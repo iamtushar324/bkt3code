@@ -119,6 +119,18 @@ const combine = (outcomes: ReadonlyArray<Outcome>): Outcome | null =>
         ? "stale"
         : "unchanged";
 
+/**
+ * The thread moved on between the read and the dispatch, so its own events win.
+ * A retried delivery reuses the same command id, and the engine answers a
+ * command it already rejected with `OrchestrationCommandPreviouslyRejectedError`;
+ * both are a lost race ("stale"), never a failed delivery the syncer would
+ * retry forever.
+ */
+const ignoreRaceLoss = Effect.catchTags({
+  OrchestrationCommandInvariantError: () => Effect.succeed("stale" as const),
+  OrchestrationCommandPreviouslyRejectedError: () => Effect.succeed("stale" as const),
+});
+
 export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.apply")(function* (
   write: PullRequestStateWrite,
 ) {
@@ -164,17 +176,19 @@ export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.a
       } else if (link.snapshot != null && snapshotFieldsEqual(link.snapshot, write.snapshot)) {
         outcomes.push("unchanged");
       } else {
-        yield* engine.dispatch({
-          type: "thread.pull-request-link.sync",
-          commandId: commandId(thread.id, "link"),
-          threadId: thread.id,
-          host: key.host,
-          repository: link.repository,
-          number: link.number,
-          snapshot: write.snapshot,
-          stack: link.stack ?? null,
-        });
-        outcomes.push("applied");
+        const outcome = yield* engine
+          .dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: commandId(thread.id, "link"),
+            threadId: thread.id,
+            host: key.host,
+            repository: link.repository,
+            number: link.number,
+            snapshot: write.snapshot,
+            stack: link.stack ?? null,
+          })
+          .pipe(Effect.as("applied" as const), ignoreRaceLoss);
+        outcomes.push(outcome);
       }
     }
 
@@ -217,13 +231,7 @@ export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.a
               },
               branchPullRequest,
             })
-            .pipe(
-              Effect.as("applied" as const),
-              // The thread moved on since it was read; its own events win.
-              Effect.catchTag("OrchestrationCommandInvariantError", () =>
-                Effect.succeed("stale" as const),
-              ),
-            );
+            .pipe(Effect.as("applied" as const), ignoreRaceLoss);
           outcomes.push(outcome);
         }
       }
