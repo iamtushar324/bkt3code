@@ -126,10 +126,13 @@ const combine = (outcomes: ReadonlyArray<Outcome>): Outcome | null =>
  * both are a lost race ("stale"), never a failed delivery the syncer would
  * retry forever.
  */
-const ignoreRaceLoss = Effect.catchTags({
-  OrchestrationCommandInvariantError: () => Effect.succeed("stale" as const),
-  OrchestrationCommandPreviouslyRejectedError: () => Effect.succeed("stale" as const),
-});
+const ignoreRaceLoss = <A, E, R>(dispatched: Effect.Effect<A, E, R>) =>
+  dispatched.pipe(
+    Effect.catchTags({
+      OrchestrationCommandInvariantError: () => Effect.succeed("stale" as const),
+      OrchestrationCommandPreviouslyRejectedError: () => Effect.succeed("stale" as const),
+    }),
+  );
 
 export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.apply")(function* (
   write: PullRequestStateWrite,
