@@ -36,11 +36,21 @@ export interface HistorySyncDecisionInput {
   readonly page: EnvironmentThreadPageState | null;
   readonly loadedUserTurns: number;
   readonly budgetUserTurns?: number;
+  /**
+   * A running turn keeps the thread busy: pages merged now are not persisted
+   * until the turn settles, so deepening only adds memory and render weight.
+   */
+  readonly sessionRunning?: boolean;
+  /** A hidden window has nobody reading it; deepen once it is visible again. */
+  readonly documentVisible?: boolean;
 }
 
 export function shouldRequestOlderPage(input: HistorySyncDecisionInput): boolean {
   const budget = input.budgetUserTurns ?? DEFAULT_HISTORY_SYNC_BUDGET_USER_TURNS;
   if (input.status !== "live") {
+    return false;
+  }
+  if (input.sessionRunning === true || input.documentVisible === false) {
     return false;
   }
   if (input.page === null || !input.page.hasMore || input.page.loadingOlder) {

@@ -18,13 +18,25 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { countUserTurns, shouldRequestOlderPage } from "@t3tools/client-runtime/historySync";
 import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import { OFFLINE_HISTORY_SYNC_ENABLED } from "../experimentalFeatures";
 import { useEnvironmentThread } from "../state/threads";
 
 /** Breathing room between pages, so a backfill never starves live traffic. */
 const HISTORY_SYNC_PAGE_SPACING_MS = 1_500;
+/**
+ * Quiet period after a thread becomes live (open, resume, reconnect): the user
+ * is looking at the latest turns right then, and a snapshot resume that just
+ * replaced the window should not immediately re-download ten older pages.
+ */
+const HISTORY_SYNC_SETTLE_MS = 10_000;
+
+const subscribeVisibility = (onChange: () => void) => {
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+};
+const documentVisible = () => document.visibilityState !== "hidden";
 
 export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
   const environmentId = ref?.environmentId ?? null;
@@ -38,6 +50,14 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
   const loadingOlder = page?.loadingOlder ?? false;
   const beforeCursor = page?.beforeCursor ?? null;
   const loadedUserTurns = countUserTurns(thread?.messages ?? []);
+  const sessionStatus = thread?.session?.status;
+  const sessionRunning = sessionStatus === "running" || sessionStatus === "starting";
+  const visible = useSyncExternalStore(subscribeVisibility, documentVisible, () => true);
+  // When the thread last became live; the first page waits out the settle period.
+  const liveSince = useRef<number | null>(null);
+  useEffect(() => {
+    liveSince.current = status === "live" ? Date.now() : null;
+  }, [status]);
 
   useEffect(() => {
     if (!OFFLINE_HISTORY_SYNC_ENABLED || environmentId === null || threadId === null) {
@@ -48,13 +68,30 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
         status,
         page: beforeCursor === null ? null : { beforeCursor, hasMore, loadingOlder },
         loadedUserTurns,
+        sessionRunning,
+        documentVisible: visible,
       })
     ) {
       return;
     }
-    const timer = setTimeout(() => {
-      requestOlderThreadTurns(environmentId, threadId);
-    }, HISTORY_SYNC_PAGE_SPACING_MS);
+    const settleRemainingMs =
+      liveSince.current === null ? 0 : liveSince.current + HISTORY_SYNC_SETTLE_MS - Date.now();
+    const timer = setTimeout(
+      () => {
+        requestOlderThreadTurns(environmentId, threadId);
+      },
+      Math.max(HISTORY_SYNC_PAGE_SPACING_MS, settleRemainingMs),
+    );
     return () => clearTimeout(timer);
-  }, [environmentId, threadId, status, hasMore, loadingOlder, beforeCursor, loadedUserTurns]);
+  }, [
+    environmentId,
+    threadId,
+    status,
+    hasMore,
+    loadingOlder,
+    beforeCursor,
+    loadedUserTurns,
+    sessionRunning,
+    visible,
+  ]);
 }

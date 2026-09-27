@@ -71,6 +71,27 @@ describe("shouldRequestOlderPage", () => {
   });
 });
 
+// T3-CUSTOM(expbkt3): deepening waits for a quiet, visible thread.
+describe("shouldRequestOlderPage while busy or hidden", () => {
+  const page = { beforeCursor: "cursor-1", hasMore: true, loadingOlder: false };
+  it("waits while a turn is running", () => {
+    expect(
+      shouldRequestOlderPage({ status: "live", page, loadedUserTurns: 10, sessionRunning: true }),
+    ).toBe(false);
+    expect(
+      shouldRequestOlderPage({ status: "live", page, loadedUserTurns: 10, sessionRunning: false }),
+    ).toBe(true);
+  });
+  it("waits while the window is hidden", () => {
+    expect(
+      shouldRequestOlderPage({ status: "live", page, loadedUserTurns: 10, documentVisible: false }),
+    ).toBe(false);
+    expect(
+      shouldRequestOlderPage({ status: "live", page, loadedUserTurns: 10, documentVisible: true }),
+    ).toBe(true);
+  });
+});
+
 describe("countUserTurns", () => {
   it("counts only what the pagination window is measured in", () => {
     expect(
