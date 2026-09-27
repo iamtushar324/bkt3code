@@ -77,6 +77,8 @@ import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 // T3-CUSTOM(expbkt3): focus wakeups probe unless the window was away >= 60 s.
 import { type FocusWakeup, makeFocusWakeupTracker } from "./focusWakeup.expbkt3";
+// T3-CUSTOM(expbkt3): desktop-local discovery must not delay the primary.
+import { DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS } from "./desktopLocalDiscovery.expbkt3";
 
 let nextObservedRpcRequestId = 0;
 
@@ -411,9 +413,11 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }
   const httpBaseUrl = entry.httpBaseUrl;
   const wsBaseUrl = entry.wsBaseUrl;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl,
+    // T3-CUSTOM(expbkt3): a starting local backend must not hold up the primary.
+    timeoutMs: DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
