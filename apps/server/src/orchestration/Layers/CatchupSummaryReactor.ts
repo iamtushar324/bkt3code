@@ -203,7 +203,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId);
+    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId, {
+      // Summaries read messages and turns only; skip every activity payload.
+      activityKinds: [],
+    });
     if (Option.isNone(threadOption)) {
       return;
     }
