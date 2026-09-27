@@ -430,7 +430,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       const sweepDoneMs = yield* Clock.currentTimeMillis;
       yield* Effect.logInfo("provider.session.reaper.sweep-complete", {
         reapedCount,
-        totalBindings: bindings.length,
+        // Only non-stopped bindings are listed (listLiveProviderBindings).
+        liveBindings: bindings.length,
         durationMs: sweepDoneMs - sweepStartedMs,
         orphanedTurnsMs: orphanedTurnsDoneMs - sweepStartedMs,
         orphanProcessesMs: orphanProcessesDoneMs - orphanedTurnsDoneMs,
