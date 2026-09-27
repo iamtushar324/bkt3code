@@ -17,20 +17,12 @@
  * "application-active" restarts every open subscription and discards the
  * catch-up the previous one had in flight, so after the first resync (or
  * reconnect) any "application-active" inside `RETURN_COALESCE_MS` only probes.
- *
- * Waking a laptop fires the OS `resume` and, once the password is typed,
- * `unlock-screen` — often 10–20 s apart, each forwarded as a reconnect. The
- * second would tear down the healthy socket the first just built and replay
- * every thread again, so a reconnect inside `RECONNECT_COALESCE_MS` of the
- * previous one only probes. A dead socket still fails that probe, and a
- * failed wake probe reconnects at once.
  */
 import * as Stream from "effect/Stream";
 import { Wakeups } from "@t3tools/client-runtime/connection";
 
 export const FOCUS_RESYNC_AFTER_MS = 60_000;
 export const RETURN_COALESCE_MS = 5_000;
-export const RECONNECT_COALESCE_MS = 60_000;
 
 export type FocusWakeup = "application-active" | "application-focus";
 
@@ -57,25 +49,19 @@ export function makeFocusWakeupTracker(now: () => number = Date.now) {
 
 export function makeReturnWakeupCoalescer(now: () => number = Date.now) {
   let lastResyncAtMs: number | null = null;
-  let lastReconnectAtMs: number | null = null;
-  const within = (since: number | null, at: number, windowMs: number) =>
-    since !== null && at - since < windowMs;
   return (wakeup: Wakeups.ConnectionWakeup): Wakeups.ConnectionWakeup => {
-    const at = now();
-    if (wakeup === "application-active-reconnect") {
-      if (within(lastReconnectAtMs, at, RECONNECT_COALESCE_MS)) {
-        return "application-focus";
-      }
-      lastReconnectAtMs = at;
-      lastResyncAtMs = at;
+    if (wakeup !== "application-active" && wakeup !== "application-active-reconnect") {
       return wakeup;
     }
-    if (wakeup === "application-active") {
-      if (within(lastResyncAtMs, at, RETURN_COALESCE_MS)) {
-        return "application-focus";
-      }
-      lastResyncAtMs = at;
+    const at = now();
+    if (
+      wakeup === "application-active" &&
+      lastResyncAtMs !== null &&
+      at - lastResyncAtMs < RETURN_COALESCE_MS
+    ) {
+      return "application-focus";
     }
+    lastResyncAtMs = at;
     return wakeup;
   };
 }

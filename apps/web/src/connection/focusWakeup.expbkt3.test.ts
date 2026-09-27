@@ -4,7 +4,6 @@ import {
   FOCUS_RESYNC_AFTER_MS,
   makeFocusWakeupTracker,
   makeReturnWakeupCoalescer,
-  RECONNECT_COALESCE_MS,
   RETURN_COALESCE_MS,
 } from "./focusWakeup.expbkt3";
 
@@ -66,14 +65,7 @@ describe("return wakeup coalescing", () => {
     expect(coalesce("application-active-reconnect")).toBe("application-active-reconnect");
     advance(1_000);
     expect(coalesce("application-active")).toBe("application-focus");
-  });
-
-  it("probes instead of reconnecting when unlock follows the resume of the same wake", () => {
-    const { coalesce, advance } = coalescerAt();
-    expect(coalesce("application-active-reconnect")).toBe("application-active-reconnect");
-    advance(15_000);
-    expect(coalesce("application-active-reconnect")).toBe("application-focus");
-    advance(RECONNECT_COALESCE_MS);
+    // A reconnect is never downgraded: only a new socket fixes a dead one.
     expect(coalesce("application-active-reconnect")).toBe("application-active-reconnect");
   });
 
