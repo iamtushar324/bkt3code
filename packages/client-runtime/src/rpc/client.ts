@@ -316,26 +316,41 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         }
                         // T3-CUSTOM(expbkt3): a policy may end retries without
                         // waiting for the whole WebSocket session to be replaced.
-                        const retryDelay =
-                          typeof retryExpectedFailureAfter === "function"
-                            ? retryExpectedFailureAfter(retryAttempt, cause)
-                            : Option.some(retryExpectedFailureAfter);
-                        const rememberAttempt = Stream.fromEffect(
-                          Ref.set(retryState, {
-                            session,
-                            attempt: retryAttempt + 1,
-                            dormant: Option.isNone(retryDelay),
-                          }),
-                        ).pipe(Stream.drain);
-                        if (Option.isNone(retryDelay)) {
-                          return Stream.concat(handled, rememberAttempt);
-                        }
-                        return handled.pipe(
-                          Stream.concat(rememberAttempt),
-                          Stream.concat(
-                            Stream.fromEffect(Effect.sleep(retryDelay.value)).pipe(Stream.drain),
+                        // The budget lives in retryState, which a delivered value
+                        // resets to 0. The attempt this stream started with goes
+                        // stale once values flow, so read the current one: a busy
+                        // stream that fails, recovers, and fails again must not
+                        // run out of retries and go dormant until reconnect.
+                        return Stream.unwrap(
+                          Ref.get(retryState).pipe(
+                            Effect.map((current) => {
+                              const attempt =
+                                current.session === session ? current.attempt : retryAttempt;
+                              const retryDelay =
+                                typeof retryExpectedFailureAfter === "function"
+                                  ? retryExpectedFailureAfter(attempt, cause)
+                                  : Option.some(retryExpectedFailureAfter);
+                              const rememberAttempt = Stream.fromEffect(
+                                Ref.set(retryState, {
+                                  session,
+                                  attempt: attempt + 1,
+                                  dormant: Option.isNone(retryDelay),
+                                }),
+                              ).pipe(Stream.drain);
+                              if (Option.isNone(retryDelay)) {
+                                return Stream.concat(handled, rememberAttempt);
+                              }
+                              return handled.pipe(
+                                Stream.concat(rememberAttempt),
+                                Stream.concat(
+                                  Stream.fromEffect(Effect.sleep(retryDelay.value)).pipe(
+                                    Stream.drain,
+                                  ),
+                                ),
+                                Stream.concat(subscribeToSession(attempt + 1)),
+                              );
+                            }),
                           ),
-                          Stream.concat(subscribeToSession(retryAttempt + 1)),
                         );
                       }
                       return Stream.failCause(cause);
