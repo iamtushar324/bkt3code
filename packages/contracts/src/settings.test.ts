@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { DEFAULT_MODEL } from "./model.ts";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -349,6 +350,47 @@ describe("ClientSettings word wrap", () => {
     expect(decoded).not.toHaveProperty("diffWordWrap");
   });
 });
+
+describe("ClientSettings phase-grouped sidebar", () => {
+  it("defaults the experiment off for legacy settings", () => {
+    expect(decodeClientSettings({}).phaseGroupedSidebarEnabled).toBe(false);
+    expect(decodeServerSettings({}).experimental.externalMcp).toEqual({
+      enabled: false,
+      apiKey: "",
+      publicUrl: "",
+    });
+  });
+
+  it("accepts persisted values and client patches", () => {
+    expect(
+      decodeClientSettings({ phaseGroupedSidebarEnabled: true }).phaseGroupedSidebarEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ phaseGroupedSidebarEnabled: true }).phaseGroupedSidebarEnabled,
+    ).toBe(true);
+  });
+});
+
+// T3-CUSTOM(expbkt3): BEGIN — the fork keeps plan mode as a first-class feature.
+// Upstream retired it behind an off-by-default flag; these lock the fork default
+// so a later upstream merge cannot silently switch plan mode off again.
+describe("ClientSettings plan mode", () => {
+  it("defaults plan mode on", () => {
+    expect(decodeClientSettings({}).planModeAvailable).toBe(true);
+  });
+
+  it("drops upstream's retired planModeEnabled key, resetting everyone to on", () => {
+    const decoded = decodeClientSettings({ planModeEnabled: false });
+    expect(decoded.planModeAvailable).toBe(true);
+    expect(decoded).not.toHaveProperty("planModeEnabled");
+  });
+
+  it("preserves an explicit opt-out", () => {
+    expect(decodeClientSettings({ planModeAvailable: false }).planModeAvailable).toBe(false);
+    expect(decodeClientSettingsPatch({ planModeAvailable: false }).planModeAvailable).toBe(false);
+  });
+});
+// T3-CUSTOM(expbkt3): END
 
 describe("ClientSettings window capture", () => {
   it("defaults capture off while keeping its feedback enabled", () => {
@@ -762,6 +804,22 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+// T3-CUSTOM(expbkt3): settings.json on long-lived fork servers still carries
+// keys for retired fork features (catch-up and work summaries). They must keep
+// decoding and simply drop out.
+describe("ServerSettings retired fork keys", () => {
+  it("decodes and drops experimental.sessionSummary and sessionWorkSummary", () => {
+    const settings = decodeServerSettings({
+      experimental: {
+        sessionSummary: { enabled: true, dataLimitChars: 24_000 },
+        sessionWorkSummary: { enabled: true, maxWords: 60 },
+      },
+    });
+    expect(settings.experimental).not.toHaveProperty("sessionSummary");
+    expect(settings.experimental).not.toHaveProperty("sessionWorkSummary");
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});
@@ -836,7 +894,17 @@ describe("ServerSettings worktree defaults", () => {
   });
 
   it("defaults start-from-origin on for legacy configs", () => {
-    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
+    const settings = decodeServerSettings({});
+
+    expect(settings.newWorktreesStartFromOrigin).toBe(true);
+    expect(settings.defaultThreadModelSelection).toEqual({
+      instanceId: "codex",
+      // T3-CUSTOM(expbkt3): read the constant rather than a literal so an upstream
+      // default-model bump stops failing this fork test on every merge.
+      model: DEFAULT_MODEL,
+    });
+    expect(settings.defaultThreadRuntimeMode).toBe("full-access");
+    expect(settings.defaultThreadInteractionMode).toBe("default");
   });
 
   it("accepts start-from-origin updates", () => {
@@ -852,6 +920,87 @@ describe("ServerSettings worktree defaults", () => {
     );
     expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
     expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+
+  it("accepts thread model, access, and interaction default updates", () => {
+    const patch = decodeServerSettingsPatch({
+      defaultThreadModelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5",
+        options: [{ id: "effort", value: "high" }],
+      },
+      defaultThreadRuntimeMode: "approval-required",
+      defaultThreadInteractionMode: "plan",
+    });
+
+    expect(patch.defaultThreadModelSelection).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(patch.defaultThreadRuntimeMode).toBe("approval-required");
+    expect(patch.defaultThreadInteractionMode).toBe("plan");
+  });
+});
+
+describe("ServerSettings source-control profiles", () => {
+  it("defaults legacy installations to machine identity with no profiles", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.sourceControlIdentityMode).toBe("machine");
+    expect(settings.environmentUserIdentityMode).toBe("optional");
+    expect(settings.sourceControlProfiles).toEqual({});
+  });
+
+  it("never retains credentials in profile metadata or serialized settings", () => {
+    const secret = "github_pat_must_not_be_serialized";
+    const settings = decodeServerSettings({
+      sourceControlIdentityMode: "thread-profile",
+      sourceControlProfiles: {
+        alice: {
+          id: "alice",
+          provider: "github",
+          label: "Alice",
+          login: "alice",
+          accountId: 42,
+          avatarUrl: null,
+          gitName: "Alice Example",
+          gitEmail: "42+alice@users.noreply.github.com",
+          archived: false,
+          credential: secret,
+          credentialStatus: "connected",
+        },
+      },
+    });
+
+    const [profile] = Object.values(settings.sourceControlProfiles);
+    expect(profile?.ownerUserId).toBeNull();
+    expect(profile).not.toHaveProperty("credential");
+    expect(profile).not.toHaveProperty("credentialStatus");
+    expect(JSON.stringify(encodeServerSettings(settings))).not.toContain(secret);
+  });
+
+  it("persists the collaborative Clerk identity mode and profile owner", () => {
+    const settings = decodeServerSettings({
+      environmentUserIdentityMode: "required",
+      sourceControlProfiles: {
+        alice: {
+          id: "alice",
+          provider: "github",
+          label: "Alice",
+          login: "alice",
+          accountId: 42,
+          avatarUrl: null,
+          gitName: "Alice Example",
+          gitEmail: "42+alice@users.noreply.github.com",
+          ownerUserId: "user_clerk_alice",
+          archived: false,
+        },
+      },
+    });
+
+    expect(settings.environmentUserIdentityMode).toBe("required");
+    expect(Object.values(settings.sourceControlProfiles)[0]?.ownerUserId).toBe("user_clerk_alice");
   });
 });
 

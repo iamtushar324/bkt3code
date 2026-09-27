@@ -1225,6 +1225,11 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
+  // T3-CUSTOM(expbkt3): BEGIN - fire a user-defined "Open in…" target URL
+  // (Obsidian, a file manager, any installed app). Optional: older desktop
+  // builds lack it, and callers disable the menu items rather than guess.
+  openForkTarget?: (url: string) => Promise<boolean>;
+  // T3-CUSTOM(expbkt3): END
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
@@ -1242,6 +1247,12 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  // T3-CUSTOM(expbkt3): BEGIN - fired when the user clicks the native
+  // update-ready notification. The click deliberately does not install; it asks
+  // the renderer to surface the update UI so the restart stays an explicit,
+  // labelled choice. Optional so a web build and an older preload both compile.
+  onUpdateReveal?: (listener: () => void) => () => void;
+  // T3-CUSTOM(expbkt3): END
   /** Present when the desktop shell accepts `t3 app` activation requests. */
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;

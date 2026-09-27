@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sessionDigest": {
+      "types": "./src/sessionDigest.ts",
+      "import": "./src/sessionDigest.ts"
+    },
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
       "import": "./src/legacyCliLauncher.ts"
@@ -42,6 +46,10 @@
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
+    },
+    "./worktreeCodename": {
+      "types": "./src/worktreeCodename.ts",
+      "import": "./src/worktreeCodename.ts"
     },
     "./githubMedia": {
       "types": "./src/githubMedia.ts",
@@ -139,6 +147,10 @@
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
     },
+    "./threadExecution": {
+      "types": "./src/threadExecution.ts",
+      "import": "./src/threadExecution.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
@@ -158,6 +170,10 @@
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
+    },
+    "./clerkIdentity": {
+      "types": "./src/clerkIdentity.ts",
+      "import": "./src/clerkIdentity.ts"
     },
     "./relayUrl": {
       "types": "./src/relayUrl.ts",
@@ -198,6 +214,10 @@
     "./threadReference": {
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
+    },
+    "./linearIssue": {
+      "types": "./src/linearIssue.ts",
+      "import": "./src/linearIssue.ts"
     },
     "./threadPullRequests": {
       "types": "./src/threadPullRequests.ts",
@@ -294,6 +314,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./planReview": {
+      "types": "./src/planReview.ts",
+      "import": "./src/planReview.ts"
     },
     "./devHome": {
       "types": "./src/devHome.ts",

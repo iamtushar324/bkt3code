@@ -272,7 +272,13 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+// T3-CUSTOM(expbkt3): BEGIN fork source-control identity schemas
+import { SourceControlProfileError } from "./sourceControlProfiles.ts";
+// T3-CUSTOM(expbkt3): END
+// T3-CUSTOM(expbkt3): fork RPC method names + definitions
+import { FORK_WS_RPCS, WS_FORK_METHODS } from "./rpcFork.ts";
 import { VcsError } from "./vcs.ts";
+import { EnvironmentUserManagementError } from "./users.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -429,6 +435,8 @@ export const WS_METHODS = {
   projectCloneRetry: "projectClone.retry",
   subscribeProjectClones: "subscribeProjectClones",
 
+  // Environment user management methods
+
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeWorktreeSetup: "subscribeWorktreeSetup",
@@ -443,6 +451,9 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  // T3-CUSTOM(expbkt3): fork RPC method names live in rpcFork.ts
+  ...WS_FORK_METHODS,
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -591,7 +602,11 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
-  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ServerSettingsError,
+    EnvironmentUserManagementError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -879,13 +894,22 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
   payload: SourceControlRepositoryLookupInput,
   success: SourceControlRepositoryInfo,
-  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  // T3-CUSTOM(expbkt3): fork source-control profiles add their own failure mode.
+  error: Schema.Union([
+    SourceControlRepositoryError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
   payload: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
-  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    SourceControlRepositoryError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 // Clone-backed project creation. `start` returns once the project exists and
@@ -922,7 +946,12 @@ const WsSubscribeProjectClonesRpc = Rpc.make(WS_METHODS.subscribeProjectClones, 
 const WsSourceControlPublishRepositoryRpc = Rpc.make(WS_METHODS.sourceControlPublishRepository, {
   payload: SourceControlPublishRepositoryInput,
   success: SourceControlPublishRepositoryResult,
-  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  // T3-CUSTOM(expbkt3): fork source-control profiles add their own failure mode.
+  error: Schema.Union([
+    SourceControlRepositoryError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -1009,20 +1038,28 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 
 const WsVcsPullRpc = Rpc.make(WS_METHODS.vcsPull, {
   payload: VcsPullInput,
   success: VcsPullResult,
-  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+  error: Schema.Union([GitCommandError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
   payload: VcsStatusInput,
   success: VcsStatusResult,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
@@ -1041,20 +1078,32 @@ const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
   payload: GitRunStackedActionInput,
   success: GitActionProgressEvent,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 
 const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   payload: GitPullRequestRefInput,
   success: GitResolvePullRequestResult,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
@@ -1111,13 +1160,13 @@ const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileCont
 const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
@@ -1139,7 +1188,7 @@ const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
 const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
   payload: TerminalRestartInput,
   success: TerminalSessionSnapshot,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
@@ -1536,4 +1585,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  // T3-CUSTOM(expbkt3): fork RPCs live in rpcFork.ts
+  ...FORK_WS_RPCS,
 );

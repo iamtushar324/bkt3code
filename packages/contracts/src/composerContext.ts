@@ -191,14 +191,25 @@ export const ReviewCommentContextRecord = Schema.Struct({
   sectionId: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   sectionTitle: ShortString,
   filePath: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
-  startIndex: NonNegativeInt,
-  endIndex: NonNegativeInt,
+  // T3-CUSTOM(expbkt3): plan-review comments may have no resolvable line range.
+  startIndex: Schema.NullOr(NonNegativeInt),
+  endIndex: Schema.NullOr(NonNegativeInt),
   rangeLabel: ShortString,
   text: BoundedString(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
   diff: BoundedString(COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS),
   fenceLanguage: Schema.optional(BoundedString(64)),
   pullRequest: Schema.optional(PullRequestContextMetadata),
-}).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
+  // T3-CUSTOM(expbkt3): byline an anchored plan comment carries.
+  author: Schema.optional(BoundedString(255)),
+}).check(
+  // T3-CUSTOM(expbkt3): null indices are a valid rangeless comment.
+  Schema.makeFilter(
+    (record) =>
+      record.startIndex === null ||
+      record.endIndex === null ||
+      record.endIndex >= record.startIndex,
+  ),
+);
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
 export const MentionContextRecord = Schema.Struct({

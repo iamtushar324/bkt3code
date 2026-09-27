@@ -110,6 +110,7 @@ describe("projectThreadAwareness", () => {
       startedAt: NOW,
       completedAt: NOW,
       assistantMessageId: null,
+      durationMs: null,
     };
     const state = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,

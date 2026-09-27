@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
+// T3-CUSTOM(expbkt3): thread-owned identity schemas live in sourceControlProfiles.ts
+import { SourceControlProfileId } from "./sourceControlProfiles.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
   "github",
@@ -22,6 +24,18 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
+export const ChangeRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
+export type ChangeRequestMergeability = typeof ChangeRequestMergeability.Type;
+export const ChangeRequestReviewDecision = Schema.Literals([
+  "approved",
+  "changes-requested",
+  "review-required",
+  "unknown",
+]);
+export type ChangeRequestReviewDecision = typeof ChangeRequestReviewDecision.Type;
+export const ChangeRequestChecksStatus = Schema.Literals(["pass", "fail", "pending", "unknown"]);
+export type ChangeRequestChecksStatus = typeof ChangeRequestChecksStatus.Type;
+
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
   number: PositiveInt,
@@ -35,6 +49,11 @@ export const ChangeRequest = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
+  mergeability: Schema.optional(ChangeRequestMergeability),
+  mergeStateStatus: Schema.optional(TrimmedNonEmptyString),
+  reviewDecision: Schema.optional(ChangeRequestReviewDecision),
+  checksStatus: Schema.optional(ChangeRequestChecksStatus),
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -66,6 +85,7 @@ export const SourceControlRepositoryLookupInput = Schema.Struct({
   provider: SourceControlProviderKind,
   repository: TrimmedNonEmptyString,
   cwd: Schema.optional(TrimmedNonEmptyString),
+  sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
 
@@ -75,6 +95,7 @@ export const SourceControlCloneRepositoryInput = Schema.Struct({
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
   protocol: Schema.optional(SourceControlCloneProtocol),
+  sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlCloneRepositoryInput = typeof SourceControlCloneRepositoryInput.Type;
 
@@ -92,6 +113,7 @@ export const SourceControlPublishRepositoryInput = Schema.Struct({
   visibility: SourceControlRepositoryVisibility,
   remoteName: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
+  sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlPublishRepositoryInput = typeof SourceControlPublishRepositoryInput.Type;
 

@@ -1,11 +1,15 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import {
   AuthSessionId,
   ClientSurface,
-  ClientWebDeployment,
+  EnvironmentUserId,
+  ForwardCompatibleArray,
   TrimmedNonEmptyString,
+  UserId,
+  ClientWebDeployment,
 } from "./baseSchemas.ts";
 
 /**
@@ -86,6 +90,9 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+// T3-CUSTOM(expbkt3): lets an external syncer (the Linear bridge) write pull-request state.
+// Never part of the standard or administrative sets; granted with `auth session issue --with-scope`.
+export const AuthExternalSyncWriteScope = "external-sync:write" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -95,6 +102,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  // T3-CUSTOM(expbkt3): external-sync write scope.
+  AuthExternalSyncWriteScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -140,18 +149,73 @@ export const AuthEnvironmentBootstrapTokenType =
  * the right UX without embedding server-specific auth logic or assuming a
  * single access method.
  */
+/**
+ * Runtime hint that lets the SPA detect team mode and configure its Clerk
+ * sign-in surface without any build-time coupling. Present only when the server
+ * is configured with a Clerk secret (team mode); absent for single-user
+ * desktop/local deployments.
+ */
+export const ServerAuthClerkDescriptor = Schema.Struct({
+  publishableKey: TrimmedNonEmptyString,
+  organizationId: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerAuthClerkDescriptor = typeof ServerAuthClerkDescriptor.Type;
+
 export const ServerAuthDescriptor = Schema.Struct({
   policy: ServerAuthPolicy,
-  bootstrapMethods: Schema.Array(ServerAuthBootstrapMethod),
+  // T3-CUSTOM(expbkt3): bootstrap methods grow over time, so drop ones this
+  // build does not know rather than failing the whole descriptor decode — the
+  // same treatment `ServerConfig` already gives `issues` and `availableEditors`.
+  // Without it, a server advertising a method the client has never heard of
+  // makes `server.getConfig` undecodable and the client closes the socket, which
+  // is what a fork-only `clerk-session` value did to stock T3 Code clients.
+  bootstrapMethods: ForwardCompatibleArray(ServerAuthBootstrapMethod),
   sessionMethods: Schema.Array(ServerAuthSessionMethod),
   sessionCookieName: TrimmedNonEmptyString,
+  clerk: Schema.optionalKey(ServerAuthClerkDescriptor),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
+export const AuthClerkSessionRequest = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
+  client_version: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type AuthClerkSessionRequest = typeof AuthClerkSessionRequest.Type;
+
+/** Subject-string encoding for a Clerk-authenticated operator. */
+const CLERK_SUBJECT_PREFIX = "clerk:";
+
+export const clerkSubjectForUser = (userId: UserId): string => `${CLERK_SUBJECT_PREFIX}${userId}`;
+
+/**
+ * Decode a session subject back into a Clerk `UserId`, or `null` when the
+ * subject is not a Clerk operator (pairing, CLI, desktop bootstrap ⇒
+ * unrestricted local mode).
+ */
+export const userIdFromSubject = (subject: string): UserId | null => {
+  if (!subject.startsWith(CLERK_SUBJECT_PREFIX)) return null;
+  const raw = subject.slice(CLERK_SUBJECT_PREFIX.length).trim();
+  return raw.length > 0 ? (raw as UserId) : null;
+};
+
 export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,
+  identityToken: Schema.optionalKey(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
+  client_version: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
+
+export const AuthIdentityBindingRequest = Schema.Struct({
+  identityToken: TrimmedNonEmptyString,
+});
+export type AuthIdentityBindingRequest = typeof AuthIdentityBindingRequest.Type;
+
+export const AuthIdentityBindingResult = Schema.Struct({
+  userId: EnvironmentUserId,
+});
+export type AuthIdentityBindingResult = typeof AuthIdentityBindingResult.Type;
 
 export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
@@ -192,6 +256,9 @@ export const AuthTokenExchangeRequest = Schema.Struct({
   client_label: Schema.optionalKey(TrimmedNonEmptyString),
   client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
   client_os: Schema.optionalKey(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): identify stale client bundles in connection diagnostics.
+  client_version: Schema.optionalKey(TrimmedNonEmptyString),
+  identity_token: Schema.optionalKey(TrimmedNonEmptyString),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 
@@ -236,11 +303,14 @@ export const AuthClientMetadata = Schema.Struct({
   deviceType: AuthClientMetadataDeviceType,
   os: Schema.optionalKey(TrimmedNonEmptyString),
   browser: Schema.optionalKey(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): persisted build identity for connected-client diagnostics.
+  appVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
+  userId: Schema.NullOr(EnvironmentUserId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   subject: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
@@ -342,6 +412,15 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  // T3-CUSTOM(expbkt3): BEGIN - mint a credential that can only be redeemed with a
+  // DPoP proof, and that lives for 2 hours instead of 5 minutes. Off by default, so
+  // every existing caller keeps producing exactly the credential it produces today.
+  //
+  // Safe to accept from a client, unlike a subject: it only *restricts* who can
+  // redeem the credential and binds the issued token to the redeemer's key. There is
+  // still deliberately no `subject` field — see apps/server/src/auth/OperatorIdentity.ts.
+  requireProofOfPossession: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): END
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
@@ -351,5 +430,9 @@ export const AuthSessionState = Schema.Struct({
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+  // T3-CUSTOM(expbkt3): the acting operator, absent outside team mode. A client
+  // with no ClerkProvider (the BK desktop, paired by credential) reads its own
+  // identity back from here; see apps/server/src/auth/OperatorIdentity.ts.
+  userId: Schema.optionalKey(UserId),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;

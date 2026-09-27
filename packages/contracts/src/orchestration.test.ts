@@ -564,10 +564,68 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.bootstrap?.createThread?.sourceControlProfileId, null);
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.requireWorktree, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
+  }),
+);
+
+// T3-CUSTOM(expbkt3): delegated creators can nominate the durable thread owner.
+it.effect("accepts ownerUserId in direct and bootstrapped thread creation", () =>
+  Effect.gen(function* () {
+    const direct = yield* decodeOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-thread-owner",
+      threadId: "thread-owner",
+      projectId: "project-1",
+      title: "Owned thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      ownerUserId: "user-linear-starter",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const bootstrapped = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-owner",
+      threadId: "thread-owner",
+      message: {
+        messageId: "msg-owner",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: {
+        createThread: {
+          projectId: "project-1",
+          title: "Owned bootstrap thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          ownerUserId: "user-linear-starter",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(direct.type, "thread.create");
+    if (direct.type === "thread.create") {
+      assert.strictEqual(direct.ownerUserId, "user-linear-starter");
+    }
+    assert.strictEqual(bootstrapped.bootstrap?.createThread?.ownerUserId, "user-linear-starter");
   }),
 );
 
@@ -590,6 +648,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.instanceId, "codex");
+    assert.strictEqual(parsed.sourceControlProfileId, null);
   }),
 );
 
@@ -1363,6 +1422,7 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.providerThreadId, null);
   }),
 );
 
@@ -1673,6 +1733,10 @@ it.effect("encodes compatible icons inside snapshots and client commands", () =>
       defaultModelSelection: null,
       scripts: [],
       projectIcon,
+      // T3-CUSTOM(expbkt3): fork field
+      ownerUserId: null,
+      // T3-CUSTOM(expbkt3): fork field
+      memberUserIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });

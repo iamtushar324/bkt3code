@@ -9,6 +9,8 @@ import {
 import * as Schema from "effect/Schema";
 
 import { formatComposerContextReference } from "./composerContextReferences.ts";
+// T3-CUSTOM(expbkt3): plan-review comments share the review_comment wire format.
+import { isPlanReviewSectionId, planReviewCommentTitle } from "./planReview.ts";
 
 /**
  * Upgrades a message written before inline context references: trailing
@@ -241,9 +243,15 @@ function reviewRecord(
   const sectionId = attributes.sectionId?.trim();
   const startIndex = attributes.startIndex;
   const endIndex = attributes.endIndex;
-  if (!filePath || !sectionId || !/^\d+$/.test(startIndex ?? "") || !/^\d+$/.test(endIndex ?? "")) {
+  // T3-CUSTOM(expbkt3): BEGIN — a plan-review anchor is quoted text, not a line
+  // number, and the quote cannot always be located. The range is optional; only
+  // the identity of what was commented on is required.
+  if (!filePath || !sectionId) {
     return null;
   }
+  const hasRange = /^\d+$/.test(startIndex ?? "") && /^\d+$/.test(endIndex ?? "");
+  const author = attributes.author?.trim();
+  // T3-CUSTOM(expbkt3): END
   const fences = Array.from(rawBody.matchAll(REVIEW_FENCE));
   const fence = fences.at(-1);
   const rangeLabel = attributes.rangeLabel?.trim() || "line";
@@ -252,16 +260,23 @@ function reviewRecord(
     version: 1,
     contextId: legacyId("review-comment", index),
     kind: "review-comment",
-    label: `${basename} ${rangeLabel}`,
+    // T3-CUSTOM(expbkt3): a plan comment is labelled by its plan title.
+    label: isPlanReviewSectionId(sectionId)
+      ? planReviewCommentTitle(filePath)
+      : `${basename} ${rangeLabel}`,
     sectionId,
     sectionTitle: attributes.sectionTitle?.trim() || "Review",
     filePath,
-    startIndex: Math.min(Number(startIndex), Number(endIndex)),
-    endIndex: Math.max(Number(startIndex), Number(endIndex)),
+    // T3-CUSTOM(expbkt3): BEGIN
+    startIndex: hasRange ? Math.min(Number(startIndex), Number(endIndex)) : null,
+    endIndex: hasRange ? Math.max(Number(startIndex), Number(endIndex)) : null,
+    // T3-CUSTOM(expbkt3): END
     rangeLabel,
     text: rawBody.slice(0, fence?.index ?? rawBody.length).trim(),
     diff: fence?.[3] ?? "",
     fenceLanguage: fence?.[2]?.trim() || "diff",
+    // T3-CUSTOM(expbkt3): the byline an anchored plan comment carries.
+    ...(author ? { author } : {}),
   };
 }
 

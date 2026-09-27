@@ -147,6 +147,23 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): server answers threadUsage.get (per-thread API cost). */
+  threadUsage: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): server understands priority on thread.create and
+      thread.meta.update. Same version-skew contract as threadSnooze. */
+  threadPriority: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): server understands customGroup on thread.create and
+  // thread.meta.update. Same version-skew contract as threadPriority.
+  threadCustomGroup: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): durable manual Linear tags on thread metadata. */
+  threadLinearIssue: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): durable Mattermost conversation link on thread metadata. */
+  threadMattermostLink: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): server exposes the native plan-review document API
+      (planReview.* and subscribePlanReview). Absent on upstream servers and on
+      fork servers from before it shipped, so clients hide the plan-review
+      surface entirely rather than probing for it. */
+  planReview: Schema.optionalKey(Schema.Boolean),
   /** Server supports legacy linkedPullRequest updates through thread.meta.update.
       Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),

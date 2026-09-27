@@ -352,6 +352,8 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
     hasPrimaryRemote: status.hasPrimaryRemote,
     isDefaultRef: status.isDefaultRef,
     refName: status.refName,
+    // T3-CUSTOM(expbkt3): Remote-only refreshes must retain the worktree origin.
+    ...(status.baseRef === undefined ? {} : { baseRef: status.baseRef }),
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,
     workingTree: status.workingTree,
   };

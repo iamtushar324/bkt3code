@@ -146,9 +146,14 @@ export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
+export const EnvironmentUserId = makeEntityId("EnvironmentUserId");
+export type EnvironmentUserId = typeof EnvironmentUserId.Type;
 export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
 export type RpcClientId = typeof RpcClientId.Type;
 
+/** Clerk user id (e.g. "user_2abc..."). Identifies a person operating the server. */
+export const UserId = makeEntityId("UserId");
+export type UserId = typeof UserId.Type;
 /**
  * Which client surface a connection or command comes from. Unlike
  * `AuthClientMetadataDeviceType` (a UA-style device class where web and

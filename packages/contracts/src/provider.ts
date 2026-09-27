@@ -68,6 +68,9 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
+  // T3-CUSTOM(expbkt3): BEGIN — stable durable dispatch/adoption correlation.
+  clientExecutionId: Schema.optional(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): END
   /** Internal recovery signal. Allows an empty turn only for adapters that
       explicitly support promptless continuation. */
   continuation: Schema.optional(Schema.Boolean),

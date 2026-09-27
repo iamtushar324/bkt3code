@@ -15,15 +15,18 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
+  DEFAULT_MODEL,
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
 import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
   ProjectScript,
+  ProviderInteractionMode,
   RuntimeMode,
 } from "./orchestration.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -40,6 +43,12 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import {
+  GitHubSourceControlProfileMetadata,
+  SourceControlIdentityMode,
+  SourceControlProfileId,
+} from "./sourceControlProfiles.ts";
+import { EnvironmentUserIdentityMode } from "./users.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -431,14 +440,22 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  phaseGroupedSidebarEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // T3-CUSTOM(expbkt3): plan mode stays a first-class feature in the fork.
+  // Upstream retired the composer's Build/Plan toggle behind an off-by-default
+  // flag; we keep it on, because our workflow requires plan mode and the fork's
+  // own "default interaction mode" settings (global and per-project) are dead
+  // while it is off — the server resolves "plan", then the composer forces
+  // "default" back. Deliberately a fresh key (was `planModeEnabled`): decoding
+  // drops the old key, so browsers that already persisted upstream's `false`
+  // reset to the fork default instead of silently staying in build mode.
+  planModeAvailable: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
     PullRequestMergeMethod,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  // Legacy plan mode. The composer's Build/Plan toggle was removed from the
-  // default UI; this beta flag restores it (plus the /plan and /default slash
-  // commands) for users who still rely on the old workflow.
-  planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy context window meter. The composer hides it by default; users who
   // still want the old usage indicator can restore it from Settings.
   contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -460,6 +477,26 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // T3-CUSTOM(expbkt3): native plan review. On by default; turning it off hides
+  // the Preview entry points.
+  nativePlanReviewEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): a reviewable plan takes over the transcript as soon as
+  // it lands, so a plan gate cannot be missed. Off leaves the Preview button as
+  // the only way in. Requires nativePlanReviewEnabled.
+  planReviewAutoOpenEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in the chat transcript. While
+  // off, a `t3_show_ui` call stays an ordinary collapsed tool row.
+  agentUiSurfacesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): upstream's pull request view. Off by default, so a pull request
+  // link opens the host's page in the integrated browser instead.
+  nativePullRequestViewEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser (Cmd/Ctrl-click still
+  // goes to the system browser). On by default; off returns to the "Open links in" setting.
+  openLinksInIntegratedBrowser: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -908,6 +945,81 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const ExternalMcpSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  publicUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type ExternalMcpSettings = typeof ExternalMcpSettings.Type;
+
+/**
+ * T3-CUSTOM(expbkt3): How much of an archived session's worktree to give back.
+ *
+ * `slim` deletes only regenerable directories (`node_modules`, build output,
+ * caches) and leaves a usable checkout behind. `remove` runs
+ * `git worktree remove`, which reclaims everything but means reopening the
+ * session has to re-create the worktree first.
+ */
+export const SessionArchiveReclaimMode = Schema.Literals(["slim", "remove"]);
+export type SessionArchiveReclaimMode = typeof SessionArchiveReclaimMode.Type;
+
+/** Days an archived thread must sit untouched before the sweeper may reclaim it. */
+export const SessionArchiveMinArchivedDays = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 365 }),
+);
+
+export const DEFAULT_SESSION_ARCHIVE_MIN_ARCHIVED_DAYS = 14;
+
+/**
+ * T3-CUSTOM(expbkt3): Reclaim archived sessions' worktrees without losing what
+ * the session did.
+ *
+ * Upstream only removes a worktree when a thread is *deleted*, so the sole way
+ * to get the disk back is to destroy the history. Archived worktrees therefore
+ * accumulate indefinitely. This exports a durable history file pair (digest
+ * Markdown plus a full transcript sidecar) outside the worktree first, then
+ * reclaims the worktree per `SessionArchiveReclaimMode`.
+ *
+ * `historyDir` is blank by default, meaning `<baseDir>/session-history`.
+ * `autoSweep` is off by default: the panel drives this by hand until an
+ * operator opts into the timer.
+ */
+export const SessionArchiveAutoSweepSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  mode: SessionArchiveReclaimMode.pipe(Schema.withDecodingDefault(Effect.succeed("slim" as const))),
+  minArchivedDays: SessionArchiveMinArchivedDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SESSION_ARCHIVE_MIN_ARCHIVED_DAYS)),
+  ),
+});
+export type SessionArchiveAutoSweepSettings = typeof SessionArchiveAutoSweepSettings.Type;
+
+export const SessionArchiveSettings = Schema.Struct({
+  // On by default so archiving a session exports its history immediately.
+  // Destructive reclaim stays separately gated behind `autoSweep.enabled`.
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  historyDir: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  includeTranscriptSidecar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Tool-call activity sidecar (`.activities.jsonl`) alongside the transcript. */
+  includeActivities: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Gzipped copies of the provider's own transcript files (`-raw/` directory).
+   * Captured at export time because the provider files are keyed by worktree
+   * path, a mapping that dies when the worktree is reclaimed.
+   */
+  includeRawProviderTranscripts: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  autoSweep: SessionArchiveAutoSweepSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type SessionArchiveSettings = typeof SessionArchiveSettings.Type;
+
+export const ExperimentalSettings = Schema.Struct({
+  externalMcp: ExternalMcpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
+  sessionArchive: SessionArchiveSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type ExperimentalSettings = typeof ExperimentalSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -1216,6 +1328,22 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  // T3-CUSTOM(expbkt3): agent-session defaults are separate from the small
+  // text-generation model used for titles, summaries, and source-control copy.
+  defaultThreadModelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      }),
+    ),
+  ),
+  defaultThreadRuntimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
+  defaultThreadInteractionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
   /**
    * Null defers to the repository's t3.json, then to recursive. A value
    * picked on a newer server decodes as null here rather than failing the
@@ -1245,6 +1373,16 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  sourceControlIdentityMode: SourceControlIdentityMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("machine" as const)),
+  ),
+  environmentUserIdentityMode: EnvironmentUserIdentityMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("optional" as const)),
+  ),
+  sourceControlProfiles: Schema.Record(
+    SourceControlProfileId,
+    GitHubSourceControlProfileMetadata,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * The merge method pull requests start with; `null` reuses the method
    * last chosen on this device. Server-side so a project can override it
@@ -1277,6 +1415,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  experimental: ExperimentalSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1519,6 +1658,9 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  defaultThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  defaultThreadRuntimeMode: Schema.optionalKey(RuntimeMode),
+  defaultThreadInteractionMode: Schema.optionalKey(ProviderInteractionMode),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
@@ -1530,12 +1672,45 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  sourceControlIdentityMode: Schema.optionalKey(SourceControlIdentityMode),
+  environmentUserIdentityMode: Schema.optionalKey(EnvironmentUserIdentityMode),
+  sourceControlProfiles: Schema.optionalKey(
+    Schema.Record(SourceControlProfileId, GitHubSourceControlProfileMetadata),
+  ),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  experimental: Schema.optionalKey(
+    Schema.Struct({
+      externalMcp: Schema.optionalKey(
+        Schema.Struct({
+          enabled: Schema.optionalKey(Schema.Boolean),
+          apiKey: Schema.optionalKey(TrimmedString),
+          publicUrl: Schema.optionalKey(TrimmedString),
+        }),
+      ),
+      // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
+      sessionArchive: Schema.optionalKey(
+        Schema.Struct({
+          enabled: Schema.optionalKey(Schema.Boolean),
+          historyDir: Schema.optionalKey(TrimmedString),
+          includeTranscriptSidecar: Schema.optionalKey(Schema.Boolean),
+          includeActivities: Schema.optionalKey(Schema.Boolean),
+          includeRawProviderTranscripts: Schema.optionalKey(Schema.Boolean),
+          autoSweep: Schema.optionalKey(
+            Schema.Struct({
+              enabled: Schema.optionalKey(Schema.Boolean),
+              mode: Schema.optionalKey(SessionArchiveReclaimMode),
+              minArchivedDays: Schema.optionalKey(SessionArchiveMinArchivedDays),
+            }),
+          ),
+        }),
+      ),
     }),
   ),
   providers: Schema.optionalKey(
@@ -1626,10 +1801,22 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  phaseGroupedSidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): plan mode availability (fresh key, on by default).
+  planModeAvailable: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): native plan review.
+  nativePlanReviewEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): plan review takeover.
+  planReviewAutoOpenEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+  agentUiSurfacesEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): upstream's pull request view.
+  nativePullRequestViewEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+  openLinksInIntegratedBrowser: Schema.optionalKey(Schema.Boolean),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),
-  planModeEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),

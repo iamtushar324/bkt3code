@@ -1,4 +1,11 @@
-import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): BEGIN — checked-in t3.json setup scripts run automatically.
+import type {
+  ProjectId,
+  ProjectScript,
+  ServerSettings,
+  T3ProjectFileScript,
+} from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): END
 
 type ProjectScriptSettings = Pick<
   ServerSettings,
@@ -73,3 +80,41 @@ export function projectScriptRuntimeEnv(
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
 }
+// T3-CUSTOM(expbkt3): BEGIN — a repository can ship its setup action in t3.json
+// instead of every teammate importing it once per project, per environment.
+
+/**
+ * The `t3.json` script a new worktree should run, if the file declares one.
+ * Mirrors {@link setupProjectScript} over the checked-in file's entries.
+ */
+export function setupT3ProjectFileScript(
+  scripts: readonly T3ProjectFileScript[] | undefined,
+): T3ProjectFileScript | null {
+  return scripts?.find((script) => script.runOnWorktreeCreate === true) ?? null;
+}
+
+/**
+ * Turn a `t3.json` script entry into a runnable {@link ProjectScript}, filling
+ * the fields the file leaves optional. `id` is supplied by the caller because
+ * the file has no identity of its own; use a stable value so terminals and
+ * receipts stay recognizable across runs.
+ */
+export function projectScriptFromFileScript(
+  id: string,
+  fileScript: T3ProjectFileScript,
+): ProjectScript {
+  return {
+    id,
+    name: fileScript.name,
+    command: fileScript.command,
+    icon: fileScript.icon ?? "play",
+    runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+    ...(fileScript.previewUrl === undefined
+      ? {}
+      : {
+          previewUrl: fileScript.previewUrl,
+          autoOpenPreview: fileScript.autoOpenPreview ?? false,
+        }),
+  };
+}
+// T3-CUSTOM(expbkt3): END

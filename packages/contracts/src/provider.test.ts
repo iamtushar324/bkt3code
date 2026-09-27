@@ -121,6 +121,16 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("preserves a client execution id for durable correlation", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      clientExecutionId: "work-item-1",
+      input: "continue",
+    });
+
+    expect(parsed.clientExecutionId).toBe("work-item-1");
+  });
+
   it("accepts 100 attachments and rejects 101", () => {
     const attachments = Array.from({ length: 100 }, (_, index) => ({
       type: "image",
