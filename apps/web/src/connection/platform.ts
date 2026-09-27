@@ -21,7 +21,6 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
-  Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
@@ -76,7 +75,11 @@ import {
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 // T3-CUSTOM(expbkt3): focus wakeups probe unless the window was away >= 60 s.
-import { type FocusWakeup, makeFocusWakeupTracker } from "./focusWakeup.expbkt3";
+import {
+  coalescedWakeupsLayer,
+  type FocusWakeup,
+  makeFocusWakeupTracker,
+} from "./focusWakeup.expbkt3";
 
 let nextObservedRpcRequestId = 0;
 
@@ -149,7 +152,8 @@ const systemResumeWakeups = Stream.callback<"application-active-reconnect">((que
 );
 // T3-CUSTOM(expbkt3): END
 
-const wakeupsLayer = Wakeups.layer({
+// T3-CUSTOM(expbkt3): one resubscribe per return, however many events it fires.
+const wakeupsLayer = coalescedWakeupsLayer({
   changes: Stream.merge(
     // Tab/window became visible again.
     applicationActiveFrom((emit) => {
