@@ -583,6 +583,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         for (const item of items) {
           if (item.kind === "synchronized") {
             synchronized = true;
+            // T3-CUSTOM(expbkt3): execution frames share batches with events.
+          } else if (item.kind === "execution") {
+            thread = withExecutionSnapshot(thread, item.execution);
           } else if (item.kind === "event" && item.event.sequence > sequence) {
             sequence = item.event.sequence;
             const result = applyThreadDetailEvent(thread, item.event);

@@ -1205,4 +1205,25 @@ describe("EnvironmentThreads", () => {
         expect(saved?.snapshotSequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       }),
   );
+
+  // T3-CUSTOM(expbkt3): BEGIN execution frames inside a transport batch
+  it.effect("applies an execution frame that arrives in the same batch as events", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: ACTIVE_THREAD });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      // The end of a catch-up replay, the resume execution frame and a live
+      // event can all be drained from the transport queue as one array.
+      yield* Queue.offerAll(harness.inputs, [
+        sessionSet("ready", "turn-1", CACHED_SNAPSHOT_SEQUENCE + 1),
+        { kind: "execution", execution: executionSnapshot("idle") },
+      ]);
+      const settled = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.execution?.activity === "idle",
+      );
+      expect(Option.getOrThrow(settled.data).session?.status).toBe("ready");
+    }),
+  );
+  // T3-CUSTOM(expbkt3): END
 });
