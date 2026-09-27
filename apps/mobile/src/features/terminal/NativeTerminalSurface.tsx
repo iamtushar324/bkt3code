@@ -35,6 +35,8 @@ interface TerminalResizeEvent {
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly buffer: string;
+  // T3-CUSTOM(expbkt3): reset native scrollback when upstream output changes generation.
+  readonly outputResetKey?: string;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly autoFocus?: boolean;
@@ -217,6 +219,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
     return (
       <View style={props.style}>
         <NativeTerminalSurfaceView
+          key={props.outputResetKey /* T3-CUSTOM(expbkt3): reset native scrollback. */}
           appearanceScheme={themeAppearance}
           autoFocus={props.autoFocus ?? true}
           backgroundColor={theme.background}

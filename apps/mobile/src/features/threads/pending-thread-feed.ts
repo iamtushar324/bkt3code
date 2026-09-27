@@ -26,6 +26,8 @@ export function appendPendingThreadMessages(
         createdAt: pendingMessage.createdAt,
         pendingMessage,
         message: {
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           id: pendingMessage.messageId,
           role: "user",
           text: pendingMessage.text,

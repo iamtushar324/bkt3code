@@ -2,11 +2,14 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { writeFileAtomically } from "../lib/atomic-file";
+// T3-CUSTOM(expbkt3): BEGIN — identity-scoped durable outbox files.
 import {
+  ANONYMOUS_OUTBOX_IDENTITY,
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
+// T3-CUSTOM(expbkt3): END
 
 const THREAD_OUTBOX_DIRECTORY = "thread-outbox";
 
@@ -49,14 +52,19 @@ export interface ThreadOutboxLoadResult {
   readonly errors: ReadonlyArray<ThreadOutboxStorageError>;
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — environment/account namespaced storage keys.
 export interface ThreadOutboxStorage {
   readonly load: () => Promise<ThreadOutboxLoadResult>;
   readonly write: (message: QueuedThreadMessage) => Promise<void>;
-  readonly remove: (message: QueuedThreadMessage) => Promise<void>;
+  readonly remove: (
+    message: Pick<QueuedThreadMessage, "environmentId" | "identityKey" | "messageId">,
+  ) => Promise<void>;
 }
 
-function messageFileName(messageId: MessageId): string {
-  return `${encodeURIComponent(messageId)}.json`;
+function messageFileName(
+  message: Pick<QueuedThreadMessage, "environmentId" | "identityKey" | "messageId">,
+): string {
+  return `${encodeURIComponent(message.environmentId)}--${encodeURIComponent(message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY)}--${encodeURIComponent(message.messageId)}.json`;
 }
 
 async function getOutboxDirectory() {
@@ -66,10 +74,13 @@ async function getOutboxDirectory() {
   return directory;
 }
 
-async function getMessageFile(messageId: MessageId) {
+async function getMessageFile(
+  message: Pick<QueuedThreadMessage, "environmentId" | "identityKey" | "messageId">,
+) {
   const { File } = await import("expo-file-system");
-  return new File(await getOutboxDirectory(), messageFileName(messageId));
+  return new File(await getOutboxDirectory(), messageFileName(message));
 }
+// T3-CUSTOM(expbkt3): END
 
 export const expoThreadOutboxStorage: ThreadOutboxStorage = {
   load: async () => {
@@ -112,12 +123,14 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
     }
     return { messages, errors };
   },
+  // T3-CUSTOM(expbkt3): BEGIN — write the namespaced file.
   write: async (message) => {
-    const fileName = messageFileName(message.messageId);
+    const fileName = messageFileName(message);
     try {
       await trackInFlightWrite(
         (async () => {
-          const file = await getMessageFile(message.messageId);
+          // T3-CUSTOM(expbkt3): identity-scoped file name resolves from the whole message.
+          const file = await getMessageFile(message);
           await writeFileAtomically(file, JSON.stringify(encodeQueuedThreadMessage(message)));
         })(),
       );
@@ -132,22 +145,32 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
       });
     }
   },
+  // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): BEGIN — remove current and one-release legacy keys.
   remove: async (message) => {
-    const fileName = messageFileName(message.messageId);
+    const fileName = messageFileName(message);
     try {
-      const file = await getMessageFile(message.messageId);
+      const file = await getMessageFile(message);
       if (file.exists) {
         file.delete();
       }
+      // One-release migration cleanup for the previous message-id-only layout.
+      const { File } = await import("expo-file-system");
+      const legacy = new File(
+        await getOutboxDirectory(),
+        `${encodeURIComponent(message.messageId)}.json`,
+      );
+      if (legacy.exists) legacy.delete();
     } catch (cause) {
       throw new ThreadOutboxStorageError({
         operation: "remove",
         environmentId: message.environmentId,
-        threadId: message.threadId,
+        threadId: null,
         messageId: message.messageId,
         fileName,
         cause,
       });
     }
   },
+  // T3-CUSTOM(expbkt3): END
 };

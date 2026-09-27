@@ -19,6 +19,8 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
+// T3-CUSTOM(expbkt3): the row menu opens the members sheet.
+import { useNavigation } from "@react-navigation/native";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -70,6 +72,10 @@ const STATUS_LABEL_BY_STATUS: Partial<
 
 // Menus keep lifecycle and title regeneration together. Archive keeps its
 // own surface (thread screen / settings) rather than crowding v2 rows.
+// T3-CUSTOM(expbkt3): member tagging, on every variant so it never depends on
+// the experimental sidebar being enabled.
+const PEOPLE_MENU_ACTION: MenuAction = { id: "people", title: "People", image: "person.2" };
+
 const CARD_MENU_ACTIONS: MenuAction[] = [
   { id: "settle", title: "Settle", image: "checkmark" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
@@ -320,6 +326,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             />
             <Text className="text-xs text-adaptive-amber-700-300">Draft</Text>
           </View>
+        ) : /* T3-CUSTOM(expbkt3): retain failed queued work as attention. */
+        pendingTask.kind === "pending" && pendingTask.message.deliveryState === "failed" ? (
+          <Text className="text-xs text-adaptive-red-700-300">Failed</Text>
         ) : (
           <Text
             className={cn(
@@ -559,6 +568,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
+  // T3-CUSTOM(expbkt3): BEGIN — non-blocking async questions remain discoverable in
+  // the list while the lifecycle status stays Working or Ready.
+  const displayedStatusLabel = thread.hasPendingAsyncUserInput
+    ? statusLabel
+      ? { ...statusLabel, label: `${statusLabel.label} · Question` }
+      : { label: "Question", className: "text-foreground-tertiary" }
+    : statusLabel;
+  // T3-CUSTOM(expbkt3): END
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.
   const timeLabel = props.timeLabel;
@@ -729,6 +746,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
+      // T3-CUSTOM(expbkt3): member tagging.
+      PEOPLE_MENU_ACTION,
       CARD_MENU_ACTIONS[0]!,
       ...arrangementMenuItems,
       ...titleMenuItems,
@@ -741,6 +760,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // row shares one menu builder.
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
+      // T3-CUSTOM(expbkt3): member tagging.
+      PEOPLE_MENU_ACTION,
       SLIM_MENU_ACTIONS[0]!,
       ...arrangementMenuItems.filter(
         (action) => action.id !== "move-up" && action.id !== "move-down",
@@ -753,6 +774,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
+      // T3-CUSTOM(expbkt3): member tagging.
+      PEOPLE_MENU_ACTION,
       SNOOZED_MENU_ACTIONS[0]!,
       ...titleMenuItems,
       ...autoSettleMenuItems,
@@ -760,8 +783,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [autoSettleMenuItems, titleMenuItems],
   );
+  // T3-CUSTOM(expbkt3): the People action opens the members sheet.
+  const threadRowNavigation = useNavigation();
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [
+      // T3-CUSTOM(expbkt3): member tagging.
+      PEOPLE_MENU_ACTION,
       LEGACY_MENU_ACTIONS[0]!,
       ...arrangementMenuItems,
       ...titleMenuItems,
@@ -771,6 +798,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      // T3-CUSTOM(expbkt3): member tagging.
+      if (nativeEvent.event === "people") {
+        threadRowNavigation.navigate("ThreadMembers", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -921,17 +955,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             type="monochrome"
           />
         ) : null}
+        {/* T3-CUSTOM(expbkt3): BEGIN — show the neutral async-question thread status. */}
         <Text
           className={cn(
             "text-xs tabular-nums",
-            statusLabel?.className ??
+            displayedStatusLabel?.className ??
               (selected
                 ? selectedThreadRowColors.foregroundClassName
                 : rowAppearance.tertiaryForegroundClassName),
           )}
         >
-          {statusLabel?.label ?? timeLabel}
+          {displayedStatusLabel?.label ?? timeLabel}
         </Text>
+        {/* T3-CUSTOM(expbkt3): END */}
       </View>
       <Text
         className={cn(

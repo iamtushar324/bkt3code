@@ -19,7 +19,11 @@ vi.mock("@shikijs/core", async (importOriginal) => {
         ...highlighter,
         codeToTokensBase: (...input: Parameters<typeof highlighter.codeToTokensBase>) => {
           tokenization.calls.push(input[0]);
-          const result = highlighter.codeToTokensBase(...input);
+          // Keep grammar assertions independent of CI scheduling; production retains Shiki's time budget.
+          const result = highlighter.codeToTokensBase(input[0], {
+            ...input[1],
+            tokenizeTimeLimit: 0,
+          });
           tokenization.afterCall?.();
           return result;
         },
@@ -155,6 +159,37 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
     ]);
 
     expect(withComment.tokensByRowId).toEqual(contiguous.tokensByRowId);
+  });
+
+  it("keeps test tokenizer grammar assertions stable across descheduling", async () => {
+    const rows = [
+      makeLine({
+        id: "template-open",
+        content: "const message = `open",
+        change: "add",
+        oldLineNumber: null,
+        newLineNumber: 1,
+      }),
+      makeLine({
+        id: "template-close",
+        content: "closed`;",
+        change: "add",
+        oldLineNumber: null,
+        newLineNumber: 2,
+      }),
+    ];
+    const expected = await highlight(rows);
+    let now = 0;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 501;
+      return now;
+    });
+
+    try {
+      expect((await highlight(rows)).tokensByRowId).toEqual(expected.tokensByRowId);
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("does not join unhighlighted rows across cached gaps", async () => {

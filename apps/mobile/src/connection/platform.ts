@@ -150,7 +150,14 @@ const capabilitiesLayer = Layer.effectContext(
     ).pipe(
       Context.add(
         PrimaryEnvironmentAuth,
-        PrimaryEnvironmentAuth.of({ bearerToken: Effect.succeed(Option.none()) }),
+        // T3-CUSTOM(expbkt3): BEGIN - `dpopAuthorization` is the seam a managed BK
+        // desktop build uses for its device-bound primary token. Mobile has no primary
+        // environment at all, so it stays none and the bearer path is unchanged.
+        PrimaryEnvironmentAuth.of({
+          bearerToken: Effect.succeed(Option.none()),
+          dpopAuthorization: Effect.succeed(Option.none()),
+        }),
+        // T3-CUSTOM(expbkt3): END
       ),
       Context.add(
         RelayDeviceIdentity,

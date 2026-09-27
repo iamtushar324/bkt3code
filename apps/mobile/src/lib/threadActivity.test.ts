@@ -93,7 +93,11 @@ describe("pending user input answers", () => {
       createdAt: "2026-09-03T00:00:00.000Z",
       payload: { requestId: "async-1", responseMode: "message", questions: [question] },
     });
-    const questions = derivePendingRequests([requested]).userInputs[0]?.questions;
+    const pending = derivePendingRequests([requested]).userInputs[0];
+    // T3-CUSTOM(expbkt3): upstream's `dismissible` now carries what the fork
+    // tracked as `responseMode === "message"`.
+    expect(pending?.dismissible).toBe(true);
+    const questions = pending?.questions;
     expect(questions).toEqual([question]);
     expect(buildPendingUserInputAnswers(questions!, { "0": { customAnswer: "Example" } })).toEqual({
       "0": "Example",
@@ -284,7 +288,10 @@ function makeThread(
     activities: [],
     checkpoints: [],
     session: null,
+    ownerUserId: null,
+    memberUserIds: [],
     ...input,
+    sourceControlProfileId: input.sourceControlProfileId ?? null,
     settledOverride: input.settledOverride ?? null,
     settledAt: input.settledAt ?? null,
   };
@@ -302,6 +309,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("completed-message"),
           role: "assistant",
+          sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
           text: "Completed response",
           turnId: completedTurnId,
           streaming: false,
@@ -311,6 +319,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("streaming-message"),
           role: "assistant",
+          sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
           text: "Current response",
           turnId: activeTurnId,
           streaming: true,
@@ -340,6 +349,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId: activeTurnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       startedAt: "2026-04-01T00:00:03.000Z",
       completedAt: null,
     };
@@ -393,6 +404,7 @@ describe("buildThreadFeed", () => {
     const messages = [2, 4].map((second) => ({
       id: MessageId.make(`message-${second}`),
       role: "assistant" as const,
+      sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
       text: second === 2 ? "" : "Response",
       streaming: false,
       turnId: null,
@@ -922,6 +934,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId: TurnId.make("turn-after-setup"),
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-08-30T00:00:03.000Z",
       startedAt: "2026-08-30T00:00:04.000Z",
       completedAt: null,
@@ -989,6 +1003,68 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("keeps older local feedback before newer messages returned by the server", () => {
+    const submission = {
+      id: MessageId.make("feedback-command-ordering"),
+      command: "/feedback The agent stopped early.",
+      createdAt: "2026-08-23T00:00:01.000Z",
+      status: "sent" as const,
+      feedbackId: "codex-thread-1",
+    };
+    const laterMessage = {
+      id: MessageId.make("later-server-message"),
+      role: "assistant" as const,
+      text: "Newer server response",
+      turnId: null,
+      // T3-CUSTOM(expbkt3): fork-required sender identity.
+      sentByUserId: null,
+      createdAt: "2026-08-23T00:00:02.000Z",
+      updatedAt: "2026-08-23T00:00:02.000Z",
+      streaming: false,
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread-feedback-ordering"),
+      projectId: ProjectId.make("project-1"),
+      title: "Feedback ordering",
+      messages: [laterMessage],
+    });
+
+    const feed = buildThreadFeed(thread, {
+      // T3-CUSTOM(expbkt3): upstream #10398 deleted `codexFeedbackMessage` when
+      // Codex feedback moved from pseudo-messages to composer banners. The
+      // subject here is buildThreadFeed's localMessages ordering, which still
+      // exists, so the two messages the helper used to build are inlined.
+      localMessages: [
+        {
+          id: submission.id,
+          role: "user" as const,
+          text: submission.command,
+          turnId: null,
+          sentByUserId: null,
+          streaming: false,
+          createdAt: submission.createdAt,
+          updatedAt: submission.createdAt,
+        },
+        {
+          id: MessageId.make(`${submission.id}:feedback`),
+          role: "assistant" as const,
+          text: `Feedback sent to OpenAI.\n\nThread ID: \`${submission.feedbackId}\``,
+          turnId: null,
+          sentByUserId: null,
+          streaming: false,
+          createdAt: submission.createdAt,
+          updatedAt: submission.createdAt,
+        },
+      ],
+    });
+
+    expect(feed.map((entry) => entry.id)).toEqual([
+      "feedback-command-ordering",
+      "feedback-command-ordering:feedback",
+      "later-server-message",
+    ]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),
@@ -1001,6 +1077,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:01.000Z",
         completedAt: null,
         assistantMessageId: null,
+        durationMs: null,
       },
       activities: [
         makeActivity({
@@ -1085,6 +1162,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:01.000Z",
         completedAt: "2026-04-01T00:00:03.000Z",
         assistantMessageId: null,
+        durationMs: null,
       },
       activities: [
         makeActivity({
@@ -1217,6 +1295,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:01.000Z",
         completedAt: "2026-04-01T00:00:03.000Z",
         assistantMessageId: null,
+        durationMs: null,
       },
       activities: [
         makeActivity({
@@ -1353,6 +1432,7 @@ describe("buildThreadFeed", () => {
         projectId: ProjectId.make("project-1"),
         title: "Friendly MCP labels",
         latestTurn: {
+          durationMs: null, // T3-CUSTOM(expbkt3): required persisted metadata.
           turnId,
           state: "running",
           requestedAt: "2026-04-01T00:00:00.000Z",
@@ -1442,6 +1522,7 @@ describe("buildThreadFeed", () => {
       projectId: ProjectId.make("project-1"),
       title: "Claude MCP labels",
       latestTurn: {
+        durationMs: null, // T3-CUSTOM(expbkt3): required persisted metadata.
         turnId,
         state: "running",
         requestedAt: "2026-04-01T00:00:00.000Z",
@@ -1535,6 +1616,7 @@ describe("buildThreadFeed", () => {
         projectId: ProjectId.make("project-1"),
         title: "Browser tool lifecycle",
         latestTurn: {
+          durationMs: null, // T3-CUSTOM(expbkt3): required persisted metadata.
           turnId,
           state: "running",
           requestedAt: "2026-04-01T00:00:00.000Z",
@@ -1650,6 +1732,8 @@ describe("buildThreadFeed", () => {
         latestTurn: {
           ...thread.latestTurn!,
           state: "completed",
+          // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+          durationMs: null,
           completedAt: "2026-04-01T00:00:04.000Z",
         },
       });
@@ -1784,6 +1868,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:01.000Z",
         completedAt: "2026-04-01T00:00:18.000Z",
         assistantMessageId: MessageId.make("assistant-final"),
+        durationMs: null,
       },
       messages: [
         {
@@ -1792,6 +1877,7 @@ describe("buildThreadFeed", () => {
           text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
           turnId,
           streaming: false,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:02.000Z",
           updatedAt: "2026-04-01T00:00:03.000Z",
         },
@@ -1801,6 +1887,7 @@ describe("buildThreadFeed", () => {
           text: "Done.",
           turnId,
           streaming: false,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:17.000Z",
           updatedAt: "2026-04-01T00:00:18.000Z",
         },
@@ -1875,6 +1962,8 @@ describe("buildThreadFeed", () => {
       projectId: ProjectId.make("project-1"),
       title: "Bounded narration",
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork-required turn duration.
+        durationMs: null,
         turnId,
         state: "completed",
         requestedAt: "2026-04-01T00:00:00.000Z",
@@ -1884,6 +1973,8 @@ describe("buildThreadFeed", () => {
       },
       messages: [
         {
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           id: MessageId.make("assistant-first"),
           role: "assistant",
           text: "The main result is ready.",
@@ -1893,6 +1984,8 @@ describe("buildThreadFeed", () => {
           updatedAt: "2026-04-01T00:00:02.000Z",
         },
         {
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           id: MessageId.make("assistant-middle"),
           role: "assistant",
           text: "I am checking one more detail.",
@@ -1902,6 +1995,8 @@ describe("buildThreadFeed", () => {
           updatedAt: "2026-04-01T00:00:04.000Z",
         },
         {
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           id: MessageId.make("assistant-final"),
           role: "assistant",
           text: "Verification finished.",
@@ -1937,6 +2032,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:14.000Z",
         completedAt: null,
         assistantMessageId: MessageId.make("assistant-next"),
+        durationMs: null,
       },
       messages: [
         {
@@ -1945,6 +2041,7 @@ describe("buildThreadFeed", () => {
           text: "Do it once more.",
           turnId: null,
           streaming: false,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:00.000Z",
           updatedAt: "2026-04-01T00:00:00.000Z",
         },
@@ -1954,6 +2051,7 @@ describe("buildThreadFeed", () => {
           text: "Kicking off call 1.",
           turnId: firstTurnId,
           streaming: false,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:09.000Z",
           updatedAt: "2026-04-01T00:00:09.000Z",
         },
@@ -1963,6 +2061,7 @@ describe("buildThreadFeed", () => {
           text: "Actually do 15.",
           turnId: null,
           streaming: false,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:14.000Z",
           updatedAt: "2026-04-01T00:00:14.000Z",
         },
@@ -1972,6 +2071,7 @@ describe("buildThreadFeed", () => {
           text: "One down - adjusting.",
           turnId: secondTurnId,
           streaming: true,
+          sentByUserId: null,
           createdAt: "2026-04-01T00:00:17.000Z",
           updatedAt: "2026-04-01T00:00:17.000Z",
         },
@@ -2014,6 +2114,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:01.000Z",
         completedAt: null,
         assistantMessageId: null,
+        durationMs: null,
       },
       activities: [
         makeActivity({
@@ -2254,6 +2355,8 @@ describe("buildThreadFeed", () => {
       const latestTurn = {
         turnId,
         state: "running" as const,
+        // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+        durationMs: null,
         requestedAt: "2026-04-01T00:00:00.000Z",
         startedAt: "2026-04-01T00:00:00.000Z",
         completedAt: null,
@@ -2323,6 +2426,7 @@ describe("buildThreadFeed", () => {
       text: `**Step ${second}**\n\nCheck ${second}.`,
       turnId,
       streaming: second === 4,
+      sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
       createdAt: `2026-04-01T00:00:0${second}.000Z`,
       updatedAt: `2026-04-01T00:00:0${second}.000Z`,
     }));
@@ -2338,6 +2442,7 @@ describe("buildThreadFeed", () => {
         startedAt: "2026-04-01T00:00:00.000Z",
         completedAt: null,
         assistantMessageId: null,
+        durationMs: null, // T3-CUSTOM(expbkt3): fork field
       },
     });
     const feed = buildThreadFeed(thread);
@@ -2527,6 +2632,7 @@ describe("buildThreadFeed", () => {
               ? TurnId.make("other-turn")
               : turnId,
         streaming: false,
+        sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
         createdAt: `2026-04-01T00:00:0${second}.000Z`,
         updatedAt: `2026-04-01T00:00:0${second}.000Z`,
       }));
@@ -2597,6 +2703,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-04-01T00:00:00.000Z",
       startedAt: "2026-04-01T00:00:00.000Z",
       completedAt: null,
@@ -2610,6 +2718,8 @@ describe("buildThreadFeed", () => {
         latestTurn,
         messages: [
           {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: MessageId.make("user-1"),
             role: "user",
             text: "hello",
@@ -2646,6 +2756,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-04-01T00:00:00.000Z",
       startedAt: "2026-04-01T00:00:00.000Z",
       completedAt: null,
@@ -2715,6 +2827,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-04-01T00:00:00.000Z",
       startedAt: "2026-04-01T00:00:00.000Z",
       completedAt: null,
@@ -2728,6 +2842,8 @@ describe("buildThreadFeed", () => {
         latestTurn,
         messages: [
           {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: MessageId.make("assistant-1"),
             role: "assistant",
             text: "Here is what I found",
@@ -2777,6 +2893,7 @@ describe("buildThreadFeed", () => {
       projectId: ProjectId.make("project-1"),
       title: "Serialized shell wrapper",
       latestTurn: {
+        durationMs: null, // T3-CUSTOM(expbkt3): required persisted metadata.
         turnId,
         state: "running",
         requestedAt: "2026-04-01T00:00:00.000Z",
@@ -2824,6 +2941,7 @@ describe("buildThreadFeed", () => {
       projectId: ProjectId.make("project-1"),
       title: "Task lifecycle",
       latestTurn: {
+        durationMs: null, // T3-CUSTOM(expbkt3): required persisted metadata.
         turnId,
         state: "running",
         requestedAt: "2026-04-01T00:00:00.000Z",
@@ -2890,6 +3008,8 @@ describe("buildThreadFeed", () => {
     const latestTurn = {
       turnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-04-01T00:00:00.000Z",
       startedAt: "2026-04-01T00:00:00.000Z",
       completedAt: null,
@@ -3249,6 +3369,8 @@ describe("quiet timeline: nested agents", () => {
     const latestTurn = {
       turnId,
       state: "running" as const,
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       requestedAt: "2026-04-01T00:00:00.000Z",
       startedAt: "2026-04-01T00:00:00.000Z",
       completedAt: null,
@@ -3680,6 +3802,8 @@ it("keeps attachment-only question answers expandable outside mobile work groups
     projectId: ProjectId.make("project-answer"),
     title: "Answer history",
     latestTurn: {
+      // T3-CUSTOM(expbkt3): server-computed turn duration; null while running.
+      durationMs: null,
       turnId,
       state: "completed",
       requestedAt: "2026-09-08T00:00:00.000Z",

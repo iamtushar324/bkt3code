@@ -12,6 +12,7 @@ export function shouldHandleAppLink(url: string): boolean {
   return (
     !url.includes("expo-development-client") &&
     !url.includes("://expo-sharing") &&
-    !/^t3code(-dev|-preview)?:\/*$/.test(url)
+    // T3-CUSTOM(expbkt3): the BK mobile build registers the t3code-bk scheme.
+    !/^t3code(-dev|-preview|-bk)?:\/*$/.test(url)
   );
 }

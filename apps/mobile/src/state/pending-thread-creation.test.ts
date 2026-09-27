@@ -250,6 +250,8 @@ describe("pendingThreadCreationMessage", () => {
       text: creation.text,
       turnId: null,
       streaming: false,
+      // T3-CUSTOM(expbkt3): fork-required field.
+      sentByUserId: null,
       createdAt: creation.createdAt,
       updatedAt: creation.createdAt,
     });

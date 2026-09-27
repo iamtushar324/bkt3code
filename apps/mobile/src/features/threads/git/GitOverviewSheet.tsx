@@ -9,6 +9,8 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): memorable worktree codenames.
+import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
 import {
   CommonActions,
   StackActions,
@@ -83,7 +85,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
   );
@@ -247,6 +249,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
       }
     >
+      {gitActions.actingProfileLogin ? (
+        <MetaCard label="GitHub identity" value={`@${gitActions.actingProfileLogin}`} />
+      ) : null}
       <View
         className={`overflow-hidden bg-card android:rounded-[20px] ios:border ios:border-border ${
           isInspector ? "ios:rounded-2xl ios:px-3 ios:py-1" : "ios:rounded-[22px] ios:px-4 ios:py-1"
@@ -354,7 +359,13 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {/* T3-CUSTOM(expbkt3): lead with the worktree codename, keep the path as detail. */}
+      {currentWorktreePath ? (
+        <MetaCard
+          label="Worktree"
+          value={`${resolveWorktreeCodename(currentWorktreePath)} — ${currentWorktreePath}`}
+        />
+      ) : null}
     </ScrollView>
   );
 

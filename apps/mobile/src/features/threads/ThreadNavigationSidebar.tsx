@@ -9,6 +9,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+// T3-CUSTOM(expbkt3): the phase sidebar opens the members sheet directly.
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -30,6 +31,10 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+// T3-CUSTOM(expbkt3): experimental phase-grouped sidebar, shared with HomeScreen.
+import { PhaseSidebarPane } from "../phasesidebar/PhaseSidebarPane";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { usePhaseSidebarEnabled } from "../phasesidebar/phaseSidebarEnabled";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -157,6 +162,15 @@ function ThreadNavigationSidebarPane(
     renameThread,
     regenerateThreadTitle,
   } = useThreadListActions();
+  // T3-CUSTOM(expbkt3): the experimental phase sidebar, shared with HomeScreen.
+  const phaseSidebarEnabled = usePhaseSidebarEnabled();
+  const phaseSidebarViewerEnvironmentId = useMemo(
+    () =>
+      props.selectedThreadKey === null
+        ? null
+        : (parseScopedThreadKey(props.selectedThreadKey)?.environmentId ?? null),
+    [props.selectedThreadKey],
+  );
   const pendingTasks = usePendingNewTasks();
   const queuedThreadKeys = useQueuedThreadKeys();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
@@ -262,6 +276,16 @@ function ThreadNavigationSidebarPane(
             ),
           ),
     [selectedProjectScope],
+  );
+  // T3-CUSTOM(expbkt3): keep the phase sidebar inside the stock Home scope.
+  const phaseSidebarHomeFilters = useMemo(
+    () => ({
+      matchedThreadKeys,
+      searchQuery: props.searchQuery,
+      selectedEnvironmentId: options.selectedEnvironmentId,
+      selectedProjectKeys: selectedProjectRefs,
+    }),
+    [matchedThreadKeys, options.selectedEnvironmentId, props.searchQuery, selectedProjectRefs],
   );
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
@@ -947,6 +971,7 @@ function ThreadNavigationSidebarPane(
               obscureBackground: false,
               placeholder: "Search",
               placement: "stacked",
+              // T3-CUSTOM(expbkt3): controlled native search updates the fork sidebar filter.
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
               },
@@ -957,45 +982,79 @@ function ThreadNavigationSidebarPane(
             unstable_headerRightItems: () => nativeHeaderItems,
           }}
         />
-        <View className="flex-1">
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <GestureDetector gesture={sidebarScrollGesture}>
-              <LegendList
-                data={listItems}
-                drawDistance={500}
-                estimatedItemSize={64}
-                extraData={listExtraData}
-                getItemType={(item) => item.type}
-                itemsAreEqual={sidebarItemsAreEqual}
-                keyExtractor={(item) => item.key}
-                renderItem={renderListItem}
-                automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
-                contentInsetAdjustmentBehavior={
-                  NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"
-                }
-                contentContainerStyle={[
-                  styles.threadListContent,
-                  Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
-                  {
-                    paddingBottom: Math.max(insets.bottom, 16) + 16,
-                    paddingTop: 6,
-                  },
-                ]}
-                keyboardDismissMode="on-drag"
-                keyboardShouldPersistTaps="handled"
-                {...scrollGateHandlers}
-                recycleItems
-                scrollEventThrottle={16}
-                showsVerticalScrollIndicator={false}
-                style={styles.threadList}
-                ListEmptyComponent={listEmpty}
-              />
-            </GestureDetector>
-          </SwipeableScrollGateProvider>
-        </View>
+        {/* T3-CUSTOM(expbkt3): BEGIN — the experimental sidebar replaces the
+            whole list, so the stock one keeps its exact behaviour when off. */}
+        {phaseSidebarEnabled ? (
+          <PhaseSidebarPane
+            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 16 }}
+            contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
+            homeFilters={phaseSidebarHomeFilters}
+            onSelectThread={props.onSelectThread}
+            selectedThreadKey={props.selectedThreadKey}
+            viewerEnvironmentId={phaseSidebarViewerEnvironmentId}
+          />
+        ) : (
+          /* T3-CUSTOM(expbkt3): END */
+          <View className="flex-1">
+            <SwipeableScrollGateProvider enabled={swipeEnabled}>
+              <GestureDetector gesture={sidebarScrollGesture}>
+                <LegendList
+                  data={listItems}
+                  drawDistance={500}
+                  estimatedItemSize={64}
+                  extraData={listExtraData}
+                  getItemType={(item) => item.type}
+                  itemsAreEqual={sidebarItemsAreEqual}
+                  keyExtractor={(item) => item.key}
+                  renderItem={renderListItem}
+                  automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
+                  contentInsetAdjustmentBehavior={
+                    NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"
+                  }
+                  contentContainerStyle={[
+                    styles.threadListContent,
+                    Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
+                    {
+                      paddingBottom: Math.max(insets.bottom, 16) + 16,
+                      paddingTop: 6,
+                    },
+                  ]}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  {...scrollGateHandlers}
+                  recycleItems
+                  scrollEventThrottle={16}
+                  // T3-CUSTOM(expbkt3): retain stock scroll behavior behind the fork sidebar flag.
+                  showsVerticalScrollIndicator={false}
+                  // T3-CUSTOM(expbkt3): preserve stock list layout when the fork sidebar is off.
+                  style={styles.threadList}
+                  ListEmptyComponent={listEmpty}
+                />
+              </GestureDetector>
+            </SwipeableScrollGateProvider>
+          </View>
+        )}
       </>
     );
   }
+
+  // T3-CUSTOM(expbkt3): BEGIN — the experimental sidebar replaces this render
+  // path too. The nativeChrome branch above has its own copy; both paths render
+  // a thread list, so gating only one leaves the flag half-wired.
+  if (phaseSidebarEnabled) {
+    return (
+      <View className="flex-1" style={{ width: props.width }}>
+        <PhaseSidebarPane
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 16 }}
+          homeFilters={phaseSidebarHomeFilters}
+          onSelectThread={props.onSelectThread}
+          selectedThreadKey={props.selectedThreadKey}
+          viewerEnvironmentId={phaseSidebarViewerEnvironmentId}
+        />
+      </View>
+    );
+  }
+  // T3-CUSTOM(expbkt3): END
 
   return (
     <View

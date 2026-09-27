@@ -41,6 +41,13 @@ import {
 } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
+// T3-CUSTOM(expbkt3): native plan review screens.
+import { PlanReviewSheet } from "./features/planreview/PlanReviewSheet";
+import { PlanReviewCommentSheet } from "./features/planreview/PlanReviewCommentSheet";
+// T3-CUSTOM(expbkt3): thread member tagging.
+import { ThreadMembersSheet } from "./features/members/ThreadMembersSheet";
+// T3-CUSTOM(expbkt3): per-thread API-level cost.
+import { ThreadUsageSheet } from "./features/threadusage/ThreadUsageSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
@@ -92,6 +99,7 @@ import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { SettingsUsersRouteScreen } from "./features/settings/SettingsSourceControlRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -329,6 +337,15 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
+    // T3-CUSTOM(expbkt3): BEGIN - fork Users settings screen.
+    SettingsSourceControl: createNativeStackScreen({
+      screen: SettingsUsersRouteScreen,
+      linking: "users",
+      options: {
+        title: "Users",
+      },
+    }),
+    // T3-CUSTOM(expbkt3): END
   },
 });
 
@@ -458,6 +475,8 @@ const NewTaskSheetStack = createNativeStackNavigator({
     AddProjectLocal: createNativeStackScreen({
       screen: AddProjectLocalRoute,
       linking: "add-project/local",
+      // T3-CUSTOM(expbkt3): deep links must show the user-facing route title.
+      options: { title: "Local folder" },
     }),
   },
 });
@@ -465,6 +484,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // Routes presented as sheets/overlays ON TOP of the workspace. They must not
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
+// T3-CUSTOM(expbkt3): overlays include fork sheets as well as native review comments.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ConnectOnboarding",
   "Connections",
@@ -479,6 +499,9 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadReviewComment",
   "ThreadDevicePreview",
   "ThreadSettingsSheet",
+  // T3-CUSTOM(expbkt3): fork sheets that float over the workspace.
+  "ThreadPlanReviewComment",
+  "ThreadUsage",
 ]);
 
 /**
@@ -638,6 +661,7 @@ const RootStackConfig = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/review`,
       options: SOLID_HEADER_OPTIONS,
     }),
+    // T3-CUSTOM(expbkt3): comment composition needs form-sheet detents on iOS.
     ThreadReviewComment: createNativeStackScreen({
       screen: ReviewCommentComposerSheet,
       linking: `${THREAD_LINKING_PREFIX}/review-comment`,
@@ -651,6 +675,56 @@ const RootStackConfig = createNativeStackNavigator({
         sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
+    // T3-CUSTOM(expbkt3): BEGIN native plan review
+    ThreadPlanReview: createNativeStackScreen({
+      screen: PlanReviewSheet,
+      linking: `${THREAD_LINKING_PREFIX}/plan-review`,
+      options: {
+        ...SOLID_HEADER_OPTIONS,
+        title: "Plan review",
+      },
+    }),
+    ThreadPlanReviewComment: createNativeStackScreen({
+      screen: PlanReviewCommentSheet,
+      linking: `${THREAD_LINKING_PREFIX}/plan-review-comment`,
+      options: {
+        // Same Android constraint as the diff-review composer: the keyboard
+        // cannot be hosted inside a formSheet there.
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
+        headerShown: false,
+      },
+    }),
+    ThreadMembers: createNativeStackScreen({
+      screen: ThreadMembersSheet,
+      linking: `${THREAD_LINKING_PREFIX}/members`,
+      options: {
+        // Same Android constraint as the other keyboard-driven sheets.
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.6, 0.95],
+        sheetGrabberVisible: Platform.OS !== "android",
+        headerShown: false,
+      },
+    }),
+    // T3-CUSTOM(expbkt3): per-thread API-level cost, opened from the header pill.
+    ThreadUsage: createNativeStackScreen({
+      screen: ThreadUsageSheet,
+      linking: `${THREAD_LINKING_PREFIX}/usage`,
+      options: {
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.6, 0.95],
+        sheetGrabberVisible: Platform.OS !== "android",
+        headerShown: false,
+      },
+    }),
+    // T3-CUSTOM(expbkt3): END native plan review
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
@@ -801,10 +875,12 @@ const RootStackConfig = createNativeStackNavigator({
         headerShown: false,
       },
     }),
+    // T3-CUSTOM(expbkt3): close fork routes before retaining the stock NotFound route.
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
       linking: "*",
     }),
+    // T3-CUSTOM(expbkt3): close the fork navigator additions before path config.
   },
 });
 
@@ -861,12 +937,15 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   );
 });
 
+// T3-CUSTOM(expbkt3): register the navigator at the upstream declaration owner.
 type RootStackType = typeof RootStack;
 
+// T3-CUSTOM(expbkt3): derive fork paths from the static navigator.
 const navigationPathConfig = {
   screens: createPathConfigForStaticNavigation(RootStack) ?? {},
 };
 
-declare module "@react-navigation/native" {
+// T3-CUSTOM(expbkt3): augment the core declaration that owns the root navigator.
+declare module "@react-navigation/core" {
   interface RootNavigator extends RootStackType {}
 }

@@ -74,8 +74,10 @@ interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
   readonly tone: "primary" | "secondary" | "danger";
 }
 
-function swipeActionsWidth(hasSecondaryAction: boolean) {
-  return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+// T3-CUSTOM(expbkt3): an optional third action widens the tray by one slot.
+function swipeActionsWidth(hasSecondaryAction: boolean, hasTertiaryAction = false) {
+  const base = hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+  return hasTertiaryAction ? base + ACTION_ITEM_WIDTH : base;
 }
 
 /** `undefined` keeps the v1 Delete default; `null` means one action only. */
@@ -258,6 +260,8 @@ interface ThreadSwipeableProps {
    * unadvertised Delete.
    */
   readonly secondaryAction?: ThreadSwipeAction | null;
+  // T3-CUSTOM(expbkt3): a third, neutral action (the phase sidebar's Archive).
+  readonly tertiaryAction?: ThreadSwipeAction | null;
   /**
    * Identity of the content being wrapped. When a recycled list reuses this
    * component for a different item, the swipeable snaps back to closed so an
@@ -299,7 +303,9 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const fullSwipeArmedRef = useRef(false);
   const hasSecondaryAction = props.secondaryAction !== null;
-  const actionsWidth = swipeActionsWidth(hasSecondaryAction);
+  // T3-CUSTOM(expbkt3): third slot.
+  const tertiaryAction = props.tertiaryAction ?? null;
+  const actionsWidth = swipeActionsWidth(hasSecondaryAction, tertiaryAction !== null);
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
@@ -492,6 +498,18 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
                   secondaryAction: props.secondaryAction,
                   threadTitle: props.threadTitle,
                 })}
+                // T3-CUSTOM(expbkt3): third slot.
+                tertiaryAction={
+                  tertiaryAction === null
+                    ? null
+                    : {
+                        ...tertiaryAction,
+                        onPress: () => {
+                          methods.close();
+                          tertiaryAction.onPress();
+                        },
+                      }
+                }
                 translation={translation}
               />
             </Animated.View>
@@ -708,11 +726,15 @@ export function ThreadSwipeActions(props: {
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
   readonly primaryAction: ThreadSwipeAction;
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
+  // T3-CUSTOM(expbkt3): third slot.
+  readonly tertiaryAction?: ThreadSwipeAction | null;
   readonly translation: SharedValue<number>;
 }) {
   const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
+  // T3-CUSTOM(expbkt3): third slot.
+  const tertiaryAction = props.tertiaryAction ?? null;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
-  const actionsWidth = swipeActionsWidth(secondaryAction !== null);
+  const actionsWidth = swipeActionsWidth(secondaryAction !== null, tertiaryAction !== null);
   useAnimatedReaction(
     () => -translation.value >= fullSwipeThreshold,
     (armed, previous) => {
@@ -762,6 +784,25 @@ export function ThreadSwipeActions(props: {
           menu={secondaryAction.menu}
           onPress={secondaryAction.onPress}
           stretchesOnFullSwipe={!fullSwipeIsPrimary}
+          translation={props.translation}
+        />
+      )}
+      {/* T3-CUSTOM(expbkt3): third slot, never the full-swipe action. Upstream
+          replaced SwipeActionButton's free-form backgroundColor with a closed
+          tone union, so the neutral grey became the secondary tone. */}
+      {tertiaryAction === null ? null : (
+        <SwipeActionButton
+          accessibilityLabel={tertiaryAction.accessibilityLabel}
+          actionsWidth={actionsWidth}
+          tone="secondary"
+          compact={props.compact}
+          entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
+          fullSwipeThreshold={props.fullSwipeThreshold}
+          icon={tertiaryAction.icon}
+          label={tertiaryAction.label}
+          menu={tertiaryAction.menu}
+          onPress={tertiaryAction.onPress}
+          stretchesOnFullSwipe={false}
           translation={props.translation}
         />
       )}

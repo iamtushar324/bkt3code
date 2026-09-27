@@ -35,7 +35,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
   );
@@ -104,6 +104,16 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           }
         >
           <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px] ios:border ios:border-border">
+            {/* T3-CUSTOM(expbkt3): BEGIN - per-thread source-control profile identity. */}
+            {gitActions.actingProfileLogin ? (
+              <View className="android:gap-1 ios:flex-row ios:items-center ios:justify-between ios:gap-3">
+                <Text className="text-foreground-muted text-sm font-medium">Identity</Text>
+                <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
+                  Commit as @{gitActions.actingProfileLogin}
+                </Text>
+              </View>
+            ) : null}
+            {/* T3-CUSTOM(expbkt3): END */}
             <View className="android:gap-1 ios:flex-row ios:items-center ios:justify-between ios:gap-3">
               <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
               <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">

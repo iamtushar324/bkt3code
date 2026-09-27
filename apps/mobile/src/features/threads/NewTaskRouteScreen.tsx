@@ -275,6 +275,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 />
               ) : !catalogState.hasReadyEnvironment ? (
                 <Pressable
+                  // T3-CUSTOM(expbkt3): BEGIN make empty-state recovery a native action.
+                  accessible
+                  accessibilityLabel="Add environment"
+                  accessibilityRole="button"
+                  // T3-CUSTOM(expbkt3): END
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                   onPress={() => navigation.navigate("ConnectionsNew")}
                 >
@@ -284,6 +289,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 </Pressable>
               ) : (
                 <Pressable
+                  // T3-CUSTOM(expbkt3): BEGIN make empty-state recovery a native action.
+                  accessible
+                  accessibilityLabel="Add new project"
+                  accessibilityRole="button"
+                  // T3-CUSTOM(expbkt3): END
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                   onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                 >
@@ -304,6 +314,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             </View>
           ) : (
             <View
+              // T3-CUSTOM(expbkt3): the list container must not swallow the card actions.
+              accessible={false}
               collapsable={false}
               className={
                 Platform.OS === "android"
@@ -344,12 +356,24 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 }
                 return (
                   <View
+                    // T3-CUSTOM(expbkt3): the row wrapper must not swallow the card action.
+                    accessible={false}
                     key={scope.key}
                     className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
                   >
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={scope.title}
+                      // T3-CUSTOM(expbkt3): BEGIN project cards must remain direct native
+                      // actions inside the form-sheet scroll view.
+                      accessible
+                      accessibilityHint="Starts a new task in this project"
+                      accessibilityLabel={
+                        hasMultipleProjects
+                          ? `${scope.title}, ${scope.projects.length} workspaces`
+                          : `${scope.title}, ${selectionTarget.workspaceRoot}`
+                      }
+                      accessibilityState={{ disabled: reservedDestinationProject !== null }}
+                      // T3-CUSTOM(expbkt3): END
                       disabled={reservedDestinationProject !== null}
                       onPress={() => void selectProject(selectionTarget)}
                       className="flex-row items-center gap-3 bg-card px-4 py-3.5"

@@ -12,18 +12,27 @@ export interface ReviewCommentTarget {
   readonly endIndex: number;
 }
 
+// T3-CUSTOM(expbkt3): BEGIN
+// `startIndex`/`endIndex` are nullable and `author` is new, matching
+// `apps/web/src/reviewCommentContext.ts`. A plan-review anchor is quoted text
+// that cannot always be located in the source, and rejecting those blocks made
+// the transcript render raw `<review_comment>` XML at the reader.
 export interface ReviewInlineComment {
   readonly id: string;
   readonly sectionId: string;
   readonly sectionTitle: string;
   readonly filePath: string;
-  readonly startIndex: number;
-  readonly endIndex: number;
+  /** Null when the anchor could not be resolved to a line range. */
+  readonly startIndex: number | null;
+  readonly endIndex: number | null;
   readonly rangeLabel: string;
   readonly text: string;
   readonly diff: string;
   readonly fenceLanguage?: string;
+  /** Byline for an anchored plan comment. */
+  readonly author?: string;
 }
+// T3-CUSTOM(expbkt3): END
 
 export type ReviewCommentMessageSegment =
   | {
@@ -218,22 +227,34 @@ function parseReviewInlineComment(
   const endIndex = readNonNegativeInteger(attributes.endIndex);
   const filePath = attributes.filePath?.trim();
   const sectionId = attributes.sectionId?.trim();
-  if (!filePath || !sectionId || startIndex === null || endIndex === null) {
+  // T3-CUSTOM(expbkt3): the range is optional; only the identity is required.
+  if (!filePath || !sectionId) {
     return null;
   }
+  const hasRange = startIndex !== null && endIndex !== null;
   const body = extractReviewCommentBody(rawBody);
+  const author = attributes.author?.trim();
 
   return {
-    id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
+    // T3-CUSTOM(expbkt3): BEGIN
+    // The parse index keeps the id unique when there is no range to key on.
+    id: hasRange
+      ? `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`
+      : `review-comment:${index}:${sectionId}:${filePath}`,
+    // T3-CUSTOM(expbkt3): END
     sectionId,
     sectionTitle: attributes.sectionTitle?.trim() || "Review",
     filePath,
-    startIndex: Math.min(startIndex, endIndex),
-    endIndex: Math.max(startIndex, endIndex),
+    // T3-CUSTOM(expbkt3): BEGIN
+    startIndex: hasRange ? Math.min(startIndex, endIndex) : null,
+    endIndex: hasRange ? Math.max(startIndex, endIndex) : null,
+    // T3-CUSTOM(expbkt3): END
     rangeLabel: attributes.rangeLabel?.trim() || "line",
     text: body.text,
     diff: body.contents,
     fenceLanguage: body.language,
+    // T3-CUSTOM(expbkt3): the byline an anchored plan comment carries.
+    ...(author ? { author } : {}),
   };
 }
 

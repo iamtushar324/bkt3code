@@ -7,6 +7,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { ProviderInstanceId, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
+// T3-CUSTOM(expbkt3): phase sidebar grouping is shaped and sanitized by client-runtime.
+import {
+  sanitizePhaseSidebarGrouping,
+  type PhaseSidebarGroupingPreferences,
+} from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -43,6 +48,26 @@ export interface Preferences {
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
+  // T3-CUSTOM(expbkt3): remember the last-used source-control profile per environment.
+  readonly lastSourceControlProfileByEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * T3-CUSTOM(expbkt3): opt into the experimental phase-grouped sidebar, the
+   * mobile counterpart of web's control centre. Off unless explicitly enabled,
+   * so a device keeps the stock thread list until someone asks for this.
+   */
+  readonly experimentalPhaseSidebarEnabled?: boolean;
+  /**
+   * T3-CUSTOM(expbkt3): last-visited time per scoped thread key, backing the
+   * phase sidebar's unread dot. Pruned to a cap on write, so this stays a small
+   * bounded map rather than growing with every thread ever opened.
+   */
+  readonly phaseSidebarVisitedAt?: Readonly<Record<string, string>>;
+  /**
+   * T3-CUSTOM(expbkt3): how the phase sidebar is sectioned (lifecycle /
+   * project / custom groups), the user's custom groups, and which sections are
+   * collapsed. Sanitized by client-runtime so web and mobile read one shape.
+   */
+  readonly phaseSidebarGrouping?: PhaseSidebarGroupingPreferences;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -99,10 +124,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
+    // T3-CUSTOM(expbkt3): experimental phase sidebar opt-in and its visit map.
+    experimentalPhaseSidebarEnabled?: boolean;
+    phaseSidebarVisitedAt?: Record<string, string>;
+    phaseSidebarGrouping?: PhaseSidebarGroupingPreferences;
     planModeEnabled?: boolean;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
+    // T3-CUSTOM(expbkt3): remember the last-used source-control profile per environment.
+    lastSourceControlProfileByEnvironment?: Readonly<Record<string, string>>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -167,6 +198,20 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ) {
     preferences.projectGroupingMode = parsed.projectGroupingMode;
   }
+  // T3-CUSTOM(expbkt3): experimental phase-grouped sidebar opt-in.
+  if (typeof parsed.experimentalPhaseSidebarEnabled === "boolean") {
+    preferences.experimentalPhaseSidebarEnabled = parsed.experimentalPhaseSidebarEnabled;
+  }
+  if (parsed.phaseSidebarVisitedAt !== null && typeof parsed.phaseSidebarVisitedAt === "object") {
+    const visited: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed.phaseSidebarVisitedAt)) {
+      if (typeof value === "string" && value.length > 0) visited[key] = value;
+    }
+    preferences.phaseSidebarVisitedAt = visited;
+  }
+  if (parsed.phaseSidebarGrouping !== undefined) {
+    preferences.phaseSidebarGrouping = sanitizePhaseSidebarGrouping(parsed.phaseSidebarGrouping);
+  }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
   }
@@ -187,6 +232,19 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
     preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
   }
+  // T3-CUSTOM(expbkt3): BEGIN - remember the last-used source-control profile per environment.
+  if (
+    typeof parsed.lastSourceControlProfileByEnvironment === "object" &&
+    parsed.lastSourceControlProfileByEnvironment !== null &&
+    !Array.isArray(parsed.lastSourceControlProfileByEnvironment)
+  ) {
+    preferences.lastSourceControlProfileByEnvironment = Object.fromEntries(
+      Object.entries(parsed.lastSourceControlProfileByEnvironment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  }
+  // T3-CUSTOM(expbkt3): END
   return preferences;
 }
 

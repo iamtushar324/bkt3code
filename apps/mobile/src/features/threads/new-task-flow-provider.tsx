@@ -68,6 +68,8 @@ import { vcsEnvironment } from "../../state/vcs";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
+  // T3-CUSTOM(expbkt3): pending tasks retain source-control profile choices.
+  type QueuedThreadCreation,
   type QueuedThreadMessage,
 } from "../../state/thread-outbox";
 import {
@@ -200,6 +202,8 @@ type NewTaskFlowContextValue = {
     options?: {
       /** The live checkout, recorded as a local task's branch when it sends now. */
       readonly currentCheckoutBranch?: string | null;
+      // T3-CUSTOM(expbkt3): bind the selected source-control identity.
+      readonly sourceControlProfileId?: QueuedThreadCreation["sourceControlProfileId"];
     },
   ) => QueuedThreadMessage | null;
   readonly setPrompt: (value: string) => void;
@@ -320,6 +324,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,
+      ownerUserId: null,
+      memberUserIds: [],
     };
   }, [editingPendingTask]);
 
@@ -954,11 +960,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const buildPendingTaskMessage = useCallback(
     (
       metadata: TurnCommandMetadata,
-      options?: { readonly currentCheckoutBranch?: string | null },
+      options?: {
+        readonly currentCheckoutBranch?: string | null;
+        // T3-CUSTOM(expbkt3): bind the selected source-control identity.
+        readonly sourceControlProfileId?: QueuedThreadCreation["sourceControlProfileId"];
+      },
     ): QueuedThreadMessage | null => {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
+      // T3-CUSTOM(expbkt3): bind the selected source-control identity.
+      const sourceControlProfileId = options?.sourceControlProfileId;
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
       const text = draft.text.trim();
       // Use the displayed selection rules without substituting an unavailable
@@ -1025,6 +1037,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           // drain with the same origin mode the composer displayed.
           ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
             ? { startFromOrigin: true }
+            : {}),
+          ...((sourceControlProfileId ?? editingPendingTask?.creation?.sourceControlProfileId)
+            ? {
+                sourceControlProfileId:
+                  sourceControlProfileId ?? editingPendingTask?.creation?.sourceControlProfileId,
+              }
             : {}),
         },
         createdAt: metadata.createdAt,

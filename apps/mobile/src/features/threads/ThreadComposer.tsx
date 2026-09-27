@@ -4,6 +4,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
+  // T3-CUSTOM(expbkt3): default the fork's Plan/Build control to the provider-compatible mode.
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type EnvironmentId,
@@ -72,7 +74,9 @@ import { ComposerEditor, type ComposerEditorHandle } from "../../components/Comp
 import { fileRoutePathSegments } from "../files/filePath";
 import {
   ComposerActionButton,
+  // T3-CUSTOM(expbkt3): compose model and Plan/Build controls in the compact toolbar.
   ComposerInlineControl,
+  ComposerToolbarScroller,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -101,6 +105,8 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+// T3-CUSTOM(expbkt3): preserve legacy Plan mode state while the provider interaction setting migrates.
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -286,9 +292,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsRoutePresentation = useExistingThreadSettingsRoutePresentation();
   const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
+  // T3-CUSTOM(expbkt3): prevent duplicate sends while a fork-aware thread submission is pending.
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
+  // T3-CUSTOM(expbkt3): retain native file/video previews beside existing-thread controls.
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
@@ -326,10 +334,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (!props.serverConfig) return null;
     return (
       props.serverConfig.providers.find(
+        // T3-CUSTOM(expbkt3): resolve provider capabilities for the Plan/Build interaction control.
         (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  // T3-CUSTOM(expbkt3): existing threads honor the explicit Plan Mode
+  // preference and provider capability, with the reverse Build control.
+  const { enabled: legacyPlanModeEnabled } = useLegacyPlanModeState();
+  const canSwitchInteractionMode =
+    legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
+  const interactionMode = props.selectedThread.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
@@ -941,6 +956,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   onCancel={voiceInput.cancel}
                 />
                 {isVoiceInputPresented ? (
+                  // T3-CUSTOM(expbkt3): retain voice-state presentation alongside fork composer controls.
                   <ComposerDictationStatus
                     audioLevels={voiceInput.audioLevels}
                     elapsedSeconds={voiceInput.elapsedSeconds}
@@ -949,7 +965,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onDismissError={voiceInput.cancel}
                   />
                 ) : (
-                  <View className="min-w-0 flex-1 flex-row items-center justify-between">
+                  // T3-CUSTOM(expbkt3): BEGIN keep model and Plan/Build controls reachable in the composer toolbar.
+                  <View className="min-w-0 flex-1 flex-row items-center">
                     <ComposerAttachmentButton
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
@@ -957,7 +974,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPickMedia={props.onPickDraftMedia}
                       onPickFiles={props.onPickDraftFiles}
                     />
-                    <View className="min-w-0 shrink">
+                    <ComposerToolbarScroller align="end" contentPaddingRight={0} fadeSurface="card">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
@@ -968,8 +985,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         maxWidth="100%"
                         onPress={openSettings}
                       />
-                    </View>
+                      {canSwitchInteractionMode ? (
+                        <ComposerInlineControl
+                          accessibilityHint={`Switches to ${interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                          accessibilityLabel={`Interaction mode: ${interactionMode === "plan" ? "Plan" : "Build"}`}
+                          emphasized
+                          icon={interactionMode === "plan" ? "list.bullet.clipboard" : "hammer"}
+                          label={interactionMode === "plan" ? "Plan" : "Build"}
+                          onPress={() =>
+                            props.onUpdateInteractionMode(
+                              interactionMode === "plan" ? "default" : "plan",
+                            )
+                          }
+                          showChevron={false}
+                        />
+                      ) : null}
+                    </ComposerToolbarScroller>
                   </View>
+                  // T3-CUSTOM(expbkt3): END keep model and Plan/Build controls reachable in the composer toolbar.
                 )}
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction

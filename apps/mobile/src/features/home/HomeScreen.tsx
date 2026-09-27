@@ -61,6 +61,9 @@ import {
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+// T3-CUSTOM(expbkt3): experimental phase-grouped sidebar, shared with the split-view pane.
+import { PhaseSidebarPane } from "../phasesidebar/PhaseSidebarPane";
+import { usePhaseSidebarEnabled } from "../phasesidebar/phaseSidebarEnabled";
 import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
@@ -224,6 +227,8 @@ function HomeTopContentSpacer() {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  // T3-CUSTOM(expbkt3): experimental phase-grouped sidebar.
+  const phaseSidebarEnabled = usePhaseSidebarEnabled();
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
@@ -396,6 +401,17 @@ export function HomeScreen(props: HomeScreenProps) {
             ),
           ),
     [v2ScopedProjectGroup],
+  );
+  // T3-CUSTOM(expbkt3): pass the existing Home scope to the phase sidebar so
+  // enabling it never disables search, project, or environment filtering.
+  const phaseSidebarHomeFilters = useMemo(
+    () => ({
+      matchedThreadKeys,
+      searchQuery: props.searchQuery,
+      selectedEnvironmentId: props.selectedEnvironmentId,
+      selectedProjectKeys: v2ScopedProjectKeys,
+    }),
+    [matchedThreadKeys, props.searchQuery, props.selectedEnvironmentId, v2ScopedProjectKeys],
   );
   // Thread List v2 (beta): one flat list in creation order, no grouping.
   // Settled threads collapse into a recency tail below the card block.
@@ -953,6 +969,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
+  // T3-CUSTOM(expbkt3): preserve the active search query in the v2 empty state.
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState
@@ -979,6 +996,32 @@ export function HomeScreen(props: HomeScreenProps) {
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );
+
+  // T3-CUSTOM(expbkt3): BEGIN — the experimental phase sidebar replaces the
+  // whole list. This MUST sit above the thread list returns below, or the
+  // phase sidebar is unreachable.
+  if (phaseSidebarEnabled) {
+    return (
+      <View className="flex-1 bg-screen">
+        <PhaseSidebarPane
+          contentContainerStyle={{
+            paddingBottom:
+              Platform.OS === "ios"
+                ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
+                : Math.max(insets.bottom, 16) + 88,
+          }}
+          // Same inset handling as the stock list below, so the first row clears
+          // the navigation header instead of sliding under it.
+          contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+          homeFilters={phaseSidebarHomeFilters}
+          onSelectThread={props.onSelectThread}
+          selectedThreadKey={null}
+          viewerEnvironmentId={props.selectedEnvironmentId}
+        />
+      </View>
+    );
+  }
+  // T3-CUSTOM(expbkt3): END
 
   if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (

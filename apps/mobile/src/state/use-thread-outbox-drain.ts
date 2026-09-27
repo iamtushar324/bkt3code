@@ -12,6 +12,7 @@ import {
   type MessageId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { recordThreadOutboxFailureUnsafe } from "@t3tools/client-runtime/outbox";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,6 +40,8 @@ import {
 import { serverEnvironment } from "./server";
 import {
   confirmThreadOutboxMessageQueued,
+  // T3-CUSTOM(expbkt3): persist deterministic failures for explicit retry/edit.
+  markThreadOutboxMessageFailed,
   threadOutboxManager,
   threadOutboxRevision,
   updateThreadOutboxMessage,
@@ -749,7 +752,7 @@ export function useThreadOutboxDrain(): void {
     const reportFailure = (
       commandResult: AtomCommandResult<unknown, unknown>,
       stage: ThreadOutboxCommandStage,
-    ): { readonly action: "retry" | "restore"; readonly message: string } | null => {
+    ): { readonly action: "retry" | "fail"; readonly message: string } | null => {
       if (!AsyncResult.isFailure(commandResult)) {
         return null;
       }
@@ -765,6 +768,14 @@ export function useThreadOutboxDrain(): void {
           cause: commandResult.cause,
         },
       });
+      // T3-CUSTOM(expbkt3): BEGIN - outbox failure telemetry.
+      const retry = action === "retry";
+      recordThreadOutboxFailureUnsafe({
+        kind: "delivery",
+        operation: stage,
+        outcome: retry ? "retrying" : "failed",
+      });
+      // T3-CUSTOM(expbkt3): END
       return {
         action,
         message: error instanceof Error ? error.message : "The message could not be sent.",
@@ -913,8 +924,14 @@ export function useThreadOutboxDrain(): void {
       if (failure?.action === "retry") {
         return false;
       }
-      if (failure?.action === "restore") {
-        return restoreQueuedMessage(persistedMessage, failure.message);
+      if (failure?.action === "fail") {
+        // T3-CUSTOM(expbkt3): rejected messages stay visibly failed until retry/edit.
+        try {
+          await markThreadOutboxMessageFailed(persistedMessage, failure.message, deliveryRevision);
+          return true;
+        } catch {
+          return false;
+        }
       }
       acknowledgedExistingThreadMessageIdsRef.current.add(persistedMessage.messageId);
       const delivered =
@@ -1034,6 +1051,8 @@ export function useThreadOutboxDrain(): void {
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
+          // T3-CUSTOM(expbkt3): source-control profile survives attachment preparation.
+          sourceControlProfileId: creation.sourceControlProfileId ?? null,
           workspaceMode: creation.workspaceMode,
           branch: creation.branch,
           worktreePath: creation.worktreePath,
@@ -1046,8 +1065,14 @@ export function useThreadOutboxDrain(): void {
       if (failure?.action === "retry") {
         return false;
       }
-      if (failure?.action === "restore") {
-        return restoreQueuedMessage(persistedMessage, failure.message);
+      if (failure?.action === "fail") {
+        // T3-CUSTOM(expbkt3): rejected messages stay visibly failed until retry/edit.
+        try {
+          await markThreadOutboxMessageFailed(persistedMessage, failure.message, deliveryRevision);
+          return true;
+        } catch {
+          return false;
+        }
       }
       // Recorded before the queue entry goes so the thread screen never sees a
       // gap between the queued creation and the server's shell.
@@ -1110,7 +1135,9 @@ export function useThreadOutboxDrain(): void {
     }
 
     for (const [threadKey, queuedMessages] of Object.entries(queuedMessagesByThreadKey)) {
-      const nextQueuedMessage = queuedMessages[0];
+      const nextQueuedMessage = queuedMessages.find(
+        (message) => message.deliveryState !== "failed",
+      );
       if (!nextQueuedMessage) {
         continue;
       }

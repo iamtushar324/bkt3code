@@ -204,6 +204,11 @@ function ListRow(props: {
   }
   return (
     <Pressable
+      // T3-CUSTOM(expbkt3): project and folder rows must remain native actions,
+      // including when their icon and label Views are flattened by React Native.
+      accessibilityLabel={[props.title, props.subtitle].filter(Boolean).join(", ")}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled, selected: props.selected }}
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
@@ -254,6 +259,10 @@ function PrimaryActionButton(props: {
   if (Platform.OS === "android") return <MaterialButton {...props} tone="primary" fullWidth />;
   return (
     <Pressable
+      // T3-CUSTOM(expbkt3): form submit buttons need an explicit native action.
+      accessibilityLabel={props.label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled, busy: props.loading }}
       disabled={props.disabled}
       onPress={props.onPress}
       className="h-12 items-center justify-center rounded-full bg-primary active:opacity-70 disabled:opacity-45"
@@ -274,6 +283,8 @@ function ProjectPathInput(props: {
 }) {
   return (
     <TextInput
+      // T3-CUSTOM(expbkt3): placeholders are not reliable native field labels.
+      accessibilityLabel="Project folder"
       className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
       value={props.value}
       onChangeText={props.onChangeText}
@@ -444,6 +455,9 @@ function EmptyEnvironmentState() {
         Start or reconnect an environment before adding a project.
       </Text>
       <Pressable
+        // T3-CUSTOM(expbkt3): the recovery action must be exposed to native navigation.
+        accessibilityLabel="Add environment"
+        accessibilityRole="button"
         onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
       >
@@ -652,6 +666,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
             routes: [
               {
                 name: "NewTaskDraft",
+                // T3-CUSTOM(expbkt3): return existing projects to a usable new-task draft.
                 params: {
                   environmentId: existing.environmentId,
                   projectId: existing.id,
@@ -668,6 +683,9 @@ function useCreateProject(environment: EnvironmentOption | null) {
       const command = buildProjectCreateCommand({
         commandId: CommandId.make(uuidv4()),
         projectId,
+        // T3-CUSTOM(expbkt3): the fork's create command carries an explicit
+        // title; upstream infers it from the path at this call site.
+        title: inferProjectTitleFromPath(workspaceRoot),
         workspaceRoot,
         createdAt: new Date().toISOString(),
       });
@@ -720,7 +738,6 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const lookupRepository = useCallback(async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
     setError(null);
@@ -741,6 +758,7 @@ export function AddProjectRepositoryScreen(props: {
       return;
     }
 
+    // T3-CUSTOM(expbkt3): lookup supports the fork's provider-aware repository field.
     const result = await lookupRepositoryQuery({
       environmentId: environment.environmentId,
       input: {
@@ -748,6 +766,7 @@ export function AddProjectRepositoryScreen(props: {
         repository: repositoryInput.trim(),
       },
     });
+    // T3-CUSTOM(expbkt3): surface repository lookup failures in the add-project form.
     if (AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     } else {
@@ -763,14 +782,19 @@ export function AddProjectRepositoryScreen(props: {
       );
     }
     setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+    // T3-CUSTOM(expbkt3): clone url comes from the shared helper, so no provider dep.
+  }, [environment, isSubmitting, lookupRepositoryQuery, navigation, repositoryInput, source]);
 
+  // T3-CUSTOM(expbkt3): local-folder form keeps its explicit add-project action.
   return (
     <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
           <TextInput
+            // T3-CUSTOM(expbkt3): expose the repository source field by purpose,
+            // not by a provider-specific placeholder.
+            accessibilityLabel={source === "url" ? "Repository URL" : "Repository name"}
             className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
             value={repositoryInput}
             onChangeText={setRepositoryInput}
@@ -784,6 +808,7 @@ export function AddProjectRepositoryScreen(props: {
             returnKeyType="next"
             onSubmitEditing={() => void lookupRepository()}
           />
+          {/* T3-CUSTOM(expbkt3): form submission remains an explicit native button. */}
           <PrimaryActionButton
             label={source === "url" ? "Continue" : "Lookup repository"}
             disabled={isSubmitting || repositoryInput.trim().length === 0}
@@ -923,7 +948,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     }
     setIsSubmitting(false);
   }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
-
+  // T3-CUSTOM(expbkt3): local-folder form keeps its explicit add-project action.
   return (
     <AddProjectShell title="Local folder">
       {error ? <ErrorBanner message={error} /> : null}
@@ -954,7 +979,9 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   );
 }
 
+// T3-CUSTOM(expbkt3): clone url comes from the shared helper, so no provider dep.
 export function AddProjectDestinationScreen(props: {
+  // T3-CUSTOM(expbkt3): The server resolves the acting user's GitHub profile.
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];

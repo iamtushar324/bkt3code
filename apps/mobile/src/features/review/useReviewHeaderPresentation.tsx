@@ -34,7 +34,9 @@ export function useReviewHeaderPresentation(props: {
     selectedThread !== null && props.selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: props.selectedThreadCwd },
+          // T3-CUSTOM(expbkt3): thread-scoped status so a per-thread source-control
+          // identity (feature 4) reads the right credentials.
+          input: { cwd: props.selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
   );

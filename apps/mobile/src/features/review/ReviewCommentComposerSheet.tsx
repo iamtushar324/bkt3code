@@ -163,6 +163,10 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         >
           <View className="flex-row items-center justify-between py-2">
             <Pressable
+              // T3-CUSTOM(expbkt3): the icon-only dismiss affordance needs a semantic name.
+              accessible
+              accessibilityLabel="Cancel comment"
+              accessibilityRole="button"
               className="bg-subtle h-12 w-12 items-center justify-center rounded-full"
               onPress={dismissComposer}
             >

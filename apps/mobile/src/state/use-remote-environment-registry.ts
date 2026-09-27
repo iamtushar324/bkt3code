@@ -173,7 +173,8 @@ export function useRemoteConnections() {
       }
       Alert.alert(
         "Remove from this device?",
-        `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
+        // T3-CUSTOM(expbkt3): removing an environment also drops its durable message outbox.
+        `Forget ${environment.environmentLabel}, its cached threads, and any unsent messages on this device. Switch it off instead to keep it saved.`,
         [
           { text: "Cancel", style: "cancel" },
           {

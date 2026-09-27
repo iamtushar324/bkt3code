@@ -110,6 +110,8 @@ export function pendingThreadCreationMessage(
   message: QueuedThreadMessage,
 ): OrchestrationThread["messages"][number] {
   return {
+    // T3-CUSTOM(expbkt3): fork-required sender identity.
+    sentByUserId: null,
     id: message.messageId,
     role: "user",
     text: message.text,
@@ -146,6 +148,12 @@ export function pendingThreadCreationShell(
     interactionMode: message.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: creation.branch,
     pullRequests: [],
+    // T3-CUSTOM(expbkt3): fork-required shell fields. The queued creation carries
+    // the chosen source-control profile; owner and members are assigned by the
+    // server once the thread exists, so they stay empty while it is pending.
+    sourceControlProfileId: creation.sourceControlProfileId ?? null,
+    ownerUserId: null,
+    memberUserIds: [],
     worktreePath: creation.workspaceMode === "worktree" ? null : creation.worktreePath,
     linkedPullRequest: null,
     latestTurn: null,

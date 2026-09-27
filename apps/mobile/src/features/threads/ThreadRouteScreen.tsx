@@ -35,17 +35,26 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+// T3-CUSTOM(expbkt3): Pressable — stale deep links need an in-route escape to the thread list.
+import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentShellState } from "../../state/shell";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
+// T3-CUSTOM(expbkt3): phase sidebar read state.
+import { useMarkPhaseSidebarThreadVisited } from "../phasesidebar/phaseSidebarVisitStore";
+// T3-CUSTOM(expbkt3): per-thread API-level cost.
+import { useThreadUsage } from "../threadusage/useThreadUsage";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+
 import { EmptyState } from "../../components/EmptyState";
+// T3-CUSTOM(expbkt3): the unavailable-thread escape button label.
+import { AppText as Text } from "../../components/AppText";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -58,6 +67,7 @@ import {
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
+// T3-CUSTOM(expbkt3): plan review entry point.
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -70,6 +80,8 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
+// T3-CUSTOM(expbkt3): compact headers keep Git utilities; the cost pill leads them.
+import { useThreadGitCenterHeaderItems, useThreadGitCompactHeaderItems } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
@@ -101,14 +113,56 @@ function ThreadHeader(
     readonly onToggleInspector: () => void;
     readonly onOpenGitInspector: () => void;
     readonly onOpenFilesInspector: () => void;
+    // T3-CUSTOM(expbkt3): per-thread API-level cost pill.
+    readonly threadCostHeader: { readonly label: string; readonly onPress: () => void } | null;
   },
 ) {
   const navigation = useNavigation();
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  // T3-CUSTOM(expbkt3): BEGIN — the cost pill sits ahead of the git controls,
+  // and compact headers keep title and environment readable while the Git menu
+  // retains the secondary utility access routes.
+  const forkCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
+  const forkCompactHeaderItems = useThreadGitCompactHeaderItems(props.gitControls);
+  const threadCostHeaderItems = useMemo<ReadonlyArray<Record<string, unknown>>>(
+    () =>
+      props.threadCostHeader
+        ? [
+            {
+              accessibilityLabel: `Session cost ${props.threadCostHeader.label}`,
+              icon: { name: "dollarsign.circle", type: "sfSymbol" as const },
+              identifier: "thread-right-cost",
+              label: props.threadCostHeader.label,
+              onPress: props.threadCostHeader.onPress,
+              type: "button" as const,
+            },
+          ]
+        : [],
+    [props.threadCostHeader],
+  );
+  const nativeOptions =
+    Platform.OS === "android"
+      ? native.options
+      : {
+          ...native.options,
+          unstable_headerRightItems: () => [
+            ...threadCostHeaderItems,
+            ...(layout.usesSplitView ? forkCenterHeaderItems : forkCompactHeaderItems),
+          ],
+        };
+  // T3-CUSTOM(expbkt3): END
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
+    // T3-CUSTOM(expbkt3): per-thread API-level cost.
+    if (props.threadCostHeader) {
+      actions.push({
+        accessibilityLabel: `Session cost ${props.threadCostHeader.label}`,
+        icon: "dollarsign.circle",
+        onPress: props.threadCostHeader.onPress,
+      });
+    }
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -139,6 +193,8 @@ function ThreadHeader(
     });
     return actions;
   }, [
+    // T3-CUSTOM(expbkt3): per-thread cost pill.
+    props.threadCostHeader,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,
@@ -156,8 +212,10 @@ function ThreadHeader(
         title={props.title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}
-        options={native.options}
-        optionsVersion={props.gitControls.projectScripts}
+        // T3-CUSTOM(expbkt3): fork right-side header items (cost pill, compact Git menu).
+        options={nativeOptions}
+        // T3-CUSTOM(expbkt3): re-apply header items when the cost label changes.
+        optionsVersion={[props.gitControls.projectScripts, props.threadCostHeader?.label]}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton
@@ -226,6 +284,8 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 function ThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
+  // T3-CUSTOM(expbkt3): a missing deep-linked thread keeps a visible route escape.
+  readonly onGoToThreads: () => void;
 }) {
   return (
     <ScrollView
@@ -244,6 +304,17 @@ function ThreadUnavailableScreen(props: {
         actionLabel={props.actionLabel}
         onAction={props.onAction}
       />
+      {/* T3-CUSTOM(expbkt3): BEGIN give a missing deep-linked thread a visible route escape. */}
+      <Pressable
+        accessibilityHint="Returns to the threads list."
+        accessibilityLabel="Go to threads list"
+        accessibilityRole="button"
+        className="mt-4 self-center rounded-lg bg-primary px-4 py-2.5 active:opacity-70"
+        onPress={props.onGoToThreads}
+      >
+        <Text className="text-sm font-t3-bold text-primary-foreground">Go to threads</Text>
+      </Pressable>
+      {/* T3-CUSTOM(expbkt3): END give a missing deep-linked thread a visible route escape. */}
     </ScrollView>
   );
 }
@@ -313,6 +384,8 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
           params: { screen: "SettingsEnvironments" },
         });
       }}
+      // T3-CUSTOM(expbkt3): route escape back to the thread list.
+      onGoToThreads={() => navigation.dispatch(StackActions.replace("Home"))}
     />
   );
 }
@@ -363,6 +436,15 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  // T3-CUSTOM(expbkt3): BEGIN — opening a thread by any route (list, search,
+  // notification, deep link) marks it read for the phase sidebar.
+  const markPhaseSidebarVisited = useMarkPhaseSidebarThreadVisited();
+  useEffect(() => {
+    if (routeThreadIdentity !== null) markPhaseSidebarVisited(routeThreadIdentity);
+    // Once per thread identity; the marker's own identity churns on every
+    // preference write and must not re-stamp the visit.
+  }, [routeThreadIdentity]);
+  // T3-CUSTOM(expbkt3): END
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
@@ -422,6 +504,18 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const sourceControlProfilesQuery = useEnvironmentQuery(
+    environmentId === null ? null : sourceControlEnvironment.profiles({ environmentId, input: {} }),
+  );
+  // T3-CUSTOM(expbkt3): The header displays server-owned attribution state;
+  // changing GitHub identity requires transferring durable thread ownership.
+  const currentSourceControlProfile =
+    (sourceControlProfilesQuery.data?.profiles ?? []).find(
+      (profile) =>
+        profile.ownerUserId !== null &&
+        selectedThread?.ownerUserId != null &&
+        String(profile.ownerUserId) === String(selectedThread.ownerUserId),
+    ) ?? null;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -443,6 +537,7 @@ function ThreadRouteContent(
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
+    currentSourceControlProfile ? `@${currentSourceControlProfile.login}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -451,7 +546,7 @@ function ThreadRouteContent(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
   );
@@ -474,7 +569,6 @@ function ThreadRouteContent(
     }
     onReconnectEnvironment(environmentId);
   }, [environmentId, onReconnectEnvironment]);
-
   /* ─── Git action progress (for overlay banner) ──────────────────── */
   const gitActionProgressTarget = useMemo(
     () => ({
@@ -791,6 +885,28 @@ function ThreadRouteContent(
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };
+  // T3-CUSTOM(expbkt3): BEGIN — what this session costs at API prices, as a
+  // header pill ahead of the git controls; tapping opens the breakdown sheet.
+  const threadCost = useThreadUsage(
+    environmentId,
+    threadId === null ? null : ThreadId.make(threadId),
+  );
+  const threadCostHeader = useMemo(
+    () =>
+      threadCost.available && environmentId !== null && threadId !== null
+        ? {
+            label: threadCost.label,
+            onPress: () =>
+              navigation.navigate("ThreadUsage", {
+                environmentId,
+                threadId: ThreadId.make(threadId),
+              }),
+          }
+        : null,
+    [environmentId, navigation, threadCost.available, threadCost.label, threadId],
+  );
+  // T3-CUSTOM(expbkt3): END
+
   const handleEditFailedCreation = useCallback(async () => {
     const creation = selectedThreadCreation?.message;
     if (!creation?.creation || routeThreadIdentity === null) {
@@ -1010,6 +1126,7 @@ function ThreadRouteContent(
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
+          failedOutboxDetail={composer.failedOutboxDetail}
           queuedMessages={composer.selectedThreadQueuedMessages}
           dispatchingMessageId={composer.dispatchingQueuedMessageId}
           layoutVariant={layout.variant}
@@ -1023,6 +1140,9 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          // T3-CUSTOM(expbkt3): deterministic outbox failures can be retried or edited.
+          onRetryFailedOutbox={composer.onRetryFailedOutboxMessage}
+          onEditFailedOutbox={composer.onEditFailedOutboxMessage}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
@@ -1055,6 +1175,8 @@ function ThreadRouteContent(
         onOpenGitInspector={handleOpenGitInspector}
         onOpenFilesInspector={handleOpenFilesInspector}
         onReturnToThread={props.onReturnToThread}
+        // T3-CUSTOM(expbkt3): per-thread API-level cost pill.
+        threadCostHeader={threadCostHeader}
       />
 
       {renderThreadRouteBody()}

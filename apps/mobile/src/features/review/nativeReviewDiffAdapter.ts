@@ -492,6 +492,8 @@ function insertFileComments(
 
   const commentsByEndIndex = new Map<number, ReviewInlineComment[]>();
   for (const comment of comments) {
+    // T3-CUSTOM(expbkt3): anchored plan comments have no diff line range.
+    if (comment.endIndex === null) continue;
     const endIndex = Math.min(comment.endIndex, file.lineCount - 1);
     if (endIndex < 0) continue;
     const existing = commentsByEndIndex.get(endIndex);

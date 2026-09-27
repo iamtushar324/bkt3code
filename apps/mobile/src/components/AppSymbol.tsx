@@ -106,6 +106,20 @@ import IconUserCircle from "@tabler/icons-react-native/IconUserCircle";
 import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
 import IconX from "@tabler/icons-react-native/IconX";
+// T3-CUSTOM(expbkt3): BEGIN icons for fork-only symbols
+import IconCircleMinus from "@tabler/icons-react-native/IconCircleMinus";
+import IconCirclePlus from "@tabler/icons-react-native/IconCirclePlus";
+import IconClipboardList from "@tabler/icons-react-native/IconClipboardList";
+import IconCpu from "@tabler/icons-react-native/IconCpu";
+import IconCurrencyDollar from "@tabler/icons-react-native/IconCurrencyDollar";
+import IconFlask from "@tabler/icons-react-native/IconFlask";
+import IconListDetails from "@tabler/icons-react-native/IconListDetails";
+import IconMessageExclamation from "@tabler/icons-react-native/IconMessageExclamation";
+import IconPackage from "@tabler/icons-react-native/IconPackage";
+import IconQuote from "@tabler/icons-react-native/IconQuote";
+import IconSend from "@tabler/icons-react-native/IconSend";
+import IconUserCheck from "@tabler/icons-react-native/IconUserCheck";
+// T3-CUSTOM(expbkt3): END
 import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
 import { withUniwind } from "uniwind";
 
@@ -217,6 +231,30 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "wifi.slash": IconWifiOff,
   xmark: IconX,
   "xmark.circle.fill": IconCircleXFilled,
+  // T3-CUSTOM(expbkt3): BEGIN fork-only symbols (environment badges, members,
+  // phase sidebar, plan mode and review, source-control users, cost, quotes).
+  "bolt.fill": IconBolt,
+  "cloud.fill": IconCloud,
+  cpu: IconCpu,
+  "cube.fill": IconBox,
+  "cylinder.split.1x2.fill": IconDatabase,
+  "doc.text.fill": IconFileText,
+  "dollarsign.circle": IconCurrencyDollar,
+  "exclamationmark.bubble.fill": IconMessageExclamation,
+  "eye.fill": IconEye,
+  "flask.fill": IconFlask,
+  "house.fill": IconHome,
+  "list.bullet.clipboard": IconClipboardList,
+  "list.bullet.rectangle": IconListDetails,
+  "minus.circle": IconCircleMinus,
+  "paperplane.fill": IconSend,
+  "person.crop.circle.badge.checkmark": IconUserCheck,
+  "plus.circle": IconCirclePlus,
+  "shippingbox.fill": IconPackage,
+  "terminal.fill": IconTerminal2,
+  "text.quote": IconQuote,
+  "wrench.fill": IconTool,
+  // T3-CUSTOM(expbkt3): END
 } satisfies Partial<Record<SFSymbol, Icon>>;
 const SF_ICON_LOOKUP: Partial<Record<SFSymbol, Icon>> = ANDROID_ICON_BY_SF_SYMBOL;
 

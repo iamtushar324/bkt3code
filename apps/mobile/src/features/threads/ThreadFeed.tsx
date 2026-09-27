@@ -17,6 +17,8 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+// T3-CUSTOM(expbkt3): anchored plan feedback.
+import { isPlanReviewSectionId, planReviewCommentTitle } from "@t3tools/shared/planReview";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   parseComposerContextHref,
@@ -119,7 +121,12 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "../../components/CopyTextButton";
-import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
+import {
+  parseReviewCommentMessageSegments,
+  // T3-CUSTOM(expbkt3): the fork's plan-review card renders this shape; upstream
+  // extracted the file-review card, which left this type unimported here.
+  type ReviewInlineComment,
+} from "../review/reviewCommentSelection";
 import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import {
   ReviewCommentCard,
@@ -1877,7 +1884,15 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
     <View className="w-full gap-2">
       {segments.map((segment) => {
         if (segment.kind === "review-comment") {
-          return (
+          // T3-CUSTOM(expbkt3): branch here, not inside ReviewCommentCard, whose
+          // diff hooks run unconditionally and must not be skipped.
+          return isPlanReviewSectionId(segment.comment.sectionId) ? (
+            <PlanReviewCommentCard
+              key={segment.comment.id}
+              comment={segment.comment}
+              colors={props.reviewCommentColors}
+            />
+          ) : (
             <ReviewCommentCard
               key={segment.comment.id}
               comment={segment.comment}
@@ -1917,6 +1932,77 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
     </View>
   );
 }
+
+/**
+ * T3-CUSTOM(expbkt3): anchored plan feedback, rendered as a quotation.
+ *
+ * Mirrors the web card. A plan comment's `filePath` is a plan title and its
+ * anchor is prose, so the file card printed a bare filename and put the quote in
+ * a horizontally scrolling monospace strip.
+ */
+const PlanReviewCommentCard = memo(function PlanReviewCommentCard(props: {
+  readonly comment: ReviewInlineComment;
+  readonly colors: ReviewCommentColors;
+}) {
+  const quotedText = props.comment.diff.trim();
+  const hasLineRange = props.comment.startIndex !== null && props.comment.endIndex !== null;
+
+  return (
+    <View
+      className="w-full overflow-hidden rounded-[16px] border border-continuous"
+      style={{ backgroundColor: props.colors.background, borderColor: props.colors.border }}
+    >
+      <View
+        className="flex-row items-center gap-2 border-b px-3 py-2"
+        style={{ borderColor: props.colors.border }}
+      >
+        <View
+          className="size-6 items-center justify-center rounded-[7px] border-continuous"
+          style={{ backgroundColor: props.colors.mutedBackground }}
+        >
+          <SymbolView
+            name="text.quote"
+            size={13}
+            tintColor={props.colors.mutedText}
+            type="monochrome"
+          />
+        </View>
+        <View className="min-w-0 flex-1">
+          <Text className="text-xs" numberOfLines={1} style={{ color: props.colors.text }}>
+            {planReviewCommentTitle(props.comment.filePath)}
+          </Text>
+          <Text className="text-[11px]" numberOfLines={1} style={{ color: props.colors.mutedText }}>
+            {props.comment.sectionTitle}
+            {hasLineRange ? ` · ${props.comment.rangeLabel}` : ""}
+          </Text>
+        </View>
+      </View>
+      {quotedText.length > 0 ? (
+        <View className="border-t px-3 py-3" style={{ borderColor: props.colors.border }}>
+          <Text
+            selectable
+            className="text-sm italic leading-snug"
+            style={{ color: props.colors.mutedText }}
+          >
+            {quotedText}
+          </Text>
+        </View>
+      ) : null}
+      {props.comment.text.length > 0 ? (
+        <View className="border-t px-3 py-3" style={{ borderColor: props.colors.border }}>
+          <Text selectable className="text-base leading-snug" style={{ color: props.colors.text }}>
+            {props.comment.text}
+          </Text>
+          {props.comment.author ? (
+            <Text className="mt-1 text-[11px]" style={{ color: props.colors.mutedText }}>
+              — {props.comment.author}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;

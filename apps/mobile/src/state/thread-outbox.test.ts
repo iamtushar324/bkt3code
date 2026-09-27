@@ -1506,6 +1506,6 @@ describe("thread outbox", () => {
         error: deterministicFailure,
         interrupted: false,
       }),
-    ).toBe("restore");
+    ).toBe("fail");
   });
 });

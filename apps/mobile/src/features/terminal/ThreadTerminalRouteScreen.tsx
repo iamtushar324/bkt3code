@@ -1,4 +1,6 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): adapt upstream chunk output to the native full-buffer surface.
+import { terminalOutputText } from "@t3tools/client-runtime/state/terminal";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/AppSymbol";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -421,6 +423,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     environmentId: selectedThread?.environmentId ?? null,
     terminal: terminalAttachInput,
   });
+  // T3-CUSTOM(expbkt3): native replay consumes the joined upstream output chunks.
+  const terminalBuffer = useMemo(() => terminalOutputText(terminal.output), [terminal.output]);
   const terminalKey = selectedThread
     ? `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`
     : terminalId;
@@ -432,7 +436,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     lastBufferReplayKeyRef.current = bufferReplayKey;
   }
   const terminalSurfaceBuffer = getTerminalSurfaceReplayBuffer({
-    buffer: terminal.buffer,
+    // T3-CUSTOM(expbkt3): replay the joined chunk output.
+    buffer: terminalBuffer,
     replayKey: bufferReplayKey,
     readyReplayKey: readyBufferReplayKey,
   });
@@ -499,7 +504,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   useEffect(() => {
     terminalDebugLog("surface:props", {
       terminalKey,
-      atomBufferLen: terminal.buffer.length,
+      // T3-CUSTOM(expbkt3): measure the joined output buffer.
+      atomBufferLen: terminalBuffer.length,
       surfaceBufferLen: terminalSurfaceBuffer.length,
       replayKey: bufferReplayKey,
       readyReplayKey: readyBufferReplayKey,
@@ -509,7 +515,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [
     bufferReplayKey,
     readyBufferReplayKey,
-    terminal.buffer.length,
+    // T3-CUSTOM(expbkt3): track changes to the joined output length.
+    terminalBuffer.length,
     terminal.status,
     terminal.version,
     terminalKey,
@@ -522,11 +529,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       status: terminal.status,
       error: terminal.error,
       summary: terminal.summary?.cwd ?? null,
-      bufferLen: terminal.buffer.length,
+      // T3-CUSTOM(expbkt3): measure the joined output buffer.
+      bufferLen: terminalBuffer.length,
       version: terminal.version,
     });
   }, [
-    terminal.buffer.length,
+    // T3-CUSTOM(expbkt3): track changes to the joined output length.
+    terminalBuffer.length,
     terminal.error,
     terminal.status,
     terminal.summary?.cwd,
@@ -535,16 +544,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   ]);
 
   useEffect(() => {
-    if (terminal.buffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
+    // T3-CUSTOM(expbkt3): detect initial output after joining upstream chunks.
+    if (terminalBuffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
       return;
     }
     firstNonEmptyBufferLoggedRef.current = true;
     terminalDebugLog("session:first-nonempty-buffer", {
       terminalKey,
-      length: terminal.buffer.length,
-      preview: terminal.buffer.slice(0, 160),
+      // T3-CUSTOM(expbkt3): inspect the joined output for replay diagnostics.
+      length: terminalBuffer.length,
+      preview: terminalBuffer.slice(0, 160),
     });
-  }, [terminal.buffer, terminal.buffer.length, terminalKey]);
+    // T3-CUSTOM(expbkt3): observe the joined output for replay diagnostics.
+  }, [terminalBuffer, terminalBuffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
   const hostOs =
@@ -1250,6 +1262,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 <TerminalSurface
                   autoFocus={terminalAutoFocus}
                   buffer={terminalSurfaceBuffer}
+                  outputResetKey={
+                    `${terminal.output.generation}:${terminal.output.resetVersion}` /* T3-CUSTOM(expbkt3): reset native replay with upstream history. */
+                  }
                   fontSize={fontSize}
                   isRunning={isRunning}
                   keyboardFocusRequest={keyboardFocusRequest}

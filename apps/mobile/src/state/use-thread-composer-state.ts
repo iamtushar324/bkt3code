@@ -67,7 +67,12 @@ import {
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
-import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import {
+  enqueueThreadOutboxMessage,
+  retryQueuedThreadMessage,
+  updateThreadOutboxMessage,
+} from "./thread-outbox";
+import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -176,6 +181,11 @@ export function useThreadComposerState() {
         : [],
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
+  // T3-CUSTOM(expbkt3): BEGIN - failed-delivery surface for the outbox notice.
+  const failedOutboxMessage = selectedThreadQueuedMessages.find(
+    (message) => message.deliveryState === "failed",
+  );
+  // T3-CUSTOM(expbkt3): END
   const feedbackSubmissions = useMemo(
     () => (selectedThreadKey ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? []) : []),
     [feedbackSubmissionsByThreadKey, selectedThreadKey],
@@ -242,7 +252,9 @@ export function useThreadComposerState() {
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
-  const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
+  const selectedThreadQueueCount = selectedThreadQueuedMessages.filter(
+    (message) => message.deliveryState !== "failed",
+  ).length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
@@ -795,11 +807,46 @@ export function useThreadComposerState() {
     [selectedEnvironmentRuntime?.serverConfig, selectedThread?.modelSelection, selectedThreadKey],
   );
 
+  const onRetryFailedOutboxMessage = useCallback(async () => {
+    if (!failedOutboxMessage) return;
+    try {
+      // A deterministic server rejection may already have a durable receipt.
+      // Explicit Retry is a new command while retaining the same user message.
+      await updateThreadOutboxMessage(
+        retryQueuedThreadMessage(
+          failedOutboxMessage,
+          CommandId.make(makeQueuedMessageMetadata().commandId),
+        ),
+      );
+    } catch (error) {
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to save the retry request.",
+      );
+    }
+  }, [failedOutboxMessage]);
+
+  const onEditFailedOutboxMessage = useCallback(async () => {
+    if (!failedOutboxMessage || !selectedThreadKey) return;
+    await mergeComposerDraftContent(selectedThreadKey, {
+      text: failedOutboxMessage.text,
+      attachments: [],
+    });
+    appendComposerDraftAttachments(selectedThreadKey, failedOutboxMessage.attachments);
+    try {
+      await removeThreadOutboxMessage(failedOutboxMessage);
+    } catch (error) {
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to remove the rejected message.",
+      );
+    }
+  }, [failedOutboxMessage, selectedThreadKey]);
+
   return {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
     selectedThreadQueueCount,
+    failedOutboxDetail: failedOutboxMessage?.failureDetail ?? null,
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
@@ -820,5 +867,7 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    onRetryFailedOutboxMessage,
+    onEditFailedOutboxMessage,
   };
 }

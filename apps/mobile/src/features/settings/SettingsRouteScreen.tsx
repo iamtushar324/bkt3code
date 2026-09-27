@@ -2,6 +2,13 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { Platform, View } from "react-native";
+// T3-CUSTOM(expbkt3): BEGIN - experimental phase-grouped sidebar opt-in.
+import { useAtomSet } from "@effect/atom-react";
+import { AppText as Text } from "../../components/AppText";
+import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { usePhaseSidebarEnabled } from "../phasesidebar/phaseSidebarEnabled";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+// T3-CUSTOM(expbkt3): END
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -86,6 +93,12 @@ function ConfiguredSettingsRouteScreen() {
             valuePosition="trailing"
             target="SettingsEnvironments"
           />
+          {/* T3-CUSTOM(expbkt3): per-user source-control profiles. */}
+          <SettingsRow
+            icon="person.crop.circle.badge.checkmark"
+            label="Users"
+            target="SettingsSourceControl"
+          />
           <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
         </SettingsSection>
 
@@ -118,6 +131,12 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             valuePosition="trailing"
             target="SettingsEnvironments"
+          />
+          {/* T3-CUSTOM(expbkt3): per-user source-control profiles. */}
+          <SettingsRow
+            icon="person.crop.circle.badge.checkmark"
+            label="Users"
+            target="SettingsSourceControl"
           />
         </SettingsSection>
 
@@ -194,6 +213,9 @@ function SettingsIndexSections() {
         />
       </SettingsSection>
 
+      {/* T3-CUSTOM(expbkt3): experimental fork features. */}
+      <ExperimentsSettingsSection />
+
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
         <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
@@ -201,3 +223,27 @@ function SettingsIndexSections() {
     </>
   );
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — experimental fork features.
+function ExperimentsSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const phaseSidebarEnabled = usePhaseSidebarEnabled();
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Experiments">
+        <SettingsSwitchRow
+          icon="square.grid.2x2"
+          label="Phase-grouped Sidebar"
+          value={phaseSidebarEnabled}
+          onValueChange={(value) => savePreferences({ experimentalPhaseSidebarEnabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Groups threads by lifecycle and shows the full row lane — worktree codename, Linear tag,
+        priority and owner. Experimental; turn it off to return to the stock list.
+      </Text>
+    </View>
+  );
+}
+// T3-CUSTOM(expbkt3): END

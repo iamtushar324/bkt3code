@@ -168,4 +168,48 @@ describe("review comment serialization", () => {
     expect(serialized).toContain('sectionTitle="Changes &gt; 5"');
     expect(comment?.sectionTitle).toBe("Changes > 5");
   });
+
+  // T3-CUSTOM(expbkt3): matches the web parser. A plan anchor is quoted text
+  // that cannot always be located, and rejecting the block rendered raw XML.
+  it("parses an anchored plan comment that carries no line range", () => {
+    const segments = parseReviewCommentMessageSegments(
+      [
+        'Plan approved.\n\n<review_comment sectionId="plan:plan-doc:ad14" sectionTitle="Plan review" filePath="TEC-951 standup plan.md" rangeLabel="quoted text" author="Tushar Bhardwaj">',
+        "no ignore this",
+        "```markdown",
+        "1. Outbound email context",
+        "```",
+        "</review_comment>",
+      ].join("\n"),
+    );
+
+    expect(segments.map((segment) => segment.kind)).toEqual(["text", "review-comment"]);
+    expect(segments[1]).toEqual(
+      expect.objectContaining({
+        kind: "review-comment",
+        comment: expect.objectContaining({
+          sectionId: "plan:plan-doc:ad14",
+          startIndex: null,
+          endIndex: null,
+          rangeLabel: "quoted text",
+          text: "no ignore this",
+          author: "Tushar Bhardwaj",
+        }),
+      }),
+    );
+  });
+
+  it("counts a rangeless plan comment as an inline comment", () => {
+    const block = [
+      '<review_comment sectionId="plan:doc" filePath="Plan.md" rangeLabel="quoted text">',
+      "Reword this.",
+      "```markdown",
+      "## Steps",
+      "```",
+      "</review_comment>",
+    ].join("\n");
+
+    expect(countReviewCommentContexts(block)).toBe(1);
+    expect(parseReviewInlineComments(block)).toHaveLength(1);
+  });
 });

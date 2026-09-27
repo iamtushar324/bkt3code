@@ -5,7 +5,14 @@ import { StatusBar, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation } from "@react-navigation/native";
+// T3-CUSTOM(expbkt3): fork linking resets only external Thread routes.
+import {
+  CommonActions,
+  createStaticNavigation,
+  getActionFromState,
+  type NavigationState,
+  type PartialState,
+} from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
@@ -26,19 +33,39 @@ import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordin
 
 import "../global.css";
 
+// T3-CUSTOM(expbkt3): native showcase setup and splash timing belong to the fork app shell.
 if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
 }
 
+// T3-CUSTOM(expbkt3): native splash handling is needed by the fork app shell.
 void SplashScreen.preventAutoHideAsync().catch(() => {
   // The native module can be unavailable in non-native test environments.
 });
 
 const appLinking = {
-  prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
+  // T3-CUSTOM(expbkt3): "t3code-bk://" is the fork build's scheme (app.config.bk.ts).
+  prefixes: [
+    Linking.createURL("/"),
+    "t3code://",
+    "t3code-dev://",
+    "t3code-preview://",
+    "t3code-bk://",
+  ],
   // Keep the compact thread list available beneath a directly opened thread.
   config: { initialRouteName: "Home" },
   filter: shouldHandleAppLink,
+  // T3-CUSTOM(expbkt3): an external thread link must replace an open form
+  // sheet, rather than push a thread route into that sheet's navigator.
+  getActionFromState: (
+    state: PartialState<NavigationState>,
+    config: Parameters<typeof getActionFromState>[1],
+  ) => {
+    const route = state.routes[state.index ?? state.routes.length - 1];
+    return route?.name === "Thread"
+      ? CommonActions.reset(state)
+      : getActionFromState(state, config);
+  },
 };
 
 const Navigation = createStaticNavigation(RootStack);

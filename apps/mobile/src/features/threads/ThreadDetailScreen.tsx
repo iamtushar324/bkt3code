@@ -44,6 +44,8 @@ import {
   AppState,
   Keyboard,
   Platform,
+  // T3-CUSTOM(expbkt3): Pressable is used by the fork outbox notice below.
+  Pressable,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -68,6 +70,7 @@ import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
+import { AppText as Text } from "../../components/AppText";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -87,6 +90,8 @@ import type {
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
+// T3-CUSTOM(expbkt3): plan review entry point, shown beside the other pending cards.
+import { PlanReviewThreadBanner } from "../planreview/PlanReviewThreadBanner";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -151,6 +156,7 @@ export interface ThreadDetailScreenProps {
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
+  readonly failedOutboxDetail: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly serverConfig: T3ServerConfig | null;
@@ -165,6 +171,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly onRetryFailedOutbox: () => void;
+  readonly onEditFailedOutbox: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
@@ -984,6 +992,40 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onScrollToEnd={handleScrollToEnd}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                {/* T3-CUSTOM(expbkt3): rejected queued messages stay visible until retry/edit. */}
+                {props.failedOutboxDetail ? (
+                  <View className="mx-4 mb-3 rounded-xl border border-danger-border bg-danger px-4 py-3">
+                    <Text className="text-sm font-t3-medium text-danger-foreground">
+                      Message was not accepted
+                    </Text>
+                    <Text className="mt-1 text-xs text-foreground-muted">
+                      {props.failedOutboxDetail}
+                    </Text>
+                    <View className="mt-3 flex-row gap-3">
+                      <Pressable
+                        accessibilityRole="button"
+                        className="rounded-lg border border-danger-border bg-danger px-3 py-2"
+                        onPress={props.onRetryFailedOutbox}
+                      >
+                        <Text className="text-xs font-t3-medium text-danger-foreground">Retry</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        className="rounded-lg border border-border px-3 py-2"
+                        onPress={props.onEditFailedOutbox}
+                      >
+                        <Text className="text-xs font-t3-medium text-foreground">Edit</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+                {/* T3-CUSTOM(expbkt3): plan ready → review. Lives with the pending
+                    cards so it sits above the composer, not under the glass header. */}
+                <PlanReviewThreadBanner
+                  environmentId={props.environmentId}
+                  hasActionableProposedPlan={props.selectedThread.hasActionableProposedPlan}
+                  threadId={props.selectedThread.id}
+                />
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
                     key={submission.id}

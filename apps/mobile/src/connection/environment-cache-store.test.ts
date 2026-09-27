@@ -103,6 +103,11 @@ describe("mobile SQLite environment cache store", () => {
             settledOverride: null,
             settledAt: null,
             deletedAt: null,
+            // T3-CUSTOM(expbkt3): BEGIN fork fields
+            sourceControlProfileId: null,
+            ownerUserId: null,
+            memberUserIds: [],
+            // T3-CUSTOM(expbkt3): END
             messages: [
               {
                 id: MessageId.make("thinking-1"),
@@ -110,6 +115,7 @@ describe("mobile SQLite environment cache store", () => {
                 text: "Checking the evidence.",
                 turnId: null,
                 streaming: false,
+                sentByUserId: null, // T3-CUSTOM(expbkt3): required persisted metadata.
                 createdAt: now,
                 updatedAt: now,
               },

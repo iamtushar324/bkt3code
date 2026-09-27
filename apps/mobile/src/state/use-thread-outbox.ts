@@ -1,4 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+// T3-CUSTOM(expbkt3): BEGIN — render only the authenticated identity's queue.
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import {
+  ANONYMOUS_OUTBOX_IDENTITY,
+  groupQueuedThreadMessages,
+} from "@t3tools/client-runtime/outbox";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
@@ -7,10 +13,18 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
 
+const activeIdentityQueuedMessagesAtom = Atom.make((get) => {
+  const identityKey = get(managedRelaySessionAtom)?.accountId ?? ANONYMOUS_OUTBOX_IDENTITY;
+  const messages = Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))
+    .flat()
+    .filter((message) => (message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY) === identityKey);
+  return groupQueuedThreadMessages(messages);
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:active-identity"));
+
 const threadOutboxShellStatusesAtom = Atom.make(
   (get): ReadonlyMap<EnvironmentId, EnvironmentShellStatus> => {
     const statuses = new Map<EnvironmentId, EnvironmentShellStatus>();
-    for (const queue of Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))) {
+    for (const queue of Object.values(get(activeIdentityQueuedMessagesAtom))) {
       const environmentId = queue[0]?.environmentId;
       if (environmentId !== undefined && !statuses.has(environmentId)) {
         statuses.set(environmentId, get(environmentShell.stateValueAtom(environmentId)).status);
@@ -19,6 +33,7 @@ const threadOutboxShellStatusesAtom = Atom.make(
     return statuses;
   },
 ).pipe(Atom.withLabel("mobile:thread-outbox:shell-statuses"));
+// T3-CUSTOM(expbkt3): END
 
 /**
  * Queued pending tasks the outbox drain must not deliver right now: the one
@@ -54,9 +69,11 @@ export function releaseEditingQueuedMessage(messageId: MessageId): void {
   appAtomRegistry.set(editingQueuedMessageIdsAtom, next);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — never expose another account's pending work.
 export function useThreadOutboxMessages() {
-  return useAtomValue(threadOutboxManager.queuedMessagesByThreadKeyAtom);
+  return useAtomValue(activeIdentityQueuedMessagesAtom);
 }
+// T3-CUSTOM(expbkt3): END
 
 /**
  * Thread keys (`environmentId:threadId`) of existing threads with a message

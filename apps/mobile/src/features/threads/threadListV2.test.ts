@@ -46,6 +46,8 @@ function makeThread(
   return {
     environmentId,
     projectId: ProjectId.make("project-1"),
+    ownerUserId: null,
+    memberUserIds: [],
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -64,6 +66,7 @@ function makeThread(
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     ...input,
+    sourceControlProfileId: input.sourceControlProfileId ?? null,
   };
 }
 
@@ -867,6 +870,7 @@ describe("buildThreadListV2Items settled paging", () => {
             startedAt: `2026-06-01T0${index}:00:00.000Z`,
             completedAt: `2026-06-01T0${index}:10:00.000Z`,
             assistantMessageId: null,
+            durationMs: null,
           },
         }),
       ),

@@ -91,6 +91,9 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const questionCount = props.pendingUserInput.questions.length;
+  // T3-CUSTOM(expbkt3): message-mode questions do not block the provider.
+  // T3-CUSTOM(expbkt3): upstream's `dismissible` replaced the fork's `responseMode`.
+  const isAsync = props.pendingUserInput.dismissible;
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -175,9 +178,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
+        {/* T3-CUSTOM(expbkt3): BEGIN — distinguish non-blocking compact questions. */}
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-          User input needed
+          {isAsync ? "Async question" : "User input needed"}
         </Text>
+        {/* T3-CUSTOM(expbkt3): END */}
         <Text className="font-sans text-xs text-foreground-muted">
           {questionCount} question{questionCount === 1 ? "" : "s"}
         </Text>
@@ -234,10 +239,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
+          {/* T3-CUSTOM(expbkt3): BEGIN — retain expanded non-blocking question status. */}
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-            User input needed
+            {isAsync ? "Async question" : "User input needed"}
           </Text>
-          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
+          <Text className="font-t3-bold text-lg text-foreground">
+            {isAsync ? "Agent can continue while you decide" : "Fill in the pending answers"}
+          </Text>
+          {/* T3-CUSTOM(expbkt3): END */}
         </View>
         <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
           <SymbolView

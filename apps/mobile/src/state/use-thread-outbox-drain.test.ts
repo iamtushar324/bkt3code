@@ -17,7 +17,10 @@ const harness = vi.hoisted(() => ({
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
   removePersistedFile: vi.fn(async () => undefined),
-  removeOutboxMessage: vi.fn(async (_message: QueuedThreadMessage) => undefined),
+  removeOutboxMessage: vi.fn(
+    async (_message: Pick<QueuedThreadMessage, "environmentId" | "identityKey" | "messageId">) =>
+      undefined,
+  ),
   prepareTurnAttachments: vi.fn<typeof import("../lib/attachmentUpload").prepareTurnAttachments>(),
   setPendingConnectionError: vi.fn(),
   draftFile: (() => {

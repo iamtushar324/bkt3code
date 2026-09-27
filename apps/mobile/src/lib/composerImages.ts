@@ -118,6 +118,68 @@ export function isFileBackedComposerAttachment(
   return attachment.fileUri !== undefined;
 }
 
+// T3-CUSTOM(expbkt3): since upstream #8048 a queued attachment may be uploaded
+// already, carrying only its asset id. Only locally-held ones (with a data url)
+// can go back into a composer draft.
+export function toDraftComposerImageAttachments(
+  attachments: ReadonlyArray<{
+    readonly type: "image";
+    readonly id: string;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly dataUrl?: string | undefined;
+    readonly previewUri?: string | undefined;
+  }>,
+): ReadonlyArray<DraftComposerImageAttachment> {
+  return attachments.flatMap((attachment) => {
+    const dataUrl = attachment.dataUrl;
+    if (dataUrl === undefined) return [];
+    return [
+      {
+        type: attachment.type,
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        dataUrl,
+        previewUri: attachment.previewUri ?? dataUrl,
+      },
+    ];
+  });
+}
+
+// T3-CUSTOM(expbkt3): re-sending a queued message keeps whichever form the queue
+// holds: an uploaded asset id (upstream #8048) or the original inline data url.
+export function toQueuedResendAttachments(
+  attachments: ReadonlyArray<{
+    readonly type: "image";
+    readonly id: string;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly dataUrl?: string | undefined;
+  }>,
+) {
+  return attachments.map((attachment) =>
+    attachment.dataUrl === undefined
+      ? {
+          type: attachment.type,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+        }
+      : {
+          type: attachment.type,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          dataUrl: attachment.dataUrl,
+        },
+  );
+}
+
 /**
  * The bytes a draft attachment can be previewed from without the server. A picture taken from
  * the photo library or the clipboard owns no file and carries its bytes inline, and its
