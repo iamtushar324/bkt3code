@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,24 +30,41 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+type DecryptStringWithMetadata =
+  ElectronSafeStorage.ElectronSafeStorage["Service"]["decryptStringWithMetadata"];
+type EncryptString = ElectronSafeStorage.ElectronSafeStorage["Service"]["encryptString"];
+
+function makeSafeStorageLayer(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  decryptStringWithMetadata: DecryptStringWithMetadata | null = null,
+  encryptString: EncryptString | null = null,
+) {
+  const decryptString = (value: Uint8Array) => {
+    return Effect.gen(function* () {
+      const decoded = textDecoder.decode(value);
+      if (
+        !decoded.startsWith("encrypted:") ||
+        (failDecrypt !== null && (yield* Ref.get(failDecrypt)))
+      ) {
+        return yield* new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+          cause: new Error("invalid encrypted catalog"),
+        });
+      }
+      return decoded.slice("encrypted:".length);
+    });
+  };
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
-    encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
-    decryptString: (value) => {
-      return Effect.gen(function* () {
-        const decoded = textDecoder.decode(value);
-        if (
-          !decoded.startsWith("encrypted:") ||
-          (failDecrypt !== null && (yield* Ref.get(failDecrypt)))
-        ) {
-          return yield* new ElectronSafeStorage.ElectronSafeStorageDecryptError({
-            cause: new Error("invalid encrypted catalog"),
-          });
-        }
-        return decoded.slice("encrypted:".length);
-      });
-    },
+    encryptString:
+      encryptString ?? ((value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`))),
+    decryptString,
+    decryptStringWithMetadata:
+      decryptStringWithMetadata ??
+      ((value) =>
+        decryptString(value).pipe(
+          Effect.map((decrypted) => ({ value: decrypted, shouldReEncrypt: false })),
+        )),
     selectedStorageBackend: Effect.succeedNone,
   } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
@@ -55,6 +74,8 @@ function makeLayer(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  decryptStringWithMetadata: DecryptStringWithMetadata | null = null,
+  encryptString: EncryptString | null = null,
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -71,7 +92,12 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
+  const safeStorageLayer = makeSafeStorageLayer(
+    encryptionAvailable,
+    failDecrypt,
+    decryptStringWithMetadata,
+    encryptString,
+  );
   const dependencies = Layer.mergeAll(
     environmentLayer,
     safeStorageLayer,
@@ -125,6 +151,120 @@ describe("DesktopConnectionCatalogStore", () => {
       }),
       false,
     ),
+  );
+
+  it.effect("does not let a delayed key rotation overwrite a newer catalog", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const decryptStarted = yield* Deferred.make<void>();
+      const releaseDecrypt = yield* Deferred.make<void>();
+      const delayNextDecrypt = yield* Ref.make(true);
+      const observeNextEncryption = yield* Ref.make(false);
+      const replacementEncryptionStarted = yield* Deferred.make<void>();
+      const decryptStringWithMetadata: DecryptStringWithMetadata = (value) =>
+        Effect.gen(function* () {
+          const decrypted = textDecoder.decode(value).slice("encrypted:".length);
+          if (yield* Ref.getAndSet(delayNextDecrypt, false)) {
+            yield* Deferred.succeed(decryptStarted, undefined);
+            yield* Deferred.await(releaseDecrypt);
+          }
+          return { value: decrypted, shouldReEncrypt: true };
+        });
+      const encryptString: EncryptString = (value) =>
+        Effect.gen(function* () {
+          if (yield* Ref.getAndSet(observeNextEncryption, false)) {
+            yield* Deferred.succeed(replacementEncryptionStarted, undefined);
+          }
+          return textEncoder.encode(`encrypted:${value}`);
+        });
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(
+          makeLayer(
+            baseDir,
+            true,
+            null,
+            NodeServices.layer,
+            decryptStringWithMetadata,
+            encryptString,
+          ),
+        ),
+      );
+      const original = '{"schemaVersion":1,"targets":["original"]}';
+      const replacement = '{"schemaVersion":1,"targets":["replacement"]}';
+
+      assert.isTrue(yield* store.set(original));
+      yield* Ref.set(observeNextEncryption, true);
+      const read = yield* store.get.pipe(Effect.forkChild);
+      yield* Deferred.await(decryptStarted);
+      const save = yield* store.set(replacement).pipe(Effect.forkChild({ startImmediately: true }));
+      assert.isFalse(yield* Deferred.isDone(replacementEncryptionStarted));
+      yield* Deferred.succeed(releaseDecrypt, undefined);
+
+      assert.deepStrictEqual(yield* Fiber.join(read), Option.some(original));
+      assert.isTrue(yield* Fiber.join(save));
+      assert.isTrue(yield* Deferred.isDone(replacementEncryptionStarted));
+      assert.deepStrictEqual(yield* store.get, Option.some(replacement));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not recreate a catalog cleared while a key rotation is pending", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const decryptStarted = yield* Deferred.make<void>();
+      const releaseDecrypt = yield* Deferred.make<void>();
+      const delayNextDecrypt = yield* Ref.make(true);
+      const observeClear = yield* Ref.make(false);
+      const clearStarted = yield* Deferred.make<void>();
+      const fileSystemLayer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const baseFileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...baseFileSystem,
+            remove: (target, options) =>
+              Ref.getAndSet(observeClear, false).pipe(
+                Effect.flatMap((observing) =>
+                  observing ? Deferred.succeed(clearStarted, undefined) : Effect.void,
+                ),
+                Effect.andThen(baseFileSystem.remove(target, options)),
+              ),
+          };
+        }),
+      ).pipe(Layer.provide(NodeServices.layer));
+      const decryptStringWithMetadata: DecryptStringWithMetadata = (value) =>
+        Effect.gen(function* () {
+          const decrypted = textDecoder.decode(value).slice("encrypted:".length);
+          if (yield* Ref.getAndSet(delayNextDecrypt, false)) {
+            yield* Deferred.succeed(decryptStarted, undefined);
+            yield* Deferred.await(releaseDecrypt);
+          }
+          return { value: decrypted, shouldReEncrypt: true };
+        });
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer, decryptStringWithMetadata)),
+      );
+      const catalog = '{"schemaVersion":1,"targets":["original"]}';
+
+      assert.isTrue(yield* store.set(catalog));
+      yield* Ref.set(observeClear, true);
+      const read = yield* store.get.pipe(Effect.forkChild);
+      yield* Deferred.await(decryptStarted);
+      const clear = yield* store.clear.pipe(Effect.forkChild({ startImmediately: true }));
+      assert.isFalse(yield* Deferred.isDone(clearStarted));
+      yield* Deferred.succeed(releaseDecrypt, undefined);
+
+      assert.deepStrictEqual(yield* Fiber.join(read), Option.some(catalog));
+      yield* Fiber.join(clear);
+      assert.isTrue(yield* Deferred.isDone(clearStarted));
+      assert.isFalse(yield* fileSystem.exists(`${baseDir}/userdata/connection-catalog.json`));
+      assert.deepStrictEqual(yield* store.get, Option.none());
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>

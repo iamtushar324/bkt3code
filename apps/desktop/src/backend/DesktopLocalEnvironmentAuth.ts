@@ -8,6 +8,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+// T3-CUSTOM(expbkt3): BEGIN - attach the packaged desktop version to local sessions.
+import desktopPackageJson from "../../package.json" with { type: "json" };
+// T3-CUSTOM(expbkt3): END
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
@@ -70,11 +73,14 @@ export const make = Effect.gen(function* () {
         }
         const session = yield* bootstrapRemoteBearerSession({
           httpBaseUrl: config.httpBaseUrl.href,
+          // T3-CUSTOM(expbkt3): BEGIN - attach the packaged build to the local session.
           credential,
           clientMetadata: {
             label: "T3 Code Desktop",
             deviceType: "desktop",
+            appVersion: desktopPackageJson.version,
           },
+          // T3-CUSTOM(expbkt3): END
         }).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.mapError(

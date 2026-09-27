@@ -51,6 +51,9 @@ describe("ElectronProtocol", () => {
       const page = yield* request("/settings/connections");
       assert.equal(yield* Effect.promise(() => page.text()), "<html>app</html>");
       assert.include(page.headers.get("content-security-policy") ?? "", "default-src 'self'");
+      // T3-CUSTOM(expbkt3): packaged-client responses carry the fork's anti-framing headers.
+      assert.include(page.headers.get("content-security-policy") ?? "", "frame-ancestors 'none'");
+      assert.equal(page.headers.get("x-frame-options"), "DENY");
       const dottedRoute = yield* request("/environment/thread.with.dots", {
         headers: { accept: "text/html" },
       });
@@ -115,6 +118,13 @@ describe("ElectronProtocol", () => {
             response.headers.get("content-security-policy") ?? "",
             "font-src 'self' t3code-dev: data:",
           );
+          // T3-CUSTOM(expbkt3): BEGIN - anti-framing headers on proxied responses.
+          assert.include(
+            response.headers.get("content-security-policy") ?? "",
+            "frame-ancestors 'none'",
+          );
+          assert.equal(response.headers.get("x-frame-options"), "DENY");
+          // T3-CUSTOM(expbkt3): END
         }),
       );
 
@@ -255,6 +265,8 @@ describe("ElectronProtocol", () => {
       "https://clerk.t3.codes",
       "https://challenges.cloudflare.com",
     ]);
+    // T3-CUSTOM(expbkt3): a remote agent frame must not frame the desktop shell.
+    assert.deepEqual(directives["frame-ancestors"], ["'none'"]);
     assert.deepEqual(directives["connect-src"], [
       "'self'",
       "blob:",
@@ -272,7 +284,15 @@ describe("ElectronProtocol", () => {
       "https:",
     ]);
     assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:", "http:", "https:"]);
-    assert.deepEqual(directives["frame-src"], ["'self'", "blob:", "http:", "https:"]);
+    // T3-CUSTOM(expbkt3): BEGIN - the fork composes frame-src for managed-environment frames.
+    assert.deepEqual(directives["frame-src"], [
+      "'self'",
+      "blob:",
+      "http:",
+      "https:",
+      "https://challenges.cloudflare.com",
+    ]);
+    // T3-CUSTOM(expbkt3): END
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
   });
 });

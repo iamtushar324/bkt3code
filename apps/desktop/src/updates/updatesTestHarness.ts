@@ -9,6 +9,8 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+// T3-CUSTOM(expbkt3): notification click and update channel coverage.
+import * as ElectronNotification from "../electron/ElectronNotification.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -45,6 +47,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let downloadCount = 0;
   let allowDowngrade = false;
   let fullChangelog = false;
+  // T3-CUSTOM(expbkt3): BEGIN
+  let allowPrerelease = false;
+  let autoDownload = false;
+  const channels: string[] = [];
+  // T3-CUSTOM(expbkt3): END
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
@@ -72,10 +79,23 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         feedUrls.push(options);
       }),
-    setAutoDownload: () => Effect.void,
+    // T3-CUSTOM(expbkt3): BEGIN - captured so tests can assert the provider
+    // channel and the prerelease flags independently; the fork sets them from
+    // different sources and conflating them silently disables updates.
+    setAutoDownload: (value) =>
+      Effect.sync(() => {
+        autoDownload = value;
+      }),
     setAutoInstallOnAppQuit: () => Effect.void,
-    setChannel: () => Effect.void,
-    setAllowPrerelease: () => Effect.void,
+    setChannel: (value) =>
+      Effect.sync(() => {
+        channels.push(value);
+      }),
+    setAllowPrerelease: (value) =>
+      Effect.sync(() => {
+        allowPrerelease = value;
+      }),
+    // T3-CUSTOM(expbkt3): END
     allowDowngrade: Effect.sync(() => allowDowngrade),
     setAllowDowngrade: (value) =>
       Effect.sync(() => {
@@ -108,6 +128,18 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           }),
       ).pipe(Effect.asVoid),
   } satisfies ElectronUpdater.ElectronUpdater["Service"]);
+
+  // T3-CUSTOM(expbkt3): BEGIN - update-ready notifications. Records what was
+  // shown and exposes the click handler so tests can drive the one-click path.
+  const notifications: ElectronNotification.ElectronNotificationRequest[] = [];
+  const notificationLayer = Layer.succeed(ElectronNotification.ElectronNotification, {
+    show: (request) =>
+      Effect.sync(() => {
+        notifications.push(request);
+        return true;
+      }),
+  } satisfies ElectronNotification.ElectronNotification["Service"]);
+  // T3-CUSTOM(expbkt3): END
 
   const windowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
@@ -237,6 +269,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(fileSystemLayer),
     Layer.provideMerge(updaterLayer),
+    // T3-CUSTOM(expbkt3): inject notification capture.
+    Layer.provideMerge(notificationLayer),
     Layer.provideMerge(windowLayer),
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
@@ -260,6 +294,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     installSteps,
     updateRestartMarkers,
     downloadCount: () => downloadCount,
+    // T3-CUSTOM(expbkt3): capture fork updater policy and notification click behavior.
+    notifications: () => notifications,
+    channels: () => channels,
+    allowPrerelease: () => allowPrerelease,
+    allowDowngrade: () => allowDowngrade,
+    autoDownload: () => autoDownload,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>

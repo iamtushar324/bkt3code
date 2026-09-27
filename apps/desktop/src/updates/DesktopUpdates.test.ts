@@ -149,6 +149,37 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN
+  it.effect("keeps prerelease handling tied to the contract channel, not the provider one", () => {
+    // The trap this guards: `allowsPrerelease` is computed from the contract
+    // channel ("latest" | "nightly"). If it were ever computed from the string
+    // handed to the provider, a fork build's "staging-nightly" would make
+    // `=== "nightly"` false, allowPrerelease would go off, and every prerelease
+    // — which is all the fork publishes — would become invisible. Silently.
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* updates.setChannel("nightly");
+        assert.equal(harness.allowPrerelease(), true);
+        assert.equal(harness.fullChangelog(), true);
+        assert.equal(harness.allowDowngrade(), true);
+
+        yield* updates.setChannel("latest");
+        assert.equal(harness.allowPrerelease(), false);
+
+        // Under test there is no packaged brand, so the provider channel is the
+        // contract channel. The fork substitution is asserted in
+        // scripts/bk-desktop-brand-overrides.test.ts, where the brand can be set.
+        assert.deepEqual(harness.channels().slice(-2), ["nightly", "latest"]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+  // T3-CUSTOM(expbkt3): END
+
   it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
     const harness = makeHarness();
 

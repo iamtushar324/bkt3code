@@ -2,6 +2,9 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+// T3-CUSTOM(expbkt3): BEGIN - fork desktop brand baked in at build time.
+import { resolveRuntimeBrand } from "../branding/BkBrand.ts";
+// T3-CUSTOM(expbkt3): END
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
   normalizeLinuxPasswordStorePreference,
@@ -88,8 +91,13 @@ export function resolveEarlyLinuxElectronOptions(
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
-    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
+    // T3-CUSTOM(expbkt3): BEGIN - keep the early Linux window class and desktop
+    // entry in step with the fork brand applied in DesktopEnvironment.ts, so the
+    // two never disagree.
+    linuxWmClass: resolveRuntimeBrand()?.linuxWmClass ?? (isDevelopment ? "t3code-dev" : "t3code"),
+    linuxDesktopEntryName:
+      resolveRuntimeBrand()?.linuxDesktopEntryName ?? resolveLinuxDesktopEntryName(isDevelopment),
+    // T3-CUSTOM(expbkt3): END
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,

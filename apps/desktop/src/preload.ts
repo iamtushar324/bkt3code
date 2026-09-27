@@ -262,6 +262,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  // T3-CUSTOM(expbkt3): BEGIN - update-ready notification click.
+  onUpdateReveal: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+
+    ipcRenderer.on(IpcChannels.UPDATE_REVEAL_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.UPDATE_REVEAL_CHANNEL, wrappedListener);
+    };
+  },
+  // T3-CUSTOM(expbkt3): END
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

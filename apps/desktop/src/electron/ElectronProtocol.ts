@@ -87,8 +87,19 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // GLTFLoader fetches embedded textures through blob URLs after parsing the model.
   const connectSources = ["'self'", "blob:", "http:", "https:", "ws:", "wss:"];
 
+  // T3-CUSTOM(expbkt3): a Plannotator review is served by the environment that
+  // owns the thread, not by this renderer's origin, so the review iframe is
+  // cross-origin. Those environment origins are unknown here for the same
+  // reason as connect-src, so allow the network schemes rather than hosts. The
+  // frame itself stays sandboxed without `allow-same-origin`, so it runs in an
+  // opaque origin and cannot reach renderer state.
+  // `blob:` is upstream's: document viewers render from local Blob URLs.
+  const frameSources = ["'self'", "blob:", "http:", "https:", "https://challenges.cloudflare.com"];
+
   return [
     "default-src 'self'",
+    // T3-CUSTOM(expbkt3): a remote agent frame must not redirect into the desktop shell.
+    "frame-ancestors 'none'",
     `script-src ${scriptSources.join(" ")}`,
     `connect-src ${connectSources.join(" ")}`,
     `img-src 'self' ${input.scheme}: blob: data: http: https:`,
@@ -96,9 +107,11 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    // Document viewers use local Blob URLs and signed assets from runtime environments.
-    // HTML viewers retain their own sandbox; the renderer's script policy stays unchanged.
-    "frame-src 'self' blob: http: https:",
+    // T3-CUSTOM(expbkt3): the fork's preview surface embeds managed-environment
+    // frames, so frame-src is composed rather than fixed. The list carries
+    // upstream's document-viewer `blob:` source; HTML viewers keep their own
+    // sandbox and the renderer's script policy is unchanged.
+    `frame-src ${frameSources.join(" ")}`,
     "form-action 'self'",
   ].join("; ");
 }
@@ -106,6 +119,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
 function withContentSecurityPolicy(response: Response, policy: string): Response {
   const headers = new Headers(response.headers);
   headers.set("Content-Security-Policy", policy);
+  // T3-CUSTOM(expbkt3): legacy defense in depth for custom-protocol shell responses.
+  headers.set("X-Frame-Options", "DENY");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

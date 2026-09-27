@@ -18,6 +18,9 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+// T3-CUSTOM(expbkt3): managed BK distributions keep the central server primary
+// and bring the bundled backend up as a secondary local environment.
+import { bootstrapBkManagedDesktop } from "../branding/BkManagedDesktop.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -158,6 +161,13 @@ export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances"
 );
 
 const bootstrap = Effect.gen(function* () {
+  // T3-CUSTOM(expbkt3): a managed BK build serves its packaged renderer, keeps
+  // the central environment primary, and starts the bundled backend as a
+  // secondary local environment.
+  // T3-CUSTOM(expbkt3): managed BK builds own their channel-specific bundled
+  // backend port and state defaults in branding/BkBundledBackendRuntime.ts.
+  if (yield* bootstrapBkManagedDesktop()) return;
+
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
