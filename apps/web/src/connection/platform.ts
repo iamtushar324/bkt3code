@@ -21,7 +21,6 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
-  Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
@@ -76,7 +75,11 @@ import {
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 // T3-CUSTOM(expbkt3): focus wakeups probe unless the window was away >= 60 s.
-import { type FocusWakeup, makeFocusWakeupTracker } from "./focusWakeup.expbkt3";
+import {
+  coalescedWakeupsLayer,
+  type FocusWakeup,
+  makeFocusWakeupTracker,
+} from "./focusWakeup.expbkt3";
 // T3-CUSTOM(expbkt3): desktop-local discovery must not delay the primary.
 import { DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS } from "./desktopLocalDiscovery.expbkt3";
 
@@ -126,7 +129,8 @@ const focusTracker = makeFocusWakeupTracker();
 const focusWakeups = Stream.callback<FocusWakeup>((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      const onFocus = () => Queue.offerUnsafe(queue, focusTracker.onFocus());
+      const onFocus = (event: FocusEvent) =>
+        Queue.offerUnsafe(queue, focusTracker.onFocus(event.timeStamp));
       window.addEventListener("focus", onFocus);
       window.addEventListener("blur", focusTracker.markInactive);
       return () => {
@@ -151,7 +155,8 @@ const systemResumeWakeups = Stream.callback<"application-active-reconnect">((que
 );
 // T3-CUSTOM(expbkt3): END
 
-const wakeupsLayer = Wakeups.layer({
+// T3-CUSTOM(expbkt3): one resubscribe per return, however many events it fires.
+const wakeupsLayer = coalescedWakeupsLayer({
   changes: Stream.merge(
     // Tab/window became visible again.
     applicationActiveFrom((emit) => {
