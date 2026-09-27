@@ -3006,6 +3006,13 @@ const make = Effect.gen(function* () {
         false,
       );
     }
+    // T3-CUSTOM(expbkt3): publish "worktree done, setup running" to clients; step
+    // changes inside one preparation pass are not intent transitions of their own.
+    if (setupStep.value === "pending") {
+      yield* executionSupervisor
+        .refreshIntent(input.intent.threadId)
+        .pipe(Effect.ignoreCause({ log: true }));
+    }
     if (setupStep.value === "acknowledged" || setupStep.value === "not-required") return;
     const terminalId = operation.value.setupTerminalId;
     if (setupStep.value === "running") {
