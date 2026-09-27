@@ -41,6 +41,16 @@ describe("focus wakeups", () => {
     expect(tracker.onFocus()).toBe("application-focus");
   });
 
+  it("gives every subscriber of one focus event the same answer", () => {
+    const { tracker, advance } = trackerAt();
+    tracker.markInactive();
+    advance(FOCUS_RESYNC_AFTER_MS);
+    expect(tracker.onFocus(42)).toBe("application-active");
+    expect(tracker.onFocus(42)).toBe("application-active");
+    // The next focus event is a new decision; the absence was consumed.
+    expect(tracker.onFocus(43)).toBe("application-focus");
+  });
+
   it("probes a focus with no recorded absence", () => {
     expect(trackerAt().tracker.onFocus()).toBe("application-focus");
   });

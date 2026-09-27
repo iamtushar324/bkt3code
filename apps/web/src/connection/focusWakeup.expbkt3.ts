@@ -28,6 +28,7 @@ export type FocusWakeup = "application-active" | "application-focus";
 
 export function makeFocusWakeupTracker(now: () => number = Date.now) {
   let inactiveSinceMs: number | null = null;
+  let lastFocus: { readonly eventTimeStamp: number; readonly wakeup: FocusWakeup } | null = null;
   return {
     /** The window lost focus or was hidden; the earliest moment wins. */
     markInactive: (): void => {
@@ -37,12 +38,23 @@ export function makeFocusWakeupTracker(now: () => number = Date.now) {
     markResynced: (): void => {
       inactiveSinceMs = null;
     },
-    onFocus: (): FocusWakeup => {
+    /**
+     * Every wakeup subscriber registers its own `focus` listener, so one focus
+     * event reaches this once per subscriber. Pass the event's `timeStamp` so
+     * they all get the same answer instead of only the first seeing the return.
+     */
+    onFocus: (eventTimeStamp?: number): FocusWakeup => {
+      if (eventTimeStamp !== undefined && lastFocus?.eventTimeStamp === eventTimeStamp) {
+        return lastFocus.wakeup;
+      }
       const since = inactiveSinceMs;
       inactiveSinceMs = null;
-      return since !== null && now() - since >= FOCUS_RESYNC_AFTER_MS
-        ? "application-active"
-        : "application-focus";
+      const wakeup: FocusWakeup =
+        since !== null && now() - since >= FOCUS_RESYNC_AFTER_MS
+          ? "application-active"
+          : "application-focus";
+      if (eventTimeStamp !== undefined) lastFocus = { eventTimeStamp, wakeup };
+      return wakeup;
     },
   };
 }

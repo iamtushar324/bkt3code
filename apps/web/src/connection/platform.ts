@@ -129,7 +129,8 @@ const focusTracker = makeFocusWakeupTracker();
 const focusWakeups = Stream.callback<FocusWakeup>((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      const onFocus = () => Queue.offerUnsafe(queue, focusTracker.onFocus());
+      const onFocus = (event: FocusEvent) =>
+        Queue.offerUnsafe(queue, focusTracker.onFocus(event.timeStamp));
       window.addEventListener("focus", onFocus);
       window.addEventListener("blur", focusTracker.markInactive);
       return () => {
