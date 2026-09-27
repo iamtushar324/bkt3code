@@ -1,4 +1,5 @@
-import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): UserId for operatorUserIdFromSessionState below.
+import type { AuthSessionState, EnvironmentId, ServerConfig, UserId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -58,6 +59,57 @@ export const fetchEnvironmentSessionState = Effect.fn(
     isUnauthorizedResponse: (response) => !response.authenticated,
   });
 });
+
+// T3-CUSTOM(expbkt3): BEGIN
+/**
+ * The org user directory for one environment, via `/api/orchestration/users`.
+ *
+ * These are `UserId`s — org-level people who can own or be tagged on a thread —
+ * and deliberately not the `EnvironmentUserId`s that `users.list` returns; those
+ * are per-environment accounts and a different id space entirely. Lives here
+ * because this module already carries the prepared-connection and auth-header
+ * plumbing an environment HTTP call needs.
+ */
+export const fetchOrchestrationUsers = Effect.fn("clientRuntime.state.fetchOrchestrationUsers")(
+  function* (input: {
+    readonly prepared: PreparedConnection;
+    readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+    readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+    readonly timeoutMs?: number;
+  }) {
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      ...input,
+      // T3-CUSTOM(expbkt3): upstream made this helper group-scoped — the caller
+      // names the group and `client` is already that group, so the call is
+      // `client.users(...)` rather than `client.orchestration.users(...)`.
+      group: "orchestration",
+      method: "GET",
+      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/users"),
+      timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
+      request: ({ client, headers }) => client.users({ headers }),
+    });
+  },
+);
+// T3-CUSTOM(expbkt3): END
+
+// T3-CUSTOM(expbkt3): BEGIN
+/**
+ * The operator id an environment session reports, or null.
+ *
+ * Null for an unauthenticated gate state, and for a single-user or local
+ * environment whose subject is not an operator. Lives here rather than in a
+ * client so web and mobile answer "who am I" identically; web's
+ * fork/environmentOperatorIdentity re-exports it.
+ */
+export function operatorUserIdFromSessionState(
+  sessionState: AuthSessionState | null,
+): UserId | null {
+  if (sessionState === null || !sessionState.authenticated) {
+    return null;
+  }
+  return sessionState.userId ?? null;
+}
+// T3-CUSTOM(expbkt3): END
 
 export function createEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
@@ -150,6 +202,28 @@ export function createEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-session-state-value:${environmentId}`)),
   );
 
+  // T3-CUSTOM(expbkt3): BEGIN — org user directory for thread tagging.
+  const orchestrationUsersAtom = Atom.family((environmentId: EnvironmentId) =>
+    runtime
+      .atom((get) => {
+        const prepared = Option.getOrNull(get(preparedConnectionValueAtom(environmentId)));
+        if (prepared === null) {
+          return Effect.never;
+        }
+        return Effect.gen(function* () {
+          const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+          const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+          return yield* fetchOrchestrationUsers({ prepared, signer, remoteAuthorization });
+        });
+      })
+      .pipe(
+        Atom.swr({ staleTime: 60_000, revalidateOnMount: true }),
+        Atom.setIdleTTL(5 * 60_000),
+        Atom.withLabel(`environment-orchestration-users:${environmentId}`),
+      ),
+  );
+  // T3-CUSTOM(expbkt3): END
+
   return {
     initialConfigAtom,
     initialConfigValueAtom,
@@ -157,5 +231,7 @@ export function createEnvironmentSessionAtoms<R, E>(
     preparedConnectionValueAtom,
     sessionStateAtom,
     sessionStateValueAtom,
+    // T3-CUSTOM(expbkt3): org user directory.
+    orchestrationUsersAtom,
   };
 }

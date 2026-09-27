@@ -38,6 +38,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
   DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
@@ -82,6 +83,16 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
+
+function identitySubject(token: string | undefined): string | null {
+  if (!token) return null;
+  try {
+    const subject = decodeRelayJwt(token).sub;
+    return typeof subject === "string" && subject.length > 0 ? subject : null;
+  } catch {
+    return null;
+  }
+}
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -275,7 +286,8 @@ export const make = Effect.gen(function* () {
       });
     }
     yield* assertSession(identity);
-    return connected;
+    // T3-CUSTOM(expbkt3): bind the current Clerk identity at the environment exchange.
+    return { ...connected, identityToken: clerkToken };
   });
 
   const exchangeDpopToken = Effect.fn("clientRuntime.connection.remote.exchangeDpopToken")(
@@ -316,6 +328,8 @@ export const make = Effect.gen(function* () {
         dpopProof: bootstrapProof,
         scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
+        // T3-CUSTOM(expbkt3): required-identity environments need the operator token.
+        identityToken: bootstrap.identityToken,
       }).pipe(
         Effect.mapError(mapRemoteDpopEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -330,6 +344,10 @@ export const make = Effect.gen(function* () {
         accessToken: access.access_token,
         expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
         dpopThumbprint: thumbprint,
+        // T3-CUSTOM(expbkt3): retain identity metadata alongside upstream account-scoped caching.
+        ...(identitySubject(bootstrap.identityToken)
+          ? { identitySubject: identitySubject(bootstrap.identityToken)! }
+          : {}),
       });
     },
   );

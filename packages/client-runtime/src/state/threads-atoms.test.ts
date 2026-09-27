@@ -67,6 +67,7 @@ const THREAD: OrchestrationThread = {
   branch: "main",
   pullRequests: [],
   worktreePath: null,
+  sourceControlProfileId: null,
   latestTurn: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
@@ -79,6 +80,8 @@ const THREAD: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+  ownerUserId: null,
+  memberUserIds: [],
 };
 const SNAPSHOT: OrchestrationThreadDetailSnapshot = { snapshotSequence: 7, thread: THREAD };
 

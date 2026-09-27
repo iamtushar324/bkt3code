@@ -340,6 +340,55 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  // T3-CUSTOM(expbkt3): session fencing and the current Clerk identity travel together.
+  it.effect("does not reuse a persisted token after the signed-in Clerk user changes", () =>
+    Effect.gen(function* () {
+      const cached = new TokenStore.RemoteDpopAccessToken({
+        environmentId: ENVIRONMENT_ID,
+        accountId: "account-alice",
+        label: DESCRIPTOR.label,
+        endpoint: ENDPOINT,
+        accessToken: "alice-access-token",
+        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        dpopThumbprint: "thumbprint-1",
+        identitySubject: "user-alice",
+      });
+      const harness = yield* makeHarness({
+        initialToken: cached,
+        clerkToken: Effect.succeed("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyLWJvYiJ9."),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("bob-access-token"),
+          websocketTicket("bob-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toContain("wsTicket=bob-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toEqual(
+        expect.objectContaining({
+          accessToken: "bob-access-token",
+          accountId: "account-1",
+          identitySubject: "user-bob",
+        }),
+      );
+      expect(harness.fetch.calls).toHaveLength(3);
+      const requestBody = harness.fetch.calls[1]?.[1].body;
+      expect(
+        requestBody instanceof Uint8Array
+          ? new TextDecoder().decode(requestBody)
+          : String(requestBody),
+      ).toContain("identity_token=");
+    }),
+  );
+
   it.effect("refreshes and persists an expired environment token", () =>
     Effect.gen(function* () {
       const expired = new TokenStore.RemoteDpopAccessToken({

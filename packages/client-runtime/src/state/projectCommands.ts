@@ -16,13 +16,32 @@ import {
   deleteProject,
   updateProject,
 } from "../operations/commands.ts";
+// T3-CUSTOM(expbkt3): BEGIN fork command creators
+import {
+  type AddProjectMemberInput,
+  type RemoveProjectMemberInput,
+  type TransferProjectOwnershipInput,
+  addProjectMember,
+  removeProjectMember,
+  transferProjectOwnership,
+} from "../operations/commandsFork.ts";
+// T3-CUSTOM(expbkt3): END
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+
+// T3-CUSTOM(expbkt3): acknowledgement timeout error
 
 export type {
   CreateProjectInput,
   DeleteProjectInput,
   UpdateProjectInput,
 } from "../operations/commands.ts";
+// T3-CUSTOM(expbkt3): BEGIN fork command input types
+export type {
+  AddProjectMemberInput,
+  RemoveProjectMemberInput,
+  TransferProjectOwnershipInput,
+} from "../operations/commandsFork.ts";
+// T3-CUSTOM(expbkt3): END
 
 export interface OptimisticProjectFile {
   readonly data: ProjectReadFileResult;
@@ -89,6 +108,24 @@ export function createProjectEnvironmentAtoms<R, E>(
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:delete",
       execute: (input: DeleteProjectInput) => deleteProject(input),
+      scheduler: projectScheduler,
+      concurrency: projectConcurrency,
+    }),
+    addMember: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:project:add-member",
+      execute: (input: AddProjectMemberInput) => addProjectMember(input),
+      scheduler: projectScheduler,
+      concurrency: projectConcurrency,
+    }),
+    removeMember: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:project:remove-member",
+      execute: (input: RemoveProjectMemberInput) => removeProjectMember(input),
+      scheduler: projectScheduler,
+      concurrency: projectConcurrency,
+    }),
+    transferOwnership: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:project:transfer-ownership",
+      execute: (input: TransferProjectOwnershipInput) => transferProjectOwnership(input),
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),

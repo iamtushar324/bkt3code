@@ -1,10 +1,14 @@
+// T3-CUSTOM(expbkt3): read managed credential expiry through Effect's clock.
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+// T3-CUSTOM(expbkt3): managed primary credentials belong to the operator, not T3 Connect.
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import { PrimaryEnvironmentAuth } from "../platform/capabilities.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -114,31 +118,71 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
+      // T3-CUSTOM(expbkt3): refresh managed credentials on each request attempt.
       let authorization = input.prepared.httpAuthorization;
       if (authorization?._tag === "Dpop") {
-        const remote = input.remoteAuthorization;
-        if (remote === undefined || Option.isNone(remote)) {
-          return yield* new RemoteEnvironmentAuthFetchError({
-            message: "No relay authorization service is available for the environment request.",
-            cause: input.prepared.target._tag,
-          });
-        }
-        const current = yield* remote.value
-          .authorizeDpopHttp({
-            expectedEnvironmentId: input.prepared.environmentId,
-            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
-          })
-          .pipe(
+        // T3-CUSTOM(expbkt3): reread the managed primary credential without crossing
+        // into the relay account/session. A replacement credential gets one retry.
+        if (input.prepared.target._tag === "PrimaryConnectionTarget") {
+          const primary = yield* Effect.serviceOption(PrimaryEnvironmentAuth);
+          if (Option.isNone(primary)) {
+            return yield* new RemoteEnvironmentAuthFetchError({
+              message: "No managed primary authorization is available for the environment request.",
+              cause: input.prepared.target._tag,
+            });
+          }
+          const current = yield* primary.value.dpopAuthorization.pipe(
             Effect.mapError(
               (cause) =>
                 new RemoteEnvironmentAuthFetchError({
-                  message: "Could not authorize the environment request.",
+                  message: "Could not authorize the managed environment request.",
                   cause,
                 }),
             ),
           );
-        httpBaseUrl = current.httpBaseUrl;
-        authorization = current.httpAuthorization;
+          // T3-CUSTOM(expbkt3): use the runtime clock to preserve expiry timing in Effect.
+          const now = yield* Clock.currentTimeMillis;
+          if (
+            Option.isNone(current) ||
+            current.value.expiresAtEpochMs <= now ||
+            current.value.accessToken === rejectedAccessToken
+          ) {
+            return yield* new RemoteEnvironmentAuthFetchError({
+              message:
+                "The managed environment credential is unavailable or requires pairing again.",
+              cause: input.prepared.target._tag,
+            });
+          }
+          authorization = {
+            _tag: "Dpop",
+            accessToken: current.value.accessToken,
+            expiresAtEpochMs: current.value.expiresAtEpochMs,
+          };
+        } else {
+          const remote = input.remoteAuthorization;
+          if (remote === undefined || Option.isNone(remote)) {
+            return yield* new RemoteEnvironmentAuthFetchError({
+              message: "No relay authorization service is available for the environment request.",
+              cause: input.prepared.target._tag,
+            });
+          }
+          const current = yield* remote.value
+            .authorizeDpopHttp({
+              expectedEnvironmentId: input.prepared.environmentId,
+              ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new RemoteEnvironmentAuthFetchError({
+                    message: "Could not authorize the environment request.",
+                    cause,
+                  }),
+              ),
+            );
+          httpBaseUrl = current.httpBaseUrl;
+          authorization = current.httpAuthorization;
+        }
       }
 
       const requestUrl = input.url(httpBaseUrl);

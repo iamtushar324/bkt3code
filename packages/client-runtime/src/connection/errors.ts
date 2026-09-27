@@ -111,7 +111,29 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
       });
   }
 }
+// T3-CUSTOM(expbkt3): BEGIN — team-mode environments reject a connection for
+// identity reasons, not only credential ones. Each needs a different action from
+// the operator, so they cannot share one "credential is invalid" message.
+type EnvironmentAuthInvalidReason = Extract<
+  RemoteEnvironmentAuthError,
+  { readonly _tag: "EnvironmentAuthInvalidError" }
+>["reason"];
 
+function environmentAuthInvalidDetail(reason: EnvironmentAuthInvalidReason): string {
+  switch (reason) {
+    case "missing_identity":
+      return "This environment requires a signed-in user. Sign in and try again.";
+    case "invalid_identity":
+      return "This environment did not accept your identity. It may belong to a different workspace, or your account may not be a member of it.";
+    case "blocked_identity":
+      return "Your account is blocked on this environment.";
+    case "missing_credential":
+    case "invalid_credential":
+      return "The environment credential is invalid.";
+  }
+}
+
+// T3-CUSTOM(expbkt3): END
 export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
   connectionMethod: ClientConnectionMethod = "direct",
@@ -121,7 +143,10 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        // T3-CUSTOM(expbkt3): BEGIN — an identity rejection is not a bad pairing
+        // code, and saying so sends people to re-copy a token that was fine.
+        detail: environmentAuthInvalidDetail(error.reason),
+        // T3-CUSTOM(expbkt3): END
         traceId: error.traceId,
       });
     case "EnvironmentScopeRequiredError":

@@ -20,9 +20,12 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import {
   ConnectionTransientError,
   RelayConnectionTarget,
+  PrimaryConnectionTarget,
   type PreparedConnection,
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
+// T3-CUSTOM(expbkt3): managed primary auth is independent of the relay account.
+import { PrimaryEnvironmentAuth } from "../platform/capabilities.ts";
 import { ManagedRelayDpopSigner, type ManagedRelayDpopProofInput } from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import {
@@ -80,6 +83,10 @@ const THREAD = {
     id: ThreadId.make("thread-1"),
     projectId: ProjectId.make("project-1"),
     title: "Thread",
+    // T3-CUSTOM(expbkt3): full persisted fork defaults returned by snapshot decoding.
+    memberUserIds: [],
+    ownerUserId: null,
+    sourceControlProfileId: null,
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -256,6 +263,43 @@ describe("authenticated environment HTTP requests", () => {
         expect(url.searchParams.get("reasoningMessages")).toBe("true");
       }
       expect(PREPARED.httpAuthorization).toMatchObject({ accessToken: "expired-token" });
+    }),
+  );
+
+  // T3-CUSTOM(expbkt3): do not route managed primary DPoP through T3 Connect.
+  it.effect("rereads managed primary authorization without contacting the relay", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SHELL));
+      const target = new PrimaryConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: "Managed environment",
+        httpBaseUrl: PREPARED.httpBaseUrl,
+        wsBaseUrl: "wss://previous.example.test",
+      });
+      const result = yield* fetchEnvironmentShellSnapshot({
+        ...harness.input,
+        prepared: { ...PREPARED, target },
+      }).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.provideService(PrimaryEnvironmentAuth, {
+          bearerToken: Effect.succeed(Option.none()),
+          dpopAuthorization: Effect.succeed(
+            Option.some({
+              accessToken: "managed-current-token",
+              expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+              resolveSocketUrl: () => Effect.die("HTTP must not prepare a WebSocket connection."),
+            }),
+          ),
+        }),
+      );
+      expect(result).toEqual(SHELL);
+      expect(harness.authorizations).toEqual([]);
+      expect(harness.calls).toHaveLength(1);
+      expect(new URL(harness.calls[0]!.url).origin).toBe(PREPARED.httpBaseUrl);
+      expect(new Headers(harness.calls[0]!.init.headers).get("authorization")).toBe(
+        "DPoP managed-current-token",
+      );
+      expect(harness.proofs[0]?.accessToken).toBe("managed-current-token");
     }),
   );
 

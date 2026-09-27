@@ -59,6 +59,7 @@ function makeShell(input: {
             startedAt: null,
             completedAt: input.turnCompletedAt,
             assistantMessageId: null,
+            durationMs: null,
           },
   };
 }
@@ -232,6 +233,7 @@ describe("hasQueuedTurnStart", () => {
         startedAt: null,
         completedAt: null,
         assistantMessageId: null,
+        durationMs: null,
       },
     });
     const failed = makeQueuedTurnShell({

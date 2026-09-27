@@ -388,3 +388,10 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     createdAt: metadata.createdAt,
   });
 });
+
+// T3-CUSTOM(expbkt3): BEGIN internals shared with commandsFork.ts
+export type ForkCommandInput<T extends CommandType> = CommandInput<T>;
+export type ForkCommandEffect = CommandEffect;
+export { commandId as commandIdInternal, dispatch as dispatchCommandInternal };
+export { timestampedCommandMetadata as timestampedCommandMetadataInternal };
+// T3-CUSTOM(expbkt3): END

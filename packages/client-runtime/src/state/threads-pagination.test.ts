@@ -62,6 +62,8 @@ function message(id: string, turnId: string, createdAt: string): OrchestrationMe
     text: `text of ${id}`,
     turnId: TurnId.make(turnId),
     streaming: false,
+    // T3-CUSTOM(expbkt3): messages carry their durable sender.
+    sentByUserId: null,
     createdAt,
     updatedAt: createdAt,
   };
@@ -111,6 +113,11 @@ const BASE_THREAD: OrchestrationThread = {
   activities: [],
   checkpoints: [checkpoint("turn-2", 2)],
   session: null,
+  // T3-CUSTOM(expbkt3): durable ownership, source-control identity and
+  // catch-up summaries are required on the fork's thread shape.
+  sourceControlProfileId: null,
+  ownerUserId: null,
+  memberUserIds: [],
 };
 
 const WINDOWED_SNAPSHOT: OrchestrationThreadDetailSnapshot = {

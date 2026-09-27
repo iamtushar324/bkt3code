@@ -18,6 +18,7 @@ export class RemoteDpopAccessToken extends Schema.Class<RemoteDpopAccessToken>(
   accessToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
   dpopThumbprint: Schema.String,
+  identitySubject: Schema.optional(Schema.String),
 }) {}
 
 export class RemoteDpopAccessTokenStore extends Context.Service<

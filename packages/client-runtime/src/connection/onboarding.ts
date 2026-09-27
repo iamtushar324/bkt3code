@@ -94,11 +94,24 @@ export const preparePairingRegistration = Effect.fn(
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
   if (compatibilityError !== null) return yield* compatibilityError;
+  // T3-CUSTOM(expbkt3): BEGIN — pair with the operator's Clerk identity when this
+  // client has one. A team-mode environment with `environmentUserIdentityMode:
+  // "required"` rejects an unidentified exchange; one set to "optional" would
+  // accept it as an unrestricted operator, which is worse. Optional service, so
+  // single-user clients and non-web platforms are unaffected.
+  const identity = yield* Effect.serviceOption(ClientCapabilities.EnvironmentIdentity);
+  const identityToken = Option.isSome(identity)
+    ? yield* identity.value.identityToken
+    : Option.none<string>();
+  // T3-CUSTOM(expbkt3): END
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
     scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
+    // T3-CUSTOM(expbkt3): BEGIN — bind the operator to the session this pairing creates.
+    ...(Option.isSome(identityToken) ? { identityToken: identityToken.value } : {}),
+    // T3-CUSTOM(expbkt3): END
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = `bearer:${descriptor.environmentId}`;
 
@@ -252,6 +265,11 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  // T3-CUSTOM(expbkt3): BEGIN — capture the optional identity capability the same way the
+  // other services here are captured, so pairing presents the operator regardless
+  // of which runtime invokes `registerPairing`.
+  const environmentIdentity = yield* Effect.serviceOption(ClientCapabilities.EnvironmentIdentity);
+  // T3-CUSTOM(expbkt3): END
 
   return ConnectionOnboarding.of({
     registerPairing: (input) =>
@@ -259,6 +277,17 @@ export const make = Effect.gen(function* () {
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        // T3-CUSTOM(expbkt3): BEGIN — forward the identity capability when this client has one.
+        (effect) =>
+          Option.isSome(environmentIdentity)
+            ? effect.pipe(
+                Effect.provideService(
+                  ClientCapabilities.EnvironmentIdentity,
+                  environmentIdentity.value,
+                ),
+              )
+            : effect,
+        // T3-CUSTOM(expbkt3): END
       ),
     registerSsh: (input) =>
       registerSshConnection(input).pipe(

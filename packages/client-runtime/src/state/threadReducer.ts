@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
+import { computeTurnDurationMs } from "@t3tools/contracts";
 import type {
   MessageId,
   OrchestrationCheckpointSummary,
@@ -122,8 +123,16 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          sourceControlProfileId: event.payload.sourceControlProfileId,
           branchPullRequest: null,
           latestTurn: null,
+          ownerUserId: event.payload.createdByUserId ?? null,
+          // T3-CUSTOM(expbkt3): BEGIN — creation tags the authenticated owner too.
+          memberUserIds:
+            event.payload.createdByUserId === null || event.payload.createdByUserId === undefined
+              ? []
+              : [event.payload.createdByUserId],
+          // T3-CUSTOM(expbkt3): END
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           archivedAt: null,
@@ -146,6 +155,18 @@ export function applyThreadDetailEvent(
 
     case "thread.deleted":
       return { kind: "deleted" };
+
+    case "thread.source-control-profile-set":
+      return event.payload.threadId === thread.id
+        ? {
+            kind: "updated",
+            thread: {
+              ...thread,
+              sourceControlProfileId: event.payload.sourceControlProfileId,
+              updatedAt: event.payload.changedAt,
+            },
+          }
+        : { kind: "unchanged" };
 
     case "thread.archived":
       return {
@@ -280,6 +301,29 @@ export function applyThreadDetailEvent(
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
             : {}),
+          // T3-CUSTOM(expbkt3): session priority.
+          ...(event.payload.priority !== undefined ? { priority: event.payload.priority } : {}),
+          // T3-CUSTOM(expbkt3): custom sidebar group.
+          ...(event.payload.customGroup !== undefined
+            ? { customGroup: event.payload.customGroup }
+            : {}),
+          // T3-CUSTOM(expbkt3): durable manual Linear tag.
+          ...(event.payload.linearIssueUrl !== undefined
+            ? { linearIssueUrl: event.payload.linearIssueUrl }
+            : {}),
+          // T3-CUSTOM(expbkt3): durable Mattermost conversation link.
+          ...(event.payload.mattermostThreadUrl !== undefined
+            ? { mattermostThreadUrl: event.payload.mattermostThreadUrl }
+            : {}),
+          // T3-CUSTOM(expbkt3): session lineage re-parent / detach. The parent's
+          // environment travels with its id, so a lineage that moved across
+          // machines renders without waiting for a refetch.
+          ...(event.payload.parentThreadId !== undefined
+            ? { parentThreadId: event.payload.parentThreadId }
+            : {}),
+          ...(event.payload.parentEnvironmentId !== undefined
+            ? { parentEnvironmentId: event.payload.parentEnvironmentId }
+            : {}),
           ...(event.payload.linkedPullRequest !== undefined
             ? { linkedPullRequest: event.payload.linkedPullRequest }
             : {}),
@@ -292,6 +336,55 @@ export function applyThreadDetailEvent(
           updatedAt: event.payload.updatedAt,
         },
       };
+
+    case "thread.member-added":
+      return thread.memberUserIds.includes(event.payload.userId)
+        ? { kind: "unchanged" }
+        : {
+            kind: "updated",
+            thread: {
+              ...thread,
+              memberUserIds: [...thread.memberUserIds, event.payload.userId],
+              updatedAt: event.payload.addedAt,
+            },
+          };
+
+    case "thread.member-removed":
+      return thread.memberUserIds.includes(event.payload.userId)
+        ? {
+            kind: "updated",
+            thread: {
+              ...thread,
+              memberUserIds: thread.memberUserIds.filter((id) => id !== event.payload.userId),
+              updatedAt: event.payload.removedAt,
+            },
+          }
+        : { kind: "unchanged" };
+
+    case "thread.owner-transferred": {
+      const memberUserIds = thread.memberUserIds.filter((id) => id !== event.payload.ownerUserId);
+      if (
+        event.payload.previousOwnerUserId !== null &&
+        event.payload.previousOwnerUserId !== event.payload.ownerUserId &&
+        !memberUserIds.includes(event.payload.previousOwnerUserId)
+      ) {
+        memberUserIds.push(event.payload.previousOwnerUserId);
+      }
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          ownerUserId: event.payload.ownerUserId,
+          memberUserIds,
+          updatedAt: event.payload.transferredAt,
+        },
+      };
+    }
+
+    case "project.member-added":
+    case "project.member-removed":
+    case "project.owner-transferred":
+      return { kind: "unchanged" };
 
     case "thread.pull-request-linked": {
       const link = event.payload.link;
@@ -379,6 +472,10 @@ export function applyThreadDetailEvent(
             state: "interrupted",
             startedAt: latestTurn.startedAt ?? event.payload.createdAt,
             completedAt: latestTurn.completedAt ?? event.payload.createdAt,
+            durationMs: computeTurnDurationMs(
+              latestTurn.startedAt ?? event.payload.createdAt,
+              latestTurn.completedAt ?? event.payload.createdAt,
+            ),
           },
           updatedAt: event.occurredAt,
         },
@@ -397,6 +494,7 @@ export function applyThreadDetailEvent(
         ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        sentByUserId: event.payload.sentByUserId ?? null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
       };
@@ -436,7 +534,7 @@ export function applyThreadDetailEvent(
         event.payload.role === "assistant" &&
           event.payload.turnId !== null &&
           (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
-          ? {
+          ? withTurnDuration({
               turnId: event.payload.turnId,
               state: settlesTurn
                 ? thread.latestTurn?.state === "interrupted"
@@ -459,7 +557,7 @@ export function applyThreadDetailEvent(
                   ? (thread.latestTurn.completedAt ?? null)
                   : null,
               assistantMessageId: event.payload.messageId,
-            }
+            })
           : thread.latestTurn,
       );
 
@@ -494,7 +592,7 @@ export function applyThreadDetailEvent(
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
-          ? {
+          ? withTurnDuration({
               turnId: event.payload.session.activeTurnId,
               state: "running",
               requestedAt:
@@ -510,18 +608,18 @@ export function applyThreadDetailEvent(
                 thread.latestTurn?.turnId === event.payload.session.activeTurnId
                   ? thread.latestTurn.assistantMessageId
                   : null,
-            }
+            })
           : thread.latestTurn !== null &&
               thread.latestTurn.state === "running" &&
               settledTurnState !== null
-            ? {
+            ? withTurnDuration({
                 ...thread.latestTurn,
                 state: settledTurnState,
                 // A running turn's completedAt can only hold a mid-turn
                 // placeholder checkpoint timestamp — the session leaving
                 // "running" is the authoritative turn end.
                 completedAt: event.payload.session.updatedAt,
-              }
+              })
             : thread.latestTurn,
       );
 
@@ -603,7 +701,7 @@ export function applyThreadDetailEvent(
       const latestTurn =
         !diffTurnStillRunning &&
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
-          ? {
+          ? withTurnDuration({
               turnId: event.payload.turnId,
               state:
                 thread.latestTurn?.state === "interrupted"
@@ -613,7 +711,7 @@ export function applyThreadDetailEvent(
               startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,
               assistantMessageId: event.payload.assistantMessageId,
-            }
+            })
           : thread.latestTurn;
 
       return {
@@ -670,6 +768,8 @@ export function applyThreadDetailEvent(
                   startedAt: latestCheckpoint.completedAt,
                   completedAt: latestCheckpoint.completedAt,
                   assistantMessageId: latestCheckpoint.assistantMessageId ?? null,
+                  // Reverted turns collapse to a single checkpoint instant.
+                  durationMs: 0,
                 },
           updatedAt: event.occurredAt,
         },
@@ -713,6 +813,36 @@ export function applyThreadDetailEvent(
           },
         };
       }
+      // T3-CUSTOM(expbkt3): BEGIN — an in-order context-window update drops the
+      // rows it supersedes in one linear pass instead of re-filtering, re-sorting
+      // and re-indexing the whole history. These updates are ~20% of a busy
+      // thread's activities, so replaying a long thread paid a full sort for each.
+      // Same result as the path below: the array is sorted, the id is unseen and
+      // the new row sorts at/after the tail, so it simply goes last.
+      if (
+        supersedesContextWindow &&
+        ids !== undefined &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !ids.has(activity.id)
+      ) {
+        const activities: OrchestrationThreadActivity[] = [];
+        for (const entry of thread.activities) {
+          if (entry.turnId === activity.turnId && isResolvableContextWindowActivity(entry)) {
+            ids.delete(entry.id);
+          } else {
+            activities.push(entry);
+          }
+        }
+        activities.push(activity);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
+        return {
+          kind: "updated",
+          thread: { ...thread, activities, updatedAt: event.occurredAt },
+        };
+      }
+      // T3-CUSTOM(expbkt3): END
       const activities = pipe(
         thread.activities,
         Arr.filter(
@@ -789,6 +919,13 @@ function checkpointStatusToTurnState(
  * Streaming cases recompute the latest turn on every delta, and keeping the
  * old reference lets selectors and memos keyed on `latestTurn` skip work.
  */
+// T3-CUSTOM(expbkt3): derived duration is part of visible turn state.
+function withTurnDuration(
+  turn: Omit<OrchestrationLatestTurn, "durationMs">,
+): OrchestrationLatestTurn {
+  return { ...turn, durationMs: computeTurnDurationMs(turn.startedAt, turn.completedAt) };
+}
+
 function reuseLatestTurn(
   previous: OrchestrationLatestTurn | null,
   next: OrchestrationLatestTurn | null,
@@ -801,6 +938,8 @@ function reuseLatestTurn(
     previous.requestedAt === next.requestedAt &&
     previous.startedAt === next.startedAt &&
     previous.completedAt === next.completedAt &&
+    // T3-CUSTOM(expbkt3): derived duration is part of visible turn state.
+    previous.durationMs === next.durationMs &&
     previous.assistantMessageId === next.assistantMessageId &&
     previous.sourceProposedPlan?.threadId === next.sourceProposedPlan?.threadId &&
     previous.sourceProposedPlan?.planId === next.sourceProposedPlan?.planId

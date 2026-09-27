@@ -76,6 +76,27 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   return Effect.fn("clientRuntime.connection.broker.primary")(function* (
     target: PrimaryConnectionTarget,
   ) {
+    // T3-CUSTOM(expbkt3): BEGIN - a managed BK build presents a DPoP-bound token, which
+    // cannot be sent as a bearer. `Option.none()` in every other build, so the bearer
+    // path below is reached exactly as it is today.
+    const dpopAuthorization = yield* auth.dpopAuthorization;
+    if (Option.isSome(dpopAuthorization)) {
+      return {
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: yield* dpopAuthorization.value.resolveSocketUrl({
+          wsBaseUrl: target.wsBaseUrl,
+        }),
+        httpAuthorization: {
+          _tag: "Dpop",
+          accessToken: dpopAuthorization.value.accessToken,
+          expiresAtEpochMs: dpopAuthorization.value.expiresAtEpochMs,
+        },
+        target,
+      } satisfies PreparedConnection;
+    }
+    // T3-CUSTOM(expbkt3): END
     const bearerToken = yield* auth.bearerToken;
     if (Option.isNone(bearerToken)) {
       return {

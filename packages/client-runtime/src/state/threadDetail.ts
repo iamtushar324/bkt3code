@@ -53,6 +53,8 @@ export function mergeEnvironmentThread(
     branch: shell.branch,
     worktreePath: shell.worktreePath,
     latestTurn: shell.latestTurn,
+    ownerUserId: shell.ownerUserId,
+    memberUserIds: shell.memberUserIds,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
     archivedAt: shell.archivedAt,

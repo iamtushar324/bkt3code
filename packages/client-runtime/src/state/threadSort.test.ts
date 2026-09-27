@@ -119,6 +119,8 @@ describe("sortSettledThreads", () => {
           requestedAt: "2026-03-09T10:00:00.000Z",
           startedAt: "2026-03-09T10:00:00.000Z",
           completedAt: "2026-03-09T10:30:00.000Z",
+          // T3-CUSTOM(expbkt3): fork field
+          durationMs: null,
         },
       }),
     ]);

@@ -1110,6 +1110,27 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    // T3-CUSTOM(expbkt3): User-scoped automation/MCP state is intentionally
+    // separate from server-wide settings.
+    personalMcpProfile: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:personal-mcp:profile",
+      tag: WS_METHODS.personalMcpGetProfile,
+    }),
+    updatePersonalMcpProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:personal-mcp:update-profile",
+      tag: WS_METHODS.personalMcpUpdateProfile,
+      concurrency: configConcurrency,
+    }),
+    rotatePersonalMcpToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:personal-mcp:rotate-token",
+      tag: WS_METHODS.personalMcpRotateToken,
+      concurrency: configConcurrency,
+    }),
+    revokePersonalMcpToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:personal-mcp:revoke-token",
+      tag: WS_METHODS.personalMcpRevokeToken,
+      concurrency: configConcurrency,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

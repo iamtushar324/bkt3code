@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
 import { applyShellStreamEvent } from "./shellReducer.ts";
@@ -19,6 +19,8 @@ const stubProject = {
   repositoryIdentity: null,
   defaultModelSelection: null,
   scripts: [],
+  ownerUserId: null,
+  memberUserIds: [],
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
 } as const;
@@ -30,9 +32,12 @@ const stubThread = {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
+  sourceControlProfileId: null,
   branch: null,
   worktreePath: null,
   latestTurn: null,
+  ownerUserId: null,
+  memberUserIds: [],
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
@@ -54,17 +59,32 @@ describe("applyShellStreamEvent", () => {
       projects: [stubProject],
     };
 
-    for (const sequence of [3, 4]) {
-      const next = applyShellStreamEvent(snapshotWithProject, {
-        kind: "project-upserted",
-        sequence,
-        project: { ...stubProject, title: "Stale Title" },
-      });
+    const next = applyShellStreamEvent(snapshotWithProject, {
+      kind: "project-upserted",
+      sequence: 3,
+      project: { ...stubProject, title: "Stale Title" },
+    });
 
-      expect(next).toBe(snapshotWithProject);
-      expect(next.snapshotSequence).toBe(4);
-      expect(next.projects[0]?.title).toBe("Test Project");
-    }
+    expect(next).toBe(snapshotWithProject);
+    expect(next.snapshotSequence).toBe(4);
+    expect(next.projects[0]?.title).toBe("Test Project");
+  });
+
+  it("applies multiple derived frames that share one durable sequence", () => {
+    const withProject = applyShellStreamEvent(baseSnapshot, {
+      kind: "project-upserted",
+      sequence: 1,
+      project: stubProject,
+    });
+    const withProjectAndThread = applyShellStreamEvent(withProject, {
+      kind: "thread-upserted",
+      sequence: 1,
+      thread: stubThread,
+    });
+
+    expect(withProjectAndThread.snapshotSequence).toBe(1);
+    expect(withProjectAndThread.projects.map((project) => project.id)).toEqual(["project-1"]);
+    expect(withProjectAndThread.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
   });
 
   describe("project-upserted", () => {
@@ -156,6 +176,10 @@ describe("applyShellStreamEvent", () => {
       expect(next.threads).toHaveLength(1);
       expect(next.threads[0]?.title).toBe("Updated Thread");
     });
+
+    // T3-CUSTOM(expbkt3): the overlay is preserved across upserts, so it needs a
+    // way out. Execution frames are live-only and never replayed, so a client
+    // that was away when the turn ended would otherwise pin "Running" forever.
   });
 
   describe("thread-removed", () => {

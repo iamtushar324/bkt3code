@@ -203,6 +203,42 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
   return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — project nickname helpers.
+export function normalizeProjectNickname(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function repositoryNameSegment(value: string): string | null {
+  const withoutQuery = value
+    .trim()
+    .replace(/[?#].*$/u, "")
+    .replace(/[\\/]+$/u, "");
+  const segment = withoutQuery
+    .split(/[\\/:]/u)
+    .findLast(Boolean)
+    ?.replace(/\.git$/iu, "");
+  return segment ? normalizeProjectNickname(segment) : null;
+}
+
+export function suggestProjectNickname(input: {
+  readonly workspaceRoot?: string | null;
+  readonly repositoryName?: string | null;
+  readonly remoteUrl?: string | null;
+}): string {
+  const repositoryName = input.repositoryName ? repositoryNameSegment(input.repositoryName) : null;
+  if (repositoryName) return repositoryName;
+
+  const remoteName = input.remoteUrl ? repositoryNameSegment(input.remoteUrl) : null;
+  if (remoteName) return remoteName;
+
+  const workspaceName = input.workspaceRoot
+    ? normalizeProjectNickname(inferProjectTitleFromPath(input.workspaceRoot))
+    : null;
+  return workspaceName ?? "Repository";
+}
+// T3-CUSTOM(expbkt3): END
+
 /**
  * Folder name `git clone` would pick, from either a looked-up repository or a
  * pasted clone URL. Providers report `owner/repo`, Azure DevOps reports
@@ -308,14 +344,19 @@ export function findExistingAddProject(input: {
 export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
+  readonly title: string;
   readonly workspaceRoot: string;
   readonly createdAt: string;
 }): Extract<OrchestrationCommand, { type: "project.create" }> {
+  const title = normalizeProjectNickname(input.title);
+  if (!title) {
+    throw new TypeError("Project nickname must not be empty.");
+  }
   return {
     type: "project.create",
     commandId: input.commandId,
     projectId: input.projectId,
-    title: inferProjectTitleFromPath(input.workspaceRoot),
+    title,
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,

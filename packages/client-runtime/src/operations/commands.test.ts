@@ -3,15 +3,19 @@ import {
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -24,12 +28,14 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  createThread,
   revertThreadCheckpoint,
   reorderActiveThread,
   settleThread,
   stopThreadSession,
   unsettleThread,
 } from "./commands.ts";
+import { restartThreadSession } from "./commandsFork.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
   Crypto.Crypto,
@@ -48,13 +54,19 @@ const TARGET = new PrimaryConnectionTarget({
 
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (
   dispatched: ClientOrchestrationCommand[],
+  dispatchOverride?: (
+    command: ClientOrchestrationCommand,
+  ) => Effect.Effect<{ readonly sequence: number }>,
+  retryNow: Effect.Effect<void> = Effect.void,
 ) {
   const client = {
     [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
-      Effect.sync(() => {
-        dispatched.push(command);
-        return { sequence: dispatched.length };
-      }),
+      dispatchOverride
+        ? dispatchOverride(command)
+        : Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: dispatched.length };
+          }),
   } as unknown as WsRpcProtocolClient;
   const session: RpcSession.RpcSession = {
     client,
@@ -71,7 +83,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
     connect: Effect.void,
     disconnect: Effect.void,
-    retryNow: Effect.void,
+    retryNow,
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
@@ -140,6 +152,28 @@ describe("environment commands", () => {
           commandId: "queued-command",
           threadId: "thread-1",
           createdAt: "2026-06-06T00:01:00.000Z",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches a provider session restart command", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* restartThreadSession({
+        commandId: CommandId.make("restart-command"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: "2026-06-06T00:02:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.session.restart",
+          commandId: "restart-command",
+          threadId: "thread-1",
+          createdAt: "2026-06-06T00:02:00.000Z",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

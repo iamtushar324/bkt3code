@@ -38,12 +38,18 @@ const thread: OrchestrationThread = {
   settledAt: null,
   deletedAt: null,
   pullRequests: [],
+  // T3-CUSTOM(expbkt3): fork-required thread fields absent from this upstream fixture.
+  sourceControlProfileId: null,
+  ownerUserId: null,
+  memberUserIds: [],
   messages: Array.from({ length: 100 }, (_, index) => ({
     id: MessageId.make(`message-${index}`),
     role: "assistant",
     text: "Message text. ".repeat(40),
     turnId: null,
     streaming: false,
+    // T3-CUSTOM(expbkt3): sender attribution is a fork-required message field.
+    sentByUserId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   })),

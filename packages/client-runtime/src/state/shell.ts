@@ -101,6 +101,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     Effect.andThen(
       SubscriptionRef.update(state, (current) => ({
         ...current,
+        snapshot: current.snapshot,
         status: shellStatusForSnapshot(current.snapshot),
       })),
     ),
@@ -129,6 +130,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       Effect.andThen(
         SubscriptionRef.update(state, (current) => ({
           ...current,
+          snapshot: current.snapshot,
           status: shellStatusForSnapshot(current.snapshot),
           error: Option.some(SHELL_SYNCHRONIZATION_ERROR_MESSAGE),
         })),
@@ -158,10 +160,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ? item.snapshot
           : Option.match(next.snapshot, {
               onNone: () => null,
-              onSome: (snapshot) =>
-                item.sequence > snapshot.snapshotSequence
-                  ? applyShellStreamEvent(snapshot, item)
-                  : snapshot,
+              // T3-CUSTOM(expbkt3): the reducer accepts equal-sequence derived
+              // frames. Team-mode visibility emits a parent-project upsert
+              // followed by its thread upsert at the same durable sequence;
+              // filtering here previously discarded the thread and left the
+              // sidebar stale until refresh.
+              onSome: (snapshot) => applyShellStreamEvent(snapshot, item),
             });
       if (nextSnapshot === null) continue;
       receivedSnapshot ||= item.kind === "snapshot";
@@ -254,6 +258,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       }),
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
+        // A shell stream is the live source for sidebar rows and draft-to-thread
+        // promotion. An expected subscription failure must not permanently
+        // freeze the last snapshot; without this retry, only a page reload or a
+        // full connection restart could make newly-created threads visible.
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },

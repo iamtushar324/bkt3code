@@ -20,6 +20,8 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+// T3-CUSTOM(expbkt3): fork thread commands require the environment cache store.
+import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 
@@ -52,6 +54,11 @@ const SNAPSHOT: OrchestrationShellSnapshot = {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      // T3-CUSTOM(expbkt3): BEGIN fork fields
+      sourceControlProfileId: null,
+      ownerUserId: null,
+      memberUserIds: [],
+      // T3-CUSTOM(expbkt3): END
     },
   ],
 };
@@ -82,6 +89,25 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
         run: (_environmentId, effect) =>
           Effect.provideService(effect, EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry["Service"]),
+      // T3-CUSTOM(expbkt3): BEGIN fork thread commands require the environment cache store.
+      Layer.succeed(
+        EnvironmentCacheStore,
+        EnvironmentCacheStore.of({
+          loadShell: () => Effect.succeedNone,
+          saveShell: () => Effect.void,
+          loadThread: () => Effect.succeedNone,
+          saveThread: () => Effect.void,
+          removeThread: () => Effect.void,
+          loadServerConfig: () => Effect.succeedNone,
+          saveServerConfig: () => Effect.void,
+          loadVcsRefs: () => Effect.succeedNone,
+          saveVcsRefs: () => Effect.void,
+          removeVcsRefs: () => Effect.void,
+          clearVcsRefs: () => Effect.void,
+          clear: () => Effect.void,
+        }),
+      ),
+      // T3-CUSTOM(expbkt3): END
       Layer.succeed(
         Crypto.Crypto,
         Crypto.make({

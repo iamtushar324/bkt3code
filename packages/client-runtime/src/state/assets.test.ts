@@ -125,6 +125,7 @@ describe("createAssetEnvironmentAtoms", () => {
               connect: Effect.void,
               disconnect: Effect.void,
               retryNow: Effect.void,
+              // T3-CUSTOM(expbkt3): dead-transport escalation entry point on the supervisor.
             }),
           );
         }

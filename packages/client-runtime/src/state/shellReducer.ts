@@ -13,7 +13,11 @@ export function applyShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: OrchestrationShellStreamEvent,
 ): OrchestrationShellSnapshot {
-  if (event.sequence <= snapshot.snapshotSequence) return snapshot;
+  // Team-mode visibility may expand one durable event into multiple derived
+  // shell frames (for example, parent project then new thread) that deliberately
+  // share a sequence. Applying equal-sequence frames is safe because every
+  // operation below is idempotent; only genuinely older frames are stale.
+  if (event.sequence < snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {
     case "project-upserted": {

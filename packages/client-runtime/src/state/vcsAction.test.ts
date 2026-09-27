@@ -301,7 +301,7 @@ describe("vcsActionState", () => {
         environmentId,
         cwd,
       }),
-    ).toBe(JSON.stringify([environmentId, cwd]));
+    ).toBe(JSON.stringify([environmentId, cwd, null]));
     expect(getVcsActionTargetKey({ environmentId: null, cwd })).toBeNull();
     expect(
       getVcsActionTargetKey({
@@ -312,10 +312,11 @@ describe("vcsActionState", () => {
   });
 
   it("normalizes progress only for the matching environment-scoped action", () => {
-    const target = { environmentId, cwd };
+    const target = { environmentId, cwd, threadId: null };
     const otherTarget = {
       environmentId: EnvironmentId.make("environment-2"),
       cwd,
+      threadId: null,
     };
     const transportActionId = createVcsActionTransportId(target, actionId);
     const event = progress({
@@ -341,7 +342,7 @@ describe("vcsActionState", () => {
 
   it.effect("consumes progress through the terminal event and returns its result", () =>
     Effect.gen(function* () {
-      const target = { environmentId, cwd };
+      const target = { environmentId, cwd, threadId: null };
       const transportActionId = createVcsActionTransportId(target, actionId);
       const observed: GitActionProgressEvent[] = [];
       const events: GitActionProgressEvent[] = [
@@ -389,7 +390,7 @@ describe("vcsActionState", () => {
 
   it.effect("retains structural remote failure context without copying the remote payload", () =>
     Effect.gen(function* () {
-      const target = { environmentId, cwd };
+      const target = { environmentId, cwd, threadId: null };
       const transportActionId = createVcsActionTransportId(target, actionId);
       const remoteMessage = "The remote rejected the push with credential=do-not-log.";
       const error = yield* consumeVcsActionProgress(
@@ -430,7 +431,7 @@ describe("vcsActionState", () => {
 
   it.effect("reports a missing terminal event as a protocol failure", () =>
     Effect.gen(function* () {
-      const target = { environmentId, cwd };
+      const target = { environmentId, cwd, threadId: null };
       const transportActionId = createVcsActionTransportId(target, actionId);
       const error = yield* consumeVcsActionProgress(
         Stream.fromIterable<GitActionProgressEvent>([
@@ -583,7 +584,7 @@ describe("vcsActionState", () => {
           attempt: 1,
           generation: 1,
         };
-        const targetKey = { environmentId, cwd };
+        const targetKey = { environmentId, cwd, threadId: null };
         const successfulActionId = "invalidate-success";
         const failedActionId = "invalidate-failure";
         const successfulTransportActionId = createVcsActionTransportId(

@@ -14,6 +14,9 @@ import * as Schema from "effect/Schema";
 
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { ConnectionTarget } from "../connection/model.ts";
+// T3-CUSTOM(expbkt3): BEGIN — exact payload shared across client surfaces.
+import type { QueuedThreadMessage } from "../outbox/model.ts";
+// T3-CUSTOM(expbkt3): END
 
 export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
@@ -35,6 +38,11 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "save-vcs-refs",
       "remove-vcs-refs",
       "clear-vcs-refs",
+      // T3-CUSTOM(expbkt3): BEGIN — durable outbox persistence operations.
+      "load-outbox",
+      "save-outbox",
+      "remove-outbox",
+      // T3-CUSTOM(expbkt3): END
       "clear-environment",
     ]),
     message: Schema.String,
@@ -125,6 +133,24 @@ export class EnvironmentCacheStore extends Context.Service<
     readonly clearVcsRefs: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
+    // T3-CUSTOM(expbkt3): BEGIN — durable pending sends.
+    /**
+     * Durable pending sends are isolated by authenticated
+     * identity and removed only after a server command receipt is accepted.
+     * Optional during rolling upgrades; clients without these operations keep
+     * their existing platform-specific outbox implementation.
+     */
+    readonly loadOutbox?: (
+      environmentId: EnvironmentId,
+      identityKey: string,
+    ) => Effect.Effect<ReadonlyArray<QueuedThreadMessage>, ConnectionPersistenceError>;
+    readonly saveOutbox?: (
+      message: QueuedThreadMessage,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly removeOutbox?: (
+      message: Pick<QueuedThreadMessage, "environmentId" | "identityKey" | "messageId">,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** T3-CUSTOM(expbkt3): END */
     readonly clear: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;

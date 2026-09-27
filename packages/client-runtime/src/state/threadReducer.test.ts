@@ -4,12 +4,14 @@ import {
   CheckpointRef,
   CommandId,
   ComposerContextId,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  UserId,
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "@t3tools/contracts";
 
@@ -30,9 +32,12 @@ const baseThread: OrchestrationThread = {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
   interactionMode: "default",
+  sourceControlProfileId: null,
   branch: null,
   worktreePath: null,
   latestTurn: null,
+  ownerUserId: null,
+  memberUserIds: [],
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
@@ -89,6 +94,7 @@ describe("applyThreadDetailEvent", () => {
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          sourceControlProfileId: null,
           branch: "main",
           worktreePath: null,
           createdAt: "2026-04-01T01:00:00.000Z",
@@ -387,6 +393,50 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    // T3-CUSTOM(expbkt3): BEGIN — a parent may live on another machine.
+    it("moves a lineage to another environment and back", () => {
+      const moved = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-elsewhere"),
+          parentEnvironmentId: EnvironmentId.make("environment-remote"),
+          updatedAt: "2026-04-01T05:00:00.000Z",
+        },
+      });
+
+      expect(moved.kind).toBe("updated");
+      if (moved.kind !== "updated") return;
+      expect(moved.thread.parentThreadId).toBe("thread-elsewhere");
+      expect(moved.thread.parentEnvironmentId).toBe("environment-remote");
+
+      const detached = applyThreadDetailEvent(moved.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          parentThreadId: null,
+          parentEnvironmentId: null,
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(detached.kind).toBe("updated");
+      if (detached.kind !== "updated") return;
+      expect(detached.thread.parentThreadId).toBeNull();
+      expect(detached.thread.parentEnvironmentId).toBeNull();
+    });
+    // T3-CUSTOM(expbkt3): END
+
     it.each(["linkedPullRequest", "branchPullRequest"] as const)(
       "sets and clears %s without changing the other link",
       (field) => {
@@ -566,6 +616,39 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.owner-transferred", () => {
+    it("moves the new owner out of members and keeps the previous owner assigned", () => {
+      const previousOwner = UserId.make("user-previous-owner");
+      const nextOwner = UserId.make("user-next-owner");
+      const thread = {
+        ...baseThread,
+        ownerUserId: previousOwner,
+        memberUserIds: [nextOwner],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.owner-transferred",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          previousOwnerUserId: previousOwner,
+          ownerUserId: nextOwner,
+          transferredByUserId: previousOwner,
+          transferredAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.ownerUserId).toBe(nextOwner);
+        expect(result.thread.memberUserIds).toEqual([previousOwner]);
+      }
+    });
+  });
+
   describe("thread.message-sent", () => {
     it.each([
       ["first", ["first+", "middle", "last"]],
@@ -583,6 +666,8 @@ describe("applyThreadDetailEvent", () => {
             streaming: false,
             createdAt: baseThread.createdAt,
             updatedAt: baseThread.updatedAt,
+            // T3-CUSTOM(expbkt3): sender attribution is a fork-required message field.
+            sentByUserId: null,
           }),
         ),
       );
@@ -728,6 +813,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Hello",
             turnId: TurnId.make("turn-1"),
             streaming: true,
+            sentByUserId: null,
             createdAt: "2026-04-01T06:00:00.000Z",
             updatedAt: "2026-04-01T06:00:00.000Z",
           },
@@ -807,6 +893,7 @@ describe("applyThreadDetailEvent", () => {
           startedAt: "2026-04-01T06:59:00.000Z",
           completedAt: null,
           assistantMessageId: null,
+          durationMs: null,
         },
       };
 
@@ -855,6 +942,7 @@ describe("applyThreadDetailEvent", () => {
           startedAt: "2026-04-01T06:59:00.000Z",
           completedAt: null,
           assistantMessageId: MessageId.make("msg-2"),
+          durationMs: null,
         },
         messages: [
           {
@@ -863,6 +951,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Hello",
             turnId: TurnId.make("turn-1"),
             streaming: true,
+            sentByUserId: null,
             createdAt: "2026-04-01T06:00:00.000Z",
             updatedAt: "2026-04-01T06:00:00.000Z",
           },
@@ -927,6 +1016,7 @@ describe("applyThreadDetailEvent", () => {
           startedAt: "2026-04-01T06:59:00.000Z",
           completedAt: null,
           assistantMessageId: null,
+          durationMs: null,
         },
         checkpoints: [
           {
@@ -981,6 +1071,7 @@ describe("applyThreadDetailEvent", () => {
           startedAt: "2026-04-01T07:00:00.000Z",
           completedAt: null,
           assistantMessageId: MessageId.make("msg-3"),
+          durationMs: null,
         },
       };
 
@@ -1483,6 +1574,7 @@ describe("applyThreadDetailEvent", () => {
                     startedAt: "2026-04-01T11:00:00.000Z",
                     completedAt: "2026-04-01T12:00:00.000Z",
                     assistantMessageId: null,
+                    durationMs: null,
                   },
           },
           {
@@ -1526,6 +1618,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Imported prompt",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-03-01T00:00:00.000Z",
             updatedAt: "2026-03-01T00:00:00.000Z",
           },
@@ -1535,6 +1628,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Imported answer",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-03-01T00:01:00.000Z",
             updatedAt: "2026-03-01T00:01:00.000Z",
           },
@@ -1544,6 +1638,7 @@ describe("applyThreadDetailEvent", () => {
             text: "New work",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T01:00:00.000Z",
             updatedAt: "2026-04-01T01:00:00.000Z",
           },
@@ -1579,6 +1674,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Earlier",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T10:30:00.000+02:00",
             updatedAt: "2026-04-01T10:30:00.000+02:00",
           },
@@ -1588,6 +1684,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Later",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T09:00:00.000Z",
             updatedAt: "2026-04-01T09:00:00.000Z",
           },
@@ -1620,6 +1717,7 @@ describe("applyThreadDetailEvent", () => {
             text: "First",
             turnId: null,
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T01:00:00.000Z",
             updatedAt: "2026-04-01T01:00:00.000Z",
           },
@@ -1629,6 +1727,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Response 1",
             turnId: TurnId.make("turn-1"),
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T02:00:00.000Z",
             updatedAt: "2026-04-01T02:00:00.000Z",
           },
@@ -1638,6 +1737,7 @@ describe("applyThreadDetailEvent", () => {
             text: "Response 2",
             turnId: TurnId.make("turn-2"),
             streaming: false,
+            sentByUserId: null,
             createdAt: "2026-04-01T03:00:00.000Z",
             updatedAt: "2026-04-01T03:00:00.000Z",
           },

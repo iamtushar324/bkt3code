@@ -176,6 +176,26 @@ describe("terminal session reducers", () => {
     expect(restarted).toMatchObject({ status: "running", lifecycleVersion: 1 });
   });
 
+  it("advances the version and buffer epoch when a snapshot replaces terminal history", () => {
+    const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const restarted = applyTerminalAttachStreamEvent(initial, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: { ...BASE_SNAPSHOT, history: "replacement" },
+    });
+
+    // T3-CUSTOM(expbkt3): upstream resetVersion replaces the fork buffer epoch.
+    expect(terminalOutputText(restarted.output)).toBe("replacement");
+    expect(restarted).toMatchObject({
+      output: expect.objectContaining({ resetVersion: 2 }),
+      version: 2,
+    });
+  });
+
   it("reduces terminal metadata snapshots, upserts, and removals", () => {
     const initial = applyTerminalMetadataStreamEvent([], {
       type: "snapshot",
