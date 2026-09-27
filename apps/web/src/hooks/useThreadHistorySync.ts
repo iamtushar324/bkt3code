@@ -55,9 +55,10 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
   const visible = useSyncExternalStore(subscribeVisibility, documentVisible, () => true);
   // When this thread last became live (or was switched to); the first page
   // waits out the settle period.
-  const liveSince = useRef<number | null>(null);
+  const liveSince = useRef<{ readonly key: string; readonly at: number } | null>(null);
   useEffect(() => {
-    liveSince.current = status === "live" ? Date.now() : null;
+    liveSince.current =
+      status === "live" ? { key: `${environmentId}:${threadId}`, at: Date.now() } : null;
   }, [status, environmentId, threadId]);
 
   useEffect(() => {
@@ -75,8 +76,11 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
     ) {
       return;
     }
+    const since = liveSince.current;
     const settleRemainingMs =
-      liveSince.current === null ? 0 : liveSince.current + HISTORY_SYNC_SETTLE_MS - Date.now();
+      since === null || since.key !== `${environmentId}:${threadId}`
+        ? HISTORY_SYNC_SETTLE_MS
+        : since.at + HISTORY_SYNC_SETTLE_MS - Date.now();
     const timer = setTimeout(
       () => {
         requestOlderThreadTurns(environmentId, threadId);
