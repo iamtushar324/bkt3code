@@ -81,6 +81,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.die("CheckpointDiffQuery should not request the command read model"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+            // T3-CUSTOM(expbkt3): required bounded projection-query test doubles.
+            listLatestProposedPlansForActiveThreads: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
             getDeletedWorktreeThreads: () => Effect.die("unused"),
@@ -112,9 +114,12 @@ describe("CheckpointDiffQuery.layer", () => {
                   toCheckpointRef,
                 });
               }),
+            getThreadAccessById: () => Effect.succeed(Option.none()),
             getThreadRuntimeContext: () => Effect.die("unused"),
             getTurnStartMessage: () => Effect.die("unused"),
+            countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
             getThreadShellById: () => Effect.succeedNone,
+            listThreadShellsByProjectId: () => Effect.succeed([]),
             getThreadDetailById: () => Effect.succeedNone,
             getThreadDetailSnapshot: () => Effect.succeedNone,
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -199,6 +204,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.die("CheckpointDiffQuery should not request the command read model"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+            // T3-CUSTOM(expbkt3): required bounded projection-query test doubles.
+            listLatestProposedPlansForActiveThreads: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
             getDeletedWorktreeThreads: () => Effect.die("unused"),
@@ -215,9 +222,12 @@ describe("CheckpointDiffQuery.layer", () => {
             getImportedAgentSessionSources: () => Effect.die("unused"),
             getThreadCheckpointContext: () => Effect.succeedSome(threadCheckpointContext),
             getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadAccessById: () => Effect.succeed(Option.none()),
             getThreadRuntimeContext: () => Effect.die("unused"),
             getTurnStartMessage: () => Effect.die("unused"),
+            countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
             getThreadShellById: () => Effect.succeedNone,
+            listThreadShellsByProjectId: () => Effect.succeed([]),
             getThreadDetailById: () => Effect.succeedNone,
             getThreadDetailSnapshot: () => Effect.succeedNone,
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -292,6 +302,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.die("CheckpointDiffQuery should not request the command read model"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+            // T3-CUSTOM(expbkt3): required bounded projection-query test doubles.
+            listLatestProposedPlansForActiveThreads: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
             getDeletedWorktreeThreads: () => Effect.die("unused"),
@@ -308,9 +320,12 @@ describe("CheckpointDiffQuery.layer", () => {
             getImportedAgentSessionSources: () => Effect.die("unused"),
             getThreadCheckpointContext: () => Effect.succeedSome(threadCheckpointContext),
             getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadAccessById: () => Effect.succeed(Option.none()),
             getThreadRuntimeContext: () => Effect.die("unused"),
             getTurnStartMessage: () => Effect.die("unused"),
+            countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
             getThreadShellById: () => Effect.succeedNone,
+            listThreadShellsByProjectId: () => Effect.succeed([]),
             getThreadDetailById: () => Effect.succeedNone,
             getThreadDetailSnapshot: () => Effect.succeedNone,
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -370,6 +385,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.die("CheckpointDiffQuery should not request the command read model"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+            // T3-CUSTOM(expbkt3): required bounded projection-query test doubles.
+            listLatestProposedPlansForActiveThreads: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
             getDeletedWorktreeThreads: () => Effect.die("unused"),
@@ -386,9 +403,12 @@ describe("CheckpointDiffQuery.layer", () => {
             getImportedAgentSessionSources: () => Effect.die("unused"),
             getThreadCheckpointContext: () => Effect.succeedSome(threadCheckpointContext),
             getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadAccessById: () => Effect.succeed(Option.none()),
             getThreadRuntimeContext: () => Effect.die("unused"),
             getTurnStartMessage: () => Effect.die("unused"),
+            countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
             getThreadShellById: () => Effect.succeedNone,
+            listThreadShellsByProjectId: () => Effect.succeed([]),
             getThreadDetailById: () => Effect.succeedNone,
             getThreadDetailSnapshot: () => Effect.succeedNone,
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -433,6 +453,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.die("CheckpointDiffQuery should not request the command read model"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+            // T3-CUSTOM(expbkt3): required bounded projection-query test doubles.
+            listLatestProposedPlansForActiveThreads: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
             getDeletedWorktreeThreads: () => Effect.die("unused"),
@@ -449,9 +471,12 @@ describe("CheckpointDiffQuery.layer", () => {
             getImportedAgentSessionSources: () => Effect.die("unused"),
             getThreadCheckpointContext: () => Effect.succeedNone,
             getFullThreadDiffContext: () => Effect.succeedNone,
+            getThreadAccessById: () => Effect.succeed(Option.none()),
             getThreadRuntimeContext: () => Effect.die("unused"),
             getTurnStartMessage: () => Effect.die("unused"),
+            countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
             getThreadShellById: () => Effect.succeedNone,
+            listThreadShellsByProjectId: () => Effect.succeed([]),
             getThreadDetailById: () => Effect.succeedNone,
             getThreadDetailSnapshot: () => Effect.succeedNone,
             searchThreads: () => Effect.succeed({ matches: [] }),

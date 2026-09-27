@@ -30,6 +30,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { SourceControlProfileService } from "../../sourceControl/SourceControlProfileService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -86,6 +87,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const sourceControlProfiles = yield* Effect.serviceOption(SourceControlProfileService);
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -868,10 +870,21 @@ const make = Effect.gen(function* () {
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
+      const sourceControlContext = yield* Option.match(sourceControlProfiles, {
+        onNone: () => Effect.succeed(null),
+        // T3-CUSTOM(expbkt3): attribution follows durable thread ownership.
+        onSome: (profiles) =>
+          profiles.resolveThreadExecutionContext(thread.id, thread.ownerUserId, {}),
+      });
+      const rollbackInput = {
         threadId: event.payload.threadId,
         numTurns: rolledBackTurns,
-      });
+      };
+      yield* sourceControlContext
+        ? providerService.rollbackConversation(rollbackInput, {
+            environment: sourceControlContext.environment,
+          })
+        : providerService.rollbackConversation(rollbackInput);
     }
 
     const staleCheckpointRefs: Array<CheckpointRef> = [];

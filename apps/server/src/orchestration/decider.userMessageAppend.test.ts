@@ -60,6 +60,8 @@ const readModelWithThread = Effect.gen(function* () {
       interactionMode: "default",
       branch: null,
       worktreePath: null,
+      // T3-CUSTOM(expbkt3): fork field
+      sourceControlProfileId: null,
       createdAt,
       updatedAt: createdAt,
     },

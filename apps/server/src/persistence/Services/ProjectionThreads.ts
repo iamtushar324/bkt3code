@@ -8,16 +8,21 @@
  */
 import {
   CommandId,
+  // T3-CUSTOM(expbkt3): a parent session may live on another environment.
+  EnvironmentId,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  SourceControlProfileId,
   ThreadLinkedPullRequest,
   ThreadTitleState,
   ThreadId,
+  ThreadPriority,
   TurnId,
+  UserId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -36,9 +41,11 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  sourceControlProfileId: Schema.NullOr(SourceControlProfileId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurnId: Schema.NullOr(TurnId),
+  ownerUserId: Schema.NullOr(UserId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
@@ -47,6 +54,19 @@ export const ProjectionThread = Schema.Struct({
   unsettledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  // T3-CUSTOM(expbkt3): session priority (P0..P4 as 0..4, null = unset).
+  priority: Schema.NullOr(ThreadPriority),
+  // T3-CUSTOM(expbkt3): custom sidebar group label (null = ungrouped).
+  customGroup: Schema.optional(Schema.NullOr(Schema.String)),
+  // T3-CUSTOM(expbkt3): durable manual Linear issue URL.
+  linearIssueUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  // T3-CUSTOM(expbkt3): durable Mattermost conversation permalink.
+  mattermostThreadUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  // T3-CUSTOM(expbkt3): session lineage; null means this is a root session.
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  // T3-CUSTOM(expbkt3): the environment the parent id belongs to. Null means
+  // this thread's own, so every pre-existing row keeps its meaning.
+  parentEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   activeOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
@@ -56,6 +76,8 @@ export const ProjectionThread = Schema.Struct({
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
+  // T3-CUSTOM(expbkt3): visible async questions never set the blocking count.
+  pendingAsyncUserInputCount: Schema.optional(NonNegativeInt),
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
@@ -83,6 +105,14 @@ export interface ProjectionThreadRepositoryShape {
   readonly getById: (
     input: GetProjectionThreadInput,
   ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
+
+  // T3-CUSTOM(expbkt3): every thread the session-history backfill must cover.
+  // Soft-deleted rows are included deliberately: their messages are still in
+  // the projection, and the archive is the only record that survives them.
+  readonly listArchivedOrDeleted: () => Effect.Effect<
+    ReadonlyArray<ProjectionThread>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

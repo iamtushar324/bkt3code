@@ -1091,6 +1091,50 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("worktree recovery", () => {
+    it.effect("prunes a stale registration so the worktree can be recreated in place", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = pathService.join(worktreesRoot, "recovered");
+
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* writeTextFile(cwd, "README.md", "# test\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "initial commit"]);
+        yield* driver.createWorktree({
+          cwd,
+          refName: "HEAD",
+          newRefName: "feature/recovered",
+          path: worktreePath,
+        });
+
+        // An externally deleted directory leaves its `.git/worktrees/`
+        // registration behind, which keeps the branch "checked out" and
+        // blocks re-adding it at the same path until pruned.
+        yield* fileSystem.remove(worktreePath, { recursive: true });
+        const blocked = yield* driver
+          .createWorktree({ cwd, refName: "feature/recovered", path: worktreePath })
+          .pipe(Effect.flip);
+        assert.equal(blocked._tag, "GitCommandError");
+
+        yield* driver.pruneWorktrees({ cwd });
+        const recreated = yield* driver.createWorktree({
+          cwd,
+          refName: "feature/recovered",
+          path: worktreePath,
+        });
+        assert.equal(recreated.worktree.path, worktreePath);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/recovered");
+      }),
+    );
+  });
+
   describe("review diff previews", () => {
     it.effect("loads repository-relative files from a nested project directory", () =>
       Effect.gen(function* () {
@@ -2999,6 +3043,9 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(worktreePath);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.aheadOfDefaultCount, 0);
+        // T3-CUSTOM(expbkt3): statusDetails/status report the fetched worktree base ref.
+        assert.equal(status.baseRef, initialBranch);
+        assert.equal((yield* driver.status({ cwd: worktreePath })).baseRef, initialBranch);
 
         yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "local-only" });
         assert.isTrue(

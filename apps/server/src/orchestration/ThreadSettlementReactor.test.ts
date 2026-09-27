@@ -84,6 +84,9 @@ function makeProject(
     id,
     title: `Project ${id}`,
     workspaceRoot,
+    // T3-CUSTOM(expbkt3): ownership on project fixtures.
+    ownerUserId: null,
+    memberUserIds: [],
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-08-01T00:00:00.000Z",
@@ -108,6 +111,10 @@ function makeThread(
     pullRequests: [],
     branch: null,
     worktreePath: null,
+    // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+    sourceControlProfileId: null,
+    ownerUserId: null,
+    memberUserIds: [],
     latestTurn: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-20T00:00:00.000Z",
@@ -1319,11 +1326,19 @@ describe("ThreadSettlementReactor", () => {
               makeThread("branch-one", {
                 branch: "saved-feature",
                 worktreePath: "/deleted/worktree-one",
+                // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+                sourceControlProfileId: null,
+                ownerUserId: null,
+                memberUserIds: [],
                 latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               }),
               makeThread("branch-two", {
                 branch: "saved-feature",
                 worktreePath: "/deleted/worktree-two",
+                // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+                sourceControlProfileId: null,
+                ownerUserId: null,
+                memberUserIds: [],
                 latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               }),
               makeThread("linked-one", {
@@ -1379,11 +1394,19 @@ describe("ThreadSettlementReactor", () => {
               makeThread("live-worktree", {
                 branch: "feature/live",
                 worktreePath: "/workspace/project-root/.worktrees/live",
+                // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+                sourceControlProfileId: null,
+                ownerUserId: null,
+                memberUserIds: [],
                 latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               }),
               makeThread("deleted-worktree", {
                 branch: "feature/deleted",
                 worktreePath: "/workspace/project-root/.worktrees/deleted",
+                // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+                sourceControlProfileId: null,
+                ownerUserId: null,
+                memberUserIds: [],
                 latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               }),
             ],
@@ -1881,6 +1904,8 @@ describe("storage cleanup", () => {
                       hasOriginRemote: false,
                       isDefaultBranch: false,
                       branch: cwd === secondWorktreePath ? "feature-two" : "feature",
+                      // T3-CUSTOM(expbkt3): fork field
+                      baseRef: null,
                       upstreamRef: null,
                       hasWorkingTreeChanges:
                         protection === "dirty" || protection === "deleted-dirty",

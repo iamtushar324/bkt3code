@@ -35,7 +35,8 @@ export const canonicalizeClientCommandTimestamps = (
         }
       : command;
 
-  if (canonicalCommand.type !== "thread.turn.start" || !canonicalCommand.bootstrap?.createThread) {
+  // T3-CUSTOM(expbkt3): BEGIN — canonicalize embedded durable-bootstrap timestamps with the turn.
+  if (canonicalCommand.type !== "thread.turn.start" || !canonicalCommand.bootstrap) {
     return canonicalCommand;
   }
 
@@ -43,12 +44,17 @@ export const canonicalizeClientCommandTimestamps = (
     ...canonicalCommand,
     bootstrap: {
       ...canonicalCommand.bootstrap,
-      createThread: {
-        ...canonicalCommand.bootstrap.createThread,
-        createdAt: receivedAt,
-      },
+      ...(canonicalCommand.bootstrap.createThread
+        ? {
+            createThread: {
+              ...canonicalCommand.bootstrap.createThread,
+              createdAt: receivedAt,
+            },
+          }
+        : {}),
     },
   };
+  // T3-CUSTOM(expbkt3): END
 };
 
 const removeClaimedAttachmentPaths = Effect.fn("Normalizer.removeClaimedAttachmentPaths")(
@@ -110,6 +116,165 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ),
         );
 
+    // T3-CUSTOM(expbkt3): BEGIN — bootstrap initial turns use the same bounded,
+    // persisted attachment normalization as ordinary turn starts. The body is
+    // upstream's thread.turn.start attachment loop (uploaded-attachment claims
+    // plus inline data URLs), parameterized by thread id so both call sites share it.
+    const normalizeAttachments = (input: {
+      readonly threadId: string;
+      readonly attachments: Extract<
+        ClientOrchestrationCommand,
+        { type: "thread.turn.start" }
+      >["message"]["attachments"];
+      // Context records bind to attachments by the id the client knew; they follow the rename.
+      readonly finalAttachmentIdByClientId?: Map<string, string>;
+    }) =>
+      Effect.gen(function* () {
+        const claimedAttachmentPaths: string[] = [];
+        const attachmentsWithDecodedSizes = [...input.attachments];
+        const normalizedAttachments = yield* Effect.forEach(
+          input.attachments,
+          (attachment, index) =>
+            Effect.gen(function* () {
+              if (!("dataUrl" in attachment)) {
+                const claim = planAttachmentClaim({
+                  attachmentsDir: serverConfig.attachmentsDir,
+                  threadId: input.threadId,
+                  attachmentId: attachment.id,
+                });
+                if (!claim.ok) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
+                  });
+                }
+
+                const info = yield* fileSystem.stat(claim.currentPath).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({
+                        message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
+                        cause,
+                      }),
+                  ),
+                );
+                if (Number(info.size) !== attachment.sizeBytes) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: `Attachment '${attachment.name}' cannot be sent: stored size does not match.`,
+                  });
+                }
+
+                const normalizedAttachment = {
+                  ...attachment,
+                  id: claim.finalId,
+                  mimeType: attachment.mimeType.toLowerCase(),
+                };
+                const expectedPath = resolveAttachmentPath({
+                  attachmentsDir: serverConfig.attachmentsDir,
+                  attachment: normalizedAttachment,
+                });
+                if (expectedPath !== claim.finalPath) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: `Attachment '${attachment.name}' cannot be sent: attachment type does not match the upload.`,
+                  });
+                }
+
+                // Keep the pending copy until the turn succeeds. A failed thread
+                // bootstrap can then retry with a fresh thread id. A copy, not a
+                // hard link: an agent editing the delivered file in place must not
+                // mutate the retry source.
+                yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({
+                        message: `Failed to claim attachment '${attachment.name}' for this thread.`,
+                        cause,
+                      }),
+                  ),
+                );
+                claimedAttachmentPaths.push(claim.finalPath);
+                input.finalAttachmentIdByClientId?.set(attachment.id, claim.finalId);
+
+                return normalizedAttachment;
+              }
+
+              const parsed = parseBase64DataUrl(attachment.dataUrl);
+              if (!parsed || !parsed.mimeType.startsWith("image/")) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: `Invalid image attachment payload for '${attachment.name}'.`,
+                });
+              }
+
+              const bytes = Buffer.from(parsed.base64, "base64");
+              if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: `Image attachment '${attachment.name}' is empty or too large.`,
+                });
+              }
+
+              const attachmentId = createAttachmentId(input.threadId);
+              if (!attachmentId) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: "Failed to create a safe attachment id.",
+                });
+              }
+
+              const persistedAttachment = {
+                type: "image" as const,
+                id: attachmentId,
+                name: attachment.name,
+                mimeType: parsed.mimeType.toLowerCase(),
+                sizeBytes: bytes.byteLength,
+                ...(attachment.source ? { source: attachment.source } : {}),
+              };
+              attachmentsWithDecodedSizes[index] = persistedAttachment;
+              const decodedLimitError = getProviderAttachmentLimitError(
+                attachmentsWithDecodedSizes,
+              );
+              if (decodedLimitError) {
+                return yield* new OrchestrationDispatchCommandError({ message: decodedLimitError });
+              }
+
+              const attachmentPath = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment: persistedAttachment,
+              });
+              if (!attachmentPath) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: `Failed to resolve persisted path for '${attachment.name}'.`,
+                });
+              }
+
+              yield* fileSystem
+                .makeDirectory(path.dirname(attachmentPath), { recursive: true })
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new OrchestrationDispatchCommandError({
+                        message: `Failed to create attachment directory for '${attachment.name}'.`,
+                      }),
+                  ),
+                );
+              yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
+                Effect.mapError(
+                  () =>
+                    new OrchestrationDispatchCommandError({
+                      message: `Failed to persist attachment '${attachment.name}'.`,
+                    }),
+                ),
+              );
+              claimedAttachmentPaths.push(attachmentPath);
+              if (attachment.id !== undefined) {
+                input.finalAttachmentIdByClientId?.set(attachment.id, attachmentId);
+              }
+
+              return persistedAttachment;
+            }),
+          { concurrency: 1 },
+        ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
+        return normalizedAttachments;
+      });
+    // T3-CUSTOM(expbkt3): END
+
     if (canonicalCommand.type === "project.create") {
       return {
         ...canonicalCommand,
@@ -158,145 +323,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         clientAttachmentIds.add(attachment.id);
       }
     }
-    const claimedAttachmentPaths: string[] = [];
-    const attachmentsWithDecodedSizes = [...attachments];
+    // T3-CUSTOM(expbkt3): BEGIN — upstream normalizes attachments inline here; the
+    // fork calls its own `normalizeAttachments` helper. Upstream's per-attachment
+    // rename bookkeeping and decoded-size limit check (#12620) live in the helper
+    // so they are not lost.
     // Context records bind to attachments by the id the client knew; they follow the rename.
     const finalAttachmentIdByClientId = new Map<string, string>();
-    const normalizedAttachments = yield* Effect.forEach(
+    const normalizedAttachments = yield* normalizeAttachments({
+      threadId: canonicalCommand.threadId,
       attachments,
-      (attachment, index) =>
-        Effect.gen(function* () {
-          if (!("dataUrl" in attachment)) {
-            const claim = planAttachmentClaim({
-              attachmentsDir: serverConfig.attachmentsDir,
-              threadId: canonicalCommand.threadId,
-              attachmentId: attachment.id,
-            });
-            if (!claim.ok) {
-              return yield* new OrchestrationDispatchCommandError({
-                message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
-              });
-            }
-
-            const info = yield* fileSystem.stat(claim.currentPath).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationDispatchCommandError({
-                    message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
-                    cause,
-                  }),
-              ),
-            );
-            if (Number(info.size) !== attachment.sizeBytes) {
-              return yield* new OrchestrationDispatchCommandError({
-                message: `Attachment '${attachment.name}' cannot be sent: stored size does not match.`,
-              });
-            }
-
-            const normalizedAttachment = {
-              ...attachment,
-              id: claim.finalId,
-              mimeType: attachment.mimeType.toLowerCase(),
-            };
-            const expectedPath = resolveAttachmentPath({
-              attachmentsDir: serverConfig.attachmentsDir,
-              attachment: normalizedAttachment,
-            });
-            if (expectedPath !== claim.finalPath) {
-              return yield* new OrchestrationDispatchCommandError({
-                message: `Attachment '${attachment.name}' cannot be sent: attachment type does not match the upload.`,
-              });
-            }
-
-            // Keep the pending copy until the turn succeeds. A failed thread
-            // bootstrap can then retry with a fresh thread id. A copy, not a
-            // hard link: an agent editing the delivered file in place must not
-            // mutate the retry source.
-            yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationDispatchCommandError({
-                    message: `Failed to claim attachment '${attachment.name}' for this thread.`,
-                    cause,
-                  }),
-              ),
-            );
-            claimedAttachmentPaths.push(claim.finalPath);
-            finalAttachmentIdByClientId.set(attachment.id, claim.finalId);
-
-            return normalizedAttachment;
-          }
-
-          const parsed = parseBase64DataUrl(attachment.dataUrl);
-          if (!parsed || !parsed.mimeType.startsWith("image/")) {
-            return yield* new OrchestrationDispatchCommandError({
-              message: `Invalid image attachment payload for '${attachment.name}'.`,
-            });
-          }
-
-          const bytes = Buffer.from(parsed.base64, "base64");
-          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-            return yield* new OrchestrationDispatchCommandError({
-              message: `Image attachment '${attachment.name}' is empty or too large.`,
-            });
-          }
-
-          const attachmentId = createAttachmentId(canonicalCommand.threadId);
-          if (!attachmentId) {
-            return yield* new OrchestrationDispatchCommandError({
-              message: "Failed to create a safe attachment id.",
-            });
-          }
-
-          const persistedAttachment = {
-            type: "image" as const,
-            id: attachmentId,
-            name: attachment.name,
-            mimeType: parsed.mimeType.toLowerCase(),
-            sizeBytes: bytes.byteLength,
-            ...(attachment.source ? { source: attachment.source } : {}),
-          };
-          attachmentsWithDecodedSizes[index] = persistedAttachment;
-          const decodedLimitError = getProviderAttachmentLimitError(attachmentsWithDecodedSizes);
-          if (decodedLimitError) {
-            return yield* new OrchestrationDispatchCommandError({ message: decodedLimitError });
-          }
-
-          const attachmentPath = resolveAttachmentPath({
-            attachmentsDir: serverConfig.attachmentsDir,
-            attachment: persistedAttachment,
-          });
-          if (!attachmentPath) {
-            return yield* new OrchestrationDispatchCommandError({
-              message: `Failed to resolve persisted path for '${attachment.name}'.`,
-            });
-          }
-
-          yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
-            Effect.mapError(
-              () =>
-                new OrchestrationDispatchCommandError({
-                  message: `Failed to create attachment directory for '${attachment.name}'.`,
-                }),
-            ),
-          );
-          yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
-            Effect.mapError(
-              () =>
-                new OrchestrationDispatchCommandError({
-                  message: `Failed to persist attachment '${attachment.name}'.`,
-                }),
-            ),
-          );
-          claimedAttachmentPaths.push(attachmentPath);
-          if (attachment.id !== undefined) {
-            finalAttachmentIdByClientId.set(attachment.id, attachmentId);
-          }
-
-          return persistedAttachment;
-        }),
-      { concurrency: 1 },
-    ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
+      finalAttachmentIdByClientId,
+    });
+    // T3-CUSTOM(expbkt3): END
 
     if (canonicalCommand.type === "thread.user-input.respond") {
       let index = 0;
@@ -333,6 +371,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
                 : record,
             ),
           };
+    // T3-CUSTOM(expbkt3): BEGIN — `normalizedAttachments` comes from the fork's
+    // shared helper rather than upstream's inline loop; the context spread is
+    // upstream's and is preserved verbatim.
     return {
       ...canonicalCommand,
       message: {
@@ -341,6 +382,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...(normalizedContext !== undefined ? { context: normalizedContext } : {}),
       },
     } satisfies OrchestrationCommand;
+    // T3-CUSTOM(expbkt3): END
   });
 
 export const cleanupFailedUploadedAttachments = Effect.fn(

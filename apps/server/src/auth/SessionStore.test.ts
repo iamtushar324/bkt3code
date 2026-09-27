@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { EnvironmentUserId } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -97,6 +98,8 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
   getById: () => Effect.fail(repositoryFailure),
   listActive: () => Effect.succeed([]),
   revoke: () => Effect.fail(repositoryFailure),
+  revokeByUserId: () => Effect.fail(repositoryFailure),
+  setUser: () => Effect.fail(repositoryFailure),
   revokeAllExcept: () => Effect.fail(repositoryFailure),
   setLastConnectedAt: () => Effect.void,
   setClientConnection: () => Effect.void,
@@ -276,6 +279,36 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.client.label).toBe("Desktop app");
       expect(verified.client.browser).toBe("Electron");
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+  it.effect("persists Clerk identity and revokes every session for one user", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const alice = EnvironmentUserId.make("user_clerk_alice");
+      const bob = EnvironmentUserId.make("user_clerk_bob");
+      const aliceFirst = yield* sessions.issue({ subject: "pairing", userId: alice });
+      yield* sessions.issue({ subject: "pairing", userId: alice });
+      const bobSession = yield* sessions.issue({ subject: "pairing", userId: bob });
+
+      expect((yield* sessions.verify(aliceFirst.token)).userId).toBe(alice);
+      expect(yield* sessions.revokeByUserId(alice)).toBe(2);
+
+      const active = yield* sessions.listActive();
+      expect(active).toHaveLength(1);
+      expect(active[0]?.sessionId).toBe(bobSession.sessionId);
+      expect(active[0]?.userId).toBe(bob);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+  it.effect("binds an existing session to the current Clerk user", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const userId = EnvironmentUserId.make("user_clerk_alice");
+      const issued = yield* sessions.issue({ subject: "desktop-bootstrap" });
+
+      expect((yield* sessions.verify(issued.token)).userId).toBeNull();
+      yield* sessions.bindUserId(issued.sessionId, userId);
+      expect((yield* sessions.verify(issued.token)).userId).toBe(userId);
+      expect((yield* sessions.listActive())[0]?.userId).toBe(userId);
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
   it.effect("rejects malformed session tokens", () =>

@@ -240,6 +240,18 @@ export const make = Effect.gen(function* () {
       threadPullRequests: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
+      // T3-CUSTOM(expbkt3): per-thread API-level cost.
+      threadUsage: true,
+      // T3-CUSTOM(expbkt3)
+      threadPriority: true,
+      // T3-CUSTOM(expbkt3): custom sidebar groups on thread metadata.
+      threadCustomGroup: true,
+      // T3-CUSTOM(expbkt3): durable manual Linear tags.
+      threadLinearIssue: true,
+      // T3-CUSTOM(expbkt3): durable Mattermost conversation link.
+      threadMattermostLink: true,
+      // T3-CUSTOM(expbkt3): native plan-review documents and discussions.
+      planReview: true,
       environmentIcon: true,
       projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),

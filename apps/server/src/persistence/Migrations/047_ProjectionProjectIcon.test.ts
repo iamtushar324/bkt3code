@@ -13,8 +13,9 @@ layer("047_ProjectionProjectIcon", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 46 });
-      yield* runMigrations({ toMigrationInclusive: 47 });
+      // T3-CUSTOM(expbkt3): upstream 46/47 are registered at fork IDs 1027/1028.
+      yield* runMigrations({ toMigrationInclusive: 1027 });
+      yield* runMigrations({ toMigrationInclusive: 1028 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_projects)

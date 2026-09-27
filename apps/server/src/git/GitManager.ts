@@ -3,6 +3,7 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as ByteSize from "effect/ByteSize";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -64,6 +65,7 @@ import {
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
@@ -193,6 +195,15 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   closedAt?: string | null;
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
+  // T3-CUSTOM(expbkt3): BEGIN — merge/review/check state the fork surfaces. These
+  // admit an explicit `undefined` so a caller can spread a mapped record straight
+  // in; under exactOptionalPropertyTypes a bare `?:` would reject that.
+  mergeability?: "mergeable" | "conflicting" | "unknown" | undefined;
+  mergeStateStatus?: string | undefined;
+  reviewDecision?: "approved" | "changes-requested" | "review-required" | "unknown" | undefined;
+  checksStatus?: "pass" | "fail" | "pending" | "unknown" | undefined;
+  autoMergeEnabled?: boolean | undefined;
+  // T3-CUSTOM(expbkt3): END
 }
 
 const pullRequestUpdatedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInput(
@@ -457,6 +468,16 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
+    ...(summary.isDraft !== undefined ? { isDraft: summary.isDraft } : {}),
+    ...(summary.mergeability !== undefined ? { mergeability: summary.mergeability } : {}),
+    ...(summary.mergeStateStatus !== undefined
+      ? { mergeStateStatus: summary.mergeStateStatus }
+      : {}),
+    ...(summary.reviewDecision !== undefined ? { reviewDecision: summary.reviewDecision } : {}),
+    ...(summary.checksStatus !== undefined ? { checksStatus: summary.checksStatus } : {}),
+    ...(summary.autoMergeEnabled !== undefined
+      ? { autoMergeEnabled: summary.autoMergeEnabled }
+      : {}),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -632,6 +653,13 @@ function toStatusPr(pr: PullRequestInfo): {
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   updatedAt: string | null;
+  // T3-CUSTOM(expbkt3): BEGIN PR review/merge readiness surfaced on status.
+  mergeability?: "mergeable" | "conflicting" | "unknown";
+  mergeStateStatus?: string;
+  reviewDecision?: "approved" | "changes-requested" | "review-required" | "unknown";
+  checksStatus?: "pass" | "fail" | "pending" | "unknown";
+  autoMergeEnabled?: boolean;
+  // T3-CUSTOM(expbkt3): END
 } {
   return {
     number: pr.number,
@@ -645,6 +673,14 @@ function toStatusPr(pr: PullRequestInfo): {
       onNone: () => null,
       onSome: (updatedAt) => DateTime.formatIso(updatedAt),
     }),
+    // T3-CUSTOM(expbkt3): BEGIN PR review/merge readiness surfaced on status.
+    ...(pr.isDraft !== undefined ? { isDraft: pr.isDraft } : {}),
+    ...(pr.mergeability !== undefined ? { mergeability: pr.mergeability } : {}),
+    ...(pr.mergeStateStatus !== undefined ? { mergeStateStatus: pr.mergeStateStatus } : {}),
+    ...(pr.reviewDecision !== undefined ? { reviewDecision: pr.reviewDecision } : {}),
+    ...(pr.checksStatus !== undefined ? { checksStatus: pr.checksStatus } : {}),
+    ...(pr.autoMergeEnabled !== undefined ? { autoMergeEnabled: pr.autoMergeEnabled } : {}),
+    // T3-CUSTOM(expbkt3): END
   };
 }
 
@@ -676,6 +712,11 @@ function shouldPreferSshRemote(url: string | null): boolean {
   if (!url) return false;
   return isSshRemoteUrl(url);
 }
+
+class RemoteStatusCacheKey extends Data.Class<{
+  readonly cwd: string;
+  readonly sourceControlProfileId: string | null;
+}> {}
 
 function toPullRequestHeadRemoteInfo(pr: {
   isCrossRepository?: boolean | undefined;
@@ -1000,11 +1041,22 @@ export const make = Effect.gen(function* () {
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
   const normalizeStatusCacheKey = canonicalizeExistingPath;
+  const normalizeRemoteStatusCacheKey = Effect.fn("normalizeRemoteStatusCacheKey")(function* (
+    cwd: string,
+  ) {
+    const canonicalCwd = yield* canonicalizeExistingPath(cwd);
+    const executionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
+    return new RemoteStatusCacheKey({
+      cwd: canonicalCwd,
+      sourceControlProfileId: executionEnvironment?.profileId ?? null,
+    });
+  });
   const nonRepositoryStatusDetails = {
     isRepo: false,
     hasOriginRemote: false,
     isDefaultBranch: false,
     branch: null,
+    baseRef: null,
     upstreamRef: null,
     hasWorkingTreeChanges: false,
     workingTree: { files: [], insertions: 0, deletions: 0 },
@@ -1029,6 +1081,8 @@ export const make = Effect.gen(function* () {
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
+      // T3-CUSTOM(expbkt3): Preserve the worktree origin for the experimental sidebar.
+      baseRef: details.baseRef,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
     } satisfies VcsStatusLocalResult;
@@ -1049,15 +1103,19 @@ export const make = Effect.gen(function* () {
   const prLookupEpochByCwd = new Map<string, number>();
   const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
   const bumpPrLookupEpoch = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
-      Effect.map((cacheKey) => {
+    normalizeRemoteStatusCacheKey(cwd).pipe(
+      Effect.map(({ cwd: canonicalCwd, sourceControlProfileId }) => {
+        const cacheKey = `${canonicalCwd}\0${sourceControlProfileId ?? "machine"}`;
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
   // Cache keys are NUL-joined. Automatic settlement validates repository URLs
   // against the cached value before it uses a pull request decision.
+  // T3-CUSTOM(expbkt3): PR lookup cache keys carry the source-control profile
+  // (epoch is tracked per cwd+profile; the profile id is the trailing segment).
   const prLookupCacheKey = (
     cwd: string,
+    sourceControlProfileId: string | null,
     details: {
       branch: string;
       upstreamRef: string | null;
@@ -1065,16 +1123,19 @@ export const make = Effect.gen(function* () {
       localBranchExists?: boolean;
       remoteName?: string | null;
     },
-  ) =>
-    [
+  ) => {
+    const profileCwd = `${cwd}\0${sourceControlProfileId ?? "machine"}`;
+    return [
       cwd,
       details.branch,
       details.upstreamRef ?? "",
       details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
-      String(prLookupEpoch(cwd)),
+      String(prLookupEpoch(profileCwd)),
+      sourceControlProfileId ?? "machine",
     ].join("\u0000");
+  };
   // Consecutive failures per cache key, so a branch that keeps failing waits
   // longer before the next attempt. Cleared as soon as a lookup succeeds.
   const prLookupFailureStreakByKey = new Map<string, number>();
@@ -1110,21 +1171,22 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
+        // T3-CUSTOM(expbkt3): preserve the no-remote lookup decision in the PR cache.
         const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, skipReason: null };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
-        if (
-          details.localBranchExists &&
-          details.upstreamRef === null &&
-          (yield* isUnpublishedBranch(cwd, headContext))
-        ) {
-          return { latest: null, headContext };
+        const skipReason =
+          details.localBranchExists && details.upstreamRef === null
+            ? yield* isUnpublishedBranch(cwd, headContext)
+            : null;
+        if (skipReason !== null) {
+          return { latest: null, headContext, skipReason };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        return { latest, headContext, skipReason: null };
       });
     },
     {
@@ -1210,8 +1272,10 @@ export const make = Effect.gen(function* () {
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
-    const branchKey = `${cwd}\u0000${details.branch}`;
-    const cacheKey = prLookupCacheKey(cwd, details);
+    const executionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
+    const sourceControlProfileId = executionEnvironment?.profileId ?? null;
+    const branchKey = `${cwd}\u0000${details.branch}\u0000${sourceControlProfileId ?? "machine"}`;
+    const cacheKey = prLookupCacheKey(cwd, sourceControlProfileId, details);
     if (refreshMissingPullRequest) {
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
@@ -1221,8 +1285,21 @@ export const make = Effect.gen(function* () {
       }
     }
     return yield* Cache.get(prLookupCache, cacheKey).pipe(
-      Effect.map(({ latest, headContext }) => {
-        if (!latest) return { pr: null, headContext };
+      // T3-CUSTOM(expbkt3): a remote removed after a successful lookup keeps its last PR badge.
+      Effect.map(({ latest, headContext, skipReason }) => {
+        if (!latest)
+          return {
+            pr:
+              skipReason === "no-remote"
+                ? resolveLastKnownPr(branchKey, {
+                    upstreamRef: details.upstreamRef,
+                    headBranch: headContext.headBranch,
+                    remoteName: headContext.remoteName,
+                    headRemoteUrlKey: headContext.headRemoteUrlKey,
+                  })
+                : null,
+            headContext,
+          };
         // On the default branch, only surface open PRs.
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
@@ -1306,12 +1383,15 @@ export const make = Effect.gen(function* () {
       pr,
     } satisfies VcsStatusRemoteResult;
   });
-  const remoteStatusResultCache = yield* Cache.makeWith((cwd: string) => readRemoteStatus(cwd), {
-    capacity: STATUS_RESULT_CACHE_CAPACITY,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
-  });
+  const remoteStatusResultCache = yield* Cache.makeWith(
+    (key: RemoteStatusCacheKey) => readRemoteStatus(key.cwd),
+    {
+      capacity: STATUS_RESULT_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
+    },
+  );
   const invalidateRemoteStatusResultCache = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
+    normalizeRemoteStatusCacheKey(cwd).pipe(
       Effect.flatMap((cacheKey) => Cache.invalidate(remoteStatusResultCache, cacheKey)),
     );
 
@@ -1573,16 +1653,33 @@ export const make = Effect.gen(function* () {
    * when a merged change request's remote branch is deleted. Together they
    * distinguish branches known to have reached a host from genuinely local
    * branches. The ref glob spans every remote so a fork branch still counts. A
-   * repository that tracks no remotes at all cannot answer the question,
-   * because then every branch looks unpublished; it, and any failed probe,
-   * keeps the lookup.
+   * T3-CUSTOM(expbkt3): A repository with no remotes at all is also unpublished by definition.
+   * Skip its provider lookup while preserving its local status result.
    */
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
     cwd: string,
     headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,
   ) {
     if (headContext.headBranch.length === 0) {
-      return false;
+      return null;
+    }
+    const remoteResult = yield* gitCore
+      .execute({
+        operation: "GitManager.isUnpublishedBranch.remotes",
+        cwd,
+        args: ["remote"],
+        timeoutMs: 5_000,
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(remoteResult)) {
+      return null;
+    }
+    const remoteNames = remoteResult.value.stdout
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+    if (remoteNames.length === 0) {
+      return "no-remote" as const;
     }
     const matchesRef = (pattern: string) =>
       gitCore
@@ -1603,15 +1700,15 @@ export const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
       if (configuredRemote !== null && configuredMerge !== null) {
-        return false;
+        return null;
       }
 
       const [tracksAnyRemote, tracksThisBranch] = yield* Effect.all(
         [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
         { concurrency: "unbounded" },
       );
-      return tracksAnyRemote && !tracksThisBranch;
-    }).pipe(Effect.orElseSucceed(() => false));
+      return tracksAnyRemote && !tracksThisBranch ? ("unpublished" as const) : null;
+    }).pipe(Effect.orElseSucceed(() => null));
   });
 
   const findOpenPr = Effect.fn("findOpenPr")(function* (
@@ -2127,9 +2224,9 @@ export const make = Effect.gen(function* () {
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
-      const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
+      const cacheKey = yield* normalizeRemoteStatusCacheKey(input.cwd);
       if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
-        return yield* readRemoteStatus(cacheKey, options);
+        return yield* readRemoteStatus(cacheKey.cwd, options);
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);
     },
@@ -2215,7 +2312,9 @@ export const make = Effect.gen(function* () {
     const defaultBranch = yield* gitCore
       .resolveDefaultBranchName(cacheCwd, defaultRemoteName)
       .pipe(Effect.orElseSucceed(() => null));
-    const cacheKey = prLookupCacheKey(cacheCwd, {
+    // T3-CUSTOM(expbkt3): settlement PR probes use the same profile-isolated cache.
+    const executionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
+    const cacheKey = prLookupCacheKey(cacheCwd, executionEnvironment?.profileId ?? null, {
       branch,
       upstreamRef,
       defaultBranch,
@@ -2341,13 +2440,21 @@ export const make = Effect.gen(function* () {
           worktreePath,
         })
         .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("GitManager.preparePullRequestThread setup script failed", {
-              threadId: input.threadId,
-              worktreePath,
-              cause: error,
-            }).pipe(Effect.asVoid),
+          // T3-CUSTOM(expbkt3): PR worktree preparation is readiness-gated too.
+          // Keep the worktree on failure and return the terminal identity.
+          Effect.mapError(
+            (error) =>
+              new GitManagerError({
+                operation: "preparePullRequestThread",
+                cwd: input.cwd,
+                detail: error.message,
+                ...("terminalId" in error && typeof error.terminalId === "string"
+                  ? { terminalId: error.terminalId }
+                  : {}),
+                cause: error,
+              }),
           ),
+          Effect.asVoid,
         );
     };
     return yield* Effect.gen(function* () {

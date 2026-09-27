@@ -192,7 +192,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn("makeThreadLiveEventCoales
               // that boundary after the final update from the run.
               yield* flushPending();
               if (input.kind === "synchronized") {
-                yield* budget.retain({ kind: "synchronized" as const }).pipe(
+                yield* budget.retain(input).pipe(
                   Effect.flatMap((marker) => Queue.offer(output, marker)),
                   Effect.uninterruptible,
                 );

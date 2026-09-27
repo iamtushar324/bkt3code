@@ -47,6 +47,7 @@ it.effect("projects settled lifecycle events", () =>
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt: now,
           updatedAt: now,
         },

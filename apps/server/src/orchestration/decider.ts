@@ -9,6 +9,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type UserId,
   type OrchestrationThread,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
@@ -44,6 +45,12 @@ import {
   requireThreadAbsent,
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
+// T3-CUSTOM(expbkt3): session lineage must stay acyclic.
+import { requireThreadLineageAcyclic } from "./threadLineage.ts";
+// T3-CUSTOM(expbkt3): a session created from a session inherits its audience.
+import { resolveCreatedThreadMemberUserIds } from "./inheritedThreadMembers.ts";
+// T3-CUSTOM(expbkt3): fork command decisions
+import { decideForkOrchestrationCommand, isForkOrchestrationCommand } from "./deciderForkCases.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
@@ -177,9 +184,11 @@ type DecideOrchestrationCommandResult =
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
+  actor = null,
 }: {
   readonly commands: ReadonlyArray<OrchestrationCommand>;
   readonly readModel: OrchestrationReadModel;
+  readonly actor?: UserId | null;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -193,6 +202,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
     const decided = yield* decideOrchestrationCommand({
       command: nextCommand,
       readModel: nextReadModel,
+      actor,
     });
     const nextEvents = Array.isArray(decided) ? decided : [decided];
     for (const nextEvent of nextEvents) {
@@ -211,16 +221,29 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  actor = null,
   userInputActivity,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  /**
+   * The Clerk operator behind this command (team mode), or null when the server
+   * runs single-user. Threaded into created-payload ownership and member events.
+   */
+  readonly actor?: UserId | null;
   readonly userInputActivity?: OrchestrationThreadActivity;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
+  // T3-CUSTOM(expbkt3): BEGIN fork commands are decided in deciderForkCases.ts.
+  // Narrowing here keeps upstream's `command satisfies never` default exhaustive.
+  if (isForkOrchestrationCommand(command)) {
+    return yield* decideForkOrchestrationCommand({ command, readModel, actor, withEventBase });
+  }
+  // T3-CUSTOM(expbkt3): END
+
   switch (command.type) {
     case "project.create": {
       yield* requireProjectAbsent({
@@ -254,6 +277,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           faviconPath: null,
           projectIcon: null,
           scripts: [],
+          createdByUserId: actor,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -342,6 +366,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (activeThreads.length > 0) {
         return yield* decideCommandSequence({
           readModel,
+          actor,
           commands: [
             ...activeThreads.map(
               (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
@@ -404,8 +429,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          // T3-CUSTOM(expbkt3): BEGIN — authenticated creator ownership.
+          // The authenticated creator is authoritative;
+          // trusted automation owner hints are only a non-Web fallback.
+          createdByUserId: actor ?? command.ownerUserId ?? null,
+          // T3-CUSTOM(expbkt3): END
+          sourceControlProfileId: command.sourceControlProfileId,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+          // T3-CUSTOM(expbkt3): session priority.
+          priority: command.priority ?? null,
+          // T3-CUSTOM(expbkt3): custom sidebar group.
+          customGroup: command.customGroup ?? null,
+          // T3-CUSTOM(expbkt3): session lineage. No cycle check is needed on
+          // create: the thread does not exist yet, so it cannot be an ancestor
+          // of anything.
+          parentThreadId: command.parentThreadId ?? null,
+          // T3-CUSTOM(expbkt3): the environment that parent lives on, when it is
+          // not this one. Null keeps the historical "same server" meaning.
+          parentEnvironmentId: command.parentEnvironmentId ?? null,
+          // T3-CUSTOM(expbkt3): BEGIN — inherited tags. The creator is tagged by
+          // the projector; these are the extra people the creator is bringing,
+          // defaulting to the parent session's audience.
+          memberUserIds: resolveCreatedThreadMemberUserIds({
+            threads: readModel.threads,
+            parentThreadId: command.parentThreadId,
+            createdByUserId: actor ?? command.ownerUserId ?? null,
+            explicitMemberUserIds: command.memberUserIds,
+          }),
+          // T3-CUSTOM(expbkt3): END
         },
       };
     }
@@ -1004,6 +1056,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
+      // T3-CUSTOM(expbkt3): re-parenting must not close a lineage loop.
+      // Detaching (null) is always safe and skips the walk. A parent on another
+      // environment is skipped too: its id names a thread in a graph this server
+      // has never seen, so walking it here could only ever match by coincidence.
+      // Callers normalise a parent on this environment to a null environment id,
+      // so anything named here is genuinely foreign, and the client tree carries
+      // its own depth and seen-set guards for the lineages it stitches together.
+      if (command.parentThreadId != null && command.parentEnvironmentId == null) {
+        yield* requireThreadLineageAcyclic({
+          readModel,
+          command,
+          threadId: command.threadId,
+          parentThreadId: command.parentThreadId,
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -1048,6 +1115,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          // T3-CUSTOM(expbkt3): undefined leaves priority unchanged; null clears it.
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          // T3-CUSTOM(expbkt3): undefined leaves the custom group unchanged; null clears it.
+          ...(command.customGroup !== undefined ? { customGroup: command.customGroup } : {}),
+          // T3-CUSTOM(expbkt3): undefined leaves the manual Linear tag unchanged.
+          ...(command.linearIssueUrl !== undefined
+            ? { linearIssueUrl: command.linearIssueUrl }
+            : {}),
+          // T3-CUSTOM(expbkt3): undefined leaves the Mattermost link unchanged.
+          ...(command.mattermostThreadUrl !== undefined
+            ? { mattermostThreadUrl: command.mattermostThreadUrl }
+            : {}),
+          // T3-CUSTOM(expbkt3): undefined leaves lineage unchanged; null detaches.
+          ...(command.parentThreadId !== undefined
+            ? { parentThreadId: command.parentThreadId }
+            : {}),
+          // T3-CUSTOM(expbkt3): re-parenting may also move a thread's lineage to
+          // another environment; null returns it to a same-environment parent.
+          ...(command.parentEnvironmentId !== undefined
+            ? { parentEnvironmentId: command.parentEnvironmentId }
+            : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
@@ -1452,6 +1540,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 : {}),
               turnId: null,
               streaming: false,
+              // T3-CUSTOM(expbkt3): who sent this message (team mode).
+              sentByUserId: actor,
               createdAt: command.createdAt,
               updatedAt: command.createdAt,
             },
@@ -1559,6 +1649,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.message.context !== undefined ? { context: command.message.context } : {}),
           turnId: null,
           streaming: false,
+          // T3-CUSTOM(expbkt3): who sent this message (team mode). A bootstrap
+          // persists the message here, so thread.turn.start no longer emits it.
+          sentByUserId: actor,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -1685,6 +1778,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         // steers a running agent or resumes an idle session.
         return yield* decideCommandSequence({
           readModel,
+          // T3-CUSTOM(expbkt3): async answers preserve the responding operator identity.
+          actor,
           commands: [
             {
               type: "thread.activity.append",

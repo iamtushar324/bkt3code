@@ -19,6 +19,10 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  CurrentSourceControlExecutionEnvironment,
+  mergeSourceControlEnvironment,
+} from "../sourceControl/SourceControlExecutionEnvironment.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -119,6 +123,13 @@ export const make = Effect.gen(function* () {
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
+    const sourceControlExecutionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
+    const environment = sourceControlExecutionEnvironment
+      ? mergeSourceControlEnvironment(
+          { ...process.env, ...input.env },
+          sourceControlExecutionEnvironment.environment,
+        )
+      : input.env;
     const baseError = {
       operation: input.operation,
       command: input.command,
@@ -134,7 +145,8 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        ...(input.env !== undefined ? { env: input.env } : {}),
+        // T3-CUSTOM(expbkt3): per-thread source-control identity env merged over input.env.
+        ...(environment !== undefined ? { env: environment } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",

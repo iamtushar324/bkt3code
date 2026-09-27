@@ -80,6 +80,8 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+// T3-CUSTOM(expbkt3): optional fork identity lookup.
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -89,6 +91,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
@@ -117,6 +120,11 @@ import {
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { spawnAndCollect } from "../providerSnapshot.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+// T3-CUSTOM(expbkt3): Claude's shared account email is not the T3 message sender.
+import {
+  claudeSessionIdentitySystemPrompt,
+  withClaudeSessionIdentityTurnHook,
+} from "../claudeSessionIdentity.expbkt3.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const encodeHistoryArgs = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -335,6 +343,9 @@ interface PendingUserInput {
   /** Unparks the waiting handler as cancelled. Session teardown must run it. */
   readonly cancel: Effect.Effect<void>;
 }
+
+// T3-CUSTOM(expbkt3): upper bound on waiting for the SDK stream fiber during stop.
+const STREAM_FIBER_INTERRUPT_TIMEOUT = "5 seconds";
 
 interface ToolInFlight {
   readonly itemId: string;
@@ -4264,7 +4275,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           detail: "Failed to close Claude runtime query.",
           cause,
         }),
-    });
+    }).pipe(
+      // T3-CUSTOM(expbkt3): surface a failed close as a runtime error too.
+      Effect.tapError((error) =>
+        emitRuntimeError(context, "Failed to close Claude runtime query.", {
+          errorTag: error._tag,
+          provider: error.provider,
+          threadId: error.threadId,
+          detail: error.detail,
+        }),
+      ),
+    );
 
     context.stopped = true;
 
@@ -4324,7 +4345,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const streamFiber = context.streamFiber;
     context.streamFiber = undefined;
     if (streamFiber && streamFiber.pollUnsafe() === undefined) {
-      yield* Fiber.interrupt(streamFiber);
+      // T3-CUSTOM(expbkt3): callers hold the per-thread lifecycle lock and may
+      // be the reactor's single worker lane; never wait on the stream forever.
+      // `query.close()` above ends the runtime whether or not the fiber settled.
+      const interrupted = yield* Fiber.interrupt(streamFiber).pipe(
+        Effect.timeoutOption(STREAM_FIBER_INTERRUPT_TIMEOUT),
+      );
+      if (Option.isNone(interrupted)) {
+        yield* Effect.logWarning("claude stream fiber did not settle before stop timeout", {
+          threadId: context.session.threadId,
+          timeout: STREAM_FIBER_INTERRUPT_TIMEOUT,
+        });
+      }
     }
 
     const updatedAt = yield* nowIso;
@@ -4380,7 +4412,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   };
 
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
-    function* (input) {
+    function* (input, executionOptions) {
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
@@ -4406,6 +4438,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
+      const sessionEnvironment = executionOptions?.environment
+        ? mergeSourceControlEnvironment(claudeEnvironment, executionOptions.environment)
+        : claudeEnvironment;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
@@ -4898,6 +4933,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      // T3-CUSTOM(expbkt3): BEGIN override Claude's shared-account userEmail context.
+      const sessionIdentitySystemPrompt = claudeSessionIdentitySystemPrompt(sessionEnvironment);
+      // T3-CUSTOM(expbkt3): END
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4906,7 +4944,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "preset",
           preset: "claude_code",
           // Model and effort can change after this session-level prompt is set.
-          append: buildRuntimeInstructions({ harness: "Claude Code" }),
+          // T3-CUSTOM(expbkt3): keep runtime instructions and the acting user identity.
+          append: [
+            buildRuntimeInstructions({ harness: "Claude Code" }),
+            sessionIdentitySystemPrompt,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
@@ -4935,7 +4979,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
+        // T3-CUSTOM(expbkt3): per-session source-control identity env + MCP bearer token.
+        env: {
+          ...McpProviderSession.withAgentDeviceEnvironment(sessionEnvironment, mcpSession),
+          ...(mcpSession
+            ? {
+                T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+              }
+            : {}),
+        },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -4945,9 +4997,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   type: "http",
                   url: mcpSession.endpoint,
                   headers: {
-                    Authorization: mcpSession.authorizationHeader,
+                    // Claude Code expands environment references in HTTP MCP
+                    // headers. Keep the short-lived credential out of process
+                    // arguments and provider diagnostic payloads.
+                    Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}",
                   },
                 },
+                ...Object.fromEntries(
+                  mcpSession.upstreamServers.map((server) => [
+                    McpProviderSession.upstreamMcpServerName(server),
+                    {
+                      type: "http" as const,
+                      url: server.endpoint,
+                      headers: {
+                        Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}",
+                      },
+                    },
+                  ]),
+                ),
               },
             }
           : {}),
@@ -4978,11 +5045,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
+      // T3-CUSTOM(expbkt3): BEGIN re-state the sender at user-message position on
+      // every turn. The system-prompt append above loses to the CLI's native
+      // `# userEmail` section on Sonnet; a UserPromptSubmit hook does not.
+      const identityAwareQueryOptions = withClaudeSessionIdentityTurnHook(
+        queryOptions,
+        sessionEnvironment,
+      );
+      // T3-CUSTOM(expbkt3): END
+
       const queryRuntime = yield* Effect.try({
         try: () =>
           createQuery({
             prompt,
-            options: queryOptions,
+            // T3-CUSTOM(expbkt3): identity turn hook folded into the SDK options.
+            options: identityAwareQueryOptions,
           }),
         catch: (cause) =>
           new ProviderAdapterProcessError({

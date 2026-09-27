@@ -36,7 +36,19 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
-    ...(summary.isDraft === true ? { isDraft: true } : {}),
+    // T3-CUSTOM(expbkt3): BEGIN — an explicit `isDraft: false` and the merge/review/check
+    // state the fork's PR surfaces render.
+    ...(summary.isDraft !== undefined ? { isDraft: summary.isDraft } : {}),
+    ...(summary.mergeability !== undefined ? { mergeability: summary.mergeability } : {}),
+    ...(summary.mergeStateStatus !== undefined
+      ? { mergeStateStatus: summary.mergeStateStatus }
+      : {}),
+    ...(summary.reviewDecision !== undefined ? { reviewDecision: summary.reviewDecision } : {}),
+    ...(summary.checksStatus !== undefined ? { checksStatus: summary.checksStatus } : {}),
+    ...(summary.autoMergeEnabled !== undefined
+      ? { autoMergeEnabled: summary.autoMergeEnabled }
+      : {}),
+    // T3-CUSTOM(expbkt3): END
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt:
@@ -168,7 +180,8 @@ export const make = Effect.gen(function* () {
             "--limit",
             String(input.limit ?? 20),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            // T3-CUSTOM(expbkt3): mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest.
+            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         })
         .pipe(

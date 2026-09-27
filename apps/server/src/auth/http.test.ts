@@ -19,6 +19,13 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
+// T3-CUSTOM(expbkt3): BEGIN — the fork's auth routes also resolve Clerk identities,
+// environment users and server settings.
+import * as ServerSettings from "../serverSettings.ts";
+import { ClerkDirectoryLive } from "./ClerkDirectory.ts";
+import * as ClerkIdentityVerifier from "./ClerkIdentityVerifier.ts";
+import * as EnvironmentUserService from "./EnvironmentUserService.ts";
+// T3-CUSTOM(expbkt3): END
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
@@ -42,8 +49,21 @@ const environmentAuthLayer = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerEnvironment.identityLayer),
   Layer.provide(configLayer),
 );
+// T3-CUSTOM(expbkt3): BEGIN — services the fork's auth routes need beyond upstream's.
+const forkSettingsLayer = ServerSettings.layerTest();
+const forkAuthServicesLayer = Layer.mergeAll(
+  ClerkDirectoryLive,
+  ClerkIdentityVerifier.layer,
+  EnvironmentUserService.layer.pipe(
+    Layer.provide(forkSettingsLayer),
+    Layer.provide(SqlitePersistenceMemory),
+  ),
+  forkSettingsLayer,
+).pipe(Layer.provide(configLayer));
+// T3-CUSTOM(expbkt3): END
 const routesLayer = HttpApiBuilder.layer(AuthTestApi).pipe(
-  Layer.provide(authHttpApiLayer),
+  // T3-CUSTOM(expbkt3): fork services for the auth routes.
+  Layer.provide(authHttpApiLayer.pipe(Layer.provide(forkAuthServicesLayer))),
   Layer.provide(environmentAuthenticatedAuthLayer),
   Layer.provideMerge(environmentAuthLayer),
   Layer.provide(configLayer),

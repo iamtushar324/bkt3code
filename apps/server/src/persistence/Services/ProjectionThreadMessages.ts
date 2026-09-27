@@ -13,6 +13,7 @@ import {
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
+  UserId,
   IsoDateTime,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -32,6 +33,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   context: Schema.optional(OrchestrationMessageContext),
   isStreaming: Schema.Boolean,
+  sentByUserId: Schema.NullOr(UserId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -52,6 +54,23 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
   messageId: MessageId,
 });
 export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
+
+// T3-CUSTOM(expbkt3): append streaming output in SQLite instead of rewriting it in Node.
+export const AppendProjectionThreadMessageDeltaInput = Schema.Struct({
+  messageId: MessageId,
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
+  role: OrchestrationMessageRole,
+  delta: Schema.String,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  context: Schema.optional(OrchestrationMessageContext),
+  isStreaming: Schema.Boolean,
+  sentByUserId: Schema.NullOr(UserId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type AppendProjectionThreadMessageDeltaInput =
+  typeof AppendProjectionThreadMessageDeltaInput.Type;
 
 export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
   threadId: ThreadId,
@@ -90,6 +109,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly getByMessageId: (
     input: GetProjectionThreadMessageInput,
   ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  // T3-CUSTOM(expbkt3): atomic streaming-delta hot path.
+  readonly appendTextDelta: (
+    input: AppendProjectionThreadMessageDeltaInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * Check for an assistant message in a turn without hydrating message text.

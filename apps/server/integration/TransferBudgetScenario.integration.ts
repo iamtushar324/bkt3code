@@ -81,6 +81,9 @@ export const seedTransferBudgetHistory = Effect.fn("TransferBudget.seedHistory")
     commandId: CommandId.make(`transfer:${provider}:thread-create`),
     threadId: TRANSFER_THREAD_ID,
     projectId: TRANSFER_PROJECT_ID,
+    // T3-CUSTOM(expbkt3): BEGIN — fork-required durable source-control identity.
+    sourceControlProfileId: null,
+    // T3-CUSTOM(expbkt3): END
     title: `${provider} transfer history`,
     modelSelection,
     runtimeMode: "approval-required",

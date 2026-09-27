@@ -188,6 +188,8 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    // T3-CUSTOM(expbkt3): per-test git workflow overrides (worktree recovery reads branches).
+    readonly gitWorkflow?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -473,6 +475,8 @@ describe("ProviderCommandReactor", () => {
           renameBranch,
           pruneWorktrees,
           createWorktree,
+          // T3-CUSTOM(expbkt3): per-test git workflow overrides.
+          ...input?.gitWorkflow,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
       ),
       Layer.provideMerge(
@@ -528,6 +532,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt: now,
       }),
     );
@@ -561,6 +566,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt: now,
         }),
       );
@@ -849,6 +855,8 @@ describe("ProviderCommandReactor", () => {
           input: text,
           ...(attachments.length > 0 ? { attachments } : {}),
         }),
+        // T3-CUSTOM(expbkt3): identity-scoped execution options ride along.
+        expect.anything(),
       );
     }),
   );
@@ -940,6 +948,8 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        // T3-CUSTOM(expbkt3): fork field
+        sourceControlProfileId: null,
         createdAt: now,
       });
       yield* harness.engine.dispatch({
@@ -963,6 +973,8 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        // T3-CUSTOM(expbkt3): fork field
+        sourceControlProfileId: null,
         createdAt: now,
       });
       yield* harness.engine.dispatch({
@@ -1096,6 +1108,8 @@ describe("ProviderCommandReactor", () => {
 
       expect(harness.sendTurn).toHaveBeenCalledWith(
         expect.objectContaining({ input: "Use the current message" }),
+        // T3-CUSTOM(expbkt3): identity-scoped execution options ride along.
+        expect.anything(),
       );
       expect(harness.generateThreadTitle).toHaveBeenCalledWith(
         expect.objectContaining({ message: "Use the current message" }),
@@ -2692,7 +2706,13 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("recreates a missing worktree from the thread branch before starting a turn", async () => {
-    const harness = await createHarness();
+    // T3-CUSTOM(expbkt3): the fork's worktree recovery only recreates a worktree whose
+    // branch still exists, so the harness has to report the branch as surviving.
+    const harness = await createHarness({
+      gitWorkflow: {
+        listLocalBranchNames: () => Effect.succeed(["main", "feature/restore"]),
+      },
+    });
     const now = "2026-01-01T00:00:00.000Z";
     const worktreePath = NodePath.join(harness.stateDir, "missing-worktree");
 
@@ -3198,7 +3218,6 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
   });
-
   it("restarts the provider session when the thread workspace changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
@@ -3231,6 +3250,9 @@ describe("ProviderCommandReactor", () => {
       cwd: "/tmp/provider-project",
     });
 
+    // The reactor verifies a thread's worktree exists before starting its
+    // session, so the fixture path must be a real directory.
+    NodeFS.mkdirSync("/tmp/provider-project-worktree", { recursive: true });
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",

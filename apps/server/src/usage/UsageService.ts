@@ -28,6 +28,14 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): per-thread cost.
+import type { ThreadId, ThreadUsage } from "@t3tools/contracts";
+import { aggregateThreadUsage } from "./threadUsage.ts";
+// T3-CUSTOM(expbkt3): per-thread transcript listing and cache-write debounce.
+import {
+  listThreadTranscriptFiles,
+  shouldPersistAfterThreadRead,
+} from "./threadTranscriptFiles.expbkt3.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -117,6 +125,13 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    // T3-CUSTOM(expbkt3): per-thread API-level cost.
+    readonly readThreadUsage: (input: {
+      readonly threadId: ThreadId;
+      readonly sessionIds: ReadonlyArray<string>;
+      readonly sinceMs: number;
+      readonly timeZone: string;
+    }) => Effect.Effect<ThreadUsage, UsageReadError>;
     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
@@ -144,6 +159,30 @@ export const layerTest = Layer.succeed(
         sources: [],
         pricing: EMPTY_PRICING,
         scanDurationMs: 0,
+      }),
+    // T3-CUSTOM(expbkt3): per-thread API-level cost.
+    readThreadUsage: (input) =>
+      Effect.succeed({
+        contractVersion: 1,
+        threadId: input.threadId,
+        readAt: "1970-01-01T00:00:00.000Z",
+        sessionIds: input.sessionIds,
+        totals: {
+          uncachedInputTokens: 0,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+        costUsd: 0,
+        cacheSavingsUsd: 0,
+        costSource: "unpriced",
+        records: 0,
+        models: [],
+        days: [],
+        firstRecordAt: null,
+        lastRecordAt: null,
+        pricing: { status: "unavailable", source: "test", fetchedAt: null, knownModels: 0 },
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
   }),
@@ -830,6 +869,79 @@ export const make = Effect.gen(function* () {
     } satisfies UsageSummary;
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN one thread's cost. Same scan, same cache, same
+  // rates as the summary; only the fold differs (see threadUsage.ts).
+  // A thread read only opens that thread's own transcripts, and rewrites the
+  // (23 MB in prod) scan cache at most every THREAD_USAGE_PERSIST_INTERVAL_MS;
+  // the rest lands with the next summary scan or on shutdown.
+  let lastThreadUsagePersistMs: number | null = null;
+  const persistScanCacheAfterThreadRead = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (!shouldPersistAfterThreadRead(lastThreadUsagePersistMs, nowMs)) return;
+    lastThreadUsagePersistMs = nowMs;
+    yield* persistScanCache();
+  });
+  yield* Effect.addFinalizer(() => persistScanCache());
+  const readThreadUsage = Effect.fn("UsageService.readThreadUsage")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly sessionIds: ReadonlyArray<string>;
+    readonly sinceMs: number;
+    readonly timeZone: string;
+  }) {
+    yield* ensureRates(false);
+    yield* ensureScanCacheLoaded;
+    const settings = yield* readSettings;
+    // Upstream's resolver now needs the scan-cache retention cutoff (#12304).
+    const retentionCutoffMs =
+      (yield* Clock.currentTimeMillis) - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const records: UsageRecord[] = [];
+    if (input.sessionIds.length > 0) {
+      for (const { provider, dir, fileName } of dirs) {
+        const exists = yield* fileSystem
+          .exists(dir)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        if (!exists) continue;
+        const files = yield* Effect.promise(() =>
+          listThreadTranscriptFiles({
+            provider,
+            dir,
+            fileName,
+            sessionIds: input.sessionIds,
+            sinceMs: input.sinceMs - MTIME_SLACK_MS,
+          }),
+        );
+        for (const file of files) {
+          const parsed = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+          for (const record of parsed) records.push(record);
+        }
+      }
+    }
+    yield* persistScanCacheAfterThreadRead;
+    const readAt = yield* DateTime.now;
+    return aggregateThreadUsage({
+      threadId: input.threadId,
+      sessionIds: input.sessionIds,
+      records,
+      rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+      timeZone: input.timeZone,
+      readAt: DateTime.formatIso(readAt),
+      pricing: {
+        status: ratesStatus,
+        source: LITELLM_RATES_URL,
+        fetchedAt:
+          ratesFetchedAtMs === null
+            ? null
+            : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
+        knownModels: rates.size,
+      },
+    });
+  });
+  // T3-CUSTOM(expbkt3): END
+
   /**
    * In-flight scans by window and custom prices, so concurrent identical requests (the usage
    * page open on two clients at once) share one scan instead of racing over
@@ -883,7 +995,10 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates } as const;
+  // T3-CUSTOM(expbkt3): expose per-thread usage alongside upstream summary and rate refresh.
+  // T3-CUSTOM(expbkt3): BEGIN — preserve per-thread usage return formatting markerability.
+  return { readSummary, readThreadUsage, refreshRates } as const;
+  // T3-CUSTOM(expbkt3): END
 });
 
 export const layer = Layer.effect(UsageService, make);

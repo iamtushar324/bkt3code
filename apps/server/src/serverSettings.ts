@@ -186,7 +186,17 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  return {
+    ...settings,
+    providerInstances,
+    usageLimitSources,
+    // T3-CUSTOM(expbkt3): The legacy server-wide MCP operator secret must
+    // never be distributed to authenticated browser clients.
+    experimental: {
+      ...settings.experimental,
+      externalMcp: { ...settings.experimental.externalMcp, apiKey: "" },
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -358,6 +368,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
+  // T3-CUSTOM(expbkt3): model selections are atomic option envelopes.
+  "defaultThreadModelSelection",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.

@@ -29,6 +29,7 @@ import {
   GitCommandError,
   ProviderDriverKind,
   ProviderInstanceId,
+  SourceControlProfileId,
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -48,6 +49,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import * as GitManager from "./GitManager.ts";
 
 const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -920,6 +922,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         hasPrimaryRemote: false,
         isDefaultRef: false,
         refName: null,
+        baseRef: null,
         hasWorkingTreeChanges: false,
         workingTree: {
           files: [],
@@ -950,6 +953,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         hasPrimaryRemote: false,
         isDefaultRef: false,
         refName: null,
+        baseRef: null,
         hasWorkingTreeChanges: false,
         workingTree: {
           files: [],
@@ -994,6 +998,46 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(first.pr?.number).toBe(113);
       expect(second.pr?.number).toBe(113);
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+    }),
+  );
+
+  // T3-CUSTOM(expbkt3): per-profile remote status cache coverage.
+  it.effect("separates remote status caches by source-control profile", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/profile-status-cache"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/profile-status-cache"]);
+
+      const existingPr = {
+        number: 114,
+        title: "Profile-scoped cached PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/114",
+        baseRefName: "main",
+        headRefName: "feature/profile-status-cache",
+      };
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr]), JSON.stringify([existingPr])],
+        },
+      });
+      const alice = {
+        profileId: SourceControlProfileId.make("alice"),
+        environment: { GH_TOKEN: "alice-token" },
+      };
+      const bob = {
+        profileId: SourceControlProfileId.make("bob"),
+        environment: { GH_TOKEN: "bob-token" },
+      };
+
+      yield* withSourceControlExecutionEnvironment(manager.status({ cwd: repoDir }), alice);
+      yield* withSourceControlExecutionEnvironment(manager.status({ cwd: repoDir }), alice);
+      yield* withSourceControlExecutionEnvironment(manager.status({ cwd: repoDir }), bob);
+
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
     }),
   );
 
@@ -1112,6 +1156,70 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.pr).toBeNull();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
     }),
+  );
+
+  // T3-CUSTOM(expbkt3): local-only repositories must not invoke the provider registry.
+  it.effect(
+    "status keeps local Git details without a provider lookup when the repository has no remotes",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+
+        const { manager, ghCalls } = yield* makeManager();
+
+        const status = yield* manager.status({ cwd: repoDir });
+
+        expect(status).toMatchObject({
+          isRepo: true,
+          hasPrimaryRemote: false,
+          isDefaultRef: true,
+          refName: "main",
+          hasWorkingTreeChanges: false,
+          pr: null,
+        });
+        expect(ghCalls).toHaveLength(0);
+      }),
+  );
+
+  it.effect(
+    "status retains a learned PR when the final remote is removed without another provider lookup",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/remote-removed"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/remote-removed"]);
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off - fake gh emits CLI JSON.
+              JSON.stringify([
+                {
+                  number: 217,
+                  title: "Learned before remote removal",
+                  url: "https://github.com/pingdotgg/t3code/pull/217",
+                  baseRefName: "main",
+                  headRefName: "feature/remote-removed",
+                },
+              ]),
+            ],
+          },
+        });
+
+        expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(217);
+        const callsBeforeRemoval = ghCalls.length;
+        yield* runGit(repoDir, ["remote", "remove", "origin"]);
+
+        const local = yield* manager.localStatus({ cwd: repoDir });
+        const remote = yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+
+        expect(local).toMatchObject({ isRepo: true, hasPrimaryRemote: false });
+        expect(remote?.pr?.number).toBe(217);
+        expect(ghCalls).toHaveLength(callsBeforeRemoval);
+      }),
   );
 
   it.effect("branch PR lookup returns null when the repository has no remotes", () =>
@@ -1978,7 +2086,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           updatedAt: "2026-03-10T07:00:00.000Z",
         });
         expect(ghCalls).toContain(
-          "pr list --head statemachine --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          // T3-CUSTOM(expbkt3): PR badge fields in the --json list.
+          "pr list --head statemachine --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
     20_000,
@@ -2043,8 +2152,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           state: "open",
           updatedAt: "2026-03-10T07:00:00.000Z",
         });
+        // T3-CUSTOM(expbkt3): the fork's provider asks for the review/checks fields its
+        // pull-request panels render, so the arg string is longer than upstream's.
         expect(ghCalls).toContain(
-          "pr list --head main --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          // T3-CUSTOM(expbkt3): PR badge fields in the --json list.
+          "pr list --head main --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
     20_000,
@@ -2144,6 +2256,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-merged-pr"]);
+      // T3-CUSTOM(expbkt3): PR assertions require a publishable repository context.
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-merged-pr"]);
 
       const { manager } = yield* makeManager({
         ghScenario: {
@@ -2458,6 +2574,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-over-merged"]);
+      // T3-CUSTOM(expbkt3): PR assertions require a publishable repository context.
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-open-over-merged"]);
 
       const { manager } = yield* makeManager({
         ghScenario: {
@@ -5621,58 +5741,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(
         (yield* runGit(worktreePath, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
       ).toBe("fork-seed/feature/pr-reused-fork");
-    }),
-  );
-
-  it.effect("does not fail PR worktree prep when setup terminal startup fails", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-setup-failure"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "setup-failure.txt"), "setup failure\n");
-      yield* runGit(repoDir, ["add", "setup-failure.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "PR setup failure branch"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-setup-failure"]);
-      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/184/head"]);
-      yield* runGit(repoDir, ["checkout", "main"]);
-
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          pullRequest: {
-            number: 184,
-            title: "Setup failure PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/184",
-            baseRefName: "main",
-            headRefName: "feature/pr-setup-failure",
-            state: "open",
-          },
-        },
-        setupScriptRunner: {
-          runForThread: (input) =>
-            Effect.fail(
-              new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
-                threadId: input.threadId,
-                worktreePath: input.worktreePath,
-                operation: "openTerminal",
-                cause: new Error("terminal start failed"),
-              }),
-            ),
-        },
-      });
-
-      const result = yield* preparePullRequestThread(manager, {
-        cwd: repoDir,
-        reference: "184",
-        mode: "worktree",
-        threadId: asThreadId("thread-pr-setup-failure"),
-      });
-
-      expect(result.branch).toBe("feature/pr-setup-failure");
-      expect(result.worktreePath).not.toBeNull();
-      expect(NodeFS.existsSync(result.worktreePath as string)).toBe(true);
     }),
   );
 

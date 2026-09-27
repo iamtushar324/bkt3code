@@ -14,7 +14,9 @@ layer("035_ProjectionThreadTitleRegeneration", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* runMigrations({ toMigrationInclusive: 34 });
-      yield* runMigrations({ toMigrationInclusive: 35 });
+      // T3-CUSTOM(expbkt3): upstream ships this as migration 35, but fork
+      // migrations already occupy 33-42, so it is registered at 43.
+      yield* runMigrations({ toMigrationInclusive: 43 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)

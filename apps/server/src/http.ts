@@ -472,6 +472,13 @@ export const attachmentUploadRouteLayer = HttpRouter.add(
   }),
 );
 
+// T3-CUSTOM(expbkt3): the signed-in shell must never become a same-origin iframe
+// after an agent-supplied cross-origin URL redirects back to T3.
+export const T3_HTML_FRAME_HEADERS = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+} as const;
+
 const decodeBuildManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Record(
@@ -611,6 +618,8 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       immutableBuildAssets.has(relativePath);
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+      // T3-CUSTOM(expbkt3): protect both HTML files and SPA fallbacks from framing.
+      ...(isHtml ? T3_HTML_FRAME_HEADERS : {}),
     };
     // Deployments can preserve HTML size and mtime while changing its bundle URLs.
     const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);

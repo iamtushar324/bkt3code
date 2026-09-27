@@ -164,6 +164,7 @@ describe("OrchestrationEngine", () => {
             interactionMode: "default",
             branch: null,
             worktreePath: null,
+            sourceControlProfileId: null,
             createdAt: now(),
           }),
         );
@@ -370,6 +371,8 @@ describe("OrchestrationEngine", () => {
             model: "gpt-5-codex",
           },
           scripts: [],
+          ownerUserId: null,
+          memberUserIds: [],
           createdAt: "2026-03-03T00:00:00.000Z",
           updatedAt: "2026-03-03T00:00:01.000Z",
           deletedAt: null,
@@ -388,6 +391,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           pullRequests: [],
           latestTurn: null,
           createdAt: "2026-03-03T00:00:02.000Z",
@@ -401,6 +405,8 @@ describe("OrchestrationEngine", () => {
           activities: [],
           checkpoints: [],
           session: null,
+          ownerUserId: null,
+          memberUserIds: [],
         },
       ],
     };
@@ -420,6 +426,10 @@ describe("OrchestrationEngine", () => {
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
+          listLatestProposedPlansForActiveThreads: () => Effect.die("unused"),
+          countThreadUserMessages: () => Effect.die("unused"),
+          getThreadAccessById: () => Effect.die("unused"),
+          listThreadShellsByProjectId: () => Effect.die("unused"),
           listActivitiesByKind: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
@@ -527,6 +537,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       });
       yield* engine.dispatch({
@@ -604,6 +615,7 @@ describe("OrchestrationEngine", () => {
             runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
+            sourceControlProfileId: null,
             createdAt: now(),
           });
         }
@@ -735,6 +747,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -795,6 +808,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -888,6 +902,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -956,6 +971,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         });
         yield* engine.dispatch({
@@ -1007,6 +1023,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: "t3code/generated-branch-name",
         worktreePath: "/tmp/project-branch-race-worktree",
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1082,6 +1099,7 @@ describe("OrchestrationEngine", () => {
             interactionMode: "default",
             branch: "feature",
             worktreePath: null,
+            sourceControlProfileId: null,
             createdAt: now(),
           }),
         );
@@ -1192,6 +1210,7 @@ describe("OrchestrationEngine", () => {
           interactionMode: "default",
           branch: "feature",
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt: now(),
         }),
       );
@@ -1290,6 +1309,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: "main",
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1344,6 +1364,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1381,6 +1402,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         }),
       ),
@@ -1432,6 +1454,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1461,6 +1484,7 @@ describe("OrchestrationEngine", () => {
         status: "ready",
         files: [],
         assistantMessageId: null,
+        durationMs: null,
         completedAt: createdAt,
       },
     ]);
@@ -1558,6 +1582,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         }),
       ),
@@ -1578,6 +1603,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1663,6 +1689,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1812,6 +1839,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1900,6 +1928,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -1920,6 +1949,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         }),
       ),
@@ -1962,6 +1992,7 @@ describe("OrchestrationEngine", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -2027,6 +2058,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         }),
       );

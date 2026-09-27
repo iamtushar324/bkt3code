@@ -21,6 +21,8 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   workspaceRoot: "/repo/project",
   defaultModelSelection: null,
   scripts,
+  ownerUserId: null,
+  memberUserIds: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
@@ -29,6 +31,10 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getUserInputActivity: () => Effect.die("unused"),
+    listLatestProposedPlansForActiveThreads: () => Effect.die("unused"),
+    countThreadUserMessages: () => Effect.die("unused"),
+    getThreadAccessById: () => Effect.die("unused"),
+    listThreadShellsByProjectId: () => Effect.die("unused"),
     listActivitiesByKind: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),

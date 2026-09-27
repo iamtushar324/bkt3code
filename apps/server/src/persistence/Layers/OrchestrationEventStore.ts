@@ -29,6 +29,8 @@ import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../Services/OrchestrationEventStore.ts";
+// T3-CUSTOM(expbkt3): rows of retired fork event types are skipped on read.
+import { RETIRED_ORCHESTRATION_EVENT_TYPES } from "../retiredOrchestrationEvents.expbkt3.ts";
 
 const encodeProjectIcon = Schema.encodeSync(ProjectIconOverride);
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
@@ -198,6 +200,8 @@ const makeEventStore = Effect.gen(function* () {
           metadata_json AS "metadata"
         FROM orchestration_events
         WHERE sequence > ${request.sequenceExclusive}
+          -- T3-CUSTOM(expbkt3): skip retired fork event types.
+          AND event_type NOT IN ${sql.in(RETIRED_ORCHESTRATION_EVENT_TYPES)}
         ORDER BY sequence ASC
         LIMIT ${request.limit}
       `,
@@ -225,6 +229,8 @@ const makeEventStore = Effect.gen(function* () {
           AND stream_id = ${request.aggregateId}
           AND sequence > ${request.fromSequenceExclusive}
           AND sequence <= ${request.toSequenceInclusive}
+          -- T3-CUSTOM(expbkt3): skip retired fork event types.
+          AND event_type NOT IN ${sql.in(RETIRED_ORCHESTRATION_EVENT_TYPES)}
         ORDER BY sequence ASC
         LIMIT ${request.limit}
       `,

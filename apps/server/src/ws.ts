@@ -1,12 +1,14 @@
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
-import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,6 +18,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
@@ -39,8 +42,10 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  type OrchestrationLatestTurn,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -50,6 +55,7 @@ import {
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  UserId,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchContentsError,
@@ -68,6 +74,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  SourceControlProfileError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -80,9 +87,16 @@ import {
   worktreeSetupActivityId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
+import { clamp } from "effect/Number";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+// T3-CUSTOM(expbkt3): HttpClient is passed to fork-only Linear status handlers.
+import {
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -102,7 +116,15 @@ import {
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationAccessControl } from "./orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControlLive } from "./orchestration/Layers/AccessControl.ts";
+import { ClerkDirectory, ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
+// T3-CUSTOM(expbkt3): fork RPC handlers
+import { makeForkWsHandlers } from "./wsForkHandlers.ts";
+// T3-CUSTOM(expbkt3): per-connection access control helpers
+import { filterShellSnapshot } from "./orchestration/accessRules.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+import { makeWsVisibility } from "./orchestration/wsVisibility.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -119,11 +141,15 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
-import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
+// T3-CUSTOM(expbkt3): native plan review service.
+import { PlanReviewService } from "./planreview/PlanReviewService.ts";
+// T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+import { AgentUiService } from "./agentui/AgentUiService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -137,6 +163,8 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+// T3-CUSTOM(expbkt3): archived-session worktree reclaim
+import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -149,6 +177,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
 import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -165,6 +194,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+import {
+  CurrentSourceControlExecutionEnvironment,
+  withSourceControlExecutionEnvironment,
+} from "./sourceControl/SourceControlExecutionEnvironment.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -174,11 +208,23 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
+import { githubSshRemoteToHttps } from "./sourceControl/GitHubRemoteUrl.ts";
+import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
+import {
+  applyAssignedSourceControlProfile,
+  creationSourceControlProfileId,
+} from "./sourceControl/ThreadSourceControlProfileSelection.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { isThreadDetailEvent } from "./orchestration/threadDetailEvent.ts";
+// T3-CUSTOM(expbkt3): terminalize unavailable subscriptions for legacy clients.
+import { makeMissingThreadSubscriptions } from "./orchestration/MissingThreadSubscriptions.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationGetTurnDiffError = Schema.is(OrchestrationGetTurnDiffError);
+const isOrchestrationGetFullThreadDiffError = Schema.is(OrchestrationGetFullThreadDiffError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -340,28 +386,6 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // When a resuming client's cursor is more than this many events behind the
@@ -503,7 +527,6 @@ const makeWsRpcLayer = (
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
-      const crypto = yield* Crypto.Crypto;
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       /** A reference's host-level link key; the project's own host where the ref names none. */
@@ -518,6 +541,40 @@ const makeWsRpcLayer = (
             );
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
+      const accessControl = yield* OrchestrationAccessControl;
+      const clerkDirectory = yield* ClerkDirectory;
+      // T3-CUSTOM(expbkt3): Identity binding preserves the transport subject, so
+      // authorization must prefer the durable user attached to the session;
+      // unidentified local operators remain unrestricted.
+      const actorUserId = Option.getOrNull(
+        accessControl.actorFor(currentSession.subject, currentSession.userId),
+      );
+      // T3-CUSTOM(expbkt3): Local/single-user transports share a deterministic
+      // personal profile; team-mode connections use the authenticated Clerk id.
+      const personalMcpUserId = actorUserId ?? UserId.make("local-user");
+      const personalMcpProfiles = yield* UserMcpProfileStore.UserMcpProfileStore;
+      // T3-CUSTOM(expbkt3): Bifrost-backed Linear status lookup.
+      const httpClient = yield* HttpClient.HttpClient;
+      // Whether that operator is a Clerk org admin (may manage project access).
+      // Stable for the connection's identity, so resolve once.
+      const actorIsAdmin =
+        actorUserId === null ? false : yield* clerkDirectory.isOrgAdmin(actorUserId);
+      // T3-CUSTOM(expbkt3): avoid re-querying stale ids for this connection.
+      const missingThreadSubscriptions = makeMissingThreadSubscriptions();
+      // T3-CUSTOM(expbkt3): BEGIN per-connection access control (wsVisibility.ts)
+      const {
+        visibleAggregateIdsForActor,
+        requireThreadAccess,
+        applyShellVisibility,
+        applyShellItemVisibility,
+        authorizeNormalizedCommand,
+      } = makeWsVisibility({
+        projectionSnapshotQuery,
+        accessControl,
+        actorUserId,
+        actorIsAdmin,
+      });
+      // T3-CUSTOM(expbkt3): END
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting
       // client's origin, including server-generated bootstrap sub-commands:
@@ -527,10 +584,11 @@ const makeWsRpcLayer = (
       const dispatchFromClient: OrchestrationEngine.OrchestrationEngineShape["dispatch"] = (
         command,
       ) =>
-        orchestrationEngine.dispatch(
-          command,
-          hasClientOrigin ? { origin: clientOrigin } : undefined,
-        );
+        orchestrationEngine.dispatch(command, {
+          ...(hasClientOrigin ? { origin: clientOrigin } : {}),
+          // T3-CUSTOM(expbkt3): acting operator for ownership + audit trail.
+          actorUserId,
+        });
       const recordClientCommandAnalytics = (command: OrchestrationCommand) => {
         switch (command.type) {
           case "thread.create":
@@ -555,6 +613,9 @@ const makeWsRpcLayer = (
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
+      const gitVcsDriver = yield* GitVcsDriver.GitVcsDriver;
+      // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
+      const sessionArchive = yield* SessionArchiveService.SessionArchiveService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
@@ -576,6 +637,7 @@ const makeWsRpcLayer = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+      const crypto = yield* Crypto.Crypto;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
@@ -646,6 +708,23 @@ const makeWsRpcLayer = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const environmentUsers = yield* EnvironmentUserService.EnvironmentUserService;
+      // T3-CUSTOM(expbkt3): BEGIN native plan review connection state.
+      const planReview = yield* PlanReviewService;
+      // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+      const agentUi = yield* AgentUiService;
+      // Resolved once per connection: it only labels this actor's own comments.
+      const actorLabel =
+        actorUserId === null
+          ? null
+          : yield* clerkDirectory.listOrgMembers().pipe(
+              Effect.map((members) => {
+                const member = members.find((user) => user.id === actorUserId);
+                return member?.name ?? member?.email ?? null;
+              }),
+              Effect.orElseSucceed(() => null),
+            );
+      // T3-CUSTOM(expbkt3): END native plan review connection state.
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
@@ -659,6 +738,9 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const sourceControlProfiles = yield* SourceControlProfileService.SourceControlProfileService;
+      const sourceControlActionLock =
+        yield* ThreadSourceControlActionLock.ThreadSourceControlActionLock;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -751,6 +833,53 @@ const makeWsRpcLayer = (
               }),
           ),
         );
+
+      const enrichProjectEvent = (
+        event: OrchestrationEvent,
+      ): Effect.Effect<OrchestrationEvent, never, never> => {
+        switch (event.type) {
+          case "project.created":
+            return repositoryIdentityResolver.resolve(event.payload.workspaceRoot).pipe(
+              Effect.map((repositoryIdentity) => ({
+                ...event,
+                payload: {
+                  ...event.payload,
+                  repositoryIdentity,
+                },
+              })),
+            );
+          case "project.meta-updated":
+            return Effect.gen(function* () {
+              const workspaceRoot =
+                event.payload.workspaceRoot ??
+                Option.match(
+                  yield* projectionSnapshotQuery.getProjectShellById(event.payload.projectId),
+                  {
+                    onNone: () => null,
+                    onSome: (project) => project.workspaceRoot,
+                  },
+                ) ??
+                null;
+              if (workspaceRoot === null) {
+                return event;
+              }
+
+              const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+              return {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  repositoryIdentity,
+                },
+              } satisfies OrchestrationEvent;
+            }).pipe(Effect.orElseSucceed(() => event));
+          default:
+            return Effect.succeed(event);
+        }
+      };
+
+      const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+        Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
@@ -852,6 +981,9 @@ const makeWsRpcLayer = (
         switch (event.type) {
           case "project.created":
           case "project.meta-updated":
+          case "project.member-added":
+          case "project.member-removed":
+          case "project.owner-transferred":
             return projectUpsertOrRemove(ProjectId.make(event.aggregateId), event.sequence);
           case "project.deleted":
             return Effect.succeedSome({
@@ -1432,6 +1564,27 @@ const makeWsRpcLayer = (
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
                 createdAt: bootstrap.createThread.createdAt,
+                // T3-CUSTOM(expbkt3): profile, ownership, priority and lineage
+                // travel with the create.
+                sourceControlProfileId: bootstrap.createThread.sourceControlProfileId,
+                ...(bootstrap.createThread.ownerUserId !== undefined
+                  ? { ownerUserId: bootstrap.createThread.ownerUserId }
+                  : {}),
+                ...(bootstrap.createThread.memberUserIds !== undefined
+                  ? { memberUserIds: bootstrap.createThread.memberUserIds }
+                  : {}),
+                ...(bootstrap.createThread.priority !== undefined
+                  ? { priority: bootstrap.createThread.priority }
+                  : {}),
+                ...(bootstrap.createThread.customGroup !== undefined
+                  ? { customGroup: bootstrap.createThread.customGroup }
+                  : {}),
+                ...(bootstrap.createThread.parentThreadId !== undefined
+                  ? { parentThreadId: bootstrap.createThread.parentThreadId }
+                  : {}),
+                ...(bootstrap.createThread.parentEnvironmentId !== undefined
+                  ? { parentEnvironmentId: bootstrap.createThread.parentEnvironmentId }
+                  : {}),
               });
               // The successful create is a fence in the engine command queue:
               // every delete for the prior incarnation committed before it.
@@ -1773,7 +1926,9 @@ const makeWsRpcLayer = (
           return yield* runBootstrap;
         });
 
-      const dispatchNormalizedCommand = (
+      // T3-CUSTOM(expbkt3): upstream's dispatchNormalizedCommand body; the fork
+      // runs its per-connection ownership/access check (wsVisibility.ts) first.
+      const dispatchAuthorizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
@@ -1801,6 +1956,11 @@ const makeWsRpcLayer = (
             ),
           );
       };
+      const dispatchNormalizedCommand = (normalizedCommand: OrchestrationCommand) =>
+        authorizeNormalizedCommand(normalizedCommand).pipe(
+          Effect.andThen(dispatchAuthorizedCommand(normalizedCommand)),
+        );
+      // T3-CUSTOM(expbkt3): END
 
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
@@ -1872,13 +2032,349 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const resolveSelectedSourceControlEnvironment = Effect.fn(
+        "ws.resolveSelectedSourceControlEnvironment",
+      )(function* (
+        profileId:
+          | SourceControlProfileService.SourceControlExecutionContext["profileId"]
+          | undefined,
+      ) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(
+            () =>
+              new SourceControlProfileError({
+                operation: "resolve-profile",
+                reason: "profile-persist-failed",
+                detail: "Could not read source-control identity settings.",
+              }),
+          ),
+        );
+        if (settings.sourceControlIdentityMode === "thread-profile") {
+          if (currentSession.userId === null) {
+            return yield* new SourceControlProfileError({
+              operation: "resolve-profile",
+              reason: "missing-profile",
+              detail: "Sign in before using authenticated source-control operations.",
+            });
+          }
+          const context = yield* sourceControlProfiles.resolveUserExecutionContext(
+            UserId.make(currentSession.userId),
+            {},
+          );
+          if (context === null) {
+            return null;
+          }
+          return {
+            profileId: context.profileId,
+            environment: context.environment,
+          };
+        }
+        if (profileId !== undefined) {
+          const context = yield* sourceControlProfiles.resolveExecutionContext(profileId, {});
+          return {
+            profileId: context.profileId,
+            environment: context.environment,
+          };
+        }
+        return null;
+      });
+
+      const resolveThreadSourceControlEnvironment = Effect.fn(
+        "ws.resolveThreadSourceControlEnvironment",
+      )(function* (threadId: ThreadId | undefined) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(
+            () =>
+              new SourceControlProfileError({
+                operation: "resolve-thread-profile",
+                reason: "profile-persist-failed",
+                detail: "Could not read source-control identity settings.",
+                ...(threadId !== undefined ? { threadId } : {}),
+              }),
+          ),
+        );
+        if (settings.sourceControlIdentityMode === "machine") {
+          return null;
+        }
+        if (threadId === undefined) {
+          return yield* new SourceControlProfileError({
+            operation: "resolve-thread-profile",
+            reason: "missing-profile",
+            detail: "This Git operation must identify its owning thread.",
+          });
+        }
+
+        const thread = yield* projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+          Effect.mapError(
+            () =>
+              new SourceControlProfileError({
+                operation: "resolve-thread-profile",
+                reason: "thread-not-found",
+                detail: "Could not read the thread's GitHub owner.",
+                threadId,
+              }),
+          ),
+        );
+        if (Option.isNone(thread)) {
+          return yield* new SourceControlProfileError({
+            operation: "resolve-thread-profile",
+            reason: "thread-not-found",
+            detail: "The selected thread no longer exists.",
+            threadId,
+          });
+        }
+        const context = yield* sourceControlProfiles.resolveThreadExecutionContext(
+          threadId,
+          thread.value.ownerUserId,
+          {},
+        );
+        return context === null
+          ? null
+          : { profileId: context.profileId, environment: context.environment };
+      });
+
+      const withThreadSourceControl = <A, E, R>(
+        threadId: ThreadId | undefined,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | SourceControlProfileError, R> =>
+        Effect.flatMap(resolveThreadSourceControlEnvironment(threadId), (executionEnvironment) =>
+          withSourceControlExecutionEnvironment(effect, executionEnvironment),
+        );
+
+      const withThreadActionLock = <A, E, R>(
+        threadId: ThreadId | undefined,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E, R> =>
+        threadId === undefined ? effect : sourceControlActionLock.runExclusive(threadId, effect);
+
+      const withThreadSourceControlStream = <A, E, R>(
+        threadId: ThreadId | undefined,
+        stream: Stream.Stream<A, E, R>,
+      ): Stream.Stream<A, E | SourceControlProfileError, R> =>
+        Stream.unwrap(
+          resolveThreadSourceControlEnvironment(threadId).pipe(
+            Effect.map((executionEnvironment) =>
+              stream.pipe(
+                Stream.provideService(
+                  CurrentSourceControlExecutionEnvironment,
+                  executionEnvironment,
+                ),
+              ),
+            ),
+          ),
+        );
+
+      const ensureGitHubRemotesUseHttps = Effect.fn("ws.ensureGitHubRemotesUseHttps")(
+        function* (input: { readonly cwd: string; readonly threadId?: ThreadId | undefined }) {
+          const executionEnvironment = yield* resolveThreadSourceControlEnvironment(input.threadId);
+          if (executionEnvironment === null) return;
+          const remote = yield* withSourceControlExecutionEnvironment(
+            gitVcsDriver.execute({
+              operation: "SourceControlRemote.validateHttps",
+              cwd: input.cwd,
+              args: ["remote", "get-url", "origin"],
+              allowNonZeroExit: true,
+            }),
+            executionEnvironment,
+          ).pipe(
+            Effect.mapError(
+              () =>
+                new SourceControlProfileError({
+                  operation: "validate-remote",
+                  reason: "validation-failed",
+                  detail: "GitHub remotes could not be validated before the authenticated action.",
+                  profileId: executionEnvironment.profileId,
+                  ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+                }),
+            ),
+          );
+          if (remote.exitCode === 0 && githubSshRemoteToHttps(remote.stdout.trim()) !== null) {
+            return yield* new SourceControlProfileError({
+              operation: "validate-remote",
+              reason: "ssh-remote",
+              detail:
+                "Convert the GitHub remote to HTTPS before fetching, pushing, or preparing a pull request.",
+              profileId: executionEnvironment.profileId,
+              ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+            });
+          }
+        },
+      );
+
+      const withThreadSourceControlEnvironment = <
+        A extends {
+          readonly threadId: string;
+          readonly env?: Readonly<Record<string, string>> | undefined;
+        },
+      >(
+        input: A,
+      ): Effect.Effect<A, SourceControlProfileError> =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(input.threadId);
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              () =>
+                new SourceControlProfileError({
+                  operation: "resolve-terminal-profile",
+                  reason: "profile-persist-failed",
+                  detail: "Could not read source-control identity settings.",
+                  threadId,
+                }),
+            ),
+          );
+          if (settings.sourceControlIdentityMode === "machine") {
+            return input;
+          }
+          const thread = yield* projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+            Effect.mapError(
+              () =>
+                new SourceControlProfileError({
+                  operation: "resolve-terminal-profile",
+                  reason: "thread-not-found",
+                  detail: "Could not read the terminal's thread owner.",
+                  threadId,
+                }),
+            ),
+          );
+          if (Option.isNone(thread)) {
+            return yield* new SourceControlProfileError({
+              operation: "resolve-terminal-profile",
+              reason: "thread-not-found",
+              detail: "The terminal's thread no longer exists.",
+              threadId,
+            });
+          }
+          const context = yield* sourceControlProfiles.resolveThreadExecutionContext(
+            threadId,
+            thread.value.ownerUserId,
+            {},
+          );
+          if (context === null) {
+            return input;
+          }
+          const merged = SourceControlProfileService.mergeSourceControlEnvironment(
+            input.env ?? {},
+            context.environment,
+          );
+          const env = Object.fromEntries(
+            Object.entries(merged).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          );
+          return { ...input, env } as A;
+        });
+
+      // T3-CUSTOM(expbkt3): BEGIN fork RPC handlers (wsForkHandlers.ts)
+      const forkHandlers = makeForkWsHandlers({
+        currentSessionId,
+        actorUserId,
+        personalMcpUserId,
+        personalMcpProfiles,
+        httpClient,
+        sourceControlProfiles,
+        environmentUsers,
+        planReview,
+        agentUi,
+        actorLabel,
+        usage,
+        projectionSnapshotQuery,
+        orchestrationEngine,
+        gitVcsDriver,
+        sessionArchive,
+        sourceControlActionLock,
+        enrichOrchestrationEvents,
+        observeRpcEffect,
+        observeRpcStream,
+        requireThreadAccess,
+        visibleAggregateIdsForActor,
+      });
+      // T3-CUSTOM(expbkt3): END
+
       return WsRpcGroup.of({
+        // T3-CUSTOM(expbkt3): fork RPC handlers live in wsForkHandlers.ts
+        ...forkHandlers,
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
+              let normalizedCommand = yield* normalizeDispatchCommand(command);
+              const sourceControlSettings = yield* serverSettings.getSettings;
+              const identityMode = sourceControlSettings.sourceControlIdentityMode;
+              if (identityMode === "thread-profile") {
+                // T3-CUSTOM(expbkt3): New-thread attribution defaults to the
+                // authenticated environment user's linked GitHub profile. This
+                // also closes the profile-query loading race in every client.
+                const assignedProfileId =
+                  actorUserId === null
+                    ? null
+                    : (Object.values(sourceControlSettings.sourceControlProfiles).find(
+                        (profile) =>
+                          profile.ownerUserId !== null &&
+                          String(profile.ownerUserId) === String(actorUserId),
+                      )?.id ?? null);
+                normalizedCommand = applyAssignedSourceControlProfile(
+                  normalizedCommand,
+                  assignedProfileId,
+                );
+                const creationProfileId = creationSourceControlProfileId(normalizedCommand);
+                if (creationProfileId === null) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message:
+                      "Assign a connected GitHub profile to your user in Settings before creating a thread.",
+                  });
+                }
+                let validation: Effect.Effect<unknown, SourceControlProfileError> | null = null;
+                if (creationProfileId !== undefined) {
+                  validation = sourceControlProfiles.resolveExecutionContext(creationProfileId);
+                } else if (normalizedCommand.type === "thread.owner.transfer") {
+                  validation = sourceControlProfiles.resolveThreadExecutionContext(
+                    normalizedCommand.threadId,
+                    normalizedCommand.userId,
+                  );
+                } else if (normalizedCommand.type === "thread.turn.start") {
+                  const threadId = normalizedCommand.threadId;
+                  validation = projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+                    Effect.mapError(
+                      () =>
+                        new SourceControlProfileError({
+                          operation: "resolve-thread-profile",
+                          reason: "thread-not-found",
+                          detail: "Could not read the selected thread.",
+                          threadId,
+                        }),
+                    ),
+                    Effect.flatMap(
+                      Option.match({
+                        onNone: () =>
+                          Effect.fail(
+                            new SourceControlProfileError({
+                              operation: "resolve-thread-profile",
+                              reason: "thread-not-found",
+                              detail: "The selected thread no longer exists.",
+                              threadId,
+                            }),
+                          ),
+                        onSome: (thread) =>
+                          sourceControlProfiles.resolveThreadExecutionContext(
+                            threadId,
+                            thread.ownerUserId,
+                          ),
+                      }),
+                    ),
+                  );
+                }
+                if (validation !== null) {
+                  yield* validation.pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new OrchestrationDispatchCommandError({
+                          message: error.detail,
+                        }),
+                    ),
+                  );
+                }
+              }
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
               // Settlement cleanup is driven by thread.settled events in the
@@ -1905,7 +2401,91 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+              const dispatchEffect =
+                normalizedCommand.type === "thread.owner.transfer"
+                  ? Effect.gen(function* () {
+                      yield* authorizeNormalizedCommand(normalizedCommand);
+                      const threadOption = yield* projectionSnapshotQuery
+                        .getThreadDetailById(normalizedCommand.threadId)
+                        .pipe(
+                          Effect.mapError(
+                            (cause) =>
+                              new OrchestrationDispatchCommandError({
+                                message: "Could not read the thread before transferring ownership.",
+                                cause,
+                              }),
+                          ),
+                        );
+                      if (Option.isNone(threadOption)) {
+                        return yield* new OrchestrationDispatchCommandError({
+                          message: "The selected thread no longer exists.",
+                        });
+                      }
+                      const thread = threadOption.value;
+                      if (
+                        thread.latestTurn?.state === "running" ||
+                        thread.session?.status === "starting" ||
+                        thread.session?.status === "running"
+                      ) {
+                        return yield* new OrchestrationDispatchCommandError({
+                          message: "Wait for the active provider turn before changing owner.",
+                        });
+                      }
+                      if (thread.session !== null && thread.session.status !== "stopped") {
+                        yield* providerService
+                          .stopSession({ threadId: normalizedCommand.threadId })
+                          .pipe(
+                            Effect.mapError(
+                              (cause) =>
+                                new OrchestrationDispatchCommandError({
+                                  message:
+                                    "The provider session could not be stopped before changing owner.",
+                                  cause,
+                                }),
+                            ),
+                          );
+                      }
+                      yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new OrchestrationDispatchCommandError({
+                              message:
+                                "The thread terminals could not be closed before changing owner.",
+                              cause,
+                            }),
+                        ),
+                      );
+                      const result = yield* dispatchAuthorizedCommand(normalizedCommand);
+                      yield* terminalManager
+                        .close({ threadId: normalizedCommand.threadId })
+                        .pipe(Effect.ignore);
+                      return result;
+                    })
+                  : dispatchNormalizedCommand(normalizedCommand);
+              const lockedDispatchEffect =
+                normalizedCommand.type === "thread.turn.start"
+                  ? sourceControlActionLock.runExclusive(normalizedCommand.threadId, dispatchEffect)
+                  : normalizedCommand.type === "thread.owner.transfer"
+                    ? sourceControlActionLock
+                        .tryRunExclusive(normalizedCommand.threadId, dispatchEffect)
+                        .pipe(
+                          Effect.flatMap(
+                            Option.match({
+                              onNone: () =>
+                                Effect.fail(
+                                  new OrchestrationDispatchCommandError({
+                                    message:
+                                      "Wait for the active turn or Git action before changing owner.",
+                                  }),
+                                ),
+                              onSome: Effect.succeed,
+                            }),
+                          ),
+                        )
+                    : dispatchEffect;
+              // T3-CUSTOM(expbkt3): upstream's attachment cleanup and client-origin
+              // analytics wrap the fork's lock-aware dispatch.
+              const result = yield* lockedDispatchEffect.pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
@@ -1969,13 +2549,17 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getTurnDiff,
-            checkpointDiffQuery.getTurnDiff(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetTurnDiffError({
-                    message: "Failed to load turn diff",
-                    cause,
-                  }),
+            Effect.gen(function* () {
+              yield* requireThreadAccess(input.threadId);
+              return yield* checkpointDiffQuery.getTurnDiff(input);
+            }).pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationGetTurnDiffError(cause)
+                  ? cause
+                  : new OrchestrationGetTurnDiffError({
+                      message: "Failed to load turn diff",
+                      cause,
+                    }),
               ),
             ),
             { "rpc.aggregate": "orchestration" },
@@ -1983,13 +2567,17 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getFullThreadDiff,
-            checkpointDiffQuery.getFullThreadDiff(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetFullThreadDiffError({
-                    message: "Failed to load full thread diff",
-                    cause,
-                  }),
+            Effect.gen(function* () {
+              yield* requireThreadAccess(input.threadId);
+              return yield* checkpointDiffQuery.getFullThreadDiff(input);
+            }).pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationGetFullThreadDiffError(cause)
+                  ? cause
+                  : new OrchestrationGetFullThreadDiffError({
+                      message: "Failed to load full thread diff",
+                      cause,
+                    }),
               ),
             ),
             { "rpc.aggregate": "orchestration" },
@@ -2074,7 +2662,14 @@ const makeWsRpcLayer = (
                 Stream.flatMap((items) => Stream.fromIterable(items)),
               );
 
-              const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
+              const loadSnapshot = Effect.gen(function* () {
+                const rawSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+                const visibleSnapshot =
+                  actorUserId === null
+                    ? rawSnapshot
+                    : filterShellSnapshot(rawSnapshot, actorUserId);
+                return visibleSnapshot;
+              }).pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
                 ),
@@ -2090,20 +2685,22 @@ const makeWsRpcLayer = (
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
-              const synchronizedThenLive = liveBudget.deliver(
-                input.requestCompletionMarker === true
-                  ? Stream.concat(
-                      Stream.fromEffect(
-                        liveBudget.retain({ kind: "synchronized" as const }).pipe(
-                          Effect.flatMap((item) => Queue.offer(liveBuffer, item)),
-                          Effect.uninterruptible,
-                          Effect.andThen(Queue.takeAll(liveBuffer)),
-                          Effect.flatMap(coalesceRetainedInputs),
-                        ),
-                      ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
-                      bufferedLiveStream,
-                    )
-                  : bufferedLiveStream,
+              const synchronizedThenLive = applyShellItemVisibility(
+                liveBudget.deliver(
+                  input.requestCompletionMarker === true
+                    ? Stream.concat(
+                        Stream.fromEffect(
+                          liveBudget.retain({ kind: "synchronized" as const }).pipe(
+                            Effect.flatMap((item) => Queue.offer(liveBuffer, item)),
+                            Effect.uninterruptible,
+                            Effect.andThen(Queue.takeAll(liveBuffer)),
+                            Effect.flatMap(coalesceRetainedInputs),
+                          ),
+                        ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
+                        bufferedLiveStream,
+                      )
+                    : bufferedLiveStream,
+                ),
               );
 
               // When the client already holds a shell snapshot (cached, or loaded
@@ -2135,12 +2732,14 @@ const makeWsRpcLayer = (
                     synchronizedThenLive,
                   );
                 }
-                const catchUpStream = coalesceShellStream(
-                  // Replay only through the head captured above. Newer events
-                  // are already covered by the live subscription, so this bound
-                  // cannot chase a moving event-store head or grow the live
-                  // buffer indefinitely while waiting for an empty page.
-                  orchestrationEngine.readEvents(afterSequence, replayGap),
+                const catchUpStream = applyShellVisibility(
+                  coalesceShellStream(
+                    // Replay only through the head captured above. Newer events
+                    // are already covered by the live subscription, so this bound
+                    // cannot chase a moving event-store head or grow the live
+                    // buffer indefinitely while waiting for an empty page.
+                    orchestrationEngine.readEvents(afterSequence, replayGap),
+                  ),
                 ).pipe(
                   Stream.mapError(
                     (cause) =>
@@ -2168,6 +2767,9 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
             projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              Effect.map((snapshot) =>
+                actorUserId === null ? snapshot : filterShellSnapshot(snapshot, actorUserId),
+              ),
               Effect.tapError((cause) =>
                 Effect.logError("orchestration archived shell snapshot load failed", { cause }),
               ),
@@ -2185,32 +2787,74 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              // T3-CUSTOM(expbkt3): a terminal event stops old clients from
+              // retrying, while the connection-local cache avoids repeat reads.
+              const knownMissing = missingThreadSubscriptions.get(input.threadId);
+              if (knownMissing !== undefined) {
+                return Stream.make(knownMissing);
+              }
+
+              // Team mode: reject a thread the operator can't access (as
+              // not-found — no existence leak).
+              if (actorUserId !== null) {
+                const accessible = yield* accessControl
+                  .canAccessThread(actorUserId, input.threadId)
+                  .pipe(Effect.orElseSucceed(() => false));
+                if (!accessible) {
+                  return Stream.make(yield* missingThreadSubscriptions.mark(input));
+                }
+              }
+
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
                 isThreadDetailEvent(event);
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+              // Close the stream once the operator is untagged from this thread
+              // so an open viewer who loses access is kicked out live.
+              const takeUntilSelfRemoved = <E, R>(
+                stream: Stream.Stream<OrchestrationThreadStreamItem, E, R>,
+              ): Stream.Stream<OrchestrationThreadStreamItem, E, R> =>
+                actorUserId === null
+                  ? stream
+                  : stream.pipe(
+                      Stream.takeUntil(
+                        (item) =>
+                          item.kind === "event" &&
+                          item.event.type === "thread.member-removed" &&
+                          item.event.payload.userId === actorUserId,
+                      ),
+                    );
+
+              // T3-CUSTOM(expbkt3): Acquire the domain subscription before reading the replay or
+              // snapshot. Keep its lifetime separate from the RPC scope so an
+              // overflowing producer also releases its PubSub subscriber.
+              const domainSubscriptionScope = yield* Scope.make("sequential");
+              yield* Effect.addFinalizer((exit) => Scope.close(domainSubscriptionScope, exit));
+              const domainLiveStream = (yield* orchestrationEngine.subscribeDomainEvents.pipe(
+                Scope.provide(domainSubscriptionScope),
+              )).pipe(
                 Stream.filter(isThisThreadDetailEvent),
                 Stream.map((event) => ({
                   kind: "event" as const,
                   event: projectActivityEvent(event, input.reasoningMessages === true),
                 })),
               );
-
               // Attach live delivery before reading either replay or snapshot state.
               // Otherwise an event published while the snapshot is loading is lost.
               const liveBuffer = yield* makeThreadLiveEventCoalescer();
               yield* Effect.forkScoped(
-                liveStream.pipe(
+                domainLiveStream.pipe(
                   Stream.runForEachArray(liveBuffer.offerAll),
                   Effect.raceFirst(liveBuffer.failed),
                   Effect.catchTags({ OrchestrationGetSnapshotError: () => Effect.void }),
+                  Effect.ensuring(Scope.close(domainSubscriptionScope, Exit.void)),
                 ),
                 { startImmediately: true },
               );
               const bufferedLiveStream = liveBuffer.stream;
               let replayOnMissingSnapshot: typeof bufferedLiveStream | undefined;
+              let replayTooLarge = false;
 
               // When the client already loaded the snapshot over HTTP it passes
               // that snapshot's sequence, and we resume the live subscription by
@@ -2253,11 +2897,12 @@ const makeWsRpcLayer = (
                               }),
                           ),
                         );
-                if (
+                const replayFitsBudget =
                   replayStats !== null &&
                   replayStats.eventCount <= THREAD_RESUME_MAX_EVENTS &&
-                  replayStats.payloadBytes <= ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES
-                ) {
+                  replayStats.payloadBytes <= ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES;
+                replayTooLarge = replayStats !== null && !replayFitsBudget;
+                if (replayFitsBudget) {
                   const catchUpStream = orchestrationEngine
                     .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
                     .pipe(
@@ -2282,7 +2927,7 @@ const makeWsRpcLayer = (
                             .pipe(Effect.as(bufferedLiveStream)),
                         )
                       : bufferedLiveStream;
-                  const replay = Stream.concat(catchUpStream, afterCatchUp);
+                  const replay = takeUntilSelfRemoved(Stream.concat(catchUpStream, afterCatchUp));
                   if (!replayStats.hasCreateEvent) {
                     return replay;
                   }
@@ -2292,7 +2937,7 @@ const makeWsRpcLayer = (
                 // Oversized replays and invalid cursors also use the snapshot path.
               }
 
-              const snapshot = yield* projectionSnapshotQuery
+              const loadedSnapshot = yield* projectionSnapshotQuery
                 .getThreadDetailSnapshot(
                   input.threadId,
                   // Windowing the fallback snapshot is opt-in per subscription:
@@ -2311,18 +2956,22 @@ const makeWsRpcLayer = (
                   ),
                 );
 
-              if (Option.isNone(snapshot)) {
+              if (Option.isNone(loadedSnapshot)) {
                 // The recreated thread can already be deleted. Preserve the
                 // bounded replay and shell removal instead of retrying a
                 // snapshot that cannot exist. Oversized ranges still fail.
                 if (replayOnMissingSnapshot !== undefined) {
                   return replayOnMissingSnapshot;
                 }
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
-                });
+                if (replayTooLarge) {
+                  return yield* new OrchestrationGetSnapshotError({
+                    message: `Thread ${input.threadId} was not found`,
+                    cause: input.threadId,
+                  });
+                }
+                return Stream.make(yield* missingThreadSubscriptions.mark(input));
               }
+              const snapshot = loadedSnapshot.value;
 
               const afterSnapshot =
                 input.requestCompletionMarker === true
@@ -2332,15 +2981,17 @@ const makeWsRpcLayer = (
                         .pipe(Effect.as(bufferedLiveStream)),
                     )
                   : bufferedLiveStream;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(
-                    snapshot.value,
-                    input.reasoningMessages === true,
-                  ),
-                }),
-                afterSnapshot,
+              return takeUntilSelfRemoved(
+                Stream.concat(
+                  Stream.make({
+                    kind: "snapshot" as const,
+                    snapshot: projectThreadDetailSnapshot(
+                      snapshot,
+                      input.reasoningMessages === true,
+                    ),
+                  }),
+                  afterSnapshot,
+                ),
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -2607,25 +3258,39 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
-          observeRpcEffect(
+        [WS_METHODS.serverUpdateSettings]: ({ patch }) => {
+          // Profile metadata is writable only through the credential-aware
+          // source-control profile RPCs. A generic settings client must not be
+          // able to replace a validated login/account binding.
+          const { sourceControlProfiles: _ignoredProfileMetadata, ...clientWritablePatch } = patch;
+          const requiresUserAdministrator =
+            patch.environmentUserIdentityMode !== undefined ||
+            patch.sourceControlIdentityMode !== undefined;
+          return observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
             Effect.gen(function* () {
+              if (requiresUserAdministrator) {
+                yield* environmentUsers.assertAdministrator(currentSessionId);
+              }
               const deviceHosts = patch.deviceHosts
                 ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                     Effect.provide(deviceHostContext),
                   )
                 : undefined;
               const settings = yield* serverSettings.updateSettings({
-                ...patch,
+                ...clientWritablePatch,
                 ...(deviceHosts ? { deviceHosts } : {}),
               });
+              if (patch.environmentUserIdentityMode === "required") {
+                yield* environmentUsers.revokeUnidentifiedSessions;
+              }
               return ServerSettings.redactServerSettingsForClient(settings);
             }),
             {
               "rpc.aggregate": "server",
             },
-          ),
+          );
+        },
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -2963,7 +3628,15 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
-            sourceControlRepositories.lookupRepository(input),
+            Effect.gen(function* () {
+              const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+                input.sourceControlProfileId,
+              );
+              return yield* withSourceControlExecutionEnvironment(
+                sourceControlRepositories.lookupRepository(input),
+                executionEnvironment,
+              );
+            }),
             {
               "rpc.aggregate": "source-control",
             },
@@ -2971,7 +3644,29 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlCloneRepository,
-            sourceControlRepositories.cloneRepository(input),
+            Effect.gen(function* () {
+              const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+                input.sourceControlProfileId,
+              );
+              if (
+                executionEnvironment !== null &&
+                input.remoteUrl !== undefined &&
+                githubSshRemoteToHttps(input.remoteUrl) !== null
+              ) {
+                return yield* new SourceControlProfileError({
+                  operation: "clone-repository",
+                  reason: "ssh-remote",
+                  detail: "Use the repository's HTTPS clone URL with a GitHub profile.",
+                  profileId: executionEnvironment.profileId,
+                });
+              }
+              const cloneInput =
+                executionEnvironment === null ? input : { ...input, protocol: "https" as const };
+              return yield* withSourceControlExecutionEnvironment(
+                sourceControlRepositories.cloneRepository(cloneInput),
+                executionEnvironment,
+              );
+            }),
             {
               "rpc.aggregate": "source-control",
             },
@@ -3038,13 +3733,25 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
-            sourceControlRepositories.publishRepository(input).pipe(
-              // A new remote can change the cached identity. Only the `cwd` entry
-              // refreshes, so after a publish from a linked worktree the project
-              // root entry waits for its TTL.
-              Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-            ),
+            Effect.gen(function* () {
+              const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+                input.sourceControlProfileId,
+              );
+              const publishInput =
+                executionEnvironment === null ? input : { ...input, protocol: "https" as const };
+              return yield* withSourceControlExecutionEnvironment(
+                sourceControlRepositories.publishRepository(publishInput).pipe(
+                  // A new remote can change the cached identity. Only the `cwd` entry
+                  // refreshes, so after a publish from a linked worktree the project
+                  // root entry waits for its TTL.
+                  Effect.tap(() =>
+                    repositoryIdentityResolver.resolve(input.cwd, { refresh: true }),
+                  ),
+                  Effect.tap(() => refreshGitStatus(input.cwd)),
+                ),
+                executionEnvironment,
+              );
+            }),
             {
               "rpc.aggregate": "source-control",
             },
@@ -3165,7 +3872,21 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentSessionsImport,
-            importRecentAgentThreads(input).pipe(
+            Effect.gen(function* () {
+              // T3-CUSTOM(expbkt3): imported history obeys project access and ownership.
+              if (
+                actorUserId !== null &&
+                !(yield* accessControl
+                  .canAccessProject(actorUserId, input.projectId)
+                  .pipe(Effect.orElseSucceed(() => false)))
+              ) {
+                return yield* new EnvironmentAuthorizationError({
+                  message: "You do not have access to this project.",
+                  requiredScope: "orchestration:operate",
+                });
+              }
+              return yield* importRecentAgentThreads(input, { actorUserId });
+            }).pipe(
               Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
               Effect.provideService(
                 OrchestrationEngine.OrchestrationEngineService,
@@ -3272,9 +3993,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input, {
-              automaticRemoteRefreshInterval: automaticGitFetchInterval,
-            }),
+            withThreadSourceControlStream(
+              input.threadId,
+              vcsStatusBroadcaster.streamStatus(input, {
+                automaticRemoteRefreshInterval: automaticGitFetchInterval,
+              }),
+            ),
             {
               "rpc.aggregate": "vcs",
             },
@@ -3296,7 +4020,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            withThreadSourceControl(input.threadId, vcsStatusBroadcaster.refreshStatus(input.cwd)),
             {
               "rpc.aggregate": "vcs",
             },
@@ -3304,11 +4028,23 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPull,
-            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-              Effect.matchCauseEffect({
-                onFailure: (cause) => Effect.failCause(cause),
-                onSuccess: (result) =>
-                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+            withThreadActionLock(
+              input.threadId,
+              Effect.gen(function* () {
+                yield* ensureGitHubRemotesUseHttps(input);
+                return yield* withThreadSourceControl(
+                  input.threadId,
+                  gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+                    Effect.matchCauseEffect({
+                      onFailure: (cause) => Effect.failCause(cause),
+                      onSuccess: (result) =>
+                        refreshGitStatus(input.cwd).pipe(
+                          Effect.ignore({ log: true }),
+                          Effect.as(result),
+                        ),
+                    }),
+                  ),
+                );
               }),
             ),
             { "rpc.aggregate": "git" },
@@ -3316,47 +4052,68 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
-            Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: (result) =>
-                      (input.threadId === undefined
-                        ? Effect.void
-                        : linkCreatedPullRequest({
-                            threadId: input.threadId,
-                            result,
-                            commandId: serverCommandId("pr-created-link"),
-                          }).pipe(
-                            Effect.provideService(
-                              OrchestrationEngine.OrchestrationEngineService,
-                              orchestrationEngine,
+            withThreadSourceControlStream(
+              input.threadId,
+              Stream.callback<
+                GitActionProgressEvent,
+                GitManagerServiceError | SourceControlProfileError
+              >((queue) =>
+                withThreadActionLock(
+                  input.threadId,
+                  Effect.gen(function* () {
+                    if (input.action !== "commit") {
+                      yield* ensureGitHubRemotesUseHttps(input);
+                    }
+                    yield* gitWorkflow
+                      .runStackedAction(input, {
+                        actionId: input.actionId,
+                        progressReporter: {
+                          publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                        },
+                      })
+                      .pipe(
+                        Effect.matchCauseEffect({
+                          onFailure: (cause) => Queue.failCause(queue, cause),
+                          onSuccess: (result) =>
+                            (input.threadId === undefined
+                              ? Effect.void
+                              : linkCreatedPullRequest({
+                                  threadId: input.threadId,
+                                  result,
+                                  // T3-CUSTOM(expbkt3): the fork has no shared
+                                  // `serverCommandId` helper in this scope; mint the
+                                  // same `server:<tag>:<uuid>` shape inline.
+                                  commandId: crypto.randomUUIDv4.pipe(
+                                    Effect.map((uuid) =>
+                                      CommandId.make(`server:pr-created-link:${uuid}`),
+                                    ),
+                                  ),
+                                }).pipe(
+                                  Effect.provideService(
+                                    OrchestrationEngine.OrchestrationEngineService,
+                                    orchestrationEngine,
+                                  ),
+                                  Effect.provideService(
+                                    ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                                    projectionSnapshotQuery,
+                                  ),
+                                )
+                            ).pipe(
+                              Effect.andThen(refreshGitStatus(input.cwd)),
+                              Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                             ),
-                            Effect.provideService(
-                              ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                              projectionSnapshotQuery,
-                            ),
-                          )
-                      ).pipe(
-                        Effect.andThen(refreshGitStatus(input.cwd)),
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+                        }),
+                      );
                   }),
-                ),
+                ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitResolvePullRequest,
-            gitWorkflow.resolvePullRequest(input),
+            withThreadSourceControl(input.threadId, gitWorkflow.resolvePullRequest(input)),
             {
               "rpc.aggregate": "git",
             },
@@ -3364,9 +4121,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,
-            gitWorkflow
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            withThreadActionLock(
+              input.threadId,
+              Effect.gen(function* () {
+                yield* ensureGitHubRemotesUseHttps(input);
+                return yield* withThreadSourceControl(
+                  input.threadId,
+                  gitWorkflow
+                    .preparePullRequestThread(input)
+                    .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+                );
+              }),
+            ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
@@ -3416,24 +4182,42 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            withThreadActionLock(
+              ThreadId.make(input.threadId),
+              withThreadSourceControlEnvironment(input).pipe(Effect.flatMap(terminalManager.open)),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
+            Stream.unwrap(
+              withThreadActionLock(
+                ThreadId.make(input.threadId),
+                withThreadSourceControlEnvironment(input).pipe(
+                  Effect.map((resolvedInput) =>
+                    Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+                      Effect.acquireRelease(
+                        terminalManager.attachStream(resolvedInput, (event) =>
+                          Queue.offer(queue, event),
+                        ),
+                        (unsubscribe) => Effect.sync(unsubscribe),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalWrite,
+            withThreadActionLock(ThreadId.make(input.threadId), terminalManager.write(input)),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalResize]: (input) =>
           observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
             "rpc.aggregate": "terminal",
@@ -3443,9 +4227,16 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            withThreadActionLock(
+              ThreadId.make(input.threadId),
+              withThreadSourceControlEnvironment(input).pipe(
+                Effect.flatMap(terminalManager.restart),
+              ),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
@@ -3786,6 +4577,44 @@ const makeWsRpcLayer = (
     }),
   );
 
+// T3-CUSTOM(expbkt3): BEGIN — reuse the authenticated web RPC implementation
+// from the compact MCP web-UI bridge instead of maintaining a second set of
+// handlers that can drift from the browser.
+export const makeAuthenticatedWsRpcHandlerLayer = (
+  session: EnvironmentAuth.AuthenticatedSession,
+  clientOrigin: OrchestrationClientOrigin,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  serverSelfUpdate: ServerSelfUpdate.ServerSelfUpdate["Service"],
+  clientAnalyticsProps: Readonly<Record<string, unknown>> = {},
+) =>
+  makeWsRpcLayer(session, clientOrigin, clientAnalyticsProps, previewAutomationBroker).pipe(
+    Layer.provide(AgentSessionScanner.layer),
+    Layer.provide(OrchestrationAccessControlLive),
+    Layer.provide(ClerkDirectoryLive),
+    Layer.provide(ProviderMaintenanceRunner.layer),
+    Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+    Layer.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(
+          SourceControlProviderRegistry.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                AzureDevOpsCli.layer,
+                BitbucketApi.layer,
+                GitHubCli.layer,
+                GitLabCli.layer,
+              ),
+            ),
+            Layer.provideMerge(GitVcsDriver.layer),
+            Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+          ),
+        ),
+        Layer.provide(VcsProcess.layer),
+      ),
+    ),
+  );
+// T3-CUSTOM(expbkt3): END
+
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -3850,11 +4679,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(
+            makeAuthenticatedWsRpcHandlerLayer(
               session,
               clientOrigin,
-              clientAnalyticsProps,
               previewAutomationBroker,
+              serverSelfUpdate,
+              clientAnalyticsProps,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

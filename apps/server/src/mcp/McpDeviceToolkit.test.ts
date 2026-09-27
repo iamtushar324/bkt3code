@@ -18,6 +18,9 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
 const invocation = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) => ({
+  // T3-CUSTOM(expbkt3): fork-required invocation identity.
+  principal: "provider-session" as const,
+  actorUserId: null,
   environmentId,
   threadId,
   providerSessionId: "provider-session-device-test",

@@ -8,6 +8,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  // T3-CUSTOM(expbkt3): actor-preserving import regression.
+  UserId,
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationThread,
@@ -41,6 +43,8 @@ import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderCommandReactor } from "../orchestration/Services/ProviderCommandReactor.ts";
+// T3-CUSTOM(expbkt3): provider bootstrap explicitly fences deletion cleanup.
+import { ThreadDeletionReactor } from "../orchestration/Services/ThreadDeletionReactor.ts";
 import { ProviderSessionDirectoryLive } from "../provider/Layers/ProviderSessionDirectory.ts";
 import { makeProviderServiceLive } from "../provider/Layers/ProviderService.ts";
 import {
@@ -102,6 +106,9 @@ const makeProject = (): OrchestrationProjectShell => ({
   id: PROJECT_ID,
   title: "Project",
   workspaceRoot: WORKSPACE_ROOT,
+  // T3-CUSTOM(expbkt3): explicit project ownership for local import fixtures.
+  ownerUserId: null,
+  memberUserIds: [],
   defaultModelSelection: null,
   scripts: [],
   createdAt: "2026-08-24T09:00:00.000Z",
@@ -128,6 +135,11 @@ const makeProjectedThread = (input: {
     pullRequests: [],
     branch: null,
     worktreePath: null,
+    // T3-CUSTOM(expbkt3): imported sessions start without a Git identity.
+    sourceControlProfileId: null,
+    // T3-CUSTOM(expbkt3): local thread ownership and summary defaults.
+    ownerUserId: null,
+    memberUserIds: [],
     latestTurn: null,
     createdAt: sourceThread.createdAt,
     updatedAt: sourceThread.updatedAt,
@@ -142,6 +154,8 @@ const makeProjectedThread = (input: {
             role: "user",
             text: "Fix the bug",
             turnId: null,
+            // T3-CUSTOM(expbkt3): historical messages have no identified operator.
+            sentByUserId: null,
             streaming: false,
             createdAt: "2026-08-24T10:00:00.000Z",
             updatedAt: "2026-08-24T10:00:00.000Z",
@@ -153,6 +167,8 @@ const makeProjectedThread = (input: {
                   role: "user" as const,
                   text: "Keep going",
                   turnId: null,
+                  // T3-CUSTOM(expbkt3): historical messages have no identified operator.
+                  sentByUserId: null,
                   streaming: false,
                   createdAt: "2026-08-24T10:02:00.000Z",
                   updatedAt: "2026-08-24T10:02:00.000Z",
@@ -185,13 +201,18 @@ const runImport = (input: {
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly snapshots: ReturnType<typeof makeSnapshotsLayer>;
   readonly expectedWorkspaceRoot?: string;
+  // T3-CUSTOM(expbkt3): exercise authenticated imports as well as local imports.
+  readonly actorUserId?: UserId;
 }) =>
-  importRecentAgentThreads({
-    projectId: PROJECT_ID,
-    ...(input.expectedWorkspaceRoot === undefined
-      ? {}
-      : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
-  }).pipe(
+  importRecentAgentThreads(
+    {
+      projectId: PROJECT_ID,
+      ...(input.expectedWorkspaceRoot === undefined
+        ? {}
+        : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+    },
+    input.actorUserId === undefined ? undefined : { actorUserId: input.actorUserId },
+  ).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
     Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, input.directory),
@@ -203,6 +224,9 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
     it.effect("uses the project root and stores provider-specific resume cursors", () =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationCommand> = [];
+        // T3-CUSTOM(expbkt3): every import dispatch carries the authenticated actor.
+        const actorUserId = UserId.make("importing-operator");
+        const dispatchActors: Array<UserId | null | undefined> = [];
         const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
         let scannedRoot: string | undefined;
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
@@ -221,7 +245,12 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           },
         });
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
-          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          // T3-CUSTOM(expbkt3): assert ownership and audit attribution across both commands.
+          dispatch: (command, options) =>
+            Effect.sync(() => {
+              dispatchActors.push(options?.actorUserId);
+              return { sequence: commands.push(command) };
+            }),
           readEvents: () => Stream.empty,
           readThreadEvents: () => Stream.empty,
           getThreadReplayStats: () => Effect.die("unused"),
@@ -244,10 +273,13 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           directory,
           snapshots: makeSnapshotsLayer({ project: makeProject() }),
           expectedWorkspaceRoot: `${WORKSPACE_ROOT}/`,
+          actorUserId,
         });
 
         expect(result).toEqual({ importedCount: 2, skippedCount: 0 });
         expect(scannedRoot).toBe(WORKSPACE_ROOT);
+        // T3-CUSTOM(expbkt3): transcript history must not erase the importing actor.
+        expect(dispatchActors).toEqual([actorUserId, actorUserId, actorUserId, actorUserId]);
         expect(commands.map((command) => command.type)).toEqual([
           "thread.create",
           "thread.history.import",
@@ -730,6 +762,8 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): imported sessions start without a Git identity.
+          sourceControlProfileId: null,
           createdAt: "2026-08-24T10:00:00.000Z",
           historyImport: true,
         });
@@ -907,6 +941,14 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         );
         const reactorLayer = ProviderCommandReactorLive.pipe(
           Layer.provideMerge(providerLayer),
+          // T3-CUSTOM(expbkt3): importing existing history never creates through turn bootstrap.
+          Layer.provide(
+            Layer.succeed(ThreadDeletionReactor, {
+              start: () => Effect.void,
+              drainThrough: () =>
+                Effect.die("Imported thread resume must not bootstrap a new thread."),
+            }),
+          ),
           Layer.provide(
             Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
               ...snapshots,
@@ -987,6 +1029,13 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
               resumeCursor,
               cwd: workspaceRoot,
             }),
+            // T3-CUSTOM(expbkt3): first resume carries the anonymous actor and
+            // composed runtime identity without borrowing another operator.
+            {
+              actorUserId: null,
+              environment: { BK_IDENTITY_RUNTIME: "t3-code" },
+              identityEnvironment: { BK_IDENTITY_RUNTIME: "t3-code" },
+            },
           );
           expect(sendTurn).toHaveBeenCalledExactlyOnceWith(
             expect.objectContaining({ threadId, input: "Continue this session" }),
@@ -1166,6 +1215,8 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        // T3-CUSTOM(expbkt3): imported sessions start without a Git identity.
+        sourceControlProfileId: null,
         createdAt: "2026-08-24T10:00:00.000Z",
       });
 

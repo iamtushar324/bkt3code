@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -36,6 +37,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -525,6 +527,71 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.ok(runtime);
       NodeAssert.equal(runtime.options.launchArgs, "--strict-config --enable foo");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("registers the user Bifrost proxy in Codex app-server arguments", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-bifrost");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-codex-test"),
+      threadId,
+      providerSessionId: "provider-session-codex-test",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      actorUserId: null,
+      // T3-CUSTOM(expbkt3): upstream gates MCP tools by capability set.
+      capabilities: new Set(["preview"] as const),
+      endpoint: "http://127.0.0.1:18085/mcp",
+      authorizationHeader: "Bearer short-lived-provider-token",
+      upstreamServers: [
+        {
+          id: "bifrost",
+          name: "Bifrost",
+          endpoint: "http://127.0.0.1:18085/mcp/upstream/bifrost",
+          authMode: "x-bf-vk",
+          allowedTools: [],
+        },
+      ],
+    });
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({}), {
+        makeRuntime: runtimeFactory.factory,
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:18085/mcp",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.bifrost.url=http://127.0.0.1:18085/mcp/upstream/bifrost",
+        "-c",
+        'mcp_servers.bifrost.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      ]);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          McpProviderSession.clearMcpProviderSession(threadId);
+        }),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   it.effect("uses T3CODE_CODEX_LAUNCH_ARGS for the session runtime", () => {
@@ -2785,6 +2852,62 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
     }
   }),
 );
+
+// T3-CUSTOM(expbkt3): the event reader belongs to the session scope, not to
+// whichever fiber happened to call startSession. A short-lived caller (a bounded
+// reactor command fiber) ending must not blind the server to a live runtime.
+const readerRuntimeFactory = makeRuntimeFactory();
+const readerLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: readerRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+readerLayer("CodexAdapterLive event reader lifetime", (it) => {
+  it.effect("keeps delivering runtime events after the fiber that started the session ends", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const starter = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-reader"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(starter);
+      const runtime = readerRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      yield* runtime.emit({
+        id: asEventId("evt-reader-closed"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-reader"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/closed",
+        message: "Session stopped",
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber).pipe(Effect.timeout("3 seconds"));
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") return;
+      NodeAssert.equal(firstEvent.value.type, "session.exited");
+      NodeAssert.equal(firstEvent.value.threadId, "thread-reader");
+    }),
+  );
+});
 
 const usageLimitRuntimeFactory = makeRuntimeFactory();
 const usageLimitLayer = it.layer(

@@ -28,6 +28,9 @@ const THREAD_ID = ThreadId.make("thread-1");
 const commandId = Effect.succeed(CommandId.make("server:pr-created-link:test"));
 
 const project: OrchestrationProjectShell = {
+  // T3-CUSTOM(expbkt3): fork-required project ownership.
+  ownerUserId: null,
+  memberUserIds: [],
   id: PROJECT_ID,
   title: "Project",
   workspaceRoot: "/workspace/project",
@@ -50,6 +53,10 @@ const project: OrchestrationProjectShell = {
 };
 
 const thread: OrchestrationThreadShell = {
+  // T3-CUSTOM(expbkt3): fork-required ownership fields.
+  sourceControlProfileId: null,
+  ownerUserId: null,
+  memberUserIds: [],
   id: THREAD_ID,
   projectId: PROJECT_ID,
   title: "Thread",

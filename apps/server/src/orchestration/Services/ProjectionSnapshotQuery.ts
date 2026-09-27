@@ -24,8 +24,11 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
+  // T3-CUSTOM(expbkt3): plan-review startup ingest reads.
+  OrchestrationProposedPlan,
   ProjectId,
   ThreadId,
+  UserId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -80,6 +83,23 @@ export interface ProjectionThreadDetailQuery {
 }
 
 /**
+ * Ownership/tag fields for a single thread, read without the active-only
+ * filter so archived threads remain authorizable.
+ */
+export interface ProjectionThreadAccess {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly ownerUserId: UserId | null;
+  readonly memberUserIds: ReadonlyArray<UserId>;
+}
+
+// T3-CUSTOM(expbkt3): plan-review startup ingest needs only the newest active plan per thread.
+export interface ProjectionLatestProposedPlan {
+  readonly threadId: ThreadId;
+  readonly proposedPlan: OrchestrationProposedPlan;
+}
+
+/**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
@@ -114,6 +134,12 @@ export interface ProjectionSnapshotQueryShape {
    * projector cursor state.
    */
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
+
+  // T3-CUSTOM(expbkt3): bounded plan-review startup ingest candidates.
+  readonly listLatestProposedPlansForActiveThreads: () => Effect.Effect<
+    ReadonlyArray<ProjectionLatestProposedPlan>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the latest orchestration shell snapshot.
@@ -275,6 +301,32 @@ export interface ProjectionSnapshotQueryShape {
     }>,
     ProjectionRepositoryError
   >;
+
+  // T3-CUSTOM(expbkt3): BEGIN — the title refresh cadence needs how many user
+  // prompts a thread has, not their bodies. Same compaction predicate as
+  // getTurnStartMessage's hasOtherUserMessages.
+  readonly countThreadUserMessages: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
+  // T3-CUSTOM(expbkt3): END
+
+  /**
+   * Read the ownership/tag fields for a thread regardless of archived state
+   * (team mode authorization). Archived threads are still owned by someone and
+   * must stay actionable — unarchiving, deleting or retagging one would
+   * otherwise be denied as "not found".
+   */
+  readonly getThreadAccessById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadAccess>, ProjectionRepositoryError>;
+
+  /**
+   * Read active thread shells for a project (team mode: used when a project tag
+   * changes so the affected threads can be pushed to a subscriber's sidebar).
+   */
+  readonly listThreadShellsByProjectId: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

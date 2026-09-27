@@ -31,6 +31,10 @@ function makeReadModel(input: {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        // T3-CUSTOM(expbkt3): fork fields
+        sourceControlProfileId: null,
+        ownerUserId: null,
+        memberUserIds: [],
         pullRequests: [],
         latestTurn: null,
         createdAt: NOW,

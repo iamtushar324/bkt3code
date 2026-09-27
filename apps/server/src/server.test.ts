@@ -14,6 +14,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
   EnvironmentId,
+  EnvironmentUserId,
   EventId,
   GitCommandError,
   KeybindingRule,
@@ -25,6 +26,7 @@ import {
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type OrchestrationProjectShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -37,13 +39,16 @@ import {
   type ProviderInstallState,
   ProviderSetupError,
   ResolvedKeybindingRule,
-  type ServerLifecycleStreamEvent,
+  SourceControlProfileId,
   ThreadId,
   TurnId,
+  UserId,
+  type ServerLifecycleStreamEvent,
   UsageLimitSourceId,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
+  emptyPersonalMcpProfile,
   WorktreeSetupSnapshot,
   type WorktreeSetupStageId,
 } from "@t3tools/contracts";
@@ -71,6 +76,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -110,11 +116,10 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
-import {
-  isThreadDetailEvent,
-  resolveAvailableEditorsForConfig,
-  resolveFileManagerRevealKindForConfig,
-} from "./ws.ts";
+import { resolveAvailableEditorsForConfig, resolveFileManagerRevealKindForConfig } from "./ws.ts";
+// T3-CUSTOM(expbkt3): the fork keeps this predicate in its own module rather
+// than declaring it inside ws.ts, so the test imports it from the source.
+import { isThreadDetailEvent } from "./orchestration/threadDetailEvent.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -125,6 +130,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+// T3-CUSTOM(expbkt3): router seams use an in-memory durable-bootstrap boundary.
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -143,6 +149,8 @@ import {
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
+import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   ProviderVersionCache,
@@ -156,6 +164,13 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+// T3-CUSTOM(expbkt3): native plan review.
+import * as PlanReviewDocuments from "./persistence/PlanReviewDocuments.ts";
+import * as PlanReviewServiceLayer from "./planreview/PlanReviewService.ts";
+// T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
+import * as ThreadWorkspaceGroups from "./persistence/ThreadWorkspaceGroups.ts";
+import * as AgentUiServiceLayer from "./agentui/AgentUiService.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -169,16 +184,24 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as TurnStartBootstrap from "./orchestration/turnStartBootstrap.expbkt3.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+// T3-CUSTOM(expbkt3): archived-session worktree reclaim
+import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+// T3-CUSTOM(expbkt3): the fork wires SourceControlRepositoryService into the app
+// under test; its provider registry needs the Forgejo CLI that upstream added.
+import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import { REPLAY_MARKER_MAX_AGE } from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ClerkIdentityVerifier from "./auth/ClerkIdentityVerifier.ts";
+import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -187,6 +210,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
@@ -340,6 +364,8 @@ const makeDefaultOrchestrationReadModel = () => {
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
+        ownerUserId: null,
+        memberUserIds: [],
       },
     ],
     threads: [
@@ -352,6 +378,7 @@ const makeDefaultOrchestrationReadModel = () => {
         runtimeMode: "full-access" as const,
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         pullRequests: [],
         createdAt: now,
         updatedAt: now,
@@ -365,10 +392,26 @@ const makeDefaultOrchestrationReadModel = () => {
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
+        ownerUserId: null,
+        memberUserIds: [],
       },
     ],
   };
 };
+
+// T3-CUSTOM(expbkt3): durable creation resolves project/app defaults before it
+// queues filesystem work, so router tests expose a realistic project shell.
+const makeDefaultProjectShell = (workspaceRoot = "/tmp/project"): OrchestrationProjectShell => ({
+  id: defaultProjectId,
+  title: "Default Project",
+  workspaceRoot,
+  defaultModelSelection,
+  scripts: [],
+  ownerUserId: null,
+  memberUserIds: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
 
 const makeDefaultOrchestrationThreadShell = (
   overrides: Partial<OrchestrationThreadShell> = {},
@@ -383,6 +426,7 @@ const makeDefaultOrchestrationThreadShell = (
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    sourceControlProfileId: null,
     pullRequests: [],
     latestTurn: null,
     createdAt: now,
@@ -395,6 +439,8 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    ownerUserId: null,
+    memberUserIds: [],
     ...overrides,
   };
 };
@@ -538,6 +584,9 @@ const buildAppUnderTest = (options?: {
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
+    sourceControlProfileService?: Partial<
+      SourceControlProfileService.SourceControlProfileService["Service"]
+    >;
     reviewService?: Partial<ReviewService.ReviewService["Service"]>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
@@ -570,6 +619,8 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    clerkIdentityVerifier?: Partial<ClerkIdentityVerifier.ClerkIdentityVerifier["Service"]>;
+    environmentUserService?: Partial<EnvironmentUserService.EnvironmentUserService["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -608,6 +659,7 @@ const buildAppUnderTest = (options?: {
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      clerkAuth: undefined,
       ...options?.config,
     };
     const layerConfig = ServerConfig.layer(config);
@@ -763,7 +815,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
     );
 
-    const servedRoutesLayer = HttpRouter.serve(
+    const servedRoutesWithDispatcherLayer = HttpRouter.serve(
       // Viewed-file marks for a host that keeps none of its own are rows, so the routes want a
       // database. Its own, in memory: nothing here shares a table with the auth store.
       makeRoutesLayer.pipe(
@@ -775,6 +827,41 @@ const buildAppUnderTest = (options?: {
         routerConfig: HTTP_ROUTER_CONFIG,
       },
     ).pipe(
+      // T3-CUSTOM(expbkt3): native plan review service for the fork RPC handlers.
+      Layer.provide(
+        PlanReviewServiceLayer.layer.pipe(
+          Layer.provide(PlanReviewDocuments.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): agent UI surfaces service for the fork RPC handlers.
+      Layer.provide(
+        AgentUiServiceLayer.layer.pipe(
+          Layer.provide(AgentUiRenders.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        ),
+      ),
+      Layer.provide(
+        TurnStartBootstrap.layer.pipe(
+          // T3-CUSTOM(expbkt3): shared child worktrees, one per (parent, repo).
+          Layer.provide(ThreadWorkspaceGroups.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): Router tests do not exercise personal credential
+      // persistence. Keep the new RPC dependency fail-closed and in memory.
+      Layer.provide(
+        Layer.mock(UserMcpProfileStore.UserMcpProfileStore)({
+          get: (userId) =>
+            Effect.succeed(emptyPersonalMcpProfile(userId, "2026-07-27T00:00:00.000Z")),
+          update: () => Effect.die("Unexpected personal MCP profile update in router test."),
+          rotateExternalToken: () =>
+            Effect.die("Unexpected personal MCP token rotation in router test."),
+          revokeExternalToken: (userId) =>
+            Effect.succeed(emptyPersonalMcpProfile(userId, "2026-07-27T00:00:00.000Z")),
+          resolveExternalToken: () => Effect.succeed(undefined),
+          getIntegrationCredential: () => Effect.succeed(undefined),
+        }),
+      ),
+    );
+    const servedRoutesLayer = servedRoutesWithDispatcherLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Keybindings.Keybindings)({
@@ -847,14 +934,32 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          start: Effect.void,
-          ready: Effect.void,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          streamChanges: Stream.empty,
-          ...options?.layers?.serverSettings,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            streamChanges: Stream.empty,
+            ...options?.layers?.serverSettings,
+          }),
+          Layer.mock(ClerkIdentityVerifier.ClerkIdentityVerifier)({
+            verify: () => Effect.die("Clerk identity verifier not stubbed"),
+            ...options?.layers?.clerkIdentityVerifier,
+          }),
+          Layer.mock(EnvironmentUserService.EnvironmentUserService)({
+            assertAllowed: () => Effect.void,
+            assertAdministrator: () => Effect.void,
+            admit: () => Effect.die("environment user admission not stubbed"),
+            list: () => Effect.die("environment user directory not stubbed"),
+            update: () => Effect.die("environment user update not stubbed"),
+            revokeSessions: () => Effect.die("environment user revocation not stubbed"),
+            setSourceControlProfile: () =>
+              Effect.die("environment user source-control assignment not stubbed"),
+            revokeUnidentifiedSessions: Effect.succeed(0),
+            ...options?.layers?.environmentUserService,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mergeAll(
@@ -933,13 +1038,62 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(gitManagerLayer),
       Layer.provide(gitVcsDriverLayer),
-      Layer.provide(gitWorkflowLayer),
+      // T3-CUSTOM(expbkt3): the session archive is stubbed rather than wired —
+      // these routes never exercise it, and a real one would walk the
+      // filesystem during unit tests. Merged into this provision rather than
+      // added as its own step: the chain is at TypeScript's `.pipe` ceiling.
+      Layer.provide(
+        Layer.mergeAll(
+          gitWorkflowLayer,
+          Layer.mock(SessionArchiveService.SessionArchiveService)({
+            scan: () => Effect.die("session archive not stubbed"),
+            exportHistory: () => Effect.die("session archive not stubbed"),
+            reclaim: () => Effect.die("session archive not stubbed"),
+            sweep: () => Effect.die("session archive not stubbed"),
+          }),
+        ),
+      ),
       Layer.provide(reviewLayer),
       Layer.provide(vcsProvisioningLayer),
       Layer.provide(
-        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
-          ...options?.layers?.sourceControlRepositoryService,
-        }),
+        Layer.mergeAll(
+          Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+            ...options?.layers?.sourceControlRepositoryService,
+          }),
+          Layer.mock(SourceControlProfileService.SourceControlProfileService)({
+            list: Effect.succeed({ identityMode: "machine", profiles: [] }),
+            upsert: () => Effect.die("source-control profile not stubbed"),
+            test: () => Effect.die("source-control profile not stubbed"),
+            replaceCredential: () => Effect.die("source-control profile not stubbed"),
+            disconnect: () => Effect.die("source-control profile not stubbed"),
+            archive: () => Effect.die("source-control profile not stubbed"),
+            resolveExecutionContext: () => Effect.die("source-control profile not stubbed"),
+            resolveUserExecutionContext: () => Effect.succeed(null),
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+            ...options?.layers?.sourceControlProfileService,
+          }),
+          Layer.mock(ProviderService.ProviderService)({
+            startSession: () => Effect.die("provider service not stubbed"),
+            sendTurn: () => Effect.die("provider service not stubbed"),
+            interruptTurn: () => Effect.die("provider service not stubbed"),
+            respondToRequest: () => Effect.die("provider service not stubbed"),
+            respondToUserInput: () => Effect.die("provider service not stubbed"),
+            stopSession: () => Effect.die("provider service not stubbed"),
+            listSessions: () => Effect.succeed([]),
+            getCapabilities: () => Effect.die("provider service not stubbed"),
+            getInstanceInfo: () => Effect.die("provider service not stubbed"),
+            rollbackConversation: () => Effect.die("provider service not stubbed"),
+            streamEvents: Stream.empty,
+            ...options?.layers?.providerService,
+          }),
+          // T3-CUSTOM(expbkt3): the dispatcher seeds a provider binding when a
+          // thread attaches to an external session. Router tests never attach,
+          // so this stays fail-closed.
+          Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+            upsert: () => Effect.die("provider session directory not stubbed"),
+          }),
+          ThreadSourceControlActionLock.layer,
+        ),
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
@@ -1000,6 +1154,9 @@ const buildAppUnderTest = (options?: {
               }),
             dispatch: () => Effect.succeed({ sequence: 0 }),
             streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: Effect.succeed(
+              options?.layers?.orchestrationEngine?.streamDomainEvents ?? Stream.empty,
+            ),
             latestSequence: Effect.succeed(0),
             ...options?.layers?.orchestrationEngine,
           }),
@@ -1241,7 +1398,14 @@ const buildAppUnderTest = (options?: {
           ? FetchHttpClient.layer
           : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
       ),
-      Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
+      // T3-CUSTOM(expbkt3): see the import note — supplies ForgejoCli to the
+      // source-control provider registry the fork pulls into this harness. Folded
+      // into upstream's provide because `.pipe` stops at 20 arguments.
+      Layer.provide(
+        Layer.mergeAll(ForgejoCli.layer, GitHubCli.layer).pipe(
+          Layer.provideMerge(VcsProcess.layer),
+        ),
+      ),
       Layer.provide(layerConfig),
     );
 
@@ -1299,6 +1463,7 @@ const withFirstWsAckHeld = (
   wsUrl: string,
   held: Deferred.Deferred<void>,
   release: Deferred.Deferred<void>,
+  isArmed: () => boolean = () => true,
 ) => {
   let holdNextAck = true;
   return Layer.effect(RpcClient.Protocol)(
@@ -1307,7 +1472,7 @@ const withFirstWsAckHeld = (
         ...protocol,
         send: (clientId, request, transferables) => {
           const send = protocol.send(clientId, request, transferables);
-          if (request._tag !== "Ack" || !holdNextAck) {
+          if (request._tag !== "Ack" || !holdNextAck || !isArmed()) {
             return send;
           }
           holdNextAck = false;
@@ -1339,6 +1504,7 @@ const bootstrapBrowserSession = (
   credential = defaultDesktopBootstrapToken,
   options?: {
     readonly headers?: Record<string, string>;
+    readonly identityToken?: string;
   },
 ) =>
   Effect.gen(function* () {
@@ -1351,6 +1517,7 @@ const bootstrapBrowserSession = (
       },
       body: jsonRequestBody({
         credential,
+        ...(options?.identityToken ? { identityToken: options.identityToken } : {}),
       }),
     });
     const body = yield* responseJsonEffect<{
@@ -1374,6 +1541,7 @@ const exchangeAccessToken = (
       readonly label?: string;
       readonly deviceType?: string;
       readonly os?: string;
+      readonly appVersion?: string;
     };
   },
 ) =>
@@ -1398,6 +1566,9 @@ const exchangeAccessToken = (
           ? { client_device_type: options.clientMetadata.deviceType }
           : {}),
         ...(options?.clientMetadata?.os ? { client_os: options.clientMetadata.os } : {}),
+        ...(options?.clientMetadata?.appVersion
+          ? { client_version: options.clientMetadata.appVersion }
+          : {}),
       }).toString(),
     });
     const body = yield* responseJsonEffect<{
@@ -1783,6 +1954,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/");
       assert.equal(response.status, 200);
       assert.include(yield* response.text, "router-static-ok");
+      assert.equal(response.headers["content-security-policy"], "frame-ancestors 'none'");
+      assert.equal(response.headers["x-frame-options"], "DENY");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("makes the SPA fallback HTML unframeable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "fallback");
+
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const response = yield* HttpClient.get("/missing/client/route");
+      assert.equal(response.status, 200);
+      assert.include(yield* response.text, "fallback");
+      assert.equal(response.headers["content-security-policy"], "frame-ancestors 'none'");
+      assert.equal(response.headers["x-frame-options"], "DENY");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2248,6 +2438,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves the authenticated orchestration provider catalog", () =>
+    Effect.gen(function* () {
+      const providers = [
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ] as const;
+      yield* buildAppUnderTest({
+        layers: { providerRegistry: { getProviders: Effect.succeed(providers) } },
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/api/orchestration/providers"), {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+      });
+      const body = yield* responseJsonEffect<typeof providers>(response);
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(body, providers);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("reports unauthenticated session state without requiring auth", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -2309,6 +2537,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("logs out the current browser session and expires its cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: bootstrapResponse, cookie: setCookie } = yield* bootstrapBrowserSession();
+      const sessionCookie = setCookie?.split(";")[0] ?? "";
+      const cookieName = sessionCookie.split("=", 1)[0] ?? "";
+      assert.equal(bootstrapResponse.status, 200);
+      assert.notEqual(sessionCookie, "");
+
+      const logoutResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/logout"), {
+        method: "POST",
+        headers: { cookie: sessionCookie },
+      });
+      const logoutBody = yield* responseJsonEffect<{ readonly revoked: boolean }>(logoutResponse);
+      const expiredCookie = logoutResponse.headers["set-cookie"];
+
+      assert.equal(logoutResponse.status, 200);
+      assert.equal(logoutBody.revoked, true);
+      assert.equal(expiredCookie?.split(";", 1)[0], `${cookieName}=`);
+      assert.include(expiredCookie ?? "", "Max-Age=0");
+      assert.include(expiredCookie ?? "", "Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { cookie: sessionCookie },
+      });
+      const sessionBody = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.authenticated, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2457,6 +2719,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           label: "T3 Code Mobile",
           deviceType: "mobile",
           os: "iOS",
+          appVersion: "0.0.31-nightly.20260806.1",
         },
       });
 
@@ -2473,6 +2736,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           readonly ipAddress?: string;
           readonly os?: string;
           readonly userAgent?: string;
+          readonly appVersion?: string;
         };
       }>;
       const mobileClient = clients.find((client) => !client.current);
@@ -2486,6 +2750,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         os: "iOS",
         ipAddress: "127.0.0.1",
         userAgent: "undici",
+        appVersion: "0.0.31-nightly.20260806.1",
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -5997,6 +6262,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const project = {
         id: projectId,
         title: "Agent import RPC",
+        ownerUserId: null, // T3-CUSTOM(expbkt3): persisted project access metadata.
+        memberUserIds: [],
         workspaceRoot,
         defaultModelSelection: null,
         scripts: [],
@@ -7842,6 +8109,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 interactionMode: "default",
                 branch: null,
                 worktreePath: null,
+                // T3-CUSTOM(expbkt3): fork field
+                sourceControlProfileId: null,
                 createdAt: "2026-01-01T00:00:01.000Z",
               }),
             );
@@ -7911,6 +8180,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): fork-required thread attribution.
+          sourceControlProfileId: null,
           createdAt: "2026-01-01T00:00:00.000Z",
         }) as const;
 
@@ -8294,6 +8565,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 },
                 branch: "feature/demo",
                 worktreePath: null,
+                // T3-CUSTOM(expbkt3): per-thread source control attribution.
+                sourceControlProfileId: null,
                 isOnPullRequestHead: true,
               }),
           },
@@ -8312,6 +8585,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     current: true,
                     isDefault: true,
                     worktreePath: null,
+                    sourceControlProfileId: null,
                   },
                 ],
                 isRepo: true,
@@ -8875,6 +9149,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  // T3-CUSTOM(expbkt3): GitHub attribution is derived from durable ownership.
+  // T3-CUSTOM(expbkt3): a durable first turn creates its thread atomically, so
+  // source-control validation must use the embedded creation request instead
+  // of looking up a projection row that cannot exist yet.
   it.effect("routes websocket rpc orchestration methods", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
@@ -8891,6 +9169,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             createdAt: now,
             updatedAt: now,
             deletedAt: null,
+            ownerUserId: null,
+            memberUserIds: [],
           },
         ],
         threads: [
@@ -8903,6 +9183,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             runtimeMode: "full-access" as const,
             branch: null,
             worktreePath: null,
+            sourceControlProfileId: null,
             pullRequests: [],
             createdAt: now,
             updatedAt: now,
@@ -8916,6 +9197,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
+            ownerUserId: null,
+            memberUserIds: [],
           },
         ],
       };
@@ -9076,6 +9359,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           streaming: false,
           createdAt: "2026-01-01T00:00:01.000Z",
           updatedAt: "2026-01-01T00:00:01.000Z",
+          // T3-CUSTOM(expbkt3): fork field
+          sentByUserId: null,
         };
         const thread = { ...makeDefaultOrchestrationReadModel().threads[0]!, messages: [message] };
         const event = {
@@ -9209,6 +9494,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  // T3-CUSTOM(expbkt3): stale clients receive a terminal tombstone and cannot
+  // turn a deleted thread id into an unbounded projection-query loop.
+  it.effect("terminalizes and caches a missing thread subscription per connection", () =>
+    Effect.gen(function* () {
+      let snapshotReads = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.sync(() => {
+                snapshotReads += 1;
+                return Option.none();
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all(
+            [
+              client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                threadId: defaultThreadId,
+              }).pipe(Stream.runHead),
+              client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                threadId: defaultThreadId,
+              }).pipe(Stream.runHead),
+            ],
+            { concurrency: 1 },
+          ),
+        ),
+      );
+
+      assert.equal(snapshotReads, 1);
+      for (const item of items) {
+        const tombstone = Option.getOrThrow(item);
+        assert.equal(tombstone.kind, "event");
+        assert.equal(tombstone.kind === "event" ? tombstone.event.type : null, "thread.deleted");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("buffers shell events published while the fallback snapshot loads", () =>
     Effect.gen(function* () {
       const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -9294,7 +9622,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           orchestrationEngine: {
-            streamDomainEvents: Stream.fromPubSub(liveEvents),
+            subscribeDomainEvents: PubSub.subscribe(liveEvents).pipe(
+              Effect.map(Stream.fromSubscription),
+            ),
           },
           projectionSnapshotQuery: {
             getThreadDetailSnapshot: () =>
@@ -9544,7 +9874,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(items[3], { kind: "synchronized" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
-
   it.effect("flushes a tool update before an interleaved message", () =>
     Effect.gen(function* () {
       const thread = makeDefaultOrchestrationReadModel().threads[0]!;
@@ -9672,171 +10001,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(second?.kind, "synchronized");
         assert.equal(readEventsCalls, 0);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect(
-    "stops an overflowing thread producer without an ACK and replays the missing events",
-    () =>
-      Effect.gen(function* () {
-        const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
-        const attached = yield* Deferred.make<void>();
-        const detached = yield* Deferred.make<void>();
-        const ackHeld = yield* Deferred.make<void>();
-        const releaseAck = yield* Deferred.make<void>();
-        const firstApplied = yield* Deferred.make<void>();
-        const replayStarted = yield* Deferred.make<void>();
-        const replayCalls: Array<{ afterSequence: number; headSequence: number }> = [];
-        let headSequence = 0;
-        let snapshotCalls = 0;
-        const message = (sequence: number, text: string) =>
-          ({
-            sequence,
-            eventId: EventId.make(`slow-thread-${sequence}`),
-            aggregateKind: "thread",
-            aggregateId: defaultThreadId,
-            occurredAt: "2026-01-01T00:00:01.000Z",
-            commandId: null,
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "thread.message-sent",
-            payload: {
-              threadId: defaultThreadId,
-              messageId: MessageId.make(`slow-message-${sequence}`),
-              role: "assistant",
-              text,
-              turnId: TurnId.make("turn-edit"),
-              streaming: false,
-              createdAt: "2026-01-01T00:00:01.000Z",
-              updatedAt: "2026-01-01T00:00:01.000Z",
-            },
-          }) satisfies OrchestrationEvent;
-        const events = [
-          message(1, "a".repeat(4 * 1024 * 1024)),
-          message(2, "b".repeat(4 * 1024 * 1024)),
-          makeLiveToolActivityEvent(3, "tool.completed"),
-          message(4, "Finished"),
-        ] as const;
-
-        yield* buildAppUnderTest({
-          layers: {
-            orchestrationEngine: {
-              latestSequence: Effect.sync(() => headSequence),
-              streamDomainEvents: Stream.unwrap(
-                Effect.gen(function* () {
-                  const subscription = yield* PubSub.subscribe(liveEvents);
-                  yield* Deferred.succeed(attached, undefined);
-                  return Stream.fromSubscription(subscription);
-                }),
-              ).pipe(Stream.ensuring(Deferred.succeed(detached, undefined))),
-              readThreadEvents: ({ fromSequenceExclusive, toSequenceInclusive }) => {
-                replayCalls.push({
-                  afterSequence: fromSequenceExclusive,
-                  headSequence: toSequenceInclusive,
-                });
-                const range = events.filter(
-                  (event) =>
-                    event.sequence > fromSequenceExclusive && event.sequence <= toSequenceInclusive,
-                );
-                return Stream.concat(
-                  Stream.fromEffect(Deferred.succeed(replayStarted, undefined)).pipe(Stream.drain),
-                  Stream.fromIterable(range),
-                );
-              },
-              getThreadReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) => {
-                const range = events.filter(
-                  (event) =>
-                    event.sequence > fromSequenceExclusive && event.sequence <= toSequenceInclusive,
-                );
-                return Effect.succeed({
-                  eventCount: range.length,
-                  payloadBytes: range.reduce(
-                    (bytes, event) => bytes + Buffer.byteLength(jsonRequestBody(event.payload)),
-                    0,
-                  ),
-                  hasCreateEvent: false,
-                });
-              },
-            },
-            projectionSnapshotQuery: {
-              getThreadDetailSnapshot: () =>
-                Effect.sync(() => {
-                  snapshotCalls += 1;
-                  return Option.none();
-                }),
-            },
-          },
-        });
-
-        const wsUrl = yield* getWsServerUrl("/ws");
-        yield* makeWsRpcClient.pipe(
-          Effect.flatMap((client) =>
-            Effect.gen(function* () {
-              let cursor = 0;
-              const received: number[] = [];
-              const attempt = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-                threadId: defaultThreadId,
-                afterSequence: cursor,
-              }).pipe(
-                Stream.tap((item) => {
-                  if (item.kind !== "event") return Effect.void;
-                  cursor = item.event.sequence;
-                  received.push(cursor);
-                  return Deferred.succeed(firstApplied, undefined);
-                }),
-                Stream.runDrain,
-                Effect.result,
-                Effect.forkScoped,
-              );
-              yield* Deferred.await(attached);
-              yield* Deferred.await(replayStarted);
-              headSequence = 1;
-              yield* PubSub.publish(liveEvents, events[0]!);
-              yield* Deferred.await(ackHeld);
-              yield* Deferred.await(firstApplied);
-              headSequence = 4;
-              yield* PubSub.publishAll(liveEvents, events.slice(1));
-
-              // This must finish while the server is still waiting for the first
-              // batch's ACK. A failed output queue alone would leave PubSub live.
-              yield* Deferred.await(detached);
-              assert.equal(yield* PubSub.size(liveEvents), 0);
-              assert.deepEqual(received, [1]);
-              yield* Deferred.succeed(releaseAck, undefined);
-              const result = yield* Fiber.join(attempt);
-              assertTrue(result._tag === "Failure");
-              assert.equal(result.failure._tag, "OrchestrationGetSnapshotError");
-
-              const recovered = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-                threadId: defaultThreadId,
-                afterSequence: cursor,
-                requestCompletionMarker: true,
-              }).pipe(
-                Stream.takeUntil((item) => item.kind === "synchronized"),
-                Stream.runCollect,
-              );
-              assert.deepEqual(
-                recovered.map((item) => (item.kind === "event" ? item.event.sequence : item.kind)),
-                [2, 3, 4, "synchronized"],
-              );
-              const first = recovered[0];
-              assertTrue(first?.kind === "event" && first.event.type === "thread.message-sent");
-              assert.equal(first.event.payload.text, events[1]!.payload.text);
-              const completed = recovered[1];
-              assertTrue(
-                completed?.kind === "event" && completed.event.type === "thread.activity-appended",
-              );
-              assert.equal(completed.event.payload.activity.kind, "tool.completed");
-              assert.deepEqual(replayCalls, [
-                { afterSequence: 0, headSequence: 0 },
-                { afterSequence: 1, headSequence: 4 },
-              ]);
-              assert.equal(snapshotCalls, 0);
-            }),
-          ),
-          Effect.provide(withFirstWsAckHeld(wsUrl, ackHeld, releaseAck)),
-        );
-      }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("stops an overflowing shell producer without an ACK and recovers deleted entries", () =>
@@ -10108,6 +10272,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 interactionMode: thread.interactionMode,
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
+                sourceControlProfileId: null,
                 createdAt: thread.createdAt,
                 updatedAt: thread.updatedAt,
               },
@@ -10231,7 +10396,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           orchestrationEngine: {
             latestSequence: Effect.sync(() => headSequence),
-            streamDomainEvents: Stream.fromPubSub(liveEvents),
+            subscribeDomainEvents: PubSub.subscribe(liveEvents).pipe(
+              Effect.map(Stream.fromSubscription),
+            ),
             getThreadReplayStats: () =>
               Effect.sync(() => {
                 headSequence = 100;
@@ -10269,6 +10436,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
+      // T3-CUSTOM(expbkt3): execution resync precedes buffered post-head live events.
       assert.deepEqual(
         items.map((item) => (item.kind === "event" ? item.event.sequence : item.kind)),
         [3, 51, "synchronized"],
@@ -11250,7 +11418,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
-
   it.effect("archives and still closes terminals when session stop defects", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive-stop-defect");
@@ -11455,6 +11622,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               bootstrap: {
                 createThread: {
                   projectId: defaultProjectId,
+                  sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                   title: "Bootstrap Thread",
                   modelSelection: defaultModelSelection,
                   runtimeMode: "full-access",
@@ -11661,6 +11829,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -11766,6 +11935,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               bootstrap: {
                 createThread: {
                   projectId: defaultProjectId,
+                  sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                   title: "Bootstrap Thread",
                   modelSelection: defaultModelSelection,
                   runtimeMode: "full-access",
@@ -11846,6 +12016,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -11939,6 +12110,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -12045,6 +12217,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -12181,6 +12354,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -12318,6 +12492,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -12488,6 +12663,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               bootstrap: {
                 createThread: {
                   projectId: defaultProjectId,
+                  sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                   title: "Bootstrap Thread",
                   modelSelection: defaultModelSelection,
                   runtimeMode: "full-access",
@@ -12575,6 +12751,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
                 type: "thread.create",
                 commandId: CommandId.make("cmd-retry-create"),
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 threadId,
                 projectId: defaultProjectId,
                 title: "Retry",
@@ -12618,6 +12795,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 bootstrap: {
                   createThread: {
                     projectId: defaultProjectId,
+                    sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                     title: "Retry",
                     modelSelection: defaultModelSelection,
                     runtimeMode: "full-access",
@@ -12699,6 +12877,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             bootstrap: {
               createThread: {
                 projectId: defaultProjectId,
+                sourceControlProfileId: null, // T3-CUSTOM(expbkt3): required source profile.
                 title: "Bootstrap Thread",
                 modelSelection: defaultModelSelection,
                 runtimeMode: "full-access",
@@ -12753,6 +12932,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         terminalId: "default",
         cwd: "/tmp/project",
         worktreePath: null,
+        sourceControlProfileId: null,
         status: "running" as const,
         pid: 1234,
         history: "",

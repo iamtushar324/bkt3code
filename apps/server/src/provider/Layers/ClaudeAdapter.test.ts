@@ -16,6 +16,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -27,6 +28,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -39,6 +41,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
@@ -51,6 +54,8 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+// T3-CUSTOM(expbkt3): per-turn sender identity injected into Claude sessions.
+import { claudeSessionIdentityTurnContext } from "../claudeSessionIdentity.expbkt3.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -462,6 +467,64 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("registers Bifrost while keeping MCP credentials out of process arguments", () => {
+    const harness = makeHarness();
+    const bearerToken = "short-lived-provider-token";
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-claude-test"),
+      threadId: THREAD_ID,
+      providerSessionId: "provider-session-claude-test",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      actorUserId: null,
+      // T3-CUSTOM(expbkt3): upstream gates MCP tools by capability set.
+      capabilities: new Set(["preview"] as const),
+      endpoint: "http://127.0.0.1:18085/mcp",
+      authorizationHeader: `Bearer ${bearerToken}`,
+      upstreamServers: [
+        {
+          id: "bifrost",
+          name: "Bifrost",
+          endpoint: "http://127.0.0.1:18085/mcp/upstream/bifrost",
+          authMode: "x-bf-vk",
+          allowedTools: [],
+        },
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.env?.T3_MCP_BEARER_TOKEN, bearerToken);
+      assert.equal(
+        options?.mcpServers?.["t3-code"]?.type === "http"
+          ? options.mcpServers["t3-code"].headers?.Authorization
+          : undefined,
+        "Bearer ${T3_MCP_BEARER_TOKEN}",
+      );
+      assert.deepEqual(options?.mcpServers?.bifrost, {
+        type: "http",
+        url: "http://127.0.0.1:18085/mcp/upstream/bifrost",
+        headers: {
+          Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}",
+        },
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          McpProviderSession.clearMcpProviderSession(THREAD_ID);
+        }),
+      ),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives auto permission mode from auto runtime policy without skip flag", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -615,6 +678,86 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  // T3-CUSTOM(expbkt3): BEGIN per-turn sender identity (see claudeSessionIdentity.expbkt3.ts).
+  it.effect("registers a UserPromptSubmit identity hook for T3 Code sessions", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const identityEnvironment = {
+        BK_IDENTITY_RUNTIME: "t3-code",
+        BK_MESSAGE_SENDER_EMAIL: "sender@example.test",
+      };
+      yield* adapter.startSession(
+        {
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        },
+        { environment: identityEnvironment },
+      );
+
+      const createInput = harness.getLastCreateQueryInput();
+      const matchers = createInput?.options.hooks?.UserPromptSubmit;
+      assert.equal(matchers?.length, 1);
+      const callback = matchers?.[0]?.hooks[0];
+      assert.isFunction(callback);
+      const output = yield* Effect.promise(() =>
+        callback!(
+          {
+            hook_event_name: "UserPromptSubmit",
+            session_id: "session-1",
+            transcript_path: "/tmp/transcript.jsonl",
+            cwd: "/tmp",
+            prompt: "who am i",
+          },
+          undefined,
+          { signal: new AbortController().signal },
+        ),
+      );
+      const additionalContext = claudeSessionIdentityTurnContext(identityEnvironment);
+      assert.isString(additionalContext);
+      assert.deepEqual(output, {
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: additionalContext!,
+        },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves non-T3 Claude sessions without the identity hook", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      // The adapter inherits `process.env`, and this suite itself may run inside
+      // a T3 Code session, so clear the runtime marker rather than omit it.
+      yield* adapter.startSession(
+        {
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        },
+        { environment: { BK_IDENTITY_RUNTIME: "", BK_MESSAGE_SENDER_EMAIL: "" } },
+      );
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.hooks, undefined);
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        // T3-CUSTOM(expbkt3): upstream runtime instructions remain without identity context.
+        append: buildRuntimeInstructions({ harness: "Claude Code" }),
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+  // T3-CUSTOM(expbkt3): END
 
   it.effect("forwards Claude thinking toggle for models that support it", () => {
     const harness = makeHarness();

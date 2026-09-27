@@ -430,6 +430,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          // T3-CUSTOM(expbkt3): project snapshots expose inherited creation defaults.
           autoPull: false,
           faviconPath: null,
           projectIcon: null,
@@ -446,6 +447,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
+          ownerUserId: null,
+          memberUserIds: [],
         },
       ]);
       assert.deepEqual(snapshot.threads, [
@@ -461,6 +464,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
+          // T3-CUSTOM(expbkt3): thread detail snapshots expose bootstrap readiness.
           pullRequests: expectedPullRequests,
           branchPullRequest,
           latestTurn: {
@@ -470,6 +475,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
             assistantMessageId: asMessageId("message-1"),
+            durationMs: 0,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
@@ -483,6 +489,18 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          priority: null,
+          // T3-CUSTOM(expbkt3): no custom sidebar group on this fixture.
+          customGroup: null,
+          // T3-CUSTOM(expbkt3): no manual Linear tag on this fixture.
+          linearIssueUrl: null,
+          // T3-CUSTOM(expbkt3): no Mattermost conversation on this fixture.
+          mattermostThreadUrl: null,
+          // T3-CUSTOM(expbkt3): session lineage.
+          parentThreadId: null,
+          // T3-CUSTOM(expbkt3): a parent may live on another environment.
+          parentEnvironmentId: null,
+          // T3-CUSTOM(expbkt3): no work summary was ever requested here.
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
@@ -497,6 +515,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               text: "hello from projection",
               turnId: asTurnId("turn-1"),
               streaming: false,
+              sentByUserId: null,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
             },
@@ -538,11 +557,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerThreadId: "provider-thread-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+          ownerUserId: null,
+          memberUserIds: [],
         },
       ]);
 
@@ -558,6 +580,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          // T3-CUSTOM(expbkt3): shell projects retain creation-default inheritance.
           autoPull: false,
           faviconPath: null,
           projectIcon: null,
@@ -573,6 +596,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           defaultThreadEnvMode: null,
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
+          ownerUserId: null,
+          memberUserIds: [],
         },
       ]);
       assert.deepEqual(shellSnapshot.threads, [
@@ -588,6 +613,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           pullRequests: expectedPullRequests,
           branchPullRequest,
           latestTurn: {
@@ -597,6 +623,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
             assistantMessageId: asMessageId("message-1"),
+            durationMs: 0,
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
@@ -610,6 +637,18 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          priority: null,
+          // T3-CUSTOM(expbkt3): no custom sidebar group on this fixture.
+          customGroup: null,
+          // T3-CUSTOM(expbkt3): no manual Linear tag on this fixture.
+          linearIssueUrl: null,
+          // T3-CUSTOM(expbkt3): no Mattermost conversation on this fixture.
+          mattermostThreadUrl: null,
+          // T3-CUSTOM(expbkt3): session lineage.
+          parentThreadId: null,
+          // T3-CUSTOM(expbkt3): a parent may live on another environment.
+          parentEnvironmentId: null,
+          // T3-CUSTOM(expbkt3): no work summary was ever requested here.
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
@@ -620,6 +659,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerThreadId: "provider-thread-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -628,7 +668,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           latestUserMessageAt: "2026-02-24T00:00:04.000Z",
           hasPendingApprovals: true,
           hasPendingUserInput: false,
+          // T3-CUSTOM(expbkt3): async questions are surfaced separately.
+          hasPendingAsyncUserInput: false,
           hasActionableProposedPlan: false,
+          ownerUserId: null,
+          memberUserIds: [],
           backgroundLiveness: null,
           planProgress: null,
         },
@@ -842,6 +886,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             role: "user",
             text: "Read these notes",
             turnId: null,
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             streaming: false,
             createdAt,
             updatedAt: createdAt,
@@ -1055,6 +1101,26 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
       assert.deepEqual(archivedShellSnapshot.threads[0]?.branchPullRequest, branchPullRequest);
+
+      // Archived threads stay authorizable so their owner can unarchive them.
+      const archivedShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-archived"),
+      );
+      assert.equal(Option.isNone(archivedShell), true);
+
+      const archivedAccess = yield* snapshotQuery.getThreadAccessById(
+        ThreadId.make("thread-archived"),
+      );
+      assert.equal(Option.isSome(archivedAccess), true);
+      if (Option.isSome(archivedAccess)) {
+        assert.equal(archivedAccess.value.threadId, ThreadId.make("thread-archived"));
+        assert.equal(archivedAccess.value.projectId, ProjectId.make("project-archive-test"));
+      }
+
+      const missingAccess = yield* snapshotQuery.getThreadAccessById(
+        ThreadId.make("thread-missing"),
+      );
+      assert.equal(Option.isNone(missingAccess), true);
       const activeContext = yield* snapshotQuery.getThreadRuntimeContext(
         ThreadId.make("thread-active"),
       );
@@ -1206,6 +1272,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(shellSnapshot.threads[0]?.settledOverride, "settled");
       assert.equal(shellSnapshot.threads[0]?.settledAt, "2026-04-06T00:00:04.000Z");
+
+      // The project-scoped shell query is also used by team-mode authorization
+      // when project access is inherited from a visible thread. Keep its SELECT
+      // aliases aligned with ProjectionThreadDbRowSchema so creating a new
+      // thread cannot fail authorization while decoding an existing one.
+      const projectThreads = yield* snapshotQuery.listThreadShellsByProjectId(
+        asProjectId("project-settled-test"),
+      );
+      assert.deepEqual(
+        projectThreads.map((thread) => thread.id),
+        [ThreadId.make("thread-settled")],
+      );
+      assert.equal(projectThreads[0]?.settledOverride, "settled");
+      assert.equal(projectThreads[0]?.settledAt, "2026-04-06T00:00:04.000Z");
 
       // And the full command read model carries them too.
       const readModel = yield* snapshotQuery.getCommandReadModel();

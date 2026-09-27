@@ -69,6 +69,7 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
     getInstanceInfo: () => Effect.die("unused"),
     rollbackConversation: () => Effect.die("unused"),
     uploadFeedback: () => Effect.die("unused"),
+    // T3-CUSTOM(expbkt3): fork-required provider surface for durable execution.
     streamEvents: Stream.empty,
   }) satisfies ProviderService.ProviderService["Service"];
 
@@ -931,7 +932,10 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
       providerService: {
         ...makeProviderService(),
         getCapabilities: () =>
-          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
+          Effect.succeed({
+            sessionModelSwitch: "in-session",
+            promptlessTurnContinuation: true,
+          }),
         sendTurn: (input) =>
           Effect.gen(function* () {
             sends.push(input);

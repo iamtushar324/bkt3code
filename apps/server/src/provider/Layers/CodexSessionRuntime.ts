@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -60,6 +61,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
+  "no rollout found",
   "missing thread",
   "no such thread",
   "unknown thread",
@@ -879,7 +881,33 @@ export function makeMemoryConsolidationNotificationFilter(): (
   };
 }
 
-function readRouteFields(notification: CodexServerNotification): {
+// T3-CUSTOM(expbkt3) BEGIN: non-throwing wire-id constructors.
+/**
+ * Wire ids are branded through `TrimmedNonEmptyString`, whose `.make` THROWS on
+ * an absent or empty value. The generated codex schema types `turnId`/`itemId`
+ * as plain strings, so an empty one decodes cleanly and then blows up here as a
+ * DEFECT — which `Effect.catch` does not catch. One such notification used to
+ * kill the notification-processing fiber and leave the session deaf for the rest
+ * of its life: codex ran the whole turn while T3 showed nothing and the watchdog
+ * reported `provider-turn-never-started`. Both route fields are optional
+ * downstream, so degrade to `undefined` rather than throw.
+ */
+const optionalWireId = <Id>(make: (value: string) => Id, value: unknown): Id | undefined => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  return make(value);
+};
+
+const optionalTurnId = (value: unknown): TurnId | undefined =>
+  optionalWireId((id) => TurnId.make(id), value);
+
+const optionalProviderItemId = (value: unknown): ProviderItemId | undefined =>
+  optionalWireId((id) => ProviderItemId.make(id), value);
+// T3-CUSTOM(expbkt3) END
+
+// T3-CUSTOM(expbkt3): exported so the empty-wire-id regression is testable.
+export function readRouteFields(notification: CodexServerNotification): {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
 } {
@@ -892,18 +920,21 @@ function readRouteFields(notification: CodexServerNotification): {
     case "turn/started":
     case "turn/completed":
       return {
-        turnId: TurnId.make(notification.params.turn.id),
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        turnId: optionalTurnId(notification.params.turn.id),
         itemId: undefined,
       };
     case "error":
       return {
-        turnId: TurnId.make(notification.params.turnId),
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        turnId: optionalTurnId(notification.params.turnId),
         itemId: undefined,
       };
     case "turn/diff/updated":
     case "turn/plan/updated":
       return {
-        turnId: TurnId.make(notification.params.turnId),
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        turnId: optionalTurnId(notification.params.turnId),
         itemId: undefined,
       };
     case "serverRequest/resolved":
@@ -914,8 +945,9 @@ function readRouteFields(notification: CodexServerNotification): {
     case "item/started":
     case "item/completed":
       return {
-        turnId: TurnId.make(notification.params.turnId),
-        itemId: ProviderItemId.make(notification.params.item.id),
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        turnId: optionalTurnId(notification.params.turnId),
+        itemId: optionalProviderItemId(notification.params.item.id),
       };
     case "item/agentMessage/delta":
     case "item/plan/delta":
@@ -927,8 +959,9 @@ function readRouteFields(notification: CodexServerNotification): {
     case "item/reasoning/summaryPartAdded":
     case "item/reasoning/textDelta":
       return {
-        turnId: TurnId.make(notification.params.turnId),
-        itemId: ProviderItemId.make(notification.params.itemId),
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        turnId: optionalTurnId(notification.params.turnId),
+        itemId: optionalProviderItemId(notification.params.itemId),
       };
     default:
       return {
@@ -2058,9 +2091,11 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payload.threadId !== providerThreadId) {
             return Effect.void;
           }
+          // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+          const activeTurnId = optionalTurnId(payload.turn.id);
           return updateSession(sessionRef, {
             status: "running",
-            activeTurnId: TurnId.make(payload.turn.id),
+            ...(activeTurnId ? { activeTurnId } : {}),
           });
         }),
       ),
@@ -2105,8 +2140,9 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("command-approval-request"));
-        const turnId = TurnId.make(payload.turnId);
-        const itemId = ProviderItemId.make(payload.itemId);
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        const turnId = optionalTurnId(payload.turnId);
+        const itemId = optionalProviderItemId(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -2163,8 +2199,9 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(
           yield* randomUUIDv4("file-change-approval-request"),
         );
-        const turnId = TurnId.make(payload.turnId);
-        const itemId = ProviderItemId.make(payload.itemId);
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        const turnId = optionalTurnId(payload.turnId);
+        const itemId = optionalProviderItemId(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -2347,8 +2384,9 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("user-input-request"));
-        const turnId = TurnId.make(payload.turnId);
-        const itemId = ProviderItemId.make(payload.itemId);
+        // T3-CUSTOM(expbkt3): tolerate a missing wire id instead of throwing a defect.
+        const turnId = optionalTurnId(payload.turnId);
+        const itemId = optionalProviderItemId(payload.itemId);
         const answers = yield* Deferred.make<ProviderUserInputAnswers>();
 
         yield* Ref.update(pendingUserInputsRef, (current) => {
@@ -2413,10 +2451,32 @@ export const makeCodexSessionRuntime = (
       { concurrency: 1, discard: true },
     );
 
+    // T3-CUSTOM(expbkt3) BEGIN: per-notification failure isolation.
+    // Per-notification isolation, not per-stream: an unhandled failure here used
+    // to kill this fiber, and with it every remaining notification for the
+    // session. The transport stayed healthy, so turns still reached codex and ran
+    // to completion while T3 saw no turn/started, no items and no turn/completed
+    // — the session hung in "starting" until the stalled-execution watchdog
+    // reported `provider-turn-never-started`. One bad notification must cost one
+    // notification.
     yield* Stream.fromQueue(serverNotifications).pipe(
-      Stream.runForEach(handleRawNotification),
+      Stream.runForEach((notification) =>
+        handleRawNotification(notification).pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            return Effect.logError("Dropped a Codex notification its handler could not process.", {
+              threadId: options.threadId,
+              method: notification.method,
+              cause: Cause.pretty(cause),
+            });
+          }),
+        ),
+      ),
       Effect.forkIn(runtimeScope),
     );
+    // T3-CUSTOM(expbkt3) END
 
     const stderrRemainderRef = yield* Ref.make("");
     yield* child.stderr.pipe(

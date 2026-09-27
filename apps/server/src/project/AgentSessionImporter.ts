@@ -16,6 +16,8 @@ import {
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type OrchestrationThread,
+  // T3-CUSTOM(expbkt3): preserve the operator across imported thread creation.
+  type UserId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
@@ -100,6 +102,8 @@ function hasImportBlockingActivity(
 /** Import recent transcript text and persist the cursor needed to resume its provider session. */
 export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(function* (
   input: AgentSessionImportInput,
+  // T3-CUSTOM(expbkt3): actor attribution is server-owned, never transcript input.
+  options?: { readonly actorUserId?: UserId | null },
 ) {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -242,34 +246,48 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         }
 
         if (Option.isNone(existingThread)) {
-          yield* engine.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(yield* crypto.randomUUIDv4),
-            threadId,
-            projectId: input.projectId,
-            title: thread.title,
-            modelSelection: { instanceId: thread.providerInstanceId, model },
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            branch: null,
-            worktreePath: null,
-            createdAt: thread.createdAt,
-            historyImport: true,
-          });
+          // T3-CUSTOM(expbkt3): BEGIN — keep actor-attributed import formatting markerable.
+          yield* engine.dispatch(
+            {
+              type: "thread.create",
+              commandId: CommandId.make(yield* crypto.randomUUIDv4),
+              threadId,
+              projectId: input.projectId,
+              title: thread.title,
+              modelSelection: { instanceId: thread.providerInstanceId, model },
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              branch: null,
+              worktreePath: null,
+              // T3-CUSTOM(expbkt3): a transcript cannot select an operator Git identity.
+              sourceControlProfileId: null,
+              createdAt: thread.createdAt,
+              historyImport: true,
+              // T3-CUSTOM(expbkt3): preserve the authenticated actor on imported history.
+            },
+            options,
+          );
+          // T3-CUSTOM(expbkt3): END
         }
 
         if (!importedHistoryPresent) {
-          yield* engine.dispatch({
-            type: "thread.history.import",
-            commandId: CommandId.make(yield* crypto.randomUUIDv4),
-            threadId,
-            messages: thread.messages.map((message, index) => ({
-              messageId: MessageId.make(`${threadId}:${String(index).padStart(6, "0")}`),
-              role: message.role,
-              text: message.text,
-              createdAt: message.createdAt,
-            })),
-          });
+          // T3-CUSTOM(expbkt3): BEGIN — keep actor-attributed history formatting markerable.
+          yield* engine.dispatch(
+            {
+              type: "thread.history.import",
+              commandId: CommandId.make(yield* crypto.randomUUIDv4),
+              threadId,
+              messages: thread.messages.map((message, index) => ({
+                messageId: MessageId.make(`${threadId}:${String(index).padStart(6, "0")}`),
+                role: message.role,
+                text: message.text,
+                createdAt: message.createdAt,
+              })),
+              // T3-CUSTOM(expbkt3): preserve the authenticated actor on imported history.
+            },
+            options,
+          );
+          // T3-CUSTOM(expbkt3): END
         }
 
         yield* directory.recordImportedTranscript({ threadId, source: outcome.source });

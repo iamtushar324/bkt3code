@@ -162,6 +162,27 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  // T3-CUSTOM(expbkt3): Clerk team-mode environment.
+  clerkSecretKey: Config.String("T3CODE_CLERK_SECRET_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  clerkPublishableKey: Config.String("T3CODE_CLERK_PUBLISHABLE_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  clerkOrganizationId: Config.String("T3CODE_CLERK_ORGANIZATION_ID").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  defaultOwnerUserId: Config.String("T3CODE_DEFAULT_OWNER_USER_ID").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  defaultOwnerEmail: Config.String("T3CODE_DEFAULT_OWNER_EMAIL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -423,6 +444,24 @@ export const resolveServerConfig = (
       persistedObservabilitySettings.otlpLogsUrl,
     );
 
+    // Clerk team mode is opt-in: only enabled when a secret key is provided.
+    // Absent ⇒ single-user mode with no behavior change.
+    const trimToUndefined = (value: string | undefined): string | undefined => {
+      const trimmed = value?.trim();
+      return trimmed && trimmed.length > 0 ? trimmed : undefined;
+    };
+    const clerkSecretKey = trimToUndefined(env.clerkSecretKey);
+    const clerkAuth: ServerConfig.ServerClerkAuthConfig | undefined =
+      clerkSecretKey === undefined
+        ? undefined
+        : {
+            secretKey: clerkSecretKey,
+            publishableKey: trimToUndefined(env.clerkPublishableKey),
+            organizationId: trimToUndefined(env.clerkOrganizationId),
+            defaultOwnerUserId: trimToUndefined(env.defaultOwnerUserId),
+            defaultOwnerEmail: trimToUndefined(env.defaultOwnerEmail),
+          };
+
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
       traceMinLevel: env.traceMinLevel,
@@ -458,6 +497,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      clerkAuth,
     };
 
     return config;

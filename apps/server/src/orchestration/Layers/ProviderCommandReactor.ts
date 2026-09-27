@@ -5,6 +5,7 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -12,6 +13,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
+  type UserId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -34,6 +36,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import { decideWorktreeRecovery, describeWorktreeRecreation } from "../threadWorktreeRecovery.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import {
   ProviderAdapterProcessError,
@@ -41,10 +44,12 @@ import {
   ProviderAdapterValidationError,
   ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
+
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import type { ProviderSessionExecutionOptions } from "../../provider/Services/ProviderAdapter.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -65,6 +70,13 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { SourceControlProfileService } from "../../sourceControl/SourceControlProfileService.ts";
+// T3-CUSTOM(expbkt3): session-identity markers injected into provider sessions.
+import {
+  SessionIdentityEnvironmentService,
+  sessionIdentityFingerprint,
+  unresolvedSessionIdentityEnvironment,
+} from "../../identity/SessionIdentityEnvironment.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
@@ -83,6 +95,7 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
+      | "thread.session-restart-requested"
       | "thread.settled"
       | "thread.session-set";
   }
@@ -122,7 +135,7 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
-function providerErrorLabel(value: string | undefined): string {
+export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
 }
@@ -180,6 +193,25 @@ function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServic
   );
 }
 
+/**
+ * An interrupt that could not be delivered because nothing was running.
+ *
+ * After a server restart the provider process is gone, so the orchestration
+ * turn is the only thing left to settle — respawning an agent just to stop it
+ * would be absurd. Both shapes reach here as adapter request errors: the
+ * service refuses to route to a dead session, and codex reports a session
+ * with no active turn.
+ */
+function isDeadSessionInterruptError(cause: Cause.Cause<ProviderServiceError>): boolean {
+  const error = findProviderAdapterRequestError(cause);
+  const detail = (error ? error.detail : Cause.pretty(cause)).toLowerCase();
+  return (
+    detail.includes("no live provider session") ||
+    detail.includes("no active turn to interrupt") ||
+    detail.includes("no persisted provider binding exists")
+  );
+}
+
 function stalePendingRequestDetail(
   requestKind: "approval" | "user-input",
   requestId: string,
@@ -223,6 +255,11 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  // T3-CUSTOM(expbkt3): optional keeps isolated upstream reactor tests lightweight.
+  const sourceControlProfiles = yield* Effect.serviceOption(SourceControlProfileService);
+  // T3-CUSTOM(expbkt3): optional for the same reason as the profile service —
+  // isolated upstream reactor tests do not build the user directory.
+  const sessionIdentity = yield* Effect.serviceOption(SessionIdentityEnvironmentService);
   const terminalManager = yield* TerminalManager.TerminalManager;
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -251,6 +288,14 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  // T3-CUSTOM(expbkt3): Tracks the identity whose personal MCP credentials
+  // were bound when this reactor started each ACP session. An absent entry
+  // means a pre-existing session has not yet been rebound in this process.
+  const threadCredentialActors = new Map<ThreadId, UserId | null>();
+  // T3-CUSTOM(expbkt3): identity environment the live provider process for each
+  // thread was spawned with. A process reads its environment once, so this is
+  // what makes an owner transfer or a new sender observable as staleness.
+  const threadSessionIdentities = new Map<ThreadId, NodeJS.ProcessEnv>();
   const compactingThreadIds = new Set<ThreadId>();
   type QueuedTurnStart = Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>;
   // Turn starts received while a thread compacts, replayed in order once its session is restored.
@@ -434,6 +479,33 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const setThreadSessionInterrupted = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) {
+    const thread = yield* resolveThreadDetail(input.threadId);
+    if (!thread) {
+      return;
+    }
+    const session = thread.session;
+    yield* setThreadSession({
+      threadId: input.threadId,
+      session: {
+        ...(session ?? {
+          threadId: input.threadId,
+          providerName: null,
+          providerInstanceId: thread.modelSelection.instanceId,
+          runtimeMode: thread.runtimeMode,
+        }),
+        status: session?.status === "stopped" ? "stopped" : "interrupted",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+  });
+
   const restoreCompaction = Effect.fnUntraced(function* (threadId: ThreadId, fromRunning = false) {
     if (stoppingThreadIds.has(threadId)) {
       compactingThreadIds.delete(threadId);
@@ -477,53 +549,6 @@ const make = Effect.gen(function* () {
    * worktree makes every later turn fail as a bogus "session not found".
    * Best-effort: on failure the turn proceeds and reports the real error.
    */
-  const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
-    readonly id: ThreadId;
-    readonly projectId: ProjectId;
-    readonly branch: string | null;
-    readonly worktreePath: string | null;
-  }) {
-    const { worktreePath, branch } = thread;
-    if (!worktreePath || !branch) {
-      return;
-    }
-    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists) {
-      return;
-    }
-    const project = yield* resolveProject(thread.projectId);
-    if (!project) {
-      return;
-    }
-    const cwd = project.workspaceRoot;
-    yield* Effect.logWarning("provider command reactor recreating missing worktree", {
-      threadId: thread.id,
-      worktreePath,
-      branch,
-    });
-    // A directory deleted without `git worktree remove` leaves an admin entry
-    // that makes `git worktree add` refuse the path; prune clears it.
-    // Best effort like the rest of this recovery: a settings read failure
-    // falls back to the checkout's t3.json.
-    const submodules = yield* projectSettingsForThread(thread.id).pipe(
-      Effect.map((settings) => settings.worktreeSubmodules),
-      Effect.orElseSucceed(() => null),
-    );
-    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(
-        gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
-      ),
-      Effect.catchCauseIf(
-        (cause) => !Cause.hasInterruptsOnly(cause),
-        (cause) =>
-          Effect.logWarning("provider command reactor failed to recreate worktree", {
-            threadId: thread.id,
-            worktreePath,
-            cause: Cause.pretty(cause),
-          }),
-      ),
-    );
-  });
 
   const resolveThreadShell = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -535,6 +560,72 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId, { activityKinds: [] })
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const resolveSourceControlExecutionOptions = Effect.fnUntraced(function* (
+    thread: Pick<OrchestrationThreadShell, "id" | "ownerUserId" | "modelSelection">,
+    method: string,
+  ): Effect.fn.Return<ProviderSessionExecutionOptions | undefined, ProviderAdapterRequestError> {
+    const context = yield* Option.match(sourceControlProfiles, {
+      onNone: () => Effect.succeed(null),
+      // T3-CUSTOM(expbkt3): attribution follows durable thread ownership.
+      onSome: (profiles) =>
+        profiles.resolveThreadExecutionContext(thread.id, thread.ownerUserId, {}).pipe(
+          Effect.mapError(
+            (error) =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabelFromInstanceHint({
+                  instanceId: String(thread.modelSelection.instanceId),
+                }),
+                method,
+                detail: error.detail,
+              }),
+          ),
+        ),
+    });
+    return context ? { environment: context.environment } : undefined;
+  });
+
+  // T3-CUSTOM(expbkt3): resolves who owns this thread and who sent the message
+  // being answered, from the durable environment-user directory. `undefined`
+  // means "this operation has no sender of its own" — an interrupt or an
+  // approval reply — and reuses whatever the live session was started with, so
+  // a session recovered by one of those paths does not drift from the identity
+  // this reactor is tracking for the thread.
+  const resolveSessionIdentityEnvironment = Effect.fnUntraced(function* (
+    thread: Pick<OrchestrationThreadShell, "id" | "ownerUserId" | "modelSelection">,
+    senderUserId: UserId | null | undefined,
+  ) {
+    if (senderUserId === undefined) {
+      const bound = threadSessionIdentities.get(thread.id);
+      if (bound !== undefined) {
+        return bound;
+      }
+    }
+    return yield* Option.match(sessionIdentity, {
+      onNone: () => Effect.succeed(unresolvedSessionIdentityEnvironment()),
+      onSome: (service) =>
+        service.resolve({
+          ownerUserId: thread.ownerUserId,
+          senderUserId: senderUserId ?? null,
+        }),
+    });
+  });
+
+  // T3-CUSTOM(expbkt3): the source-control profile environment and the identity
+  // markers compose — a thread-profile session carries both, a machine-identity
+  // session carries the markers alone.
+  const resolveSessionExecutionOptions = Effect.fnUntraced(function* (
+    thread: Pick<OrchestrationThreadShell, "id" | "ownerUserId" | "modelSelection">,
+    method: string,
+    senderUserId: UserId | null | undefined,
+  ): Effect.fn.Return<ProviderSessionExecutionOptions, ProviderAdapterRequestError> {
+    const sourceControlExecutionOptions = yield* resolveSourceControlExecutionOptions(
+      thread,
+      method,
+    );
+    const identityEnvironment = yield* resolveSessionIdentityEnvironment(thread, senderUserId);
+    return { ...sourceControlExecutionOptions, identityEnvironment };
   });
 
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
@@ -569,12 +660,104 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // T3-CUSTOM(expbkt3): a worktree deleted out from under a live thread —
+  // external cleanup, a disk incident, a manual `git worktree remove` — would
+  // otherwise fail every session start with the same ENOENT until a human
+  // rebuilds the directory by hand.
+  const ensureThreadWorktree = Effect.fn("ensureThreadWorktree")(function* (input: {
+    readonly thread: Pick<
+      OrchestrationThreadShell,
+      "id" | "modelSelection" | "worktreePath" | "branch"
+    >;
+    readonly workspaceRoot: string | null;
+    readonly createdAt: string;
+  }) {
+    const worktreePath = input.thread.worktreePath;
+    if (worktreePath === null) {
+      return;
+    }
+    if (yield* fileSystem.exists(worktreePath)) {
+      return;
+    }
+    const branch = input.thread.branch;
+    const branchExists =
+      input.workspaceRoot !== null && branch !== null
+        ? (yield* gitWorkflow.listLocalBranchNames(input.workspaceRoot)).includes(branch)
+        : false;
+    const decision = decideWorktreeRecovery({
+      worktreePath,
+      branch,
+      branchExists,
+      workspaceRoot: input.workspaceRoot,
+    });
+    if (decision.kind === "unrecoverable") {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabelFromInstanceHint({
+          instanceId: String(input.thread.modelSelection.instanceId),
+        }),
+        method: "thread.turn.start",
+        detail: decision.detail,
+      });
+    }
+    // An `rm -rf` deletion leaves a stale `.git/worktrees/` registration that
+    // keeps the branch "checked out" and blocks re-adding it at this path.
+    yield* gitWorkflow.pruneWorktrees({ cwd: decision.workspaceRoot });
+    // Upstream #12955: honour the worktree submodule setting. A settings read
+    // failure falls back to the checkout's t3.json.
+    const submodules = yield* projectSettingsForThread(input.thread.id).pipe(
+      Effect.map((settings) => settings.worktreeSubmodules),
+      Effect.orElseSucceed(() => null),
+    );
+    yield* gitWorkflow.createWorktree(
+      {
+        cwd: decision.workspaceRoot,
+        refName: decision.branch,
+        path: decision.worktreePath,
+      },
+      { submodules },
+    );
+    yield* Effect.all({
+      commandId: serverCommandId("worktree-recreated-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.thread.id,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "worktree.recreated",
+            summary: `Recreated missing worktree from branch '${decision.branch}'`,
+            payload: {
+              detail: describeWorktreeRecreation({
+                worktreePath: decision.worktreePath,
+                branch: decision.branch,
+              }),
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+  });
+
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly actorUserId?: UserId | null;
+      /**
+       * T3-CUSTOM(expbkt3): the user who actually sent this message, with no
+       * owner fallback — an inferred sender is the misattribution this exists
+       * to prevent.
+       */
+      readonly messageSenderUserId?: UserId | null;
       // First-turn prompt seed. A manual title that still equals this seed was
       // written by the client's auto-title, not a user rename.
       readonly titleSeed?: string;
@@ -585,6 +768,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    const desiredCredentialActor = options?.actorUserId ?? thread.ownerUserId;
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
@@ -706,10 +890,24 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
+    yield* ensureThreadWorktree({
+      thread,
+      workspaceRoot: project?.workspaceRoot ?? null,
+      createdAt,
+    });
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: project ? [project] : [],
     });
+    // T3-CUSTOM(expbkt3): source-control profile environment plus the session
+    // identity markers the agent reads to name the person it works for.
+    const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
+      thread,
+      "thread.turn.start",
+      options?.messageSenderUserId ?? null,
+    );
+    const desiredSessionIdentity =
+      sessionExecutionOptions.identityEnvironment ?? unresolvedSessionIdentityEnvironment();
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
           .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
@@ -730,16 +928,24 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderDriverKind;
     }) =>
       providerService
-        .startSession(threadId, {
+        .startSession(
           threadId,
-          ...(preferredProvider ? { provider: preferredProvider } : {}),
-          providerInstanceId: desiredInstanceId,
-          ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-          ...(sessionTitle ? { title: sessionTitle } : {}),
-          modelSelection: desiredModelSelection,
-          ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-          runtimeMode: desiredRuntimeMode,
-        })
+          {
+            threadId,
+            ...(preferredProvider ? { provider: preferredProvider } : {}),
+            providerInstanceId: desiredInstanceId,
+            ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+            ...(sessionTitle ? { title: sessionTitle } : {}),
+            modelSelection: desiredModelSelection,
+            ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+            runtimeMode: desiredRuntimeMode,
+          },
+          // T3-CUSTOM(expbkt3): per-turn credential actor for multi-user sessions.
+          {
+            ...sessionExecutionOptions,
+            actorUserId: desiredCredentialActor,
+          },
+        )
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
     const bindSessionToThread = (session: ProviderSession) =>
@@ -751,6 +957,8 @@ const make = Effect.gen(function* () {
             detail: `Provider session '${session.threadId}' started without a provider instance id.`,
           });
         }
+        threadCredentialActors.set(threadId, desiredCredentialActor);
+        threadSessionIdentities.set(threadId, desiredSessionIdentity);
         yield* setThreadSession({
           threadId,
           session: {
@@ -761,6 +969,7 @@ const make = Effect.gen(function* () {
                 : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            providerThreadId: thread.session?.providerThreadId ?? null,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
@@ -790,13 +999,29 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
+      // T3-CUSTOM(expbkt3): Managed MCP credentials are bound to the user who
+      // starts this turn. Resume the ACP under a fresh generation when a
+      // different authorized user takes over a shared thread.
+      const credentialActorChanged =
+        !threadCredentialActors.has(threadId) ||
+        threadCredentialActors.get(threadId) !== desiredCredentialActor;
+      // T3-CUSTOM(expbkt3): the running process already read its environment,
+      // so an owner transfer or a different sender only reaches the agent
+      // through a fresh session.
+      const boundSessionIdentity = threadSessionIdentities.get(threadId);
+      const sessionIdentityChanged =
+        boundSessionIdentity === undefined ||
+        sessionIdentityFingerprint(boundSessionIdentity) !==
+          sessionIdentityFingerprint(desiredSessionIdentity);
 
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
+        !shouldRestartForModelSelectionChange &&
+        !credentialActorChanged &&
+        !sessionIdentityChanged
       ) {
         yield* refreshWorkspaceSnapshot;
         return existingSessionThreadId;
@@ -822,6 +1047,8 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        credentialActorChanged,
+        sessionIdentityChanged,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -850,6 +1077,9 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly actorUserId?: UserId | null;
+    /** T3-CUSTOM(expbkt3): sender of this message, never the owner by fallback. */
+    readonly messageSenderUserId?: UserId | null;
     readonly createdAt: string;
     readonly titleSeed?: string;
   }) {
@@ -863,6 +1093,8 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
       pendingTurnStart: true,
+      actorUserId: input.actorUserId ?? thread.ownerUserId,
+      messageSenderUserId: input.messageSenderUserId ?? null,
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -1215,6 +1447,62 @@ const make = Effect.gen(function* () {
     processThreadTitleRegenerationSafely,
   );
 
+  // T3-CUSTOM(expbkt3): native account commands precede busy-turn steering too.
+  const processNativeAuthCommand = Effect.fn("processNativeAuthCommand")(function* (
+    thread: Pick<OrchestrationThreadShell, "id" | "session" | "modelSelection" | "runtimeMode">,
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
+    message: {
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+    },
+  ) {
+    // Native account commands belong to the thread's existing provider session.
+    const instanceId =
+      thread.session?.providerInstanceId ??
+      event.payload.modelSelection?.instanceId ??
+      thread.modelSelection.instanceId;
+    const handled = yield* providerAuthService.tryHandlePromptCommand({
+      instanceId,
+      text: message.text,
+      hasAttachments: (message.attachments?.length ?? 0) > 0,
+    });
+    if (!handled) {
+      return false;
+    }
+
+    const instanceInfo = yield* providerService.getInstanceInfo(instanceId);
+    yield* setThreadSession({
+      threadId: thread.id,
+      session: {
+        threadId: thread.id,
+        status: "stopped",
+        providerName: instanceInfo.driverKind,
+        providerInstanceId: instanceId,
+        runtimeMode: thread.runtimeMode,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: event.payload.createdAt,
+      },
+      createdAt: event.payload.createdAt,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: yield* serverCommandId("provider-sign-out"),
+      threadId: thread.id,
+      activity: {
+        id: yield* serverEventId(),
+        tone: "info",
+        kind: "provider.auth.signed-out",
+        summary: "Provider signed out",
+        payload: { providerInstanceId: instanceId },
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      },
+      createdAt: event.payload.createdAt,
+    });
+    return true;
+  });
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     receivedEvent: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -1291,58 +1579,18 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const authCommandHandled = yield* Effect.gen(function* () {
-      // Native account commands belong to the thread's existing provider session.
-      const instanceId =
-        thread.session?.providerInstanceId ??
-        event.payload.modelSelection?.instanceId ??
-        thread.modelSelection.instanceId;
-      const handled = yield* providerAuthService.tryHandlePromptCommand({
-        instanceId,
-        text: message.text,
-        hasAttachments: (message.attachments?.length ?? 0) > 0,
-      });
-      if (!handled) {
-        return false;
-      }
-
-      const instanceInfo = yield* providerService.getInstanceInfo(instanceId);
-      yield* setThreadSession({
-        threadId: thread.id,
-        session: {
-          threadId: thread.id,
-          status: "stopped",
-          providerName: instanceInfo.driverKind,
-          providerInstanceId: instanceId,
-          runtimeMode: thread.runtimeMode,
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: yield* serverCommandId("provider-sign-out"),
-        threadId: thread.id,
-        activity: {
-          id: yield* serverEventId(),
-          tone: "info",
-          kind: "provider.auth.signed-out",
-          summary: "Provider signed out",
-          payload: { providerInstanceId: instanceId },
-          turnId: null,
-          createdAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      return true;
-    }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
+    // T3-CUSTOM(expbkt3): native account commands live in processNativeAuthCommand.
+    const authCommandHandled = yield* processNativeAuthCommand(thread, event, message).pipe(
+      Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))),
+    );
     if (authCommandHandled) {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    // T3-CUSTOM(expbkt3): upstream #7839 recreates a missing worktree at the top of
+    // the turn; the fork already does it in startProviderSession with a richer
+    // recovery path (branch check, decideWorktreeRecovery, activity events), so the
+    // guarantee holds without running the recovery twice per turn.
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {
@@ -1501,6 +1749,9 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      // T3-CUSTOM(expbkt3): owner and sender attribution for the provider session.
+      actorUserId: message.sentByUserId ?? thread.ownerUserId,
+      messageSenderUserId: message.sentByUserId ?? null,
       createdAt: event.payload.createdAt,
       // Later turns must not reuse the current title as titleSeed. Only the
       // first prompt seed should suppress a not-yet-renamed session title.
@@ -1516,8 +1767,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // T3-CUSTOM(expbkt3): identity-scoped execution options for the send.
+    const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
+      thread,
+      "thread.turn.start",
+      message.sentByUserId ?? null,
+    );
     const send = providerService
-      .sendTurn(sendTurnRequest.value)
+      .sendTurn(sendTurnRequest.value, sessionExecutionOptions)
       .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
@@ -1621,9 +1878,42 @@ const make = Effect.gen(function* () {
     };
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
+    // T3-CUSTOM(expbkt3): identity-scoped execution options for the interrupt call.
+    const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
+      thread,
+      "thread.turn.interrupt",
+      undefined,
+    );
     yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
-      .pipe(Effect.catchCause(recoverInterruptFailure));
+      .interruptTurn({ threadId: event.payload.threadId }, sessionExecutionOptions)
+      .pipe(
+        Effect.catchCause((cause) => {
+          // T3-CUSTOM(expbkt3): BEGIN — Stop must always be able to unstick a
+          // thread. When the provider session is already gone there is nothing
+          // to interrupt, so settle the orchestration turn directly instead of
+          // leaving it pinned. Every other failure goes through upstream's
+          // stop-and-recover path below.
+          if (isDeadSessionInterruptError(cause)) {
+            return setThreadSessionInterrupted({
+              threadId: event.payload.threadId,
+              createdAt: event.payload.createdAt,
+            }).pipe(
+              Effect.andThen(
+                appendProviderFailureActivity({
+                  threadId: event.payload.threadId,
+                  kind: "provider.turn.interrupt.failed",
+                  summary: "Turn stopped",
+                  detail: "The provider session was no longer running, so the turn was closed.",
+                  turnId: event.payload.turnId ?? null,
+                  createdAt: event.payload.createdAt,
+                }),
+              ),
+            );
+          }
+          // T3-CUSTOM(expbkt3): END
+          return recoverInterruptFailure(cause);
+        }),
+      );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1646,12 +1936,20 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
+      thread,
+      "thread.approval.respond",
+      undefined,
+    );
     yield* providerService
-      .respondToRequest({
-        threadId: event.payload.threadId,
-        requestId: event.payload.requestId,
-        decision: event.payload.decision,
-      })
+      .respondToRequest(
+        {
+          threadId: event.payload.threadId,
+          requestId: event.payload.requestId,
+          decision: event.payload.decision,
+        },
+        sessionExecutionOptions,
+      )
       .pipe(
         Effect.catchCause((cause) =>
           appendProviderFailureActivity({
@@ -1690,15 +1988,23 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
+        thread,
+        "thread.user-input.respond",
+        undefined,
+      );
       yield* providerService
-        .respondToUserInput({
-          threadId: event.payload.threadId,
-          requestId: event.payload.requestId,
-          answers: event.payload.answers,
-          ...(event.payload.attachmentsByQuestionId
-            ? { attachmentsByQuestionId: event.payload.attachmentsByQuestionId }
-            : {}),
-        })
+        .respondToUserInput(
+          {
+            threadId: event.payload.threadId,
+            requestId: event.payload.requestId,
+            answers: event.payload.answers,
+            ...(event.payload.attachmentsByQuestionId
+              ? { attachmentsByQuestionId: event.payload.attachmentsByQuestionId }
+              : {}),
+          },
+          sessionExecutionOptions,
+        )
         .pipe(
           Effect.catchCause((cause) =>
             appendProviderFailureActivity({
@@ -1781,8 +2087,33 @@ const make = Effect.gen(function* () {
             createdAt: now,
           }),
       }),
+      // T3-CUSTOM(expbkt3): a stopped session forgets its per-turn credential actor.
+      Effect.tap(() => Effect.sync(() => threadCredentialActors.delete(thread.id))),
       Effect.ensuring(clearStopping),
     );
+  });
+
+  // T3-CUSTOM(expbkt3): explicit provider reconnect (MCP session_action "restart").
+  const processSessionRestartRequested = Effect.fn("processSessionRestartRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.session-restart-requested" }>,
+  ) {
+    const thread = yield* resolveThreadDetail(event.payload.threadId);
+    if (!thread?.session) {
+      return yield* new ProviderAdapterRequestError({
+        provider: "unknown",
+        method: "thread.session.restart",
+        detail: `Thread '${event.payload.threadId}' does not have a provider session to reconnect.`,
+      });
+    }
+
+    const modelSelection =
+      thread.session.providerInstanceId !== undefined
+        ? {
+            ...thread.modelSelection,
+            instanceId: thread.session.providerInstanceId,
+          }
+        : thread.modelSelection;
+    yield* ensureSessionForThread(thread.id, event.payload.createdAt, { modelSelection });
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
@@ -1840,6 +2171,10 @@ const make = Effect.gen(function* () {
         return;
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
+        return;
+      // T3-CUSTOM(expbkt3): explicit provider reconnect.
+      case "thread.session-restart-requested":
+        yield* processSessionRestartRequested(event);
         return;
       case "thread.settled": {
         const thread = yield* projectionSnapshotQuery.getThreadShellById(event.payload.threadId);
@@ -1912,6 +2247,8 @@ const make = Effect.gen(function* () {
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested" ||
+        // T3-CUSTOM(expbkt3): explicit provider reconnect.
+        event.type === "thread.session-restart-requested" ||
         event.type === "thread.settled"
       ) {
         return yield* worker.enqueue(event);

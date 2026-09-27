@@ -5,6 +5,7 @@ import type {
   OrchestrationThread,
   ProjectId,
   ThreadId,
+  UserId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
@@ -113,6 +114,22 @@ export function requireThread(input: {
   );
 }
 
+export function requireOwnershipTransferable(input: {
+  readonly commandType: string;
+  readonly entityLabel: string;
+  readonly ownerUserId: UserId | null;
+  readonly userId: UserId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return input.ownerUserId === input.userId
+    ? Effect.fail(
+        invariantError(
+          input.commandType,
+          `${input.entityLabel} is already owned by user '${input.userId}'.`,
+        ),
+      )
+    : Effect.void;
+}
+
 export function requireThreadArchived(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
@@ -163,6 +180,80 @@ export function requireThreadAbsent(input: {
     invariantError(
       input.command.type,
       `Thread '${input.threadId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+/**
+ * Membership invariants — the creator (owner) is a permanent member: they are
+ * implicitly present and can never be added or removed. Adds are rejected for
+ * the owner or an existing member (idempotency is a client concern); removes are
+ * rejected for the owner (creator permanence) or a non-member.
+ */
+export function requireMemberAddable(input: {
+  readonly commandType: OrchestrationCommand["type"];
+  readonly entityLabel: string;
+  readonly ownerUserId: UserId | null;
+  readonly memberUserIds: ReadonlyArray<UserId>;
+  readonly userId: UserId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.ownerUserId === input.userId) {
+    return Effect.fail(
+      invariantError(
+        input.commandType,
+        `User '${input.userId}' owns ${input.entityLabel} and is already a permanent member.`,
+      ),
+    );
+  }
+  if (input.memberUserIds.includes(input.userId)) {
+    return Effect.fail(
+      invariantError(
+        input.commandType,
+        `User '${input.userId}' is already a member of ${input.entityLabel}.`,
+      ),
+    );
+  }
+  return Effect.void;
+}
+
+export function requireMemberRemovable(input: {
+  readonly commandType: OrchestrationCommand["type"];
+  readonly entityLabel: string;
+  readonly ownerUserId: UserId | null;
+  readonly memberUserIds: ReadonlyArray<UserId>;
+  readonly userId: UserId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.ownerUserId === input.userId) {
+    return Effect.fail(
+      invariantError(
+        input.commandType,
+        `User '${input.userId}' owns ${input.entityLabel} and cannot be removed.`,
+      ),
+    );
+  }
+  if (!input.memberUserIds.includes(input.userId)) {
+    return Effect.fail(
+      invariantError(
+        input.commandType,
+        `User '${input.userId}' is not a member of ${input.entityLabel}.`,
+      ),
+    );
+  }
+  return Effect.void;
+}
+
+export function requireNonNegativeInteger(input: {
+  readonly commandType: OrchestrationCommand["type"];
+  readonly field: string;
+  readonly value: number;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (Number.isInteger(input.value) && input.value >= 0) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.commandType,
+      `${input.field} must be an integer greater than or equal to 0.`,
     ),
   );
 }

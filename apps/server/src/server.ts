@@ -73,7 +73,21 @@ import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/Provide
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
+import { mcpUpstreamProxyRouteLayer } from "./mcp/McpUpstreamProxy.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+// T3-CUSTOM(expbkt3): BEGIN — native plan review.
+import * as PlanIngestListener from "./planreview/PlanIngestListener.ts";
+import * as PlanReviewServiceLayer from "./planreview/PlanReviewService.ts";
+// T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+import * as AgentUiServiceLayer from "./agentui/AgentUiService.ts";
+import * as PlanReviewDocuments from "./persistence/PlanReviewDocuments.ts";
+import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
+// T3-CUSTOM(expbkt3): END
+// T3-CUSTOM(expbkt3): event feed for followers such as the Linear bridge.
+import { eventFeedRouteLayer } from "./orchestration/eventFeedHttp.expbkt3.ts";
+// T3-CUSTOM(expbkt3): pull-request state pushed by the Linear bridge.
+import { pullRequestStateRouteLayer } from "./orchestration/pullRequestStateHttp.expbkt3.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -89,6 +103,8 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+// T3-CUSTOM(expbkt3): archive-time session history export.
+import { ArchiveExportReactorLive } from "./orchestration/Layers/ArchiveExportReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
@@ -96,6 +112,8 @@ import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReac
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
+// T3-CUSTOM(expbkt3): recycle only the Claude thread that reports a hard usage limit.
+import * as ClaudeHardLimitRotation from "./provider/claudeHardLimitRotation.expbkt3.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -117,6 +135,8 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
@@ -125,9 +145,14 @@ import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ClerkIdentityVerifier from "./auth/ClerkIdentityVerifier.ts";
+import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
+// T3-CUSTOM(expbkt3): session-identity markers for provider sessions.
+import * as SessionIdentityEnvironment from "./identity/SessionIdentityEnvironment.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -163,12 +188,24 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+// T3-CUSTOM(expbkt3): archived-session worktree reclaim
+import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
+import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
+import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
+// T3-CUSTOM(expbkt3): archive-time history export reads activities, thread
+// rows (for the soft-deleted backfill), and provider resume cursors.
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
+// T3-CUSTOM(expbkt3): bootstrap turn starts for HTTP and MCP callers.
+import * as TurnStartBootstrap from "./orchestration/turnStartBootstrap.expbkt3.ts";
+import * as ThreadWorkspaceGroups from "./persistence/ThreadWorkspaceGroups.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { OrchestrationAccessControlLive } from "./orchestration/Layers/AccessControl.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -268,6 +305,8 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(StorageCleanup.layer),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  // T3-CUSTOM(expbkt3): archive-time session history export.
+  Layer.provideMerge(ArchiveExportReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(PullRequestSyncReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),
@@ -291,6 +330,14 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
+
+// T3-CUSTOM(expbkt3): Fully compose this custom persistence service once so
+// unrelated route tests and upstream callers never inherit its SqlClient or
+// secret-store implementation requirements.
+const UserMcpProfileStoreLive = UserMcpProfileStore.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(PersistenceLayerLive),
+);
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -380,6 +427,12 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+const SourceControlProfileServiceLayerLive = SourceControlProfileService.layer.pipe(
+  Layer.provide(GitHubCli.layer.pipe(Layer.provide(VcsProcess.layer))),
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(ServerSecretStore.layer),
+);
+
 const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
   Layer.provide(SourceControlRepositoryServiceLayerLive),
 );
@@ -453,10 +506,23 @@ const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
-const AuthLayerLive = EnvironmentAuth.layer.pipe(
+const EnvironmentAuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
   Layer.provide(ServerSecretStore.layer),
+);
+
+const AuthLayerLive = EnvironmentUserService.layer.pipe(
+  Layer.provide(PersistenceLayerLive),
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provideMerge(EnvironmentAuthLayerLive),
+  Layer.provideMerge(ClerkIdentityVerifier.layer),
+);
+
+// T3-CUSTOM(expbkt3): provider sessions read owner and sender identity from the
+// same environment-user directory the auth layer already builds.
+const SessionIdentityLayerLive = SessionIdentityEnvironment.layer.pipe(
+  Layer.provideMerge(AuthLayerLive),
 );
 
 const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
@@ -467,12 +533,35 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
-  // Subscribes to `account.rate-limits.updated` so usage bars track live
-  // telemetry instead of waiting for the next status probe.
-  Layer.provideMerge(ProviderUsageLimitsIngestionLive),
-  Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+// T3-CUSTOM(expbkt3): hard-limit rotation consumes the same provider event bus
+// and lifecycle service as the reaper, without widening upstream contracts.
+const ProviderRuntimeLayerLive = Layer.mergeAll(
+  ProviderSessionReaperLive,
+  ClaudeHardLimitRotation.layer,
+  ProviderUsageLimitsIngestionLive,
+).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
+
+// T3-CUSTOM(expbkt3): archived-session worktree reclaim. Reads the projection
+// for archived threads and their messages, and removes worktrees through the
+// same git workflow service the delete path uses.
+const SessionArchiveLayerLive = SessionArchiveService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+  Layer.provide(ProjectionThreadMessageRepositoryLive),
+  // T3-CUSTOM(expbkt3): archive-time export deps — activities sidecar, the
+  // soft-deleted backfill row source, and provider resume cursors for raw
+  // transcript capture.
+  Layer.provide(ProjectionThreadActivityRepositoryLive),
+  Layer.provide(ProjectionThreadRepositoryLive),
+  Layer.provide(ProviderSessionRuntime.layer),
+  Layer.provide(GitWorkflowLayerLive),
+  Layer.provide(PersistenceLayerLive),
+);
+
+// The sweeper only puts the service on a timer, so it composes on top of it.
+const SessionArchiveSweeperLayerLive = SessionArchiveSweeper.layer.pipe(
+  Layer.provide(SessionArchiveLayerLive),
+  Layer.provide(ServerSettingsLayerLive),
 );
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
@@ -512,10 +601,22 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
   // GitHub-hosted pull request media with the repository's credential.
   Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive, GitHubCli.layer),
+    Layer.mergeAll(
+      SourceControlProviderRegistryLayerLive,
+      PullRequestServiceLive,
+      GitHubCli.layer,
+      // T3-CUSTOM(expbkt3): per-user source-control profiles and per-thread action lock.
+      SourceControlProfileServiceLayerLive,
+      ThreadSourceControlActionLock.layer,
+    ),
   ),
   Layer.provideMerge(GitLayerLive),
-  Layer.provideMerge(VcsLayerLive),
+  // T3-CUSTOM(expbkt3): the session archive is merged into the VCS group rather
+  // than added as its own `pipe` step — the chain is already at TypeScript's
+  // 20-overload ceiling for `.pipe`.
+  Layer.provideMerge(
+    Layer.mergeAll(VcsLayerLive, SessionArchiveLayerLive, SessionArchiveSweeperLayerLive),
+  ),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
@@ -554,8 +655,18 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolverLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
-  Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(SessionIdentityLayerLive),
+  // T3-CUSTOM(expbkt3): Keep the personal MCP store beside its write-only
+  // secret dependency in one merge seam. Besides making upstream rebases
+  // mechanical, grouping these avoids exceeding Effect's typed pipe arity.
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ServerSecretStore.layer,
+      // Reusing this layer value shares the already-memoized SQLite runtime;
+      // it does not create a second database connection or migration graph.
+      UserMcpProfileStoreLive,
+    ),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudCliTokenManager.layer.pipe(
@@ -587,13 +698,36 @@ const commandReadinessLayer = HttpRouter.middleware(
     ),
   { global: true },
 );
+// T3-CUSTOM(expbkt3): Build one memoized user profile + credential registry
+// pair and provide both to the native T3 MCP transport and upstream proxy.
+const PersonalMcpRouteServicesLive = McpSessionRegistry.layer;
+
+const McpRoutesLive = Layer.mergeAll(
+  mcpUpstreamProxyRouteLayer,
+  McpHttpServer.layer,
+  eventFeedRouteLayer,
+  pullRequestStateRouteLayer,
+).pipe(
+  // One registry instance authenticates both the native and upstream MCP
+  // routes; separate instances would not recognize each other's run tokens.
+  Layer.provideMerge(PersonalMcpRouteServicesLive),
+  Layer.provide(ClerkDirectoryLive),
+  Layer.provide(OrchestrationAccessControlLive),
+);
+// T3-CUSTOM(expbkt3): END
 
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
-      Layer.provide(authHttpApiLayer),
+      Layer.provide(authHttpApiLayer.pipe(Layer.provide(ClerkDirectoryLive))),
       Layer.provide(connectHttpApiLayer),
-      Layer.provide(orchestrationHttpApiLayer),
+      // T3-CUSTOM(expbkt3): orchestration routes require Clerk-backed access control.
+      Layer.provide(
+        orchestrationHttpApiLayer.pipe(
+          Layer.provide(ClerkDirectoryLive),
+          Layer.provide(OrchestrationAccessControlLive),
+        ),
+      ),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -605,7 +739,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  // T3-CUSTOM(expbkt3): fork MCP routes (native + upstream proxy, one registry) replace
+  // upstream's McpHttpServer-only layer.
+  McpRoutesLive,
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,
 ).pipe(
@@ -941,7 +1077,7 @@ const makeServerLayer = Layer.unwrap(
       }),
     );
 
-    const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
+    const runtimeBaseServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
       awaitAuxiliaryParked: Effect.all(
@@ -954,6 +1090,32 @@ const makeServerLayer = Layer.unwrap(
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
+    // T3-CUSTOM(expbkt3): Layer the bootstrap dispatcher beside upstream's
+    // activation-aware runtime services.
+    const runtimeServicesWithDispatcherLive = Layer.mergeAll(
+      runtimeBaseServicesLive,
+      TurnStartBootstrap.layer.pipe(
+        // T3-CUSTOM(expbkt3): shared child worktrees, one per (parent, repo).
+        Layer.provide(ThreadWorkspaceGroups.layer.pipe(Layer.provide(PersistenceLayerLive))),
+        Layer.provide(runtimeBaseServicesLive),
+      ),
+    );
+    // T3-CUSTOM(expbkt3): native plan review reads the proposed-plan events.
+    const planReviewServicesLive = PlanReviewServiceLayer.layer.pipe(
+      Layer.provide(PlanReviewDocuments.layer),
+      Layer.provideMerge(runtimeServicesWithDispatcherLive),
+    );
+    // T3-CUSTOM(expbkt3): agent-rendered UI surfaces. Only needs the sqlite
+    // client, so it composes beside plan review rather than under it.
+    const agentUiServicesLive = AgentUiServiceLayer.layer.pipe(
+      Layer.provide(AgentUiRenders.layer),
+      Layer.provideMerge(runtimeServicesWithDispatcherLive),
+    );
+    const runtimeServicesLive = Layer.mergeAll(
+      PlanIngestListener.layer.pipe(Layer.provideMerge(planReviewServicesLive)),
+      planReviewServicesLive,
+      agentUiServicesLive,
+    );
 
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,

@@ -6,13 +6,17 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../Migrations.ts";
 import migrateAutoSettleDisabledAt from "./054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
+// T3-CUSTOM(expbkt3): upstream ships these migrations at ids 52-54; the fork
+// remaps them into its 1000+ lane (52->1036, 53->1037, 54->1038), so these
+// boundaries follow the fork registry in Migrations.ts, not upstream's.
+
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
   "054_ProjectionThreadsAutoSettleDisabledAt",
   (it) => {
     it.effect("adds the column with auto-settle left on for existing threads", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 53 });
+        yield* runMigrations({ toMigrationInclusive: 1037 });
         const now = "2026-01-01T00:00:00.000Z";
         yield* sql`
         INSERT INTO projection_threads (
@@ -23,7 +27,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', ${now}, ${now}
         )
       `;
-        yield* runMigrations({ toMigrationInclusive: 54 });
+        yield* runMigrations({ toMigrationInclusive: 1038 });
         const migrated = yield* sql<{ readonly autoSettleDisabledAt: string | null }>`
         SELECT auto_settle_disabled_at AS "autoSettleDisabledAt" FROM projection_threads WHERE thread_id = 'thread-1'
       `;

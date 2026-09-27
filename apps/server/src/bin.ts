@@ -7,6 +7,8 @@ import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
+// T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry.
+import { ForgejoCliSelfContainedLive } from "./sourceControl/forgejoCliRuntime.expbkt3.ts";
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { connectCommand } from "./cli/connect.ts";
@@ -27,7 +29,14 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// T3-CUSTOM(expbkt3): the fork's CLI graph reaches SourceControlRepositoryService,
+// whose provider registry needs the Forgejo CLI upstream added. Upstream's own CLI
+// never touches that service, so its CliRuntimeLayer does not carry it.
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  ForgejoCliSelfContainedLive,
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";

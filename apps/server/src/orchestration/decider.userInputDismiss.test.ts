@@ -45,6 +45,10 @@ function makeReadModel(
       {
         id: threadId,
         projectId: ProjectId.make("project-1"),
+        // T3-CUSTOM(expbkt3): fork-required thread ownership and summaries.
+        sourceControlProfileId: null,
+        ownerUserId: null,
+        memberUserIds: [],
         title: "Thread",
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",

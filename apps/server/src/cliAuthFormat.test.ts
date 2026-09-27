@@ -65,6 +65,7 @@ it("formats issued sessions with the bearer token but omits tokens from listings
     [
       {
         sessionId: "session-1" as never,
+        userId: null,
         method: "bearer-access-token",
         scopes: ["orchestration:read", "access:write"],
         subject: "cli-issued-session",

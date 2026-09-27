@@ -8,6 +8,7 @@ import {
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
   ThreadRuntimeModeSetPayload as ContractsThreadRuntimeModeSetPayloadSchema,
   ThreadInteractionModeSetPayload as ContractsThreadInteractionModeSetPayloadSchema,
+  ThreadSourceControlProfileSetPayload as ContractsThreadSourceControlProfileSetPayloadSchema,
   ThreadDeletedPayload as ContractsThreadDeletedPayloadSchema,
   ThreadUnarchivedPayload as ContractsThreadUnarchivedPayloadSchema,
   ThreadUnsettledPayload as ContractsThreadUnsettledPayloadSchema,
@@ -31,6 +32,13 @@ import {
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  ThreadSessionRestartRequestedPayload as ContractsThreadSessionRestartRequestedPayloadSchema,
+  ThreadMemberAddedPayload as ContractsThreadMemberAddedPayloadSchema,
+  ThreadMemberRemovedPayload as ContractsThreadMemberRemovedPayloadSchema,
+  ThreadOwnerTransferredPayload as ContractsThreadOwnerTransferredPayloadSchema,
+  ProjectMemberAddedPayload as ContractsProjectMemberAddedPayloadSchema,
+  ProjectMemberRemovedPayload as ContractsProjectMemberRemovedPayloadSchema,
+  ProjectOwnerTransferredPayload as ContractsProjectOwnerTransferredPayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -44,6 +52,8 @@ export const ThreadSettledPayload = ContractsThreadSettledPayloadSchema;
 export const ThreadMetaUpdatedPayload = ContractsThreadMetaUpdatedPayloadSchema;
 export const ThreadRuntimeModeSetPayload = ContractsThreadRuntimeModeSetPayloadSchema;
 export const ThreadInteractionModeSetPayload = ContractsThreadInteractionModeSetPayloadSchema;
+export const ThreadSourceControlProfileSetPayload =
+  ContractsThreadSourceControlProfileSetPayloadSchema;
 export const ThreadDeletedPayload = ContractsThreadDeletedPayloadSchema;
 export const ThreadUnarchivedPayload = ContractsThreadUnarchivedPayloadSchema;
 export const ThreadUnsettledPayload = ContractsThreadUnsettledPayloadSchema;
@@ -72,3 +82,12 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+export const ThreadSessionRestartRequestedPayload =
+  ContractsThreadSessionRestartRequestedPayloadSchema;
+
+export const ThreadMemberAddedPayload = ContractsThreadMemberAddedPayloadSchema;
+export const ThreadMemberRemovedPayload = ContractsThreadMemberRemovedPayloadSchema;
+export const ThreadOwnerTransferredPayload = ContractsThreadOwnerTransferredPayloadSchema;
+export const ProjectMemberAddedPayload = ContractsProjectMemberAddedPayloadSchema;
+export const ProjectMemberRemovedPayload = ContractsProjectMemberRemovedPayloadSchema;
+export const ProjectOwnerTransferredPayload = ContractsProjectOwnerTransferredPayloadSchema;

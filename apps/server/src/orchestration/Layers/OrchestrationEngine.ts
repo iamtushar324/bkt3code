@@ -4,6 +4,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  UserId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -24,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  increment,
   metricAttributes,
   orchestrationCommandAckDuration,
   orchestrationCommandsTotal,
@@ -57,6 +59,8 @@ const isOrchestrationCommandIdConflictError = Schema.is(OrchestrationCommandIdCo
 interface CommandEnvelope {
   command: OrchestrationCommand;
   origin: OrchestrationClientOrigin | undefined;
+  // T3-CUSTOM(expbkt3): acting operator for ownership + audit trail.
+  actorUserId: UserId | null;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
@@ -69,6 +73,9 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "project.create":
     case "project.meta.update":
     case "project.delete":
+    case "project.member.add":
+    case "project.member.remove":
+    case "project.owner.transfer":
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
@@ -245,6 +252,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          actor: envelope.actorUserId,
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
@@ -263,13 +271,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
         // Stamp the dispatching client's origin onto every event the command
         // produced. The decider stays pure; attribution is an engine concern.
-        const eventBases =
+        const originStampedEvents =
           envelope.origin === undefined
             ? plannedEvents
             : plannedEvents.map((planned) => ({
                 ...planned,
                 metadata: { ...planned.metadata, origin: envelope.origin },
               }));
+        // T3-CUSTOM(expbkt3): BEGIN — stamp the acting operator into every
+        // produced event's metadata in one place (audit trail via the existing
+        // metadata_json column). No-op in single-user mode where actorUserId is null.
+        const actorUserId = envelope.actorUserId;
+        const eventBases =
+          actorUserId === null
+            ? originStampedEvents
+            : originStampedEvents.map((decided) => ({
+                ...decided,
+                metadata: { ...decided.metadata, actorUserId },
+              }));
+        // T3-CUSTOM(expbkt3): END
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -441,6 +461,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       yield* Queue.offer(commandQueue, {
         command,
         origin: options?.origin,
+        // T3-CUSTOM(expbkt3): acting operator for ownership + audit trail.
+        actorUserId: options?.actorUserId ?? null,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });

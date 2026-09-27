@@ -41,6 +41,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           favicon_path,
           project_icon_json,
           scripts_json,
+          owner_user_id,
           created_at,
           updated_at,
           deleted_at
@@ -55,6 +56,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.faviconPath ?? null},
           ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
           ${JSON.stringify(row.scripts)},
+          ${row.ownerUserId},
           ${row.createdAt},
           ${row.updatedAt},
           ${row.deletedAt}
@@ -69,6 +71,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           favicon_path = excluded.favicon_path,
           project_icon_json = excluded.project_icon_json,
           scripts_json = excluded.scripts_json,
+          owner_user_id = COALESCE(excluded.owner_user_id, projection_projects.owner_user_id),
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           deleted_at = excluded.deleted_at
@@ -90,6 +93,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"

@@ -314,6 +314,8 @@ const makePairServerConfig = Effect.fn(function* (input: {
     {},
   );
   return ServerConfig.make({
+    // T3-CUSTOM(expbkt3): Clerk team auth is a fork field on ServerConfig.
+    clerkAuth: undefined,
     logLevel: input.logLevel,
     traceMinLevel: "Info",
     traceTimingEnabled: false,

@@ -39,6 +39,7 @@ import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSes
 import * as ProviderService from "../src/provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../src/provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "../src/provider/Services/ProviderSessionReaper.ts";
+import * as SessionArchiveSweeper from "../src/sessionArchive/SessionArchiveSweeper.ts";
 import * as RepositoryIdentityResolver from "../src/project/RepositoryIdentityResolver.ts";
 import * as ServerLifecycleEvents from "../src/serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "../src/serverRuntimeStartup.ts";
@@ -78,6 +79,10 @@ const startupDependencies = Layer.mergeAll(
     start: () => Effect.void,
   }),
   Layer.succeed(ProviderSessionReaper.ProviderSessionReaper, {
+    start: () => Effect.void,
+  }),
+  // T3-CUSTOM(expbkt3): fork services the runtime startup requires.
+  Layer.succeed(SessionArchiveSweeper.SessionArchiveSweeper, {
     start: () => Effect.void,
   }),
   ServerLifecycleEvents.layer,
@@ -153,6 +158,8 @@ it.effect(
         });
         yield* engine.dispatch({
           type: "thread.create",
+          // T3-CUSTOM(expbkt3): fork-required thread attribution.
+          sourceControlProfileId: null,
           commandId: CommandId.make("command-create-thread"),
           threadId,
           projectId,
@@ -205,6 +212,8 @@ it.effect(
         });
         yield* engine.dispatch({
           type: "thread.create",
+          // T3-CUSTOM(expbkt3): fork-required thread attribution.
+          sourceControlProfileId: null,
           commandId: CommandId.make("command-create-stopped-binding-thread"),
           threadId: stoppedBindingThreadId,
           projectId,
@@ -390,6 +399,8 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
         });
         yield* engine.dispatch({
           type: "thread.create",
+          // T3-CUSTOM(expbkt3): fork-required source-control profile.
+          sourceControlProfileId: null,
           commandId: CommandId.make("create-restart-thread"),
           threadId,
           projectId,

@@ -7,6 +7,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+// T3-CUSTOM(expbkt3): upstream ships these migrations at ids 48-51; the fork
+// remaps them into its 1000+ lane (48->1031, 49->1032, 50->1033, 51->1034), so
+// these boundaries follow the fork registry in Migrations.ts, not upstream's.
+
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
@@ -28,7 +32,7 @@ layer("050_ProjectionThreadPullRequests", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 1032 });
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -100,7 +104,7 @@ layer("050_ProjectionThreadPullRequests", (it) => {
           )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 1033 });
 
       const rows = yield* sql<PullRequestRow>`
         SELECT
@@ -162,7 +166,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
     it.effect("keeps legacy Azure repositories distinct across organizations", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 49 });
+        yield* runMigrations({ toMigrationInclusive: 1032 });
         for (const organization of ["org-a", "org-b"]) {
           yield* sql`
           INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, linked_pull_request_json, created_at, updated_at)
@@ -171,7 +175,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
             '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z')
         `;
         }
-        yield* runMigrations({ toMigrationInclusive: 50 });
+        yield* runMigrations({ toMigrationInclusive: 1033 });
         const rows =
           yield* sql`SELECT host, repository, number FROM projection_thread_pull_requests ORDER BY repository`;
         assert.deepStrictEqual(rows, [

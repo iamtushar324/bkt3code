@@ -55,6 +55,7 @@ describe("canonicalizeClientCommandTimestamps", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt: clientCreatedAt,
         },
       },

@@ -22,6 +22,10 @@ const makeThread = (
   pullRequests: [],
   branch: "feature",
   worktreePath: "/repo",
+  // T3-CUSTOM(expbkt3): fork-owned identity fields in upstream shell fixtures.
+  sourceControlProfileId: null,
+  ownerUserId: null,
+  memberUserIds: [],
   latestTurn: null,
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-20T00:00:00.000Z",
@@ -61,6 +65,8 @@ describe("resolveAutoSettlementAt", () => {
             startedAt: "2026-08-19T00:01:00.000Z",
             completedAt: "2026-08-21T00:00:00.000Z",
             assistantMessageId: null,
+            // T3-CUSTOM(expbkt3): retain the nullable measured duration.
+            durationMs: null,
           },
         }),
         pullRequest: null,
@@ -164,6 +170,8 @@ describe("resolveAutoSettlementAt", () => {
         startedAt: "2026-08-25T00:01:00.000Z",
         completedAt: "2026-08-27T00:00:00.000Z",
         assistantMessageId: null,
+        // T3-CUSTOM(expbkt3): retain the nullable measured duration.
+        durationMs: null,
       },
     });
     expect(decide(thread, { state: "merged", mergedAt: "2026-08-26T00:00:00.000Z" })).toBe(true);
@@ -218,6 +226,8 @@ describe("resolveAutoSettlementAt", () => {
             startedAt: "2026-08-18T00:01:00.000Z",
             completedAt: "2026-08-20T00:00:00.000Z",
             assistantMessageId: null,
+            // T3-CUSTOM(expbkt3): retain the nullable measured duration.
+            durationMs: null,
           },
         }),
       ),

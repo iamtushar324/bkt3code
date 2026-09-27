@@ -1,3 +1,7 @@
+/**
+ * T3-CUSTOM(expbkt3): Streamable HTTP MCP endpoint for scoped native agents
+ * and authenticated external operators.
+ */
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -25,11 +29,15 @@ import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
 } from "./toolkits/preview/handlers.ts";
+import { T3ControlToolkitHandlersLive } from "./toolkits/control/handlers.ts";
+import { T3ControlToolkit } from "./toolkits/control/tools.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+// T3-CUSTOM(expbkt3): compact parity bridge for the authenticated web UI RPCs.
+import { WebUiRpcRegistrationLive } from "./toolkits/webUi/registration.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -45,7 +53,8 @@ import {
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
-    message: "A valid provider-scoped MCP bearer credential is required.",
+    message:
+      "A valid provider-scoped or Settings-issued external MCP bearer credential is required.",
   },
   {
     status: 401,
@@ -643,6 +652,11 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+// T3-CUSTOM(expbkt3): the fork's control toolkit.
+export const T3ControlToolkitRegistrationLive = McpServer.toolkit(T3ControlToolkit).pipe(
+  Layer.provide(T3ControlToolkitHandlersLive),
+);
+
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -669,6 +683,8 @@ const McpTransportLive = McpServer.layerHttp({
 
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
+  T3ControlToolkitRegistrationLive,
+  WebUiRpcRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

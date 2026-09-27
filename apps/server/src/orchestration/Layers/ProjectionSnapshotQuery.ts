@@ -4,6 +4,7 @@ import {
   ChatAttachment,
   OrchestrationMessageContext,
   CheckpointRef,
+  computeTurnDurationMs,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -32,6 +33,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadTitleState,
   ThreadId,
+  UserId,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   type ThreadPullRequestLink,
@@ -74,7 +76,10 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionEventReplayStats,
   type ProjectionFullThreadDiffContext,
+  // T3-CUSTOM(expbkt3): bounded startup projection reads.
+  type ProjectionLatestProposedPlan,
   type ProjectionSnapshotCounts,
+  type ProjectionThreadAccess,
   type ProjectionThreadCheckpointContext,
   type ProjectionThreadDetailQuery,
   type ProjectionThreadPullRequests,
@@ -171,6 +176,11 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   assistantMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+});
+const ProjectionThreadAccessRowSchema = Schema.Struct({
+  threadId: ProjectionThread.fields.threadId,
+  projectId: ProjectionThread.fields.projectId,
+  ownerUserId: ProjectionThread.fields.ownerUserId,
 });
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
@@ -357,6 +367,7 @@ function mapLatestTurn(
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     assistantMessageId: row.assistantMessageId,
+    durationMs: computeTurnDurationMs(row.startedAt, row.completedAt),
     ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
       ? {
           sourceProposedPlan: {
@@ -385,6 +396,7 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    providerThreadId: row.providerThreadId,
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
@@ -395,6 +407,7 @@ function mapSessionRow(
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
   repositoryIdentity: OrchestrationProject["repositoryIdentity"],
+  memberUserIds: ReadonlyArray<UserId> = [],
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
@@ -407,6 +420,8 @@ function mapProjectShellRow(
     faviconPath: row.faviconPath ?? null,
     projectIcon: row.projectIcon ?? null,
     scripts: row.scripts,
+    ownerUserId: row.ownerUserId,
+    memberUserIds,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -529,6 +544,81 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
   });
 
+  // Membership rows are hydrated in bulk (one query, grouped by id) alongside
+  // the other per-entity collections — same shape as sessions/messages.
+  const ThreadMemberRow = Schema.Struct({ threadId: ThreadId, userId: UserId });
+  const ProjectMemberRow = Schema.Struct({ projectId: ProjectId, userId: UserId });
+
+  const listThreadMemberRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ThreadMemberRow,
+    execute: () =>
+      sql`
+        SELECT thread_id AS "threadId", user_id AS "userId"
+        FROM projection_thread_members
+        ORDER BY added_at ASC, user_id ASC
+      `,
+  });
+
+  const listProjectMemberRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectMemberRow,
+    execute: () =>
+      sql`
+        SELECT project_id AS "projectId", user_id AS "userId"
+        FROM projection_project_members
+        ORDER BY added_at ASC, user_id ASC
+      `,
+  });
+
+  const listThreadMemberRowsByThreadId = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: ThreadId }),
+    Result: ThreadMemberRow,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT thread_id AS "threadId", user_id AS "userId"
+        FROM projection_thread_members
+        WHERE thread_id = ${threadId}
+        ORDER BY added_at ASC, user_id ASC
+      `,
+  });
+
+  const listProjectMemberRowsByProjectId = SqlSchema.findAll({
+    Request: Schema.Struct({ projectId: ProjectId }),
+    Result: ProjectMemberRow,
+    execute: ({ projectId }) =>
+      sql`
+        SELECT project_id AS "projectId", user_id AS "userId"
+        FROM projection_project_members
+        WHERE project_id = ${projectId}
+        ORDER BY added_at ASC, user_id ASC
+      `,
+  });
+
+  const groupThreadMemberIds = (
+    rows: ReadonlyArray<{ readonly threadId: ThreadId; readonly userId: UserId }>,
+  ): Map<string, UserId[]> => {
+    const byThread = new Map<string, UserId[]>();
+    for (const row of rows) {
+      const existing = byThread.get(row.threadId) ?? [];
+      existing.push(row.userId);
+      byThread.set(row.threadId, existing);
+    }
+    return byThread;
+  };
+
+  const groupProjectMemberIds = (
+    rows: ReadonlyArray<{ readonly projectId: ProjectId; readonly userId: UserId }>,
+  ): Map<string, UserId[]> => {
+    const byProject = new Map<string, UserId[]>();
+    for (const row of rows) {
+      const existing = byProject.get(row.projectId) ?? [];
+      existing.push(row.userId);
+      byProject.set(row.projectId, existing);
+    }
+    return byProject;
+  };
+
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.UndefinedOr(
       Schema.Struct({
@@ -549,6 +639,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -574,9 +665,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -585,6 +678,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          parent_environment_id AS "parentEnvironmentId",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -594,6 +693,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): async input is visible but never blocking.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -622,9 +723,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -633,6 +736,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          parent_environment_id AS "parentEnvironmentId",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -642,6 +751,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): async input is visible but never blocking.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads threads
@@ -697,9 +808,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -708,6 +821,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          parent_environment_id AS "parentEnvironmentId",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -717,6 +836,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): async input is visible but never blocking.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -740,6 +861,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          sent_by_user_id AS "sentByUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1188,6 +1310,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -1214,6 +1337,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -1301,9 +1425,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -1312,6 +1438,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          parent_environment_id AS "parentEnvironmentId",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -1321,6 +1453,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): async input is visible but never blocking.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -1328,6 +1462,81 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND deleted_at IS NULL
           AND archived_at IS NULL
         LIMIT 1
+      `,
+  });
+
+  // Deliberately not filtered on `archived_at`: authorization must still resolve
+  // for an archived thread so its owner can unarchive/delete/retag it.
+  const getThreadAccessRowById = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadAccessRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          owner_user_id AS "ownerUserId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  // T3-CUSTOM(expbkt3): Keep the bounded project-thread query aligned with
+  // upstream's shell schema additions.
+  const listActiveThreadRowsByProjectId = SqlSchema.findAll({
+    Request: Schema.Struct({ projectId: ProjectId }),
+    Result: ProjectionThreadDbRowSchema,
+    execute: ({ projectId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model_selection_json AS "modelSelection",
+          title_state_json AS "titleState",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
+          linked_pull_request_json AS "linkedPullRequest",
+          branch_pull_request_json AS "branchPullRequest",
+          latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          parent_environment_id AS "parentEnvironmentId",
+          pinned_at AS "pinnedAt",
+          pin_order_key AS "pinOrderKey",
+          active_order_key AS "activeOrderKey",
+          auto_settle_disabled_at AS "autoSettleDisabledAt",
+          title_regeneration_request_id AS "titleRegenerationRequestId",
+          title_regeneration_started_at AS "titleRegenerationStartedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): async input is visible but never blocking.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE project_id = ${projectId}
+          AND deleted_at IS NULL
+          AND archived_at IS NULL
+        ORDER BY created_at ASC, thread_id ASC
       `,
   });
 
@@ -1345,6 +1554,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.status,
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
+          -- T3-CUSTOM(expbkt3): runtime contexts retain durable provider conversation identity.
+          sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
@@ -1382,6 +1593,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         attachments_json AS "attachments",
         context_json AS "context",
         is_streaming AS "isStreaming",
+        -- T3-CUSTOM(expbkt3): this fork's ProjectionThreadMessage requires
+        -- sentByUserId, so every query decoding ProjectionThreadMessageDbRowSchema
+        -- must select it. Keep in sync with listThreadMessageRowsByThread.
+        sent_by_user_id AS "sentByUserId",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
         EXISTS (
@@ -1401,6 +1616,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     `,
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — prompt count for the title refresh cadence.
+  // Keep the compaction predicate in sync with getTurnStartMessageRow.
+  const countThreadUserMessagesRow = SqlSchema.findOne({
+    Request: ThreadIdLookupInput,
+    Result: Schema.Struct({ count: Schema.Number }),
+    execute: ({ threadId }) => sql`
+      SELECT COUNT(*) AS "count"
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId}
+        AND role = 'user'
+        AND (
+          LOWER(TRIM(text, ${MESSAGE_TRIM_WHITESPACE})) != '/compact'
+          OR COALESCE(json_array_length(attachments_json), 0) > 0
+        )
+    `,
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const listThreadMessageRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -1415,6 +1648,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          sent_by_user_id AS "sentByUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1663,6 +1897,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
@@ -1696,6 +1931,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
         LIMIT 1
+      `,
+  });
+
+  // T3-CUSTOM(expbkt3): Bound plan-review startup ingest to one newest active plan per thread.
+  const listLatestProposedPlanRowsForActiveThreads = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadProposedPlanDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          plans.plan_id AS "planId",
+          plans.thread_id AS "threadId",
+          plans.turn_id AS "turnId",
+          plans.plan_markdown AS "planMarkdown",
+          plans.implemented_at AS "implementedAt",
+          plans.implementation_thread_id AS "implementationThreadId",
+          plans.created_at AS "createdAt",
+          plans.updated_at AS "updatedAt"
+        FROM projection_thread_proposed_plans AS plans
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = plans.thread_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+          AND plans.plan_id = (
+            SELECT latest.plan_id
+            FROM projection_thread_proposed_plans AS latest
+            WHERE latest.thread_id = plans.thread_id
+            ORDER BY latest.updated_at DESC, latest.plan_id DESC
+            LIMIT 1
+          )
+          AND plans.implemented_at IS NULL
+        ORDER BY plans.thread_id ASC
       `,
   });
 
@@ -1828,6 +2095,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          -- T3-CUSTOM(expbkt3): BEGIN
+          -- This fork's ProjectionThreadMessage requires sentByUserId, so every
+          -- query decoding ProjectionThreadMessageDbRowSchema must select it —
+          -- including upstream's windowed variants. Keep in sync with
+          -- listThreadMessageRowsByThread.
+          sent_by_user_id AS "sentByUserId",
+          -- T3-CUSTOM(expbkt3): END
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -2183,6 +2457,22 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listThreadMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listThreadMembers:query",
+                "ProjectionSnapshotQuery.getSnapshot:listThreadMembers:decodeRows",
+              ),
+            ),
+          ),
+          listProjectMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listProjectMembers:query",
+                "ProjectionSnapshotQuery.getSnapshot:listProjectMembers:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2205,6 +2495,8 @@ pending_approval_requests AS (
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            threadMemberRows,
+            projectMemberRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
@@ -2215,6 +2507,8 @@ pending_approval_requests AS (
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
+              const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
 
               let updatedAt: string | null = null;
 
@@ -2239,6 +2533,7 @@ pending_approval_requests AS (
                   ...(row.context !== null ? { context: row.context } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
+                  sentByUserId: row.sentByUserId,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                 });
@@ -2316,6 +2611,7 @@ pending_approval_requests AS (
                   startedAt: row.startedAt,
                   completedAt: row.completedAt,
                   assistantMessageId: row.assistantMessageId,
+                  durationMs: computeTurnDurationMs(row.startedAt, row.completedAt),
                   ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
                     ? {
                         sourceProposedPlan: {
@@ -2336,6 +2632,7 @@ pending_approval_requests AS (
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
                     : {}),
+                  providerThreadId: row.providerThreadId,
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
@@ -2359,6 +2656,8 @@ pending_approval_requests AS (
                 faviconPath: row.faviconPath ?? null,
                 projectIcon: row.projectIcon ?? null,
                 scripts: row.scripts,
+                ownerUserId: row.ownerUserId,
+                memberUserIds: memberUserIdsByProject.get(row.projectId) ?? [],
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 deletedAt: row.deletedAt,
@@ -2373,6 +2672,7 @@ pending_approval_requests AS (
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                sourceControlProfileId: row.sourceControlProfileId,
                 ...mapThreadPullRequests(
                   pullRequestsByThread.get(row.threadId) ?? [],
                   row.projectId,
@@ -2380,6 +2680,8 @@ pending_approval_requests AS (
                 ),
                 branchPullRequest: row.branchPullRequest,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                ownerUserId: row.ownerUserId,
+                memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
@@ -2388,6 +2690,12 @@ pending_approval_requests AS (
                 unsettledAt: row.unsettledAt,
                 snoozedUntil: row.snoozedUntil,
                 snoozedAt: row.snoozedAt,
+                priority: row.priority,
+                customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+                linearIssueUrl: row.linearIssueUrl ?? null,
+                mattermostThreadUrl: row.mattermostThreadUrl ?? null,
+                parentThreadId: row.parentThreadId ?? null,
+                parentEnvironmentId: row.parentEnvironmentId ?? null,
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 activeOrderKey: row.activeOrderKey ?? null,
@@ -2422,6 +2730,24 @@ pending_approval_requests AS (
           }
           return toPersistenceSqlError("ProjectionSnapshotQuery.getSnapshot:query")(error);
         }),
+      );
+
+  // T3-CUSTOM(expbkt3): Never hydrate activities for plan-review startup ingest.
+  const listLatestProposedPlansForActiveThreads: ProjectionSnapshotQueryShape["listLatestProposedPlansForActiveThreads"] =
+    () =>
+      listLatestProposedPlanRowsForActiveThreads(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listLatestProposedPlansForActiveThreads:query",
+            "ProjectionSnapshotQuery.listLatestProposedPlansForActiveThreads:decodeRows",
+          ),
+        ),
+        Effect.map((rows) =>
+          rows.map((row): ProjectionLatestProposedPlan => ({
+            threadId: row.threadId,
+            proposedPlan: mapProposedPlanRow(row),
+          })),
+        ),
       );
 
   const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
@@ -2476,6 +2802,22 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listThreadMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMembers:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMembers:decodeRows",
+              ),
+            ),
+          ),
+          listProjectMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listProjectMembers:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listProjectMembers:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2495,6 +2837,8 @@ pending_approval_requests AS (
             pullRequestRows,
             sessionRows,
             latestTurnRows,
+            threadMemberRows,
+            projectMemberRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
@@ -2510,6 +2854,8 @@ pending_approval_requests AS (
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
               const threads: OrchestrationThread[] = [];
+              const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
+              const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
 
               for (let index = 0; index < projectRows.length; index += 1) {
                 const row = projectRows[index];
@@ -2528,6 +2874,8 @@ pending_approval_requests AS (
                   faviconPath: row.faviconPath ?? null,
                   projectIcon: row.projectIcon ?? null,
                   scripts: row.scripts,
+                  ownerUserId: row.ownerUserId,
+                  memberUserIds: memberUserIdsByProject.get(row.projectId) ?? [],
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   deletedAt: row.deletedAt,
@@ -2619,6 +2967,7 @@ pending_approval_requests AS (
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  sourceControlProfileId: row.sourceControlProfileId,
                   ...mapThreadPullRequests(
                     pullRequestsByThread.get(row.threadId) ?? [],
                     row.projectId,
@@ -2626,6 +2975,8 @@ pending_approval_requests AS (
                   ),
                   branchPullRequest: row.branchPullRequest,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  ownerUserId: row.ownerUserId,
+                  memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -2634,6 +2985,12 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  priority: row.priority,
+                  customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+                  linearIssueUrl: row.linearIssueUrl ?? null,
+                  mattermostThreadUrl: row.mattermostThreadUrl ?? null,
+                  parentThreadId: row.parentThreadId ?? null,
+                  parentEnvironmentId: row.parentEnvironmentId ?? null,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -2710,6 +3067,22 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listThreadMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listThreadMembers:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listThreadMembers:decodeRows",
+              ),
+            ),
+          ),
+          listProjectMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listProjectMembers:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listProjectMembers:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2722,8 +3095,19 @@ pending_approval_requests AS (
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, sessionRows, pullRequestRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            sessionRows,
+            pullRequestRows,
+            latestTurnRows,
+            threadMemberRows,
+            projectMemberRows,
+            stateRows,
+          ]) =>
             Effect.gen(function* () {
+              const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
+              const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
               let updatedAt: string | null = null;
               for (const row of projectRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2765,7 +3149,11 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed(
-                        mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                        mapProjectShellRow(
+                          row,
+                          repositoryIdentities.get(row.projectId) ?? null,
+                          memberUserIdsByProject.get(row.projectId) ?? [],
+                        ),
                       )
                     : Result.failVoid,
                 ),
@@ -2780,6 +3168,7 @@ pending_approval_requests AS (
                         interactionMode: row.interactionMode,
                         branch: row.branch,
                         worktreePath: row.worktreePath,
+                        sourceControlProfileId: row.sourceControlProfileId,
                         branchPullRequest: row.branchPullRequest,
                         ...mapThreadPullRequests(
                           pullRequestsByThread.get(row.threadId) ?? [],
@@ -2787,6 +3176,8 @@ pending_approval_requests AS (
                           repositoryIdentities.get(row.projectId),
                         ),
                         latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                        ownerUserId: row.ownerUserId,
+                        memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                         archivedAt: row.archivedAt,
@@ -2795,6 +3186,12 @@ pending_approval_requests AS (
                         unsettledAt: row.unsettledAt,
                         snoozedUntil: row.snoozedUntil,
                         snoozedAt: row.snoozedAt,
+                        priority: row.priority,
+                        customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+                        linearIssueUrl: row.linearIssueUrl ?? null,
+                        mattermostThreadUrl: row.mattermostThreadUrl ?? null,
+                        parentThreadId: row.parentThreadId ?? null,
+                        parentEnvironmentId: row.parentEnvironmentId ?? null,
                         pinnedAt: row.pinnedAt,
                         pinOrderKey: row.pinOrderKey ?? null,
                         activeOrderKey: row.activeOrderKey ?? null,
@@ -2805,6 +3202,8 @@ pending_approval_requests AS (
                         latestUserMessageAt: row.latestUserMessageAt,
                         hasPendingApprovals: row.pendingApprovalCount > 0,
                         hasPendingUserInput: row.pendingUserInputCount > 0,
+                        // T3-CUSTOM(expbkt3): neutral async-question sidebar signal.
+                        hasPendingAsyncUserInput: (row.pendingAsyncUserInputCount ?? 0) > 0,
                         hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
                         backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                           row.threadId,
@@ -2899,6 +3298,22 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listThreadMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listThreadMembers:query",
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listThreadMembers:decodeRows",
+              ),
+            ),
+          ),
+          listProjectMemberRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listProjectMembers:query",
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listProjectMembers:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2911,8 +3326,19 @@ pending_approval_requests AS (
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, sessionRows, pullRequestRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            sessionRows,
+            pullRequestRows,
+            latestTurnRows,
+            threadMemberRows,
+            projectMemberRows,
+            stateRows,
+          ]) =>
             Effect.gen(function* () {
+              const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
+              const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
               let updatedAt: string | null = null;
               for (const row of projectRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2953,7 +3379,11 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null && activeProjectIds.has(row.projectId)
                     ? Result.succeed(
-                        mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                        mapProjectShellRow(
+                          row,
+                          repositoryIdentities.get(row.projectId) ?? null,
+                          memberUserIdsByProject.get(row.projectId) ?? [],
+                        ),
                       )
                     : Result.failVoid,
                 ),
@@ -2966,6 +3396,7 @@ pending_approval_requests AS (
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  sourceControlProfileId: row.sourceControlProfileId,
                   branchPullRequest: row.branchPullRequest,
                   ...mapThreadPullRequests(
                     pullRequestsByThread.get(row.threadId) ?? [],
@@ -2973,6 +3404,8 @@ pending_approval_requests AS (
                     repositoryIdentities.get(row.projectId),
                   ),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  ownerUserId: row.ownerUserId,
+                  memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -2981,6 +3414,12 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  priority: row.priority,
+                  customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+                  linearIssueUrl: row.linearIssueUrl ?? null,
+                  mattermostThreadUrl: row.mattermostThreadUrl ?? null,
+                  parentThreadId: row.parentThreadId ?? null,
+                  parentEnvironmentId: row.parentEnvironmentId ?? null,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -2991,6 +3430,8 @@ pending_approval_requests AS (
                   latestUserMessageAt: row.latestUserMessageAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
+                  // T3-CUSTOM(expbkt3): neutral async-question sidebar signal.
+                  hasPendingAsyncUserInput: (row.pendingAsyncUserInputCount ?? 0) > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
                   backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                     row.threadId,
@@ -3090,8 +3531,20 @@ pending_approval_requests AS (
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolve(option.value.workspaceRoot).pipe(
-                Effect.map((repositoryIdentity) =>
+            : Effect.all({
+                repositoryIdentity: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
+                memberRows: listProjectMemberRowsByProjectId({
+                  projectId: option.value.projectId,
+                }).pipe(
+                  Effect.mapError(
+                    toPersistenceSqlOrDecodeError(
+                      "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:listMembers:query",
+                      "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:listMembers:decodeRows",
+                    ),
+                  ),
+                ),
+              }).pipe(
+                Effect.map(({ repositoryIdentity, memberRows }) =>
                   Option.some({
                     id: option.value.projectId,
                     title: option.value.title,
@@ -3103,6 +3556,8 @@ pending_approval_requests AS (
                     faviconPath: option.value.faviconPath ?? null,
                     projectIcon: option.value.projectIcon ?? null,
                     scripts: option.value.scripts,
+                    ownerUserId: option.value.ownerUserId,
+                    memberUserIds: memberRows.map((row) => row.userId),
                     createdAt: option.value.createdAt,
                     updatedAt: option.value.updatedAt,
                     deletedAt: option.value.deletedAt,
@@ -3142,13 +3597,29 @@ pending_approval_requests AS (
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : repositoryIdentityResolver
-              .resolve(option.value.workspaceRoot)
-              .pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
+          : Effect.all({
+              repositoryIdentity: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
+              memberRows: listProjectMemberRowsByProjectId({
+                projectId: option.value.projectId,
+              }).pipe(
+                Effect.mapError(
+                  toPersistenceSqlOrDecodeError(
+                    "ProjectionSnapshotQuery.getProjectShellById:listMembers:query",
+                    "ProjectionSnapshotQuery.getProjectShellById:listMembers:decodeRows",
+                  ),
                 ),
               ),
+            }).pipe(
+              Effect.map(({ repositoryIdentity, memberRows }) =>
+                Option.some(
+                  mapProjectShellRow(
+                    option.value,
+                    repositoryIdentity,
+                    memberRows.map((row) => row.userId),
+                  ),
+                ),
+              ),
+            ),
       ),
     );
 
@@ -3264,40 +3735,50 @@ pending_approval_requests AS (
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow, pullRequestRows] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
+      const [threadRow, latestTurnRow, sessionRow, memberRows, pullRequestRows] = yield* Effect.all(
+        [
+          getActiveThreadRowById({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
+              ),
             ),
           ),
-        ),
-        getLatestTurnRowByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
+          getLatestTurnRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
+              ),
             ),
           ),
-        ),
-        getThreadSessionRowByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+          getThreadSessionRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+              ),
             ),
           ),
-        ),
-        listThreadPullRequestRowsByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:listPullRequests:query",
-              "ProjectionSnapshotQuery.getThreadShellById:listPullRequests:decodeRows",
+          listThreadMemberRowsByThreadId({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:listMembers:query",
+                "ProjectionSnapshotQuery.getThreadShellById:listMembers:decodeRows",
+              ),
             ),
           ),
-        ),
-      ]);
+          listThreadPullRequestRowsByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:listPullRequests:query",
+                "ProjectionSnapshotQuery.getThreadShellById:listPullRequests:decodeRows",
+              ),
+            ),
+          ),
+        ],
+      );
 
       if (Option.isNone(threadRow)) {
         return Option.none<OrchestrationThreadShell>();
@@ -3312,6 +3793,7 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        sourceControlProfileId: threadRow.value.sourceControlProfileId,
         ...mapThreadPullRequests(
           pullRequestRows.map(mapPullRequestRow),
           threadRow.value.projectId,
@@ -3322,6 +3804,8 @@ pending_approval_requests AS (
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        ownerUserId: threadRow.value.ownerUserId,
+        memberUserIds: memberRows.map((row) => row.userId),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -3330,6 +3814,12 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        priority: threadRow.value.priority,
+        customGroup: threadRow.value.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+        linearIssueUrl: threadRow.value.linearIssueUrl ?? null,
+        mattermostThreadUrl: threadRow.value.mattermostThreadUrl ?? null,
+        parentThreadId: threadRow.value.parentThreadId ?? null,
+        parentEnvironmentId: threadRow.value.parentEnvironmentId ?? null,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
@@ -3340,12 +3830,65 @@ pending_approval_requests AS (
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
+        // T3-CUSTOM(expbkt3): neutral async-question sidebar signal.
+        hasPendingAsyncUserInput: (threadRow.value.pendingAsyncUserInputCount ?? 0) > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
         backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
           threadRow.value.threadId,
         ),
         planProgress: threadPlanProgress.getThreadPlanProgress(threadRow.value.threadId),
       } satisfies OrchestrationThreadShell);
+    });
+
+  const getThreadAccessById: ProjectionSnapshotQueryShape["getThreadAccessById"] = (threadId) =>
+    Effect.gen(function* () {
+      const [threadRow, memberRows] = yield* Effect.all([
+        getThreadAccessRowById({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadAccessById:getThread:query",
+              "ProjectionSnapshotQuery.getThreadAccessById:getThread:decodeRow",
+            ),
+          ),
+        ),
+        listThreadMemberRowsByThreadId({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadAccessById:listMembers:query",
+              "ProjectionSnapshotQuery.getThreadAccessById:listMembers:decodeRows",
+            ),
+          ),
+        ),
+      ]);
+
+      if (Option.isNone(threadRow)) {
+        return Option.none<ProjectionThreadAccess>();
+      }
+
+      return Option.some({
+        threadId: threadRow.value.threadId,
+        projectId: threadRow.value.projectId,
+        ownerUserId: threadRow.value.ownerUserId,
+        memberUserIds: memberRows.map((row) => row.userId),
+      } satisfies ProjectionThreadAccess);
+    });
+
+  const listThreadShellsByProjectId: ProjectionSnapshotQueryShape["listThreadShellsByProjectId"] = (
+    projectId,
+  ) =>
+    Effect.gen(function* () {
+      const rows = yield* listActiveThreadRowsByProjectId({ projectId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listThreadShellsByProjectId:listThreads:query",
+            "ProjectionSnapshotQuery.listThreadShellsByProjectId:listThreads:decodeRows",
+          ),
+        ),
+      );
+      const shells = yield* Effect.forEach(rows, (row) => getThreadShellById(row.threadId), {
+        concurrency: 4,
+      });
+      return shells.filter(Option.isSome).map((option) => option.value);
     });
 
   const getThreadRuntimeContext: ProjectionSnapshotQueryShape["getThreadRuntimeContext"] =
@@ -3385,6 +3928,8 @@ pending_approval_requests AS (
         text: row.text,
         turnId: row.turnId,
         streaming: row.isStreaming === 1,
+        // T3-CUSTOM(expbkt3): message sender attribution.
+        sentByUserId: row.sentByUserId,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -3393,6 +3938,21 @@ pending_approval_requests AS (
       hasOtherUserMessages: row.hasOtherUserMessages === 1,
     }));
   });
+
+  // T3-CUSTOM(expbkt3): BEGIN
+  const countThreadUserMessages: ProjectionSnapshotQueryShape["countThreadUserMessages"] =
+    Effect.fn("ProjectionSnapshotQuery.countThreadUserMessages")(function* (threadId) {
+      const row = yield* countThreadUserMessagesRow({ threadId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.countThreadUserMessages:query",
+            "ProjectionSnapshotQuery.countThreadUserMessages:decodeRow",
+          ),
+        ),
+      );
+      return row.count;
+    });
+  // T3-CUSTOM(expbkt3): END
 
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
@@ -3538,6 +4098,7 @@ pending_approval_requests AS (
         checkpointRows,
         latestTurnRow,
         sessionRow,
+        memberRows,
       ] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
@@ -3599,6 +4160,14 @@ pending_approval_requests AS (
             ),
           ),
         ),
+        listThreadMemberRowsByThreadId({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listMembers:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listMembers:decodeRows",
+            ),
+          ),
+        ),
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -3614,6 +4183,7 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        sourceControlProfileId: threadRow.value.sourceControlProfileId,
         ...mapThreadPullRequests(
           pullRequestRows.map(mapPullRequestRow),
           threadRow.value.projectId,
@@ -3624,6 +4194,8 @@ pending_approval_requests AS (
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        ownerUserId: threadRow.value.ownerUserId,
+        memberUserIds: memberRows.map((row) => row.userId),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -3632,6 +4204,12 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        priority: threadRow.value.priority,
+        customGroup: threadRow.value.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
+        linearIssueUrl: threadRow.value.linearIssueUrl ?? null,
+        mattermostThreadUrl: threadRow.value.mattermostThreadUrl ?? null,
+        parentThreadId: threadRow.value.parentThreadId ?? null,
+        parentEnvironmentId: threadRow.value.parentEnvironmentId ?? null,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
@@ -3646,6 +4224,7 @@ pending_approval_requests AS (
             text: row.text,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
+            sentByUserId: row.sentByUserId,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
@@ -3841,6 +4420,8 @@ pending_approval_requests AS (
     getUserInputActivity,
     listActivitiesByKind,
     getSnapshot,
+    listLatestProposedPlansForActiveThreads,
+    // T3-CUSTOM(expbkt3): bounded list/startup projection reads.
     getShellSnapshot,
     listThreadsWithPullRequests,
     getArchivedShellSnapshot,
@@ -3857,8 +4438,12 @@ pending_approval_requests AS (
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getThreadAccessById,
+    listThreadShellsByProjectId,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    // T3-CUSTOM(expbkt3): fork-only title-cadence query.
+    countThreadUserMessages,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

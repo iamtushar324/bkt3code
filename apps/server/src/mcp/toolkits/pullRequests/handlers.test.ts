@@ -22,6 +22,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
@@ -38,6 +39,9 @@ const testCrypto = Crypto.make({
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
+  // T3-CUSTOM(expbkt3): fork-required invocation identity.
+  principal: "provider-session",
+  actorUserId: null,
   environmentId: EnvironmentId.make("environment-1"),
   threadId: THREAD_ID,
   providerSessionId: "provider-session-1",
@@ -61,6 +65,9 @@ function makeProject(
   },
 ): OrchestrationProjectShell {
   return {
+    // T3-CUSTOM(expbkt3): fork-required project ownership.
+    ownerUserId: null,
+    memberUserIds: [],
     id: PROJECT_ID,
     title: "Project",
     workspaceRoot: "/workspace/project",
@@ -74,6 +81,10 @@ function makeProject(
 
 function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): OrchestrationThreadShell {
   return {
+    // T3-CUSTOM(expbkt3): fork-required ownership fields.
+    sourceControlProfileId: null,
+    ownerUserId: null,
+    memberUserIds: [],
     id: THREAD_ID,
     projectId: PROJECT_ID,
     title: "Thread",
@@ -161,6 +172,12 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       latestSequence: Effect.succeed(0),
     }),
     Layer.succeed(Crypto.Crypto, testCrypto),
+    // T3-CUSTOM(expbkt3): only a user-wide caller reaches this; an in-session
+    // credential is pinned to its own thread before access control is asked.
+    Layer.mock(OrchestrationAccessControl)({
+      actorFor: () => Option.none(),
+      canAccessThread: (_userId, threadId) => Effect.succeed(threadId === THREAD_ID),
+    }),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
     Effect.provide(PullRequestsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
@@ -169,6 +186,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     name: Name,
     params: Parameters<typeof toolkit.handle<Name>>[1],
     capabilities: ReadonlyArray<McpInvocationContext.McpCapability> = ["pull-requests"],
+    scopeOverrides: Partial<McpInvocationContext.McpInvocationScope> = {},
   ) =>
     toolkit.handle(name, params).pipe(
       Stream.unwrap,
@@ -177,13 +195,64 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation(capabilities),
+        ...scopeOverrides,
+      }),
       Effect.provide(dependencies),
     );
   return { commands, call };
 });
 
 describe("pull request toolkit handlers", () => {
+  // T3-CUSTOM(expbkt3): BEGIN — tagging a named session from outside it.
+  it.effect("lets an external operator tag the session it names", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call(
+        "link_pull_request",
+        { sessionId: THREAD_ID, url: "https://github.com/T3Tools/T3Code/pull/7" },
+        ["pull-requests"],
+        { principal: "external-operator", threadId: ThreadId.make("external-operator") },
+      );
+
+      expect(result).toMatchObject({ number: 7, alreadyLinked: false });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", threadId: THREAD_ID, source: "agent" },
+      ]);
+    }),
+  );
+
+  it.effect("makes an external caller name a session rather than guessing one", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness
+        .call("list_thread_pull_requests", {}, ["pull-requests"], {
+          principal: "external-operator",
+          threadId: ThreadId.make("external-operator"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "PullRequestSessionTargetError" });
+    }),
+  );
+
+  it.effect("keeps an in-session agent pinned to its own session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness
+        .call("link_pull_request", {
+          sessionId: ThreadId.make("thread-somebody-else"),
+          url: "https://github.com/T3Tools/T3Code/pull/7",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "PullRequestSessionTargetError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+  // T3-CUSTOM(expbkt3): END
+
   it.effect("refuses a credential without the pull-requests capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

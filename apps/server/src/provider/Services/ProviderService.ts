@@ -32,7 +32,10 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderSessionExecutionOptions,
+} from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -45,6 +48,7 @@ export interface ProviderServiceShape {
   readonly startSession: (
     threadId: ThreadId,
     input: ProviderSessionStartInput,
+    options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
   /**
@@ -52,6 +56,7 @@ export interface ProviderServiceShape {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
   readonly compactThread: (
@@ -65,6 +70,7 @@ export interface ProviderServiceShape {
    */
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
+    options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
@@ -72,6 +78,7 @@ export interface ProviderServiceShape {
    */
   readonly respondToRequest: (
     input: ProviderRespondToRequestInput,
+    options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
@@ -79,6 +86,7 @@ export interface ProviderServiceShape {
    */
   readonly respondToUserInput: (
     input: ProviderRespondToUserInputInput,
+    options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
@@ -116,10 +124,13 @@ export interface ProviderServiceShape {
   /**
    * Roll back provider conversation state by a number of turns.
    */
-  readonly rollbackConversation: (input: {
-    readonly threadId: ThreadId;
-    readonly numTurns: number;
-  }) => Effect.Effect<void, ProviderServiceError>;
+  readonly rollbackConversation: (
+    input: {
+      readonly threadId: ThreadId;
+      readonly numTurns: number;
+    },
+    options?: ProviderSessionExecutionOptions,
+  ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Upload a thread and return the provider's shareable feedback identifier.

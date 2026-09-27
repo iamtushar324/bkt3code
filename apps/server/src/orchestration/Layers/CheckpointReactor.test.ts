@@ -125,7 +125,11 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    // T3-CUSTOM(expbkt3): explicit durable execution behavior.
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+      }),
     assertConversationRollbackSupported,
     getInstanceInfo: (instanceId) =>
       Effect.succeed({
@@ -458,6 +462,7 @@ describe("CheckpointReactor", () => {
           branch: options?.threadBranch ?? null,
           worktreePath:
             options?.threadWorktreePath !== undefined ? options.threadWorktreePath : cwd,
+          sourceControlProfileId: null,
           createdAt,
         })
         .pipe(
@@ -478,6 +483,7 @@ describe("CheckpointReactor", () => {
                   branch: null,
                   worktreePath:
                     options?.secondThreadWorktreePath?.(cwd) ?? options?.threadWorktreePath ?? cwd,
+                  sourceControlProfileId: null,
                   createdAt,
                 }),
               )

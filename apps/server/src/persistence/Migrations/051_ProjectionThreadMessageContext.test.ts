@@ -6,6 +6,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+// T3-CUSTOM(expbkt3): upstream ships these migrations at ids 48-51; the fork
+// remaps them into its 1000+ lane (48->1031, 49->1032, 50->1033, 51->1034), so
+// these boundaries follow the fork registry in Migrations.ts, not upstream's.
+
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 layer("051_ProjectionThreadMessageContext", (it) => {
@@ -13,13 +17,13 @@ layer("051_ProjectionThreadMessageContext", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 1033 });
       yield* sql`
         ALTER TABLE projection_thread_messages
         ADD COLUMN context_json TEXT
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 51 });
+      yield* runMigrations({ toMigrationInclusive: 1034 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_thread_messages)
@@ -28,7 +32,7 @@ layer("051_ProjectionThreadMessageContext", (it) => {
       const migrations = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id
         FROM effect_sql_migrations
-        WHERE migration_id = 51
+        WHERE migration_id = 1034
       `;
 
       assert.equal(context?.name, "context_json");

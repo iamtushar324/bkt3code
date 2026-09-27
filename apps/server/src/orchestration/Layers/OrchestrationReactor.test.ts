@@ -9,6 +9,8 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+// T3-CUSTOM(expbkt3): archive-time session history export.
+import { ArchiveExportReactor } from "../Services/ArchiveExportReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
@@ -95,6 +97,16 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        // T3-CUSTOM(expbkt3): archive-time session history export.
+        Layer.provideMerge(
+          Layer.succeed(ArchiveExportReactor, {
+            start: () => {
+              started.push("archive-export-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
         Layer.provideMerge(
           Layer.succeed(PullRequestSyncReactor.PullRequestSyncReactor, {
             start: () => {
@@ -127,6 +139,7 @@ describe("OrchestrationReactor", () => {
       "provider-command-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
+      "archive-export-reactor",
       "thread-pull-request-reactor",
       "thread-settlement-reactor",
       "pull-request-sync-reactor",

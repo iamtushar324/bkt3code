@@ -51,6 +51,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
         interactionMode: "default" as const,
         branch: null,
         worktreePath: null,
+        // T3-CUSTOM(expbkt3): explicit source-control identity default.
+        sourceControlProfileId: null,
         createdAt,
       });
 
@@ -99,6 +101,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): explicit source-control identity default.
+          sourceControlProfileId: null,
           createdAt,
           updatedAt: createdAt,
         },
@@ -199,6 +203,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): explicit source-control identity default.
+          sourceControlProfileId: null,
           createdAt,
           updatedAt: createdAt,
         },
@@ -264,6 +270,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): explicit source-control identity default.
+          sourceControlProfileId: null,
           createdAt,
           updatedAt: createdAt,
         },
@@ -341,6 +349,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
             interactionMode: "default",
             branch: null,
             worktreePath: null,
+            // T3-CUSTOM(expbkt3): explicit source-control identity default.
+            sourceControlProfileId: null,
             createdAt,
             updatedAt: createdAt,
           },
@@ -419,6 +429,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): explicit source-control identity default.
+          sourceControlProfileId: null,
           createdAt,
           updatedAt: createdAt,
         },
@@ -473,6 +485,8 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          // T3-CUSTOM(expbkt3): explicit source-control identity default.
+          sourceControlProfileId: null,
           createdAt,
           updatedAt: createdAt,
         },

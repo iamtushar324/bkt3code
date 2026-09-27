@@ -3,6 +3,7 @@ import {
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
+  EnvironmentUserId,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
@@ -41,6 +42,7 @@ import {
 
 export interface IssuedSession {
   readonly sessionId: AuthSessionId;
+  readonly userId: EnvironmentUserId | null;
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
@@ -51,6 +53,7 @@ export interface IssuedSession {
 
 export interface VerifiedSession {
   readonly sessionId: AuthSessionId;
+  readonly userId: EnvironmentUserId | null;
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
@@ -344,6 +347,31 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class UserSessionsRevocationError extends Schema.TaggedError<UserSessionsRevocationError>()(
+  "UserSessionsRevocationError",
+  {
+    userId: EnvironmentUserId,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke user sessions.";
+  }
+}
+
+export class SessionUserBindingError extends Schema.TaggedError<SessionUserBindingError>()(
+  "SessionUserBindingError",
+  {
+    sessionId: AuthSessionId,
+    userId: EnvironmentUserId,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to bind the session to an environment user.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -353,8 +381,14 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  UserSessionsRevocationError,
+  SessionUserBindingError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
+// T3-CUSTOM(expbkt3): predicate used by the fork's auth HTTP surface
+// (src/auth/http.ts) to narrow internal credential failures. Present on the
+// fork tip; the merge took upstream's version of this region and dropped it.
+export const isSessionCredentialInternalError = Schema.is(SessionCredentialInternalError);
 
 export const SessionCredentialError = Schema.Union([
   SessionCredentialInvalidError,
@@ -373,6 +407,7 @@ export class SessionStore extends Context.Service<
       readonly method?: ServerAuthSessionMethod;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
+      readonly userId?: EnvironmentUserId;
       readonly proofKeyThumbprint?: string;
       /**
        * Atomically revoke active sessions with the same subject and method
@@ -407,6 +442,13 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly revokeByUserId: (
+      userId: EnvironmentUserId,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly bindUserId: (
+      sessionId: AuthSessionId,
+      userId: EnvironmentUserId,
+    ) => Effect.Effect<void, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly recordClientConnection: (
@@ -460,6 +502,7 @@ function toClientMetadata(record: {
   readonly deviceType: AuthClientMetadata["deviceType"];
   readonly os: string | null;
   readonly browser: string | null;
+  readonly appVersion: string | null;
 }): AuthClientMetadata {
   return {
     ...(record.label ? { label: record.label } : {}),
@@ -468,6 +511,7 @@ function toClientMetadata(record: {
     deviceType: record.deviceType,
     ...(record.os ? { os: record.os } : {}),
     ...(record.browser ? { browser: record.browser } : {}),
+    ...(record.appVersion ? { appVersion: record.appVersion } : {}),
   };
 }
 
@@ -502,6 +546,8 @@ export const make = Effect.gen(function* () {
     yield* authSessions
       .createIfAbsent({
         sessionId: devAuth.sessionId,
+        // T3-CUSTOM(expbkt3): the dev token is not bound to an environment user.
+        userId: null,
         subject: "reusable-dev-token",
         scopes: AuthAdministrativeScopes,
         method: "browser-session-cookie",
@@ -512,6 +558,8 @@ export const make = Effect.gen(function* () {
           deviceType: "unknown",
           os: null,
           browser: null,
+          // T3-CUSTOM(expbkt3): the fork records the connecting app version.
+          appVersion: null,
         },
         issuedAt: yield* DateTime.now,
         expiresAt: REUSABLE_DEV_SESSION_EXPIRES_AT,
@@ -551,6 +599,7 @@ export const make = Effect.gen(function* () {
       return Option.some(
         toAuthClientSession({
           sessionId: row.value.sessionId,
+          userId: row.value.userId,
           subject: row.value.subject,
           scopes: row.value.scopes,
           method: row.value.method,
@@ -687,6 +736,8 @@ export const make = Effect.gen(function* () {
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
+        // T3-CUSTOM(expbkt3): retain operator identity when replacing desktop sessions.
+        userId: input?.userId ?? null,
         subject: claims.sub,
         scopes: claims.scopes,
         method: claims.method,
@@ -697,6 +748,8 @@ export const make = Effect.gen(function* () {
           deviceType: client.deviceType,
           os: client.os ?? null,
           browser: client.browser ?? null,
+          // T3-CUSTOM(expbkt3): client build identity.
+          appVersion: client.appVersion ?? null,
         },
         issuedAt,
         expiresAt,
@@ -722,6 +775,7 @@ export const make = Effect.gen(function* () {
       yield* emitUpsert(
         toAuthClientSession({
           sessionId,
+          userId: input?.userId ?? null,
           subject: claims.sub,
           scopes: claims.scopes,
           method: claims.method,
@@ -735,6 +789,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId,
+        userId: input?.userId ?? null,
         token: `${encodedPayload}.${signature}`,
         method: claims.method,
         client,
@@ -775,6 +830,8 @@ export const make = Effect.gen(function* () {
         }
         return {
           sessionId: row.value.sessionId,
+          // T3-CUSTOM(expbkt3): sessions carry the environment user.
+          userId: row.value.userId,
           token,
           method: row.value.method,
           client: toClientMetadata(row.value.client),
@@ -832,6 +889,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId: claims.sid,
+        userId: row.value.userId,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
@@ -941,6 +999,7 @@ export const make = Effect.gen(function* () {
 
     return {
       sessionId: row.value.sessionId,
+      userId: row.value.userId,
       token,
       method: row.value.method,
       client: toClientMetadata(row.value.client),
@@ -962,6 +1021,7 @@ export const make = Effect.gen(function* () {
       return rows.map((row) =>
         toAuthClientSession({
           sessionId: row.sessionId,
+          userId: row.userId,
           subject: row.subject,
           scopes: row.scopes,
           method: row.method,
@@ -1031,6 +1091,48 @@ export const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const revokeByUserId: SessionStore["Service"]["revokeByUserId"] = Effect.fn(
+    "SessionStore.revokeByUserId",
+  )(function* (userId) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeByUserId({ userId, revokedAt })
+      .pipe(Effect.mapError((cause) => new UserSessionsRevocationError({ userId, cause })));
+    if (revokedSessionIds.length > 0) {
+      yield* Ref.update(connectedSessionsRef, (current) => {
+        const next = new Map(current);
+        for (const sessionId of revokedSessionIds) next.delete(sessionId);
+        return next;
+      });
+      yield* Effect.forEach(revokedSessionIds, emitRemoved, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    }
+    return revokedSessionIds.length;
+  });
+
+  const bindUserId: SessionStore["Service"]["bindUserId"] = Effect.fn("SessionStore.bindUserId")(
+    function* (sessionId, userId) {
+      const updated = yield* authSessions
+        .setUser({ sessionId, userId })
+        .pipe(
+          Effect.mapError((cause) => new SessionUserBindingError({ sessionId, userId, cause })),
+        );
+      if (!updated) {
+        return yield* new SessionUserBindingError({
+          sessionId,
+          userId,
+          cause: new Error("The session is unavailable."),
+        });
+      }
+      const session = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionUserBindingError({ sessionId, userId, cause })),
+      );
+      if (Option.isSome(session)) yield* emitUpsert(session.value);
+    },
+  );
+
   return SessionStore.of({
     cookieName,
     legacyCookieName,
@@ -1044,6 +1146,8 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    revokeByUserId,
+    bindUserId,
     markConnected,
     markDisconnected,
     recordClientConnection,

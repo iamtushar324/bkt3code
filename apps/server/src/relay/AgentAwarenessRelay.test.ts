@@ -351,6 +351,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      sourceControlProfileId: null,
+      ownerUserId: null,
+      memberUserIds: [],
     } satisfies Omit<OrchestrationThreadShell, "id">;
 
     expect(
@@ -374,6 +377,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               startedAt: now,
               completedAt: null,
               assistantMessageId: null,
+              durationMs: null,
             },
           },
           {
@@ -390,6 +394,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               startedAt: "2026-05-24T00:00:00.000Z",
               completedAt: "2026-05-24T00:01:00.000Z",
               assistantMessageId: null,
+              durationMs: null,
             },
           },
           {
@@ -402,6 +407,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               startedAt: "2026-05-25T00:00:01.000Z",
               completedAt: "2026-05-25T00:00:02.000Z",
               assistantMessageId: null,
+              durationMs: null,
             },
           },
           {
@@ -429,6 +435,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               startedAt: now,
               completedAt: null,
               assistantMessageId: null,
+              durationMs: null,
             },
           },
         ],
@@ -509,6 +516,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           repositoryIdentity: null,
           defaultModelSelection: null,
           scripts: [],
+          ownerUserId: null,
+          memberUserIds: [],
           createdAt: now,
           updatedAt: now,
         } satisfies OrchestrationProjectShell;
@@ -530,6 +539,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             startedAt: now,
             completedAt: null,
             assistantMessageId: null,
+            durationMs: null,
           },
           createdAt: now,
           updatedAt: now,
@@ -549,6 +559,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          sourceControlProfileId: null,
+          ownerUserId: null,
+          memberUserIds: [],
         } satisfies OrchestrationThreadShell;
 
         const orchestrationEngine = {
@@ -701,6 +714,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           repositoryIdentity: null,
           defaultModelSelection: null,
           scripts: [],
+          ownerUserId: null,
+          memberUserIds: [],
           createdAt: now,
           updatedAt: now,
         } satisfies OrchestrationProjectShell;
@@ -722,6 +737,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             startedAt: now,
             completedAt: null,
             assistantMessageId: null,
+            durationMs: null,
           },
           createdAt: now,
           updatedAt: now,
@@ -741,6 +757,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          sourceControlProfileId: null,
+          ownerUserId: null,
+          memberUserIds: [],
         } satisfies OrchestrationThreadShell;
 
         const descriptor = {
@@ -860,6 +879,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           scripts: [],
           createdAt: old,
           updatedAt: old,
+          ownerUserId: null,
+          memberUserIds: [],
         } satisfies OrchestrationProjectShell;
         const completedTurn = {
           turnId: "turn-1" as TurnId,
@@ -868,6 +889,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           startedAt: old,
           completedAt: old,
           assistantMessageId: null,
+          durationMs: null,
         } as const;
         const completedThread = {
           id: threadId,
@@ -890,6 +912,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          sourceControlProfileId: null,
+          ownerUserId: null,
+          memberUserIds: [],
         } satisfies OrchestrationThreadShell;
         let currentThread: OrchestrationThreadShell | null = completedThread;
         let publishes = 0;

@@ -14,7 +14,8 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
   it.effect("repairs automatic stamps and leaves manual settlement alone", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 45 });
+      // T3-CUSTOM(expbkt3): upstream 46 follows the fork registry through ID 1026.
+      yield* runMigrations({ toMigrationInclusive: 1026 });
 
       yield* sql`
         INSERT INTO projection_threads (
@@ -164,7 +165,8 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
       const eventsBefore =
         yield* sql`SELECT payload_json FROM orchestration_events ORDER BY event_id`;
 
-      yield* runMigrations({ toMigrationInclusive: 46 });
+      // T3-CUSTOM(expbkt3): upstream filename 046 is registered at ID 1027.
+      yield* runMigrations({ toMigrationInclusive: 1027 });
 
       const threads = yield* sql<{
         readonly threadId: string;

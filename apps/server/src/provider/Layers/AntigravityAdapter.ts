@@ -83,6 +83,8 @@ import {
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
 } from "../acp/AntigravityProtocol.ts";
+// T3-CUSTOM(expbkt3): refuse thread-owned source-control identities.
+import { carriesSourceControlIdentity } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -727,10 +729,23 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     }
   });
 
-  const startSession: Adapter["startSession"] = (input) =>
+  // T3-CUSTOM(expbkt3): provider start validates fork-owned execution credentials.
+  const startSession: Adapter["startSession"] = (input, executionOptions) =>
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
+        // T3-CUSTOM(expbkt3): this provider's managed login process cannot accept per-thread Git credentials.
+        if (
+          executionOptions?.environment &&
+          carriesSourceControlIdentity(executionOptions.environment)
+        ) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue:
+              "Thread-owned source-control identity is not supported by Antigravity. Select a provider that supports this profile.",
+          });
+        }
         if (!settings.enabled) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,

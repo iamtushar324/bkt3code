@@ -13,8 +13,9 @@ layer("042_ProjectionThreadLinkedPullRequest", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 41 });
-      yield* runMigrations({ toMigrationInclusive: 42 });
+      // T3-CUSTOM(expbkt3): upstream's 041/042 register as 1019/1020 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1019 });
+      yield* runMigrations({ toMigrationInclusive: 1020 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)

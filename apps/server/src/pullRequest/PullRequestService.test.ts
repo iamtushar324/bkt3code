@@ -54,6 +54,9 @@ function project(input: {
     id: input.id as ProjectId,
     title: input.title,
     workspaceRoot: input.workspaceRoot,
+    // T3-CUSTOM(expbkt3): ownership fields are required on the fork's project shell.
+    ownerUserId: null,
+    memberUserIds: [],
     ...(input.repository
       ? {
           repositoryIdentity: {

@@ -20,6 +20,9 @@ import * as Layer from "effect/Layer";
 import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
+// T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
+// which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
+import { ForgejoCliSelfContainedLive } from "../sourceControl/forgejoCliRuntime.expbkt3.ts";
 import { makeCli } from "../bin.ts";
 
 vi.mock("node:os", async (importOriginal) => {
@@ -35,6 +38,7 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
       Layer.mergeAll(
         NodeServices.layer,
         NetService.layer,
+        ForgejoCliSelfContainedLive,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
       ),
     ),

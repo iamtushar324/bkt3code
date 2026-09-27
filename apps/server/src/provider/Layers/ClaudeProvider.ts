@@ -417,6 +417,32 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+type ClaudeAuthStatus = {
+  readonly loggedIn: boolean;
+  readonly authMethod?: string;
+  readonly email?: string;
+};
+
+function parseClaudeAuthStatus(output: string): ClaudeAuthStatus | undefined {
+  try {
+    const value: unknown = JSON.parse(output);
+    if (!value || typeof value !== "object" || !("loggedIn" in value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (typeof record.loggedIn !== "boolean") return undefined;
+    const account =
+      record.account && typeof record.account === "object"
+        ? (record.account as Record<string, unknown>)
+        : undefined;
+    return {
+      loggedIn: record.loggedIn,
+      ...(typeof record.authMethod === "string" ? { authMethod: record.authMethod } : {}),
+      ...(typeof account?.email === "string" ? { email: account.email } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -533,6 +559,48 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
+  const authProbe = yield* runClaudeCommand(
+    claudeSettings,
+    ["auth", "status"],
+    resolvedEnvironment,
+  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  const authStatus =
+    Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
+      ? parseClaudeAuthStatus(authProbe.success.value.stdout)
+      : undefined;
+
+  if (authStatus?.loggedIn === false) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude is not authenticated. Run `claude auth login` to reconnect it.",
+      },
+    });
+  }
+
+  if (!authStatus) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Could not verify Claude authentication with `claude auth status`.",
+      },
+    });
+  }
+
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
@@ -561,8 +629,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
+      authMethod: capabilities.tokenSource ?? authStatus.authMethod,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const authEmail = capabilities.email ?? authStatus.email;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
@@ -591,7 +660,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...(authEmail ? { email: authEmail } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),

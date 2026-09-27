@@ -60,7 +60,10 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderSessionExecutionOptions,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -143,27 +146,28 @@ function makeFakeCodexAdapter(
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
-    Effect.sync(() => {
-      const now = "2026-01-01T00:00:00.000Z";
-      const session: ProviderSession = {
-        provider,
-        ...(input.providerInstanceId !== undefined
-          ? { providerInstanceId: input.providerInstanceId }
-          : {}),
-        status: "ready",
-        runtimeMode: input.runtimeMode,
-        threadId: input.threadId,
-        resumeCursor: input.resumeCursor ?? {
-          opaque: `resume-${String(input.threadId)}`,
-        },
-        cwd: input.cwd ?? process.cwd(),
-        createdAt: now,
-        updatedAt: now,
-      };
-      sessions.set(session.threadId, session);
-      return session;
-    }),
+  const startSession = vi.fn(
+    (input: ProviderSessionStartInput, _options?: ProviderSessionExecutionOptions) =>
+      Effect.sync(() => {
+        const now = "2026-01-01T00:00:00.000Z";
+        const session: ProviderSession = {
+          provider,
+          ...(input.providerInstanceId !== undefined
+            ? { providerInstanceId: input.providerInstanceId }
+            : {}),
+          status: "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          resumeCursor: input.resumeCursor ?? {
+            opaque: `resume-${String(input.threadId)}`,
+          },
+          cwd: input.cwd ?? process.cwd(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        sessions.set(session.threadId, session);
+        return session;
+      }),
   );
 
   const sendTurn = vi.fn(
@@ -1618,6 +1622,67 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("forwards the server-only source-control environment to the selected adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-source-control-environment");
+      const environment = {
+        GH_TOKEN: "alice-token",
+        GIT_AUTHOR_NAME: "Alice Example",
+      };
+
+      yield* provider.startSession(
+        threadId,
+        {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: fixtureCwd("project"),
+          runtimeMode: "full-access",
+        },
+        { environment },
+      );
+
+      assert.deepEqual(routing.codex.startSession.mock.calls.at(-1)?.[1], { environment });
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
+  it.effect("fails closed when a profile-owned session recovery omits its environment", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-profile-recovery");
+      const environment = { GH_TOKEN: "alice-token", GIT_AUTHOR_NAME: "Alice Example" };
+      yield* provider.startSession(
+        threadId,
+        {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: fixtureCwd("project"),
+          runtimeMode: "full-access",
+        },
+        { environment },
+      );
+      yield* routing.codex.stopAll();
+      routing.codex.startSession.mockClear();
+
+      const failure = yield* Effect.flip(
+        provider.sendTurn({ threadId, input: "resume", attachments: [] }),
+      );
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "without its source-control identity environment");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+
+      yield* provider.sendTurn({ threadId, input: "resume", attachments: [] }, { environment });
+      assert.deepEqual(routing.codex.startSession.mock.calls.at(-1)?.[1], { environment });
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+    }),
+  );
+
   it.effect.each([CODEX_DRIVER, CLAUDE_AGENT_DRIVER, CURSOR_DRIVER])(
     "rejects missing, file, and saved workspace paths before starting %s",
     (driver) =>
@@ -5084,7 +5149,13 @@ describe("agent browser access", () => {
         Layer.provide(runtimeRepositoryLayer),
       );
       const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        // T3-CUSTOM(expbkt3): stubs for the query methods the fork adds to the shape;
+        // this test drives none of them.
+        listLatestProposedPlansForActiveThreads: () => Effect.die("unused"),
+        getThreadAccessById: () => Effect.die("unused"),
+        listThreadShellsByProjectId: () => Effect.die("unused"),
         getTurnStartMessage: () => Effect.die("unused"),
+        countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
         getImportedAgentSessionSources: () => Effect.die("unused"),
         getUserInputActivity: () => Effect.die("unused"),
         listActivitiesByKind: () => Effect.die("unused"),
@@ -5136,7 +5207,9 @@ describe("agent browser access", () => {
           Effect.sync(() => {
             issued.push({
               threadId: request.threadId,
-              capabilities: [...request.capabilities].toSorted(),
+              // T3-CUSTOM(expbkt3): capabilities is optional on McpCredentialRequest,
+              // because fork call sites that predate upstream's gate omit it.
+              capabilities: [...(request.capabilities ?? [])].toSorted(),
             });
             return undefined;
           }),

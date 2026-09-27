@@ -9,6 +9,7 @@ import {
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
+  type EnvironmentUserId,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -33,6 +34,10 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
+// T3-CUSTOM(expbkt3): the acting operator reported on `/api/auth/session`.
+import { operatorSessionStateFields } from "./OperatorIdentity.ts";
+// T3-CUSTOM(expbkt3): shorter sessions for member self-service pairings.
+import { pairedSessionTtlFields } from "./SelfServicePairing.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -65,6 +70,7 @@ export interface IssuedBearerSession {
 
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
+  readonly userId: EnvironmentUserId | null;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
@@ -425,6 +431,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly createBrowserSession: (
       credential: string,
       requestMetadata: AuthClientMetadata,
+      input?: { readonly userId?: EnvironmentUserId },
     ) => Effect.Effect<
       {
         readonly response: AuthBrowserSessionResult;
@@ -434,12 +441,37 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
+    /**
+     * Issue a browser-session cookie for an already-verified Clerk operator.
+     *
+     * Unlike `createBrowserSession` this bypasses one-time bootstrap credential
+     * consumption: the caller (the `/api/auth/clerk-session` handler) has already
+     * verified the Clerk token and org membership, so we mint a standard-scoped
+     * cookie session with `subject: "clerk:<userId>"`. Everything downstream (WS
+     * ticket, principal, visibility) reads that subject unchanged.
+     */
+    readonly createClerkBrowserSession: (
+      input: {
+        readonly subject: string;
+        // T3-CUSTOM(expbkt3): Direct Clerk sessions retain their durable user binding.
+        readonly userId: EnvironmentUserId;
+        readonly label?: string;
+      },
+      requestMetadata: AuthClientMetadata,
+    ) => Effect.Effect<
+      {
+        readonly response: AuthBrowserSessionResult;
+        readonly sessionToken: string;
+      },
+      ServerAuthInternalError
+    >;
     readonly exchangeBootstrapCredentialForAccessToken: (
       credential: string,
       requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
+        readonly userId?: EnvironmentUserId;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -451,6 +483,11 @@ export class EnvironmentAuth extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
+      // T3-CUSTOM(expbkt3): BEGIN - redeem only with a DPoP proof, and/or a member
+      // self-service link. See OperatorIdentity.ts and SelfServicePairing.ts.
+      readonly requiresProofOfPossession?: boolean;
+      readonly selfIssued?: boolean;
+      // T3-CUSTOM(expbkt3): END
       readonly purpose?: "startup";
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
     readonly issuePairingCredential: (
@@ -626,6 +663,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map((session) => ({
         sessionId: session.sessionId,
+        userId: session.userId,
         subject: session.subject,
         method: session.method,
         scopes: session.scopes,
@@ -698,6 +736,9 @@ export const make = Effect.gen(function* () {
             scopes: session.scopes,
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+            // T3-CUSTOM(expbkt3): report the acting operator so a client with no
+            // ClerkProvider can resolve its own identity. See OperatorIdentity.ts.
+            ...operatorSessionStateFields(session),
           }) satisfies AuthSessionState,
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
@@ -712,6 +753,8 @@ export const make = Effect.gen(function* () {
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = (
     credential,
     requestMetadata,
+    // T3-CUSTOM(expbkt3): optional environment user bound to the issued session.
+    input,
   ) => {
     if (devAuth?.matches(credential)) {
       return sessions.verify(credential).pipe(
@@ -745,6 +788,9 @@ export const make = Effect.gen(function* () {
             method: "browser-session-cookie",
             subject: grant.subject,
             scopes: grant.scopes,
+            ...(input?.userId ? { userId: input.userId } : {}),
+            // T3-CUSTOM(expbkt3): a pairing's session does not expire.
+            ...pairedSessionTtlFields(grant),
             client: {
               ...requestMetadata,
               ...(grant.label ? { label: grant.label } : {}),
@@ -772,7 +818,8 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    // T3-CUSTOM(expbkt3): the proof-of-possession and self-issued flags travel with the grant.
+    "scopes" | "subject" | "label" | "requiresProofOfPossession" | "selfIssued"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -801,11 +848,54 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const createClerkBrowserSession: EnvironmentAuth["Service"]["createClerkBrowserSession"] = (
+    input,
+    requestMetadata,
+  ) =>
+    sessions
+      .issue({
+        method: "browser-session-cookie",
+        subject: input.subject,
+        // T3-CUSTOM(expbkt3): Make the Clerk identity available to every authenticated use case.
+        userId: input.userId,
+        scopes: AuthStandardClientScopes,
+        client: {
+          ...requestMetadata,
+          ...(input.label ? { label: input.label } : {}),
+        },
+      })
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
+        Effect.map(
+          (session) =>
+            ({
+              response: {
+                authenticated: true,
+                scopes: session.scopes,
+                sessionMethod: session.method,
+                expiresAt: DateTime.toUtc(session.expiresAt),
+              } satisfies AuthBrowserSessionResult,
+              sessionToken: session.token,
+            }) satisfies BootstrapExchangeResult,
+        ),
+        Effect.withSpan("EnvironmentAuth.createClerkBrowserSession"),
+      );
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
       resolveBootstrapGrant(credential, input).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
+            // T3-CUSTOM(expbkt3): BEGIN - second gate on the proof-of-possession rule.
+            // `PairingGrantStore.consume` already refuses to consume such a grant without
+            // a proof; this makes it impossible for a future consume path to leak a plain
+            // bearer token from a credential that must be device-bound.
+            if (grant.requiresProofOfPossession && !input?.proofKeyThumbprint) {
+              return yield* new ServerAuthInvalidCredentialError({
+                diagnostic: "Pairing credential must be redeemed with a DPoP proof.",
+              });
+            }
+            // T3-CUSTOM(expbkt3): END
             const grantedScopes = requestedScopes ?? grant.scopes;
             if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
               return yield* new ServerAuthScopeNotGrantedError({});
@@ -821,6 +911,11 @@ export const make = Effect.gen(function* () {
                       ttl: Duration.hours(1),
                     }
                   : {}),
+                // T3-CUSTOM(expbkt3): a pairing's session does not expire. It overrides
+                // the DPoP hour above on purpose: nothing refreshes that token, so an
+                // hour meant re-pairing. Spread order is the mechanism.
+                ...pairedSessionTtlFields(grant),
+                ...(input?.userId ? { userId: input.userId } : {}),
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
@@ -892,6 +987,10 @@ export const make = Effect.gen(function* () {
         ...(input?.ttl ? { ttl: input.ttl } : {}),
         ...(input?.label ? { label: input.label } : {}),
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+        // T3-CUSTOM(expbkt3): BEGIN - both default off.
+        ...(input?.requiresProofOfPossession ? { requiresProofOfPossession: true } : {}),
+        ...(input?.selfIssued ? { selfIssued: true } : {}),
+        // T3-CUSTOM(expbkt3): END
         ...(input?.purpose ? { purpose: input.purpose } : {}),
       });
       return {
@@ -1081,6 +1180,7 @@ export const make = Effect.gen(function* () {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             Effect.map((session) => ({
               sessionId: session.sessionId,
+              userId: session.userId,
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
@@ -1099,6 +1199,7 @@ export const make = Effect.gen(function* () {
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
     createBrowserSession,
+    createClerkBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,

@@ -258,6 +258,13 @@ export interface GitHubPullRequestSummary {
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
+  // T3-CUSTOM(expbkt3): BEGIN — merge/review/check state for the fork's PR surfaces.
+  readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+  readonly mergeStateStatus?: string;
+  readonly reviewDecision?: "approved" | "changes-requested" | "review-required" | "unknown";
+  readonly checksStatus?: "pass" | "fail" | "pending" | "unknown";
+  readonly autoMergeEnabled?: boolean;
+  // T3-CUSTOM(expbkt3): END
   readonly updatedAt?: string;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -287,6 +294,7 @@ export class GitHubCli extends Context.Service<
       readonly timeoutMs?: number;
       /** Piped to the child's stdin, for payloads that must never appear in argv. */
       readonly stdin?: string;
+      // T3-CUSTOM(expbkt3): also carries the fork's per-profile credential overrides.
       readonly env?: NodeJS.ProcessEnv;
       readonly maxOutputBytes?: number;
       readonly rateLimitHost?: string;
@@ -536,7 +544,8 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          // T3-CUSTOM(expbkt3): mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest.
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -570,7 +579,8 @@ export const make = Effect.gen(function* () {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          // T3-CUSTOM(expbkt3): mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest.
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

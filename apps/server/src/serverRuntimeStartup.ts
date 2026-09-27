@@ -39,6 +39,8 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationReactor from "./orchestration/Services/OrchestrationReactor.ts";
+import { runOwnershipBackfill } from "./orchestration/ownershipBackfill.ts";
+import { ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -47,6 +49,8 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+// T3-CUSTOM(expbkt3): archived-session worktree reclaim
+import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -257,6 +261,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
               .defaultRuntimeMode,
             branch: null,
             worktreePath: null,
+            // T3-CUSTOM(expbkt3): startup threads use machine source-control identity.
+            sourceControlProfileId: null,
             createdAt,
           });
           bootstrapThreadId = createdThreadId;
@@ -901,6 +907,9 @@ export const make = (options?: StartupOptions) =>
     const keybindings = yield* Keybindings.Keybindings;
     const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
     const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
+    // T3-CUSTOM(expbkt3): archived-session worktree reclaim; no-ops unless the
+    // operator has switched the automatic sweep on.
+    const sessionArchiveSweeper = yield* SessionArchiveSweeper.SessionArchiveSweeper;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -963,12 +972,25 @@ export const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
           yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
+          yield* sessionArchiveSweeper.start().pipe(Scope.provide(reactorScope));
         }),
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
       yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
+      // Team mode only: converge pre-ownership records. This is idempotent and
+      // fail-soft, so it is parked alongside the other auxiliary roots rather
+      // than holding readiness — a full pass once cost bkt3.dev ~146 s of
+      // blocked startup on every restart.
+      yield* Effect.logDebug("startup phase: ownership backfill");
+      yield* forkParked(
+        runStartupPhase(
+          "ownership.backfill",
+          runOwnershipBackfill.pipe(Effect.provide(ClerkDirectoryLive)),
+        ),
+      );
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
 

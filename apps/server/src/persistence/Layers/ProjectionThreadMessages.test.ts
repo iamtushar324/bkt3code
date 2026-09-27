@@ -22,6 +22,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId: MessageId.make("import:codex:latest-user-message:000000"),
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "user",
         text: "Imported prompt",
         isStreaming: false,
@@ -41,6 +43,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
           messageId: MessageId.make(`latest-user-message-${index}`),
           threadId,
           turnId: null,
+          // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+          sentByUserId: null,
           ...message,
           text: "Message body",
           isStreaming: false,
@@ -51,6 +55,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId: MessageId.make("latest-user-message-other-thread"),
         threadId: ThreadId.make("thread-latest-user-message-other"),
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "user",
         text: "Other thread",
         isStreaming: false,
@@ -90,6 +96,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         ],
       };
       yield* repository.upsert({
+        // T3-CUSTOM(expbkt3): fork-required sender identity.
+        sentByUserId: null,
         messageId,
         threadId,
         turnId: null,
@@ -104,6 +112,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): fork-required sender identity.
+        sentByUserId: null,
         role: "user",
         text: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx_1)",
         isStreaming: false,
@@ -135,6 +145,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "assistant",
         text: "hello",
         attachments,
@@ -145,6 +157,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "assistant",
         text: " world",
         createdAt: "2026-02-28T19:05:01.000Z",
@@ -161,6 +175,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "assistant",
         text: "",
         attachments: [],
@@ -201,6 +217,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "user",
         text: "initial",
         attachments: persistedAttachments,
@@ -213,6 +231,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "user",
         text: "updated",
         isStreaming: false,
@@ -245,6 +265,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "assistant",
         text: "with attachment",
         attachments: [
@@ -265,6 +287,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         messageId,
         threadId,
         turnId: null,
+        // T3-CUSTOM(expbkt3): standalone messages have no acting operator.
+        sentByUserId: null,
         role: "assistant",
         text: "cleared",
         attachments: [],
@@ -288,6 +312,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
       const createdAt = "2026-03-01T00:00:00.000Z";
 
       yield* repository.upsert({
+        // T3-CUSTOM(expbkt3): fork-required sender identity.
+        sentByUserId: null,
         messageId: MessageId.make("message-assistant-turn-state"),
         threadId,
         turnId,

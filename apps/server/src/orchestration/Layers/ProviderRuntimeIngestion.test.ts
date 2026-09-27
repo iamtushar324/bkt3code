@@ -131,7 +131,11 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    // T3-CUSTOM(expbkt3): explicit durable execution behavior.
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+      }),
     assertConversationRollbackSupported: () => unsupported(),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
@@ -387,6 +391,7 @@ describe("ProviderRuntimeIngestion", () => {
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: null,
+      sourceControlProfileId: null,
       createdAt,
     });
     await dispatch({
@@ -518,7 +523,8 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.session).toMatchObject({
       status: "interrupted",
       activeTurnId: null,
-      lastError: null,
+      // Preserve the provider’s abort reason for an interrupted session.
+      lastError: "Interrupted by user.",
     });
     expect(thread?.latestTurn).toMatchObject({
       turnId,
@@ -1990,6 +1996,7 @@ describe("ProviderRuntimeIngestion", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -2025,6 +2032,7 @@ describe("ProviderRuntimeIngestion", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -2203,6 +2211,7 @@ describe("ProviderRuntimeIngestion", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          sourceControlProfileId: null,
           createdAt,
         }),
         harness.engine.dispatch({
@@ -2441,6 +2450,7 @@ describe("ProviderRuntimeIngestion", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -2476,6 +2486,7 @@ describe("ProviderRuntimeIngestion", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        sourceControlProfileId: null,
         createdAt,
       }),
     );
@@ -4024,6 +4035,9 @@ describe("ProviderRuntimeIngestion", () => {
       provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
+      payload: {
+        providerThreadId: "provider-thread-1",
+      },
     });
     harness.emit({
       type: "item.started",
@@ -4066,6 +4080,8 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.session?.status).toBe("ready");
+    // T3-CUSTOM(expbkt3): provider thread binding is projected onto the session.
+    expect(thread.session?.providerThreadId).toBe("provider-thread-1");
     const activity = thread.activities.find(
       (entry: ProviderRuntimeTestActivity) => entry.kind === "tool.started",
     );

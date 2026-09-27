@@ -52,6 +52,9 @@ const testCrypto = Crypto.make({
 
 function makeProject(id: ProjectId = PROJECT_ID): OrchestrationProjectShell {
   return {
+    // T3-CUSTOM(expbkt3): fork-required ownership fields.
+    ownerUserId: null,
+    memberUserIds: [],
     id,
     title: `Project ${id}`,
     workspaceRoot: "/workspace/project",
@@ -68,6 +71,10 @@ function makeThread(
 ): OrchestrationThreadShell {
   return {
     id: ThreadId.make(id),
+    // T3-CUSTOM(expbkt3): fork-required thread ownership.
+    sourceControlProfileId: null,
+    ownerUserId: null,
+    memberUserIds: [],
     projectId: PROJECT_ID,
     title: id,
     modelSelection: {

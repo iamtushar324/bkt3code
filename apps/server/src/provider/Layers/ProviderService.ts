@@ -34,6 +34,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerSettings as ServerSettingsValue,
+  type UserId,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -75,7 +76,10 @@ import {
   ProviderValidationError,
   ProviderWorkspaceMissingError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderSessionExecutionOptions,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -86,8 +90,26 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+// T3-CUSTOM(expbkt3): session-identity markers for provider processes.
+import { withSessionIdentityEnvironment } from "../../identity/SessionIdentityEnvironment.ts";
+import * as Context from "effect/Context";
 const isModelSelection = Schema.is(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+// T3-CUSTOM(expbkt3): BEGIN — per-call source-control and session-identity
+// options. Provided around the upstream method bodies (see the service object
+// below) so lazy session recovery respawns with the caller's identity without
+// threading a parameter through every upstream method.
+const CurrentExecutionOptions = Context.Reference<ProviderSessionExecutionOptions | undefined>(
+  "t3/provider/CurrentExecutionOptions",
+  { defaultValue: () => undefined },
+);
+const withExecutionOptions = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  options: ProviderSessionExecutionOptions | undefined,
+): Effect.Effect<A, E, R> =>
+  options === undefined ? effect : Effect.provideService(effect, CurrentExecutionOptions, options);
+// T3-CUSTOM(expbkt3): END
 
 interface SnapShotPromptAccessibilityNode {
   readonly role: string;
@@ -387,6 +409,7 @@ function toRuntimePayloadFromSession(
     readonly continueAfterServerUpdate?: TurnId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
+    readonly sourceControlIdentityRequired?: boolean;
   },
 ): Record<string, unknown> {
   return {
@@ -401,6 +424,9 @@ function toRuntimePayloadFromSession(
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
+      : {}),
+    ...(extra?.sourceControlIdentityRequired !== undefined
+      ? { sourceControlIdentityRequired: extra.sourceControlIdentityRequired }
       : {}),
   };
 }
@@ -425,6 +451,19 @@ function readPersistedCwd(
   if (typeof rawCwd !== "string") return undefined;
   const trimmed = rawCwd.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// T3-CUSTOM(expbkt3): per-user source-control identity flag on the runtime payload.
+function readSourceControlIdentityRequired(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): boolean {
+  return Boolean(
+    runtimePayload &&
+    typeof runtimePayload === "object" &&
+    !Array.isArray(runtimePayload) &&
+    "sourceControlIdentityRequired" in runtimePayload &&
+    runtimePayload.sourceControlIdentityRequired === true,
+  );
 }
 
 /** Stopped rows with no active turn are settled; shutdown leaves them untouched. */
@@ -948,10 +987,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    // T3-CUSTOM(expbkt3): bind the MCP credential to the acting user.
+    actorUserId: UserId | null = null,
+  ) =>
     Effect.gen(function* () {
       const capabilities = yield* agentAccessCapabilities(threadId);
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
+      // T3-CUSTOM(expbkt3): actorUserId travels with the credential.
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        capabilities,
+        actorUserId,
+      });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
@@ -1066,6 +1116,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       readonly continueAfterServerUpdate?: TurnId;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
+      readonly sourceControlIdentityRequired?: boolean;
     },
   ) =>
     Effect.gen(function* () {
@@ -1236,6 +1287,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
   }) {
+    // T3-CUSTOM(expbkt3): identity options of the call that triggered recovery.
+    const executionOptions = yield* CurrentExecutionOptions;
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "recover-session",
@@ -1276,18 +1329,37 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+      // T3-CUSTOM(expbkt3): a thread-profile session never recovers without its identity.
+      if (
+        readSourceControlIdentityRequired(input.binding.runtimePayload) &&
+        executionOptions?.environment === undefined
+      ) {
+        return yield* toValidationError(
+          input.operation,
+          `Cannot recover thread '${input.binding.threadId}' without its source-control identity environment.`,
+        );
+      }
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      yield* prepareMcpSession(
+        input.binding.threadId,
+        bindingInstanceId,
+        executionOptions?.actorUserId ?? null,
+      );
       const resumed = yield* adapter
-        .startSession({
-          threadId: input.binding.threadId,
-          provider: input.binding.provider,
-          providerInstanceId: bindingInstanceId,
-          ...(persistedCwd ? { cwd: persistedCwd } : {}),
-          ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
-        })
+        .startSession(
+          {
+            threadId: input.binding.threadId,
+            provider: input.binding.provider,
+            providerInstanceId: bindingInstanceId,
+            ...(persistedCwd ? { cwd: persistedCwd } : {}),
+            ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+            ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+            runtimeMode: input.binding.runtimeMode ?? "full-access",
+          },
+          // T3-CUSTOM(expbkt3): a recovered session is a freshly spawned
+          // process, so it needs the identity markers too.
+          withSessionIdentityEnvironment(executionOptions),
+        )
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
         yield* clearMcpSession(input.binding.threadId);
@@ -1403,7 +1475,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
-    function* (threadId, rawInput) {
+    function* (threadId, rawInput, executionOptions) {
       const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.startSession",
         schema: ProviderSessionStartInput,
@@ -1508,14 +1580,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        // T3-CUSTOM(expbkt3): MCP credential bound to the acting user.
+        yield* prepareMcpSession(
+          threadId,
+          resolvedInstanceId,
+          executionOptions?.actorUserId ?? null,
+        );
         const session = yield* adapter
-          .startSession({
-            ...input,
-            providerInstanceId: resolvedInstanceId,
-            ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
-            ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
-          })
+          .startSession(
+            {
+              ...input,
+              providerInstanceId: resolvedInstanceId,
+              ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
+              ...(effectiveResumeCursor !== undefined
+                ? { resumeCursor: effectiveResumeCursor }
+                : {}),
+            },
+            // T3-CUSTOM(expbkt3): fold the session-identity markers into the
+            // environment the adapter spawns with.
+            withSessionIdentityEnvironment(executionOptions),
+          )
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 
         if (session.provider !== adapter.provider) {
@@ -1536,6 +1620,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
+          // T3-CUSTOM(expbkt3): recovery must bring the thread's identity back.
+          sourceControlIdentityRequired: executionOptions?.environment !== undefined,
         });
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
@@ -2416,17 +2502,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
-    sendTurn,
+    // T3-CUSTOM(expbkt3): BEGIN — calls that may lazily recover a session carry identity.
+    sendTurn: (input, options) => withExecutionOptions(sendTurn(input), options),
     compactThread,
-    interruptTurn,
-    respondToRequest,
-    respondToUserInput,
+    interruptTurn: (input, options) => withExecutionOptions(interruptTurn(input), options),
+    respondToRequest: (input, options) => withExecutionOptions(respondToRequest(input), options),
+    respondToUserInput: (input, options) =>
+      withExecutionOptions(respondToUserInput(input), options),
+    // T3-CUSTOM(expbkt3): END
     stopSession,
     listSessions,
     getCapabilities,
     getInstanceInfo,
     assertConversationRollbackSupported,
-    rollbackConversation,
+    // T3-CUSTOM(expbkt3): rollback may lazily recover a session too.
+    rollbackConversation: (input, options) =>
+      withExecutionOptions(rollbackConversation(input), options),
     uploadFeedback,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each

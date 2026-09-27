@@ -13,8 +13,9 @@ layer("041_AuthSessionClientConnection", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 40 });
-      yield* runMigrations({ toMigrationInclusive: 41 });
+      // T3-CUSTOM(expbkt3): upstream's 040/041 register as 1018/1019 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1018 });
+      yield* runMigrations({ toMigrationInclusive: 1019 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(auth_sessions)

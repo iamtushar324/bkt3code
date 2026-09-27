@@ -120,6 +120,40 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
     ),
   );
 
+  // T3-CUSTOM(expbkt3): BEGIN — team mode must stay invisible to `bootstrapMethods`.
+  //
+  // `bootstrapMethods` is a closed literal union in stock T3 Code. A fork-only
+  // entry there made the whole `server.getConfig` reply undecodable for App Store
+  // clients: they paired, opened the socket, read the config and hung up. The
+  // `clerk` descriptor is an additive optional field, which such clients ignore.
+  it.effect("advertises team mode with the clerk descriptor and no extra bootstrap method", () =>
+    Effect.gen(function* () {
+      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+
+      expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+      expect(descriptor.clerk).toEqual({
+        publishableKey: "pk_test_team",
+        organizationId: "org_team",
+      });
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthPolicyLayer({
+          mode: "web",
+          host: "0.0.0.0",
+          clerkAuth: {
+            secretKey: "sk_test_team",
+            publishableKey: "pk_test_team",
+            organizationId: "org_team",
+            defaultOwnerUserId: undefined,
+            defaultOwnerEmail: undefined,
+          },
+        }),
+      ),
+    ),
+  );
+  // T3-CUSTOM(expbkt3): END
+
   it.effect("isolates wildcard-bound web development sessions", () =>
     Effect.gen(function* () {
       const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;

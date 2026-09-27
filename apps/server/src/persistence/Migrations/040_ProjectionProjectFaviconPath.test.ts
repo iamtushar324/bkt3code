@@ -13,8 +13,9 @@ layer("040_ProjectionProjectFaviconPath", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
-      yield* runMigrations({ toMigrationInclusive: 40 });
+      // T3-CUSTOM(expbkt3): upstream's 039/040 register as 1017/1018 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1017 });
+      yield* runMigrations({ toMigrationInclusive: 1018 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_projects)

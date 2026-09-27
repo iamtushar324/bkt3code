@@ -30,6 +30,10 @@ function makeReadModel(overrides: Partial<OrchestrationThread> = {}): Orchestrat
         id: THREAD_ID,
         projectId: ProjectId.make("project-1"),
         title: "Thread",
+        // T3-CUSTOM(expbkt3): fork-required thread ownership and summaries.
+        sourceControlProfileId: null,
+        ownerUserId: null,
+        memberUserIds: [],
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",

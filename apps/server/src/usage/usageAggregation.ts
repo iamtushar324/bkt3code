@@ -23,7 +23,9 @@ import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
  * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
  * assembling the day from `Date` getters (those are host-local only).
  */
-function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
+// T3-CUSTOM(expbkt3): re-exported for the fork's per-thread usage aggregation
+// (src/usage/threadUsage.ts). Upstream un-exported it when nothing else used it.
+export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
   try {
     format = new Intl.DateTimeFormat("en-CA", {

@@ -42,6 +42,53 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
   },
 );
 
+export const threadExecutionTransitionsTotal = Metric.counter(
+  "t3_thread_execution_transitions_total",
+  { description: "Authoritative thread execution state transitions." },
+);
+
+export const threadExecutionsActive = Metric.gauge("t3_thread_executions_active", {
+  description: "Current thread execution snapshots by provider and activity state.",
+});
+
+export const threadExecutionStopDuration = Metric.timer("t3_thread_execution_stop_duration", {
+  description: "Time from an authoritative stop request to its returned terminal/failure state.",
+});
+
+export const threadExecutionStopAcknowledgementDuration = Metric.timer(
+  "t3_thread_execution_stop_acknowledgement_duration",
+  { description: "Provider-native turn interrupt acknowledgement latency." },
+);
+
+export const threadExecutionStopEscalationsTotal = Metric.counter(
+  "t3_thread_execution_stop_escalations_total",
+  { description: "Stops escalated from provider interrupt to process-tree termination." },
+);
+
+export const threadExecutionTerminationOutcomesTotal = Metric.counter(
+  "t3_thread_execution_termination_outcomes_total",
+  { description: "Verified, forced, and unverifiable provider process-tree termination outcomes." },
+);
+
+export const threadExecutionGenerationRejectionsTotal = Metric.counter(
+  "t3_thread_execution_generation_rejections_total",
+  { description: "Provider lifecycle events rejected by session generation fencing." },
+);
+
+export const threadExecutionInvariantRepairsTotal = Metric.counter(
+  "t3_thread_execution_invariant_repairs_total",
+  { description: "Execution/provider/projection mismatches repaired by the periodic audit." },
+);
+
+// T3-CUSTOM(expbkt3): leaked provider runtime processes reaped at the OS level.
+export const providerRuntimeOrphanProcessesKilledTotal = Metric.counter(
+  "t3_provider_runtime_orphan_processes_killed_total",
+  {
+    description:
+      "Provider runtime OS processes killed by the session reaper because no live session owned them.",
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });
@@ -57,6 +104,16 @@ export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
 export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_events_total", {
   description: "Total canonical provider runtime events processed.",
 });
+
+export const providerRateLimitUpdatesTotal = Metric.counter(
+  "t3_provider_rate_limit_updates_total",
+  { description: "Normalized provider rate-limit updates processed." },
+);
+
+export const providerRateLimitRefreshFailuresTotal = Metric.counter(
+  "t3_provider_rate_limit_refresh_failures_total",
+  { description: "Provider rate-limit refresh failures." },
+);
 
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
@@ -83,6 +140,12 @@ export const increment = (
   attributes: Readonly<Record<string, unknown>>,
   amount = 1,
 ) => Metric.update(Metric.withAttributes(metric, metricAttributes(attributes)), amount);
+
+export const setMetric = (
+  metric: Metric.Metric<number, unknown>,
+  attributes: Readonly<Record<string, unknown>>,
+  value: number,
+) => Metric.update(Metric.withAttributes(metric, metricAttributes(attributes)), value);
 
 export interface WithMetricsOptions {
   readonly counter?: Metric.Metric<number, unknown>;

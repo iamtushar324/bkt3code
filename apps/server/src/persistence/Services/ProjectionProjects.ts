@@ -6,6 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
+// T3-CUSTOM(expbkt3): expose per-project thread creation defaults in the read model.
 import {
   IsoDateTime,
   ModelSelection,
@@ -13,6 +14,7 @@ import {
   ProjectId,
   ProjectScript,
   ThreadEnvMode,
+  UserId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -31,6 +33,7 @@ export const ProjectionProject = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
+  ownerUserId: Schema.NullOr(UserId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

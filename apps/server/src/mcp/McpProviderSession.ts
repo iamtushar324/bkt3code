@@ -1,12 +1,35 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  BIFROST_MCP_INTEGRATION_ID,
+  type EnvironmentId,
+  type PersonalMcpAuthMode,
+  type PersonalMcpIntegrationId,
+  type ProviderInstanceId,
+  type ThreadId,
+  type UserId,
+} from "@t3tools/contracts";
+
+export interface McpUpstreamServerConfig {
+  readonly id: PersonalMcpIntegrationId;
+  readonly name: string;
+  readonly endpoint: string;
+  readonly authMode: PersonalMcpAuthMode;
+  readonly allowedTools: ReadonlyArray<string>;
+}
+
+export function upstreamMcpServerName(server: McpUpstreamServerConfig): string {
+  if (server.id === BIFROST_MCP_INTEGRATION_ID) return BIFROST_MCP_INTEGRATION_ID;
+  return `t3_user_${server.id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly actorUserId: UserId | null;
   readonly endpoint: string;
   readonly authorizationHeader: string;
+  readonly upstreamServers: ReadonlyArray<McpUpstreamServerConfig>;
   /** Capabilities the credential grants ("preview", "device"). */
   readonly capabilities: ReadonlySet<string>;
   /**

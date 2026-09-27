@@ -16,7 +16,10 @@ import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
-import { isThreadDetailEvent } from "../ws.ts";
+// T3-CUSTOM(expbkt3): import from the module that owns this predicate rather than
+// from ws.ts, which only imports it. Upstream moved it out of ws.ts; pointing at
+// the real owner keeps this fork test off a merge hot-spot.
+import { isThreadDetailEvent } from "./threadDetailEvent.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
@@ -55,6 +58,9 @@ function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): Orch
     snapshotSequence: 0,
     projects: [
       {
+        // T3-CUSTOM(expbkt3): fork-required ownership fields.
+        ownerUserId: null,
+        memberUserIds: [],
         id: ProjectId.make("project-1"),
         title: "Project",
         workspaceRoot: "/repo",
@@ -79,6 +85,10 @@ function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): Orch
       {
         id: THREAD_ID,
         projectId: ProjectId.make("project-1"),
+        // T3-CUSTOM(expbkt3): fork-required thread ownership and summaries.
+        sourceControlProfileId: null,
+        ownerUserId: null,
+        memberUserIds: [],
         title: "Thread",
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",

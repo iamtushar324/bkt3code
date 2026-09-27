@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ThreadId,
+  TurnId,
   ModelSelection,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -30,6 +31,8 @@ import {
   type OrchestrationIntegrationHarness,
 } from "./OrchestrationEngineHarness.integration.ts";
 import { checkpointRefForThreadTurn } from "../src/checkpointing/Utils.ts";
+import { OrchestrationEngineService } from "../src/orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import type {
   CheckpointDiffFinalizedReceipt,
   TurnProcessingQuiescedReceipt,
@@ -149,8 +152,24 @@ const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: harness.workspaceDir,
+      sourceControlProfileId: null,
       createdAt,
     });
+  });
+
+const waitForStableSession = (harness: OrchestrationIntegrationHarness) =>
+  Effect.gen(function* () {
+    let previous: string | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const thread = yield* harness.waitForThread(THREAD_ID, (entry) => entry.session != null);
+      const updatedAt = thread.session!.updatedAt;
+      if (previous === updatedAt) {
+        return thread;
+      }
+      previous = updatedAt;
+      yield* Effect.sleep(100);
+    }
+    return yield* Effect.die(new IntegrationWaitTimeoutError({ description: "stable session" }));
   });
 
 const startTurn = (input: {
@@ -292,6 +311,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           runtimeMode: "full-access",
           branch: null,
           worktreePath: harness.workspaceDir,
+          sourceControlProfileId: null,
           createdAt,
         });
 

@@ -22,6 +22,7 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   readCodexThread,
+  readRouteFields,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
@@ -843,15 +844,20 @@ describe("codexSessionAppServerArgs", () => {
 
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "Thread does not exist",
-        }),
-      ),
-      true,
-    );
+    for (const errorMessage of [
+      "Thread does not exist",
+      "no rollout found for thread id 019f8392-a04d-7991-86de-4e587e934349",
+    ]) {
+      NodeAssert.equal(
+        isRecoverableThreadResumeError(
+          new CodexErrors.CodexAppServerRequestError({
+            code: -32603,
+            errorMessage,
+          }),
+        ),
+        true,
+      );
+    }
   });
 
   it("matches a missing rollout for a known thread id", () => {
@@ -1007,7 +1013,7 @@ describe("openCodexThread", () => {
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
-                errorMessage: "thread not found",
+                errorMessage: "no rollout found for thread id 019f8392-a04d-7991-86de-4e587e934349",
               }),
             );
           },
@@ -1068,4 +1074,68 @@ describe("openCodexThread", () => {
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
     }),
   );
+});
+
+// T3-CUSTOM(expbkt3): a codex notification carrying an empty turnId/itemId used
+// to throw out of readRouteFields. The throw is a DEFECT, so it escaped the
+// notification pipeline's error handling, killed the fiber draining
+// `serverNotifications`, and left the session deaf for the rest of its life:
+// codex ran the turn to completion while T3 recorded no turn.started, no items
+// and no assistant message, and the watchdog reported
+// `provider-turn-never-started`.
+describe("readRouteFields", () => {
+  it("brands well-formed wire ids", () => {
+    const route = readRouteFields({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { id: "item-1" },
+      },
+    } as never);
+
+    NodeAssert.equal(route.turnId, "turn-1");
+    NodeAssert.equal(route.itemId, "item-1");
+  });
+
+  it("degrades an empty turnId to undefined instead of throwing", () => {
+    const route = readRouteFields({
+      method: "error",
+      params: {
+        threadId: "thread-1",
+        turnId: "",
+        willRetry: false,
+        error: { message: "boom" },
+      },
+    } as never);
+
+    NodeAssert.equal(route.turnId, undefined);
+  });
+
+  it("keeps a usable itemId when only the turnId is missing", () => {
+    const route = readRouteFields({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread-1",
+        turnId: "   ",
+        itemId: "item-2",
+        delta: "hello",
+      },
+    } as never);
+
+    NodeAssert.equal(route.turnId, undefined);
+    NodeAssert.equal(route.itemId, "item-2");
+  });
+
+  it("tolerates an absent turn id on turn lifecycle notifications", () => {
+    const route = readRouteFields({
+      method: "turn/started",
+      params: {
+        threadId: "thread-1",
+        turn: { id: undefined },
+      },
+    } as never);
+
+    NodeAssert.equal(route.turnId, undefined);
+  });
 });

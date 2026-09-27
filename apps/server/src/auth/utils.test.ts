@@ -43,6 +43,7 @@ describe("deriveAuthClientMetadata", () => {
         label: "T3 Code Mobile",
         deviceType: "mobile",
         os: "iOS",
+        appVersion: "0.0.31-nightly.20260806.1",
       },
     });
 
@@ -52,6 +53,7 @@ describe("deriveAuthClientMetadata", () => {
       deviceType: "mobile",
       ipAddress: "192.168.213.72",
       os: "iOS",
+      appVersion: "0.0.31-nightly.20260806.1",
     });
     expect(metadata.userAgent).toContain("Electron/36.3.2");
   });

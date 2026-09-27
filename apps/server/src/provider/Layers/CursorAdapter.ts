@@ -44,6 +44,8 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+// T3-CUSTOM(expbkt3): per-thread source-control identity for spawned agents.
+import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -489,7 +491,8 @@ export function makeCursorAdapter(
         });
       });
 
-    const startSession: CursorAdapterShape["startSession"] = (input) =>
+    // T3-CUSTOM(expbkt3): execution options carry the thread's source-control identity.
+    const startSession: CursorAdapterShape["startSession"] = (input, executionOptions) =>
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -545,14 +548,24 @@ export function makeCursorAdapter(
             : cursorSettings;
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          // T3-CUSTOM(expbkt3): BEGIN per-session source-control identity env.
+          const sessionEnvironment = executionOptions?.environment
+            ? mergeSourceControlEnvironment(
+                options?.environment ?? process.env,
+                executionOptions.environment,
+              )
+            : options?.environment;
+          // T3-CUSTOM(expbkt3): END
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
-            ...(options?.environment || mcpSession?.agentDeviceEnvironment
+            // T3-CUSTOM(expbkt3): BEGIN per-session source-control identity env.
+            ...(sessionEnvironment || mcpSession?.agentDeviceEnvironment
               ? {
                   environment: McpProviderSession.withAgentDeviceEnvironment(
-                    options?.environment ?? process.env,
+                    sessionEnvironment ?? process.env,
                     mcpSession,
                   ),
+                  // T3-CUSTOM(expbkt3): END
                 }
               : {}),
             childProcessSpawner,
@@ -574,6 +587,19 @@ export function makeCursorAdapter(
                         },
                       ],
                     },
+                    // T3-CUSTOM(expbkt3): BEGIN personal upstream MCP servers.
+                    ...mcpSession.upstreamServers.map((server) => ({
+                      type: "http" as const,
+                      name: McpProviderSession.upstreamMcpServerName(server),
+                      url: server.endpoint,
+                      headers: [
+                        {
+                          name: "Authorization",
+                          value: mcpSession.authorizationHeader,
+                        },
+                      ],
+                    })),
+                    // T3-CUSTOM(expbkt3): END
                   ],
                 }
               : {}),

@@ -26,6 +26,17 @@ export interface BootstrapGrant {
   readonly subject: string;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
+  // T3-CUSTOM(expbkt3): BEGIN - the grant may only be redeemed by a caller that
+  // presented a verified DPoP proof, and the issued token is bound to that key.
+  // Distinct from `proofKeyThumbprint`, which pre-binds to a key already known to
+  // the issuer. Optional so seeded (desktop-bootstrap) grants are unaffected.
+  readonly requiresProofOfPossession?: boolean;
+  /**
+   * Minted by a member for one of their own devices. Carries a shorter session
+   * life and counts against that member's device cap.
+   */
+  readonly selfIssued?: boolean;
+  // T3-CUSTOM(expbkt3): END
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -56,6 +67,19 @@ export class BootstrapCredentialProofKeyMismatchError extends Schema.TaggedError
   }
 }
 
+// T3-CUSTOM(expbkt3): BEGIN - redemption of a proof-of-possession credential with no
+// DPoP proof. Separate from the pre-bound `ProofKeyMismatch` case so the diagnostic
+// says which of the two rules was broken.
+export class BootstrapCredentialProofOfPossessionRequiredError extends Schema.TaggedError<BootstrapCredentialProofOfPossessionRequiredError>()(
+  "BootstrapCredentialProofOfPossessionRequiredError",
+  {},
+) {
+  override get message(): string {
+    return "Bootstrap credential must be redeemed with a DPoP proof.";
+  }
+}
+// T3-CUSTOM(expbkt3): END
+
 export class UnavailableBootstrapCredentialError extends Schema.TaggedError<UnavailableBootstrapCredentialError>()(
   "UnavailableBootstrapCredentialError",
   {},
@@ -69,6 +93,8 @@ export const BootstrapCredentialInvalidError = Schema.Union([
   UnknownBootstrapCredentialError,
   ExpiredBootstrapCredentialError,
   BootstrapCredentialProofKeyMismatchError,
+  // T3-CUSTOM(expbkt3): proof-of-possession rule.
+  BootstrapCredentialProofOfPossessionRequiredError,
   UnavailableBootstrapCredentialError,
 ]);
 export type BootstrapCredentialInvalidError = typeof BootstrapCredentialInvalidError.Type;
@@ -200,6 +226,10 @@ export class PairingGrantStore extends Context.Service<
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
+      // T3-CUSTOM(expbkt3): BEGIN - see BootstrapGrant.
+      readonly requiresProofOfPossession?: boolean;
+      readonly selfIssued?: boolean;
+      // T3-CUSTOM(expbkt3): END
       /**
        * "startup" marks the credential the server mints for itself at boot,
        * which gets the long dev TTL when a dev URL is configured.
@@ -218,6 +248,14 @@ export class PairingGrantStore extends Context.Service<
         readonly proofKeyThumbprint?: string;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
+    // T3-CUSTOM(expbkt3): BEGIN - read a redeemable grant's subject without consuming
+    // it, so `/oauth/token` can decide whether an absent `identity_token` is actually
+    // missing before it burns the credential. Returns `null` for anything that is not
+    // currently redeemable, which the caller treats exactly as "no identity".
+    readonly peekSubject: (
+      credential: string,
+    ) => Effect.Effect<string | null, BootstrapCredentialInternalError>;
+    // T3-CUSTOM(expbkt3): END
   }
 >()("t3/auth/PairingGrantStore") {}
 
@@ -404,6 +442,11 @@ export const make = Effect.gen(function* () {
         subject,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
+        // T3-CUSTOM(expbkt3): BEGIN - both default off, so every existing caller
+        // writes exactly the row it writes today.
+        requiresProofOfPossession: input?.requiresProofOfPossession === true,
+        selfIssued: input?.selfIssued === true,
+        // T3-CUSTOM(expbkt3): END
         createdAt: now,
         expiresAt: expiresAt,
       })
@@ -528,6 +571,11 @@ export const make = Effect.gen(function* () {
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
+          // T3-CUSTOM(expbkt3): BEGIN - carried so callers can assert the rule a second
+          // time, and so redemption knows to shorten the session it issues.
+          requiresProofOfPossession: consumed.value.requiresProofOfPossession,
+          selfIssued: consumed.value.selfIssued,
+          // T3-CUSTOM(expbkt3): END
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }
@@ -558,9 +606,42 @@ export const make = Effect.gen(function* () {
         return yield* new BootstrapCredentialProofKeyMismatchError({});
       }
 
+      // T3-CUSTOM(expbkt3): BEGIN - the link is otherwise redeemable, so the only
+      // remaining reason `consumeAvailable` declined it is the proof-of-possession
+      // gate. The credential is deliberately still unconsumed.
+      if (matching.value.requiresProofOfPossession && !input?.proofKeyThumbprint) {
+        return yield* new BootstrapCredentialProofOfPossessionRequiredError({});
+      }
+      // T3-CUSTOM(expbkt3): END
+
       return yield* new UnavailableBootstrapCredentialError({});
     },
   );
+
+  // T3-CUSTOM(expbkt3): BEGIN - see the service declaration. Deliberately mirrors the
+  // availability rules `consume` applies (unrevoked, unconsumed, unexpired) rather than
+  // reporting a subject for a grant that could not be redeemed anyway.
+  const peekSubject: PairingGrantStore["Service"]["peekSubject"] = Effect.fn(
+    "PairingGrantStore.peekSubject",
+  )(function* (credential) {
+    const now = yield* DateTime.now;
+    const seeded = (yield* Ref.get(seededGrantsRef)).get(credential);
+    if (seeded) {
+      return DateTime.isGreaterThanOrEqualTo(now, seeded.expiresAt) ? null : seeded.subject;
+    }
+    const matching = yield* pairingLinks
+      .getByCredential({ credential })
+      .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
+    if (Option.isNone(matching)) {
+      return null;
+    }
+    const link = matching.value;
+    if (link.revokedAt !== null || link.consumedAt !== null) {
+      return null;
+    }
+    return DateTime.isGreaterThanOrEqualTo(now, link.expiresAt) ? null : link.subject;
+  });
+  // T3-CUSTOM(expbkt3): END
 
   return PairingGrantStore.of({
     issueOneTimeToken,
@@ -570,6 +651,8 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     consume,
+    // T3-CUSTOM(expbkt3): non-consuming subject read for the token exchange.
+    peekSubject,
   });
 });
 

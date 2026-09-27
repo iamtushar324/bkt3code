@@ -78,6 +78,8 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         devAllowedOrigins: [],
         noBrowser: false,
         startupPresentation: "browser",
+        // T3-CUSTOM(expbkt3): fork field
+        clerkAuth: undefined,
         ...overrides,
       });
     }),

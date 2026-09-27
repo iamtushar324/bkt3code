@@ -27,6 +27,9 @@ const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => (
   id: ProjectId.make("project-1"),
   title: "Imported",
   workspaceRoot,
+  // T3-CUSTOM(expbkt3): explicit project ownership for local import fixtures.
+  ownerUserId: null,
+  memberUserIds: [],
   defaultModelSelection: null,
   scripts: [],
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -36,6 +39,10 @@ const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => (
 /** Only `getShellSnapshot` is exercised; the rest must not be called. */
 const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<string>) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+    // T3-CUSTOM(expbkt3): fork query additions are unused in scanner fixtures.
+    listLatestProposedPlansForActiveThreads: () => Effect.die("unused"),
+    getThreadAccessById: () => Effect.die("unused"),
+    listThreadShellsByProjectId: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getUserInputActivity: () => Effect.die("unused"),
     listActivitiesByKind: () => Effect.die("unused"),
@@ -63,6 +70,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
     getThreadShellById: () => Effect.die("unused"),
     getThreadRuntimeContext: () => Effect.die("unused"),
     getTurnStartMessage: () => Effect.die("unused"),
+    countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),
     searchThreads: () => Effect.die("unused"),

@@ -40,9 +40,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode,
           branch,
           worktree_path,
+          source_control_profile_id,
           linked_pull_request_json,
           branch_pull_request_json,
           latest_turn_id,
+          owner_user_id,
           created_at,
           updated_at,
           archived_at,
@@ -51,6 +53,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           unsettled_at,
           snoozed_until,
           snoozed_at,
+          priority,
+          custom_group, -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url,
+          mattermost_thread_url,
+          parent_thread_id,
           pinned_at,
           pin_order_key,
           active_order_key,
@@ -60,6 +67,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_user_message_at,
           pending_approval_count,
           pending_user_input_count,
+          -- T3-CUSTOM(expbkt3): non-blocking async question counter.
+          pending_async_user_input_count,
           has_actionable_proposed_plan,
           deleted_at
         )
@@ -73,9 +82,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
+          ${row.sourceControlProfileId},
           ${row.linkedPullRequest === undefined || row.linkedPullRequest === null ? null : JSON.stringify(row.linkedPullRequest)},
           ${row.branchPullRequest === undefined || row.branchPullRequest === null ? null : JSON.stringify(row.branchPullRequest)},
           ${row.latestTurnId},
+          ${row.ownerUserId},
           ${row.createdAt},
           ${row.updatedAt},
           ${row.archivedAt},
@@ -84,6 +95,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.unsettledAt},
           ${row.snoozedUntil},
           ${row.snoozedAt},
+          ${row.priority},
+          ${row.customGroup ?? null}, -- T3-CUSTOM(expbkt3): custom sidebar group.
+          ${row.linearIssueUrl ?? null},
+          ${row.mattermostThreadUrl ?? null},
+          ${row.parentThreadId ?? null},
           ${row.pinnedAt},
           ${row.pinOrderKey ?? null},
           ${row.activeOrderKey ?? null},
@@ -93,6 +109,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.latestUserMessageAt},
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
+          -- T3-CUSTOM(expbkt3): non-blocking async question counter.
+          ${row.pendingAsyncUserInputCount ?? 0},
           ${row.hasActionableProposedPlan},
           ${row.deletedAt}
         )
@@ -106,9 +124,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          source_control_profile_id = excluded.source_control_profile_id,
           linked_pull_request_json = excluded.linked_pull_request_json,
           branch_pull_request_json = excluded.branch_pull_request_json,
           latest_turn_id = excluded.latest_turn_id,
+          owner_user_id = COALESCE(excluded.owner_user_id, projection_threads.owner_user_id),
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           archived_at = excluded.archived_at,
@@ -117,6 +137,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           unsettled_at = excluded.unsettled_at,
           snoozed_until = excluded.snoozed_until,
           snoozed_at = excluded.snoozed_at,
+          priority = excluded.priority,
+          custom_group = excluded.custom_group, -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url = excluded.linear_issue_url,
+          mattermost_thread_url = excluded.mattermost_thread_url,
+          parent_thread_id = excluded.parent_thread_id,
           pinned_at = excluded.pinned_at,
           pin_order_key = excluded.pin_order_key,
           active_order_key = excluded.active_order_key,
@@ -126,6 +151,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_user_message_at = excluded.latest_user_message_at,
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
+          -- T3-CUSTOM(expbkt3): non-blocking async question counter.
+          pending_async_user_input_count = excluded.pending_async_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
           deleted_at = excluded.deleted_at
       `,
@@ -146,9 +173,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -157,6 +186,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -166,10 +200,66 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): non-blocking async question counter.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
+      `,
+  });
+
+  // T3-CUSTOM(expbkt3): session-history backfill coverage set.
+  const listArchivedOrDeletedRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadDbRow,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          title_state_json AS "titleState",
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          source_control_profile_id AS "sourceControlProfileId",
+          linked_pull_request_json AS "linkedPullRequest",
+          branch_pull_request_json AS "branchPullRequest",
+          latest_turn_id AS "latestTurnId",
+          owner_user_id AS "ownerUserId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
+          priority,
+          custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
+          linear_issue_url AS "linearIssueUrl",
+          mattermost_thread_url AS "mattermostThreadUrl",
+          parent_thread_id AS "parentThreadId",
+          pinned_at AS "pinnedAt",
+          pin_order_key AS "pinOrderKey",
+          active_order_key AS "activeOrderKey",
+          auto_settle_disabled_at AS "autoSettleDisabledAt",
+          title_regeneration_request_id AS "titleRegenerationRequestId",
+          title_regeneration_started_at AS "titleRegenerationStartedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          -- T3-CUSTOM(expbkt3): non-blocking async question counter.
+          pending_async_user_input_count AS "pendingAsyncUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE archived_at IS NOT NULL
+           OR deleted_at IS NOT NULL
+        ORDER BY created_at ASC, thread_id ASC
       `,
   });
 
@@ -183,9 +273,19 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
+  // T3-CUSTOM(expbkt3): session-history backfill coverage set.
+  const listArchivedOrDeleted: ProjectionThreadRepositoryShape["listArchivedOrDeleted"] = () =>
+    listArchivedOrDeletedRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadRepository.listArchivedOrDeleted:query"),
+      ),
+    );
+
   return {
     upsert,
     getById,
+    // T3-CUSTOM(expbkt3): session-history backfill coverage set.
+    listArchivedOrDeleted,
   } satisfies ProjectionThreadRepositoryShape;
 });
 

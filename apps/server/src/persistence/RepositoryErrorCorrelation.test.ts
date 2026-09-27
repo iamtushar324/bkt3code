@@ -35,6 +35,7 @@ describe("persistence error correlation", () => {
 
       yield* sessions.create({
         sessionId,
+        userId: null,
         subject,
         scopes,
         method: "browser-session-cookie",
@@ -45,6 +46,7 @@ describe("persistence error correlation", () => {
           deviceType: "desktop",
           os: null,
           browser: null,
+          appVersion: null,
         },
         issuedAt,
         expiresAt,
@@ -70,6 +72,7 @@ describe("persistence error correlation", () => {
       const createError = yield* Effect.flip(
         sessions.create({
           sessionId,
+          userId: null,
           subject,
           scopes,
           method: "browser-session-cookie",
@@ -80,6 +83,7 @@ describe("persistence error correlation", () => {
             deviceType: "desktop",
             os: null,
             browser: null,
+            appVersion: null,
           },
           issuedAt,
           expiresAt,
@@ -164,6 +168,8 @@ describe("persistence error correlation", () => {
           subject,
           label: null,
           proofKeyThumbprint: null,
+          requiresProofOfPossession: false,
+          selfIssued: false,
           createdAt: issuedAt,
           expiresAt,
         }),

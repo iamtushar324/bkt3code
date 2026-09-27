@@ -6,13 +6,17 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../Migrations.ts";
 import migrateActiveOrderKey from "./049_ProjectionThreadsActiveOrderKey.ts";
 
+// T3-CUSTOM(expbkt3): upstream ships these migrations at ids 48-51; the fork
+// remaps them into its 1000+ lane (48->1031, 49->1032, 50->1033, 51->1034), so
+// these boundaries follow the fork registry in Migrations.ts, not upstream's.
+
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
   "049_ProjectionThreadsActiveOrderKey",
   (it) => {
     it.effect("migrates old threads without changing their timestamps or assigning an order", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 48 });
+        yield* runMigrations({ toMigrationInclusive: 1031 });
         const now = "2026-01-01T00:00:00.000Z";
         yield* sql`
         INSERT INTO projection_threads (
@@ -23,7 +27,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', ${now}, ${now}
         )
       `;
-        yield* runMigrations({ toMigrationInclusive: 49 });
+        yield* runMigrations({ toMigrationInclusive: 1032 });
         const migrated = yield* sql<{ readonly activeOrderKey: string | null }>`
         SELECT active_order_key AS "activeOrderKey" FROM projection_threads WHERE thread_id = 'thread-1'
       `;

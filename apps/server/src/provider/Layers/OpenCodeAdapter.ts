@@ -35,6 +35,11 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+// T3-CUSTOM(expbkt3): per-thread source-control identity for spawned servers.
+import {
+  carriesSourceControlIdentity,
+  mergeSourceControlEnvironment,
+} from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -2829,10 +2834,33 @@ export function makeOpenCodeAdapter(
     });
 
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
-      function* (input) {
+      // T3-CUSTOM(expbkt3): execution options carry the thread's source-control identity.
+      function* (input, executionOptions) {
         const binaryPath = openCodeSettings.binaryPath;
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
+        // T3-CUSTOM(expbkt3): BEGIN — only a source-control identity is a hard stop:
+        // an external server takes no environment from us. The additive session
+        // identity markers ride in the same field and are simply not delivered.
+        if (
+          serverUrl &&
+          executionOptions?.environment &&
+          carriesSourceControlIdentity(executionOptions.environment)
+        ) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue:
+              "Thread-owned GitHub attribution is not supported by an external OpenCode server.",
+          });
+        }
+        const sessionEnvironment = executionOptions?.environment
+          ? mergeSourceControlEnvironment(
+              options?.environment ?? process.env,
+              executionOptions.environment,
+            )
+          : options?.environment;
+        // T3-CUSTOM(expbkt3): END
         const directory = input.cwd ?? serverConfig.cwd;
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
@@ -2857,8 +2885,9 @@ export function makeOpenCodeAdapter(
                 directory,
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
+                // T3-CUSTOM(expbkt3): per-session source-control identity env.
                 environment: McpProviderSession.withAgentDeviceEnvironment(
-                  options?.environment ?? process.env,
+                  sessionEnvironment ?? process.env,
                   mcpSession,
                 ),
               });
@@ -2881,6 +2910,23 @@ export function makeOpenCodeAdapter(
                     },
                   }),
                 );
+                // T3-CUSTOM(expbkt3): BEGIN personal upstream MCP servers.
+                for (const upstream of mcpSession.upstreamServers) {
+                  yield* runOpenCodeSdk("mcp.add", () =>
+                    client.mcp.add({
+                      name: McpProviderSession.upstreamMcpServerName(upstream),
+                      config: {
+                        type: "remote",
+                        url: upstream.endpoint,
+                        headers: {
+                          Authorization: mcpSession.authorizationHeader,
+                        },
+                        oauth: false,
+                      },
+                    }),
+                  );
+                }
+                // T3-CUSTOM(expbkt3): END
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only

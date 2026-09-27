@@ -9,6 +9,8 @@ import { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts"
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
+  // T3-CUSTOM(expbkt3): atomic streaming-delta hot path.
+  AppendProjectionThreadMessageDeltaInput,
   AppendStreamingProjectionThreadMessage,
   GetProjectionThreadMessageInput,
   HasProjectionThreadAssistantMessageInput,
@@ -38,6 +40,7 @@ function toProjectionThreadMessage(
     role: row.role,
     text: row.text,
     isStreaming: row.isStreaming === 1,
+    sentByUserId: row.sentByUserId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -64,6 +67,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json,
           context_json,
           is_streaming,
+          sent_by_user_id,
           created_at,
           updated_at
         )
@@ -90,6 +94,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             )
           ),
           ${row.isStreaming ? 1 : 0},
+          ${row.sentByUserId},
           ${row.createdAt},
           ${row.updatedAt}
         )
@@ -108,6 +113,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.context_json
           ),
           is_streaming = excluded.is_streaming,
+          sent_by_user_id = COALESCE(
+            excluded.sent_by_user_id,
+            projection_thread_messages.sent_by_user_id
+          ),
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `;
@@ -130,6 +139,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json,
           context_json,
           is_streaming,
+          -- T3-CUSTOM(expbkt3): preserve sender identity on the upstream streaming API.
+          sent_by_user_id,
           created_at,
           updated_at
         )
@@ -142,6 +153,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${nextAttachmentsJson},
           ${nextContextJson},
           1,
+          ${row.sentByUserId},
           ${row.createdAt},
           ${row.updatedAt}
         )
@@ -160,6 +172,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.context_json
           ),
           is_streaming = 1,
+          sent_by_user_id = COALESCE(excluded.sent_by_user_id, projection_thread_messages.sent_by_user_id),
           updated_at = excluded.updated_at
       `;
     },
@@ -179,12 +192,71 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          sent_by_user_id AS "sentByUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE message_id = ${messageId}
         LIMIT 1
       `,
+  });
+
+  // T3-CUSTOM(expbkt3): let SQLite append deltas without copying the growing body into Node.
+  const appendProjectionThreadMessageDeltaRow = SqlSchema.void({
+    Request: AppendProjectionThreadMessageDeltaInput,
+    execute: (row) => {
+      const nextAttachmentsJson =
+        row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
+      const nextContextJson = row.context !== undefined ? JSON.stringify(row.context) : null;
+      return sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          context_json,
+          is_streaming,
+          sent_by_user_id,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ${row.messageId},
+          ${row.threadId},
+          ${row.turnId},
+          ${row.role},
+          ${row.delta},
+          ${nextAttachmentsJson},
+          ${nextContextJson},
+          ${row.isStreaming ? 1 : 0},
+          ${row.sentByUserId},
+          ${row.createdAt},
+          ${row.updatedAt}
+        )
+        ON CONFLICT (message_id)
+        DO UPDATE SET
+          thread_id = excluded.thread_id,
+          turn_id = COALESCE(excluded.turn_id, projection_thread_messages.turn_id),
+          role = excluded.role,
+          text = projection_thread_messages.text || excluded.text,
+          attachments_json = COALESCE(
+            excluded.attachments_json,
+            projection_thread_messages.attachments_json
+          ),
+          context_json = COALESCE(
+            excluded.context_json,
+            projection_thread_messages.context_json
+          ),
+          is_streaming = excluded.is_streaming,
+          sent_by_user_id = COALESCE(
+            excluded.sent_by_user_id,
+            projection_thread_messages.sent_by_user_id
+          ),
+          updated_at = excluded.updated_at
+      `;
+    },
   });
 
   const hasProjectionThreadAssistantMessageRow = SqlSchema.findOne({
@@ -218,6 +290,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          sent_by_user_id AS "sentByUserId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -268,6 +341,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map(Option.map(toProjectionThreadMessage)),
     );
 
+  // T3-CUSTOM(expbkt3): atomic streaming-delta hot path.
+  const appendTextDelta: ProjectionThreadMessageRepositoryShape["appendTextDelta"] = (input) =>
+    appendProjectionThreadMessageDeltaRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.appendTextDelta:query"),
+      ),
+    );
+
   const hasAssistantMessageForTurn: ProjectionThreadMessageRepositoryShape["hasAssistantMessageForTurn"] =
     (input) =>
       hasProjectionThreadAssistantMessageRow(input).pipe(
@@ -308,6 +389,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     upsert,
     appendStreaming,
     getByMessageId,
+    // T3-CUSTOM(expbkt3): atomic streaming-delta hot path.
+    appendTextDelta,
     hasAssistantMessageForTurn,
     listByThreadId,
     getLatestUserMessageAt,
