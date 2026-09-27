@@ -1,0 +1,13 @@
+# T3-CUSTOM(stage): Periodic isolated deployment check.
+[Unit]
+Description=Check for validated stage T3 updates every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+Persistent=true
+Unit=t3-stage-deploy.service
+
+[Install]
+WantedBy=timers.target
