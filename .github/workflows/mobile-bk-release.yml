@@ -1,0 +1,407 @@
+# Fork-owned. Builds the sideloadable Beknown mobile artifacts.
+#
+# There is no Expo/EAS account behind this fork and no store listing, so the
+# release is two files attached to a GitHub release:
+#
+#   bk-t3code-<version>-<sha>.apk   signed with the fork keystore, sideloaded
+#   bk-t3code-<version>-<sha>.ipa   UNSIGNED, re-signed on-device by SideStore
+#
+# WHY PUSH-TRIGGERED AND NOT PATH-FILTERED. T3 has no client/server protocol
+# handshake. A mobile binary older than the server it pairs with hard-fails its
+# orchestration subscription as an Effect defect, so it stops updating while
+# still displaying "connected". The mitigation is an artifact at every deployed
+# server SHA, and a contracts change can arrive through any file — so every push
+# to a deploy branch builds. Re-runs are idempotent (see the skip step).
+#
+# SECURITY. The android job holds the keystore secret AND runs every
+# dependency's install scripts, so it gets `contents: read` and nothing else;
+# only the publish jobs, which run no build scripts, get `contents: write`.
+# Triggers stay push/dispatch-only: DO NOT add `pull_request`,
+# `pull_request_target` or `issue_comment`, which would run fork-authored code
+# in the same job as the signing key.
+#
+# Actions are pinned to commit SHAs for the same reason.
+#
+# See docs/operations/bk-mobile-build.md.
+name: BK mobile release
+
+on:
+  push:
+    branches: [expbkmain, bkmain]
+  # NOTE: this will not appear in the Actions UI. GitHub only offers
+  # workflow_dispatch for workflows present on the DEFAULT branch, and this
+  # fork's default branch is `main` — the pure upstream mirror, which by design
+  # never carries fork-owned workflows. Declared anyway so it works if that ever
+  # changes; until then, push to expbkmain/bkmain to build.
+  workflow_dispatch:
+
+# Per branch, and NOT cancel-in-progress: cancelling mid-publish can leave a
+# half-uploaded release behind. Releases queue instead.
+concurrency:
+  group: bk-mobile-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      already-published: ${{ steps.existing.outputs.found }}
+      short-sha: ${{ steps.identity.outputs.short-sha }}
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Resolve build identity
+        id: identity
+        # app-version.ts is the single source of the version the app reports to
+        # servers, so the release tag is derived from it rather than restated.
+        run: |
+          set -euo pipefail
+          version=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' apps/mobile/app-version.ts | head -1 | tr -d '"')
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not read MOBILE_APP_VERSION from apps/mobile/app-version.ts." >&2
+            exit 1
+          fi
+          short_sha="${GITHUB_SHA::7}"
+          {
+            echo "version=$version"
+            echo "short-sha=$short_sha"
+            echo "tag=bk-mobile-v${version}-${short_sha}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building BK T3 Code ${version}+bk.${short_sha}."
+
+      - name: Skip if this commit is already released
+        id: existing
+        # Makes a re-run idempotent. Without it, re-running a green workflow
+        # publishes a second identical release for the same code.
+        run: |
+          set -uo pipefail
+          found=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+                    --jq '[.[] | select(.tag_name == "${{ steps.identity.outputs.tag }}")]
+                          | first // empty | .tag_name')
+          if [[ -n "$found" ]]; then
+            echo "::notice::${{ github.sha }} is already published as $found. Nothing to do."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  android:
+    name: Android APK
+    needs: guard
+    if: needs.guard.outputs.already-published != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Assert the build stays keyless
+        # BK builds MUST NOT carry a Clerk publishable key: identity on this
+        # fleet comes from the device-bound pairing credential. build-bk-mobile.ts
+        # refuses one too; this is the earlier, louder copy of that check.
+        run: |
+          for file in .env .env.local; do
+            if [[ -f "$file" ]] && grep -qE '^\s*[A-Z0-9_]*CLERK' "$file"; then
+              echo "::error::$file sets a Clerk variable. BK builds must be keyless." >&2
+              exit 1
+            fi
+          done
+          echo "Keyless build confirmed."
+
+      - name: Setup JDK
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Installs dependencies itself via run-install. Do NOT add a separate
+      # `pnpm install` step: this action provides `vp`, not `pnpm`.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+              - --filter=@t3tools/scripts...
+
+      - name: Decode signing keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.BK_ANDROID_KEYSTORE_BASE64 }}
+        # A missing keystore is a warning rather than an error: the APK still
+        # builds (Expo's template falls back to its shared debug key) and is
+        # still useful for a smoke test. The publish job refuses to attach an
+        # unsigned-identity APK, so nothing distributable escapes.
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            echo "::warning::BK_ANDROID_KEYSTORE_BASE64 is unset; this APK cannot be distributed." \
+                 "See docs/operations/bk-mobile-build.md."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          path="$RUNNER_TEMP/bk-mobile-release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build APK
+        env:
+          BK_GIT_SHA: ${{ github.sha }}
+          # Monotonic across CI builds so Android accepts each release as an
+          # upgrade of the last.
+          BK_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          BK_ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          BK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.BK_ANDROID_KEYSTORE_PASSWORD }}
+          BK_ANDROID_KEY_ALIAS: ${{ secrets.BK_ANDROID_KEY_ALIAS }}
+          BK_ANDROID_KEY_PASSWORD: ${{ secrets.BK_ANDROID_KEY_PASSWORD }}
+        run: node scripts/build-bk-mobile.ts --platform android
+
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bk-mobile-android-${{ github.sha }}
+          path: release/mobile/*.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  ios:
+    name: iOS IPA
+    needs: guard
+    if: needs.guard.outputs.already-published != 'true'
+    runs-on: macos-26
+    # Slower than a real Mac: the standard hosted runner is 3 vCPU / 7 GB, and
+    # this job runs `expo prebuild` (which installs pods) before xcodebuild.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    # Holds no secrets at all: the archive is deliberately unsigned, because
+    # SideStore re-signs it on the device with the user's own free Apple ID.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+              - --filter=@t3tools/scripts...
+
+      - name: Build unsigned IPA
+        env:
+          BK_GIT_SHA: ${{ github.sha }}
+          # SideStore needs a new CFBundleVersion even when app-version.ts has
+          # not changed. Workflow run numbers are monotonic across both release
+          # branches, so an expbkmain build can never look older than the last.
+          BK_IOS_BUILD_NUMBER: ${{ github.run_number }}
+        run: node scripts/build-bk-mobile.ts --platform ios
+
+      - name: Generate SideStore source
+        env:
+          BK_MOBILE_VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ipas=(release/mobile/*.ipa)
+          if [[ ${#ipas[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one IPA, found ${#ipas[@]}." >&2
+            exit 1
+          fi
+          released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          node scripts/generate-bk-mobile-source.ts \
+            --branch "$GITHUB_REF_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$BK_MOBILE_VERSION" \
+            --git-sha "$GITHUB_SHA" \
+            --build-number "$GITHUB_RUN_NUMBER" \
+            --date "$released_at" \
+            --ipa "${ipas[0]}"
+
+      - name: Upload IPA and SideStore source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bk-mobile-ios-${{ github.sha }}
+          path: |
+            release/mobile/*.ipa
+            release/mobile/bk-mobile-${{ github.ref_name }}.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [guard, android, ios]
+    # Runs when either platform produced something. `always()` plus an explicit
+    # result check, so a broken iOS toolchain does not withhold a good APK.
+    if: >-
+      always()
+      && needs.guard.outputs.already-published != 'true'
+      && (needs.android.result == 'success' || needs.ios.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The only job that can write releases, and it runs no build scripts and
+      # holds no signing key.
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: release/mobile
+          pattern: bk-mobile-*-${{ github.sha }}
+          merge-multiple: true
+
+      - name: Publish prerelease
+        # A prerelease, always: these are sideload builds pinned to one server
+        # SHA, not a general-availability app.
+        #
+        # --target is what stops the tag being cut from the default branch,
+        # which for this fork is the pure upstream mirror.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(release/mobile/*.apk release/mobile/*.ipa release/mobile/*.json)
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "::error::No artifacts to publish." >&2
+            exit 1
+          fi
+          printf 'Publishing:\n'; printf '  %s\n' "${assets[@]}"
+
+          {
+            echo "Sideload build of BK T3 Code from \`${{ github.ref_name }}\` at"
+            echo "\`${{ github.sha }}\`, reporting \`client_version\`"
+            echo "\`${{ needs.guard.outputs.version }}+bk.${{ needs.guard.outputs.short-sha }}\`."
+            echo
+            echo "- **Android**: download the \`.apk\` on the phone and install it."
+            echo "  It upgrades a previous BK build in place."
+            echo "- **iOS**: download the \`.ipa\` on your Mac and open it with SideStore,"
+            echo "  which re-signs it with your free Apple ID."
+            echo "  Add the branch's SideStore source once to receive later builds as updates."
+            echo
+            echo "Pair from **Settings → Connections** on the server this was built for,"
+            echo "then scan the QR code in the app."
+            echo
+            echo "> Install the build whose SHA matches the running server. There is no"
+            echo "> client/server protocol handshake: an older binary can silently stop"
+            echo "> receiving orchestration updates. See"
+            echo "> \`docs/operations/bk-mobile-build.md\`."
+          } > release-notes.md
+
+          gh release create "${{ needs.guard.outputs.tag }}" "${assets[@]}" \
+            --title "BK T3 Code ${{ needs.guard.outputs.version }} (${{ needs.guard.outputs.short-sha }})" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --target "${{ github.sha }}"
+
+  source:
+    name: Publish SideStore source
+    needs: [guard, ios, publish]
+    # A rerun repairs the rolling source without rebuilding when the immutable
+    # per-SHA release already exists. This makes a partial publish recoverable.
+    if: >-
+      always()
+      && (needs.guard.outputs.already-published == 'true'
+          || (needs.ios.result == 'success'
+              && needs.publish.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # No checkout and no branch code execution: this job only copies the
+      # source JSON generated by the secretless iOS job between releases.
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download source from the immutable build release
+        run: |
+          set -euo pipefail
+          source_asset="bk-mobile-${GITHUB_REF_NAME}.json"
+          mkdir -p release/mobile
+          gh release download "${{ needs.guard.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$source_asset" \
+            --dir release/mobile
+
+      - name: Publish rolling SideStore source
+        run: |
+          set -euo pipefail
+          source_tag="bk-mobile-source-${GITHUB_REF_NAME}"
+          source_asset="bk-mobile-${GITHUB_REF_NAME}.json"
+          source_path="release/mobile/${source_asset}"
+          previous_dir=$(mktemp -d)
+
+          # Retain recent immutable versions for inspection and downgrade. The
+          # freshly built version remains first because SideStore treats order,
+          # not semantic sorting, as the definition of "latest".
+          if gh release download "$source_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$source_asset" \
+            --dir "$previous_dir" 2>/dev/null; then
+            merged_source=$(mktemp)
+            jq --slurpfile previous "$previous_dir/$source_asset" '
+              .apps[0].versions = (
+                reduce (
+                  .apps[0].versions + ($previous[0].apps[0].versions // [])
+                )[] as $version (
+                  [];
+                  if any(
+                    .[];
+                    .version == $version.version
+                      and (.buildVersion // "") == ($version.buildVersion // "")
+                  ) then . else . + [$version] end
+                ) | .[:20]
+              )
+            ' "$source_path" > "$merged_source"
+            mv "$merged_source" "$source_path"
+          fi
+
+          if ! gh release view "$source_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$source_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "BK T3 Code ${GITHUB_REF_NAME} SideStore source" \
+              --notes "Rolling AltSource feed for BK T3 Code builds from ${GITHUB_REF_NAME}." \
+              --prerelease \
+              --target "$GITHUB_SHA"
+          fi
+
+          gh release upload "$source_tag" "$source_path" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          verify_dir=$(mktemp -d)
+          gh release download "$source_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$source_asset" \
+            --dir "$verify_dir"
+          cmp "$source_path" "$verify_dir/$source_asset"

@@ -1,0 +1,14 @@
+# T3-CUSTOM(expbkt3): Deploy only a CI-validated experimental branch commit.
+[Unit]
+Description=Deploy validated experimental T3 updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/repos/t3code-expbkt3
+Environment=HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v24.16.0/bin:/home/ubuntu/.local/bin:/home/ubuntu/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/ubuntu/repos/t3code-expbkt3/deploy/expbkt3/auto-deploy.sh

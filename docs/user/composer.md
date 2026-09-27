@@ -143,6 +143,17 @@ awake; it can sleep normally once recording stops.
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
 
+## Listen to a session summary
+
+In an existing thread, use **Summarize and read this session** in the composer.
+T3 Code summarizes the complete conversation, shows the result, and starts reading
+it aloud. You can stop, replay, or regenerate it.
+
+On web and desktop, choose the summary model and maximum word count under
+**Settings → Experiments → Session work summary**. On mobile, open the gear in the
+summary sheet. These settings belong to the connected environment and apply on
+every client.
+
 ## Commands and skills
 
 Type `/` for commands or `$` to add a skill from the selected environment and

@@ -1,0 +1,309 @@
+# Fork-owned. Builds and publishes the two Beknown desktop apps.
+#
+# Runs on GitHub-hosted macOS. electron-builder cannot cross-compile a mac DMG,
+# and standard GitHub-hosted runners are free and unmetered on public
+# repositories — which this repository is — so there is no reason to put a
+# signing key on somebody's laptop and wait for them to be awake.
+#
+# The signing certificate is imported from secrets into a TEMPORARY keychain
+# created per job and destroyed with the VM. See
+# docs/operations/bk-desktop-build.md for how to produce those secrets, and for
+# the self-hosted fallback if this ever needs to move back onto a real Mac.
+#
+# SECURITY. The build job is the one that holds the signing key, because
+# electron-builder signs during packaging — and it is also the job that runs
+# every dependency's install scripts. So it is given `contents: read` and
+# nothing else; only the publish job, which runs no build scripts, gets
+# `contents: write`. Triggers stay push/dispatch-only: DO NOT add
+# `pull_request`, `pull_request_target` or `issue_comment`, which would run
+# fork-authored code in the same job as the signing key.
+#
+# Actions are pinned to commit SHAs for the same reason.
+name: BK desktop release
+
+on:
+  push:
+    branches: [expbkmain, bkmain]
+  # NOTE: this will not appear in the Actions UI. GitHub only offers
+  # workflow_dispatch for workflows present on the DEFAULT branch, and this
+  # fork's default branch is `main` — the pure upstream mirror, which by design
+  # never carries fork-owned workflows. It is declared anyway so the trigger
+  # works if that ever changes; until then, push to expbkmain/bkmain to build.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Which app to build (defaults to the branch's own)"
+        required: false
+        type: choice
+        options:
+          - ""
+          - staging
+          - production
+
+# Per branch, and NOT cancel-in-progress: cancelling mid-publish can leave a
+# half-uploaded release or a dangling tag behind. Releases queue instead.
+concurrency:
+  group: bk-desktop-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-26
+    # Slower than a real Mac: the standard hosted runner is 3 vCPU / 7 GB.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+      version: ${{ steps.version.outputs.version }}
+      already-published: ${{ steps.existing.outputs.found }}
+    env:
+      T3CODE_BK_SIGNING_IDENTITY: ${{ secrets.BK_MACOS_SIGNING_IDENTITY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve channel
+        id: channel
+        run: |
+          channel="${{ inputs.channel }}"
+          if [[ -z "$channel" ]]; then
+            case "${{ github.ref_name }}" in
+              expbkmain) channel=staging ;;
+              bkmain)    channel=production ;;
+              *)
+                echo "::error::No channel mapping for branch ${{ github.ref_name }}." >&2
+                exit 1
+                ;;
+            esac
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Building the $channel app from ${{ github.ref_name }} (${{ github.sha }})."
+
+      - name: Skip if this commit is already released
+        id: existing
+        # Makes a re-run idempotent. Without this, re-running a green workflow
+        # allocates a second version for identical code and asks every client to
+        # download it.
+        # Uses the REST API rather than `gh release list`, whose --json has no
+        # targetCommitish field — only `gh release view` does, and that needs a
+        # tag we do not have yet. The API returns target_commitish on every
+        # release in one call.
+        run: |
+          found=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+                    --jq '[.[] | select(.target_commitish == "${{ github.sha }}")
+                          | select(.tag_name | contains("-${{ steps.channel.outputs.channel }}-nightly."))]
+                          | first // empty | .tag_name')
+          if [[ -n "$found" ]]; then
+            echo "::notice::${{ github.sha }} is already published as $found. Nothing to do."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assert the build stays keyless
+        if: steps.existing.outputs.found != 'true'
+        # Managed builds MUST NOT carry a Clerk publishable key. Identity and team
+        # capability come from the device-bound pairing credential. A key makes
+        # apps/web/src/main.tsx mount ElectronClerkProvider, which renders nothing
+        # until Clerk's Native API answers — the black-screen/auth failure this
+        # fork already hit once. build-bk-desktop-dmg.ts refuses it too; this is
+        # the earlier, louder copy of that check.
+        run: |
+          for file in .env .env.local; do
+            if [[ -f "$file" ]] && grep -qE '^\s*[A-Z0-9_]*CLERK' "$file"; then
+              echo "::error::$file sets a Clerk variable. Managed builds must be keyless." >&2
+              exit 1
+            fi
+          done
+          if env | grep -qE '^[A-Z0-9_]*CLERK[A-Z0-9_]*='; then
+            echo "::error::A CLERK environment variable is set. Managed builds must be keyless." >&2
+            exit 1
+          fi
+          echo "Keyless build confirmed."
+
+      - name: Import signing certificate
+        if: steps.existing.outputs.found != 'true'
+        env:
+          CERT_P12_BASE64: ${{ secrets.BK_MACOS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.BK_MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.BK_MACOS_KEYCHAIN_PASSWORD }}
+        # Squirrel.Mac validates an update against the installed app's designated
+        # requirement, so an unsigned build cannot auto-update — the publisher
+        # refuses one outright. The keychain is created per job in RUNNER_TEMP and
+        # dies with the VM, so its password protects nothing beyond this job; a
+        # random one is used when the secret is absent.
+        run: |
+          if [[ -z "$CERT_P12_BASE64" || -z "$CERT_PASSWORD" || -z "$T3CODE_BK_SIGNING_IDENTITY" ]]; then
+            echo "::error::Missing BK_MACOS_CERTIFICATE_BASE64, BK_MACOS_CERTIFICATE_PASSWORD or" \
+                 "BK_MACOS_SIGNING_IDENTITY. See docs/operations/bk-desktop-build.md." >&2
+            exit 1
+          fi
+
+          keychain="$RUNNER_TEMP/bk-signing.keychain-db"
+          keychain_password="${KEYCHAIN_PASSWORD:-$(openssl rand -base64 32)}"
+          certificate="$RUNNER_TEMP/bk-signing.p12"
+
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$certificate"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          # No auto-lock: a keychain that relocks mid-build fails at codesign.
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without this, codesign blocks on a GUI prompt that never appears.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain
+
+          rm -f "$certificate"
+
+          if ! security find-identity -v -p codesigning "$keychain" \
+               | grep -qF "$T3CODE_BK_SIGNING_IDENTITY"; then
+            echo "::error::No usable code-signing identity named" \
+                 "'$T3CODE_BK_SIGNING_IDENTITY' in the imported keychain." >&2
+            exit 1
+          fi
+          echo "Imported signing identity."
+
+      # Installs dependencies itself via run-install. Do NOT add a separate
+      # `pnpm install` step: this action provides `vp`, not `pnpm`, so a bare
+      # pnpm call fails with "command not found". Filters mirror the desktop
+      # matrix in .github/workflows/release.yml, which is the proven set for
+      # building this app.
+      - name: Setup Vite+
+        if: steps.existing.outputs.found != 'true'
+        uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop...
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        if: steps.existing.outputs.found != 'true'
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Report disk headroom
+        if: steps.existing.outputs.found != 'true'
+        # Advisory, not a gate: runner sizing is not ours to change, and a hard
+        # failure here would be unactionable. A packaged app is ~450 MB staged
+        # plus a ~158 MB DMG and a ~152 MB ZIP, so a later ENOSPC is much easier
+        # to diagnose with this number in the log.
+        run: df -h . | tail -n 1
+
+      - name: Resolve build version
+        id: version
+        if: steps.existing.outputs.found != 'true'
+        # Delegates to the same resolver the scripts use, so the per-channel,
+        # per-day counter rules are not reimplemented in shell.
+        run: |
+          version=$(node scripts/resolve-bk-desktop-version.ts \
+            --channel "${{ steps.channel.outputs.channel }}")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Stamping $version."
+
+      - name: Build DMG
+        if: steps.existing.outputs.found != 'true'
+        run: |
+          node scripts/build-bk-desktop-dmg.ts \
+            --channel "${{ steps.channel.outputs.channel }}" \
+            --build-version "${{ steps.version.outputs.version }}"
+
+      - name: Upload build output
+        if: steps.existing.outputs.found != 'true'
+        # Hosted jobs run on separate VMs, so unlike the self-hosted layout the
+        # publish job cannot read release/ directly.
+        #
+        # Only the publishable files cross the boundary — deliberately NOT the
+        # packaged .app directory. upload-artifact re-zips its payload without
+        # preserving a bundle's symlinks and executable bits, so an .app shipped
+        # this way would fail codesign for reasons unrelated to signing. The
+        # publisher extracts the update ZIP and verifies that instead, which is
+        # both the artifact Squirrel.Mac actually installs and ~450 MB cheaper.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bk-desktop-${{ steps.channel.outputs.channel }}-${{ github.sha }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/*.yml
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    if: needs.build.outputs.already-published != 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      # The only job that can write releases, and it runs no build scripts and
+      # holds no signing key.
+      contents: write
+    # Both channels publish automatically: a merge to bkmain ships the production
+    # app without waiting for anyone, the same way expbkmain already shipped
+    # staging. The required-reviewer rule that used to gate `bk-desktop-production`
+    # was removed from the environment's settings, not from here — protection
+    # rules live in repository settings and no workflow file can express their
+    # absence. If a build must be held again, add the reviewer back there.
+    #
+    # The environments themselves stay, and both branches of this expression name
+    # a REAL one on purpose: they record each deployment, and resolving to an
+    # empty string to mean "no environment" is a widely used trick that GitHub
+    # does not actually document — this is the first-publish path, not somewhere
+    # to find out.
+    environment: >-
+      ${{ needs.build.outputs.channel == 'production'
+          && 'bk-desktop-production'
+          || 'bk-desktop-staging' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Only the publisher's own workspace is needed here — no app is built in
+      # this job. Same rule as above: this action provides `vp`, not `pnpm`.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: bk-desktop-${{ needs.build.outputs.channel }}-${{ github.sha }}
+          path: release/
+
+      - name: Publish prerelease
+        # Re-verifies the signature, the channel manifest and the payload hash,
+        # then uploads to a draft and only flips it to a prerelease once every
+        # asset is present at the right size. --source-sha is what stops the tag
+        # being cut from the default branch.
+        run: |
+          node scripts/publish-bk-desktop-dmg.ts \
+            --channel "${{ needs.build.outputs.channel }}" \
+            --build-version "${{ needs.build.outputs.version }}" \
+            --source-sha "${{ github.sha }}"

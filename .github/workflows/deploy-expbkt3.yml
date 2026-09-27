@@ -1,0 +1,136 @@
+# T3-CUSTOM(expbkt3): Isolated validation/deployment workflow for the experimental branch.
+name: Validate and deploy experimental T3
+
+on:
+  push:
+    branches: [expbkmain]
+  pull_request:
+    branches: [expbkmain]
+  workflow_dispatch:
+
+concurrency:
+  group: expbkt3-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.10.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            libsecret-1-dev \
+            pkg-config
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve upstream nightly version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags https://github.com/pingdotgg/t3code.git \
+            main:refs/remotes/upstream/main \
+            '+refs/tags/v*:refs/tags/upstream-v*'
+
+          upstream_sha="$(git merge-base HEAD refs/remotes/upstream/main)"
+          # T3-CUSTOM(expbkt3): raw upstream main can advance between nightlies.
+          # Keep exact tags unchanged; label an untagged integrated SHA from its
+          # closest tagged ancestor so the deployed version stays truthful.
+          node scripts/resolve-integrated-upstream-nightly.ts \
+            --upstream-sha "$upstream_sha" \
+            --github-env "$GITHUB_ENV"
+
+      - name: Align package versions to upstream nightly
+        run: node scripts/update-release-package-versions.ts "$APP_VERSION"
+
+      - name: Ensure Electron runtime is installed
+        run: pnpm exec vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check formatting and lint
+        run: pnpm exec vp check
+
+      - name: Typecheck
+        run: pnpm exec vp run typecheck
+
+      - name: Test
+        run: pnpm exec vp run test
+
+      # See deploy-bkt3.yml: the Clerk publishable key must be baked in here or
+      # the deployed SPA runs with team mode silently off.
+      - name: Build experimental web client
+        run: pnpm exec vp run --filter @t3tools/web build
+        env:
+          VITE_T3_EXPERIMENTAL_CONTROL_CENTER: "true"
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+
+      - name: Build server bundle
+        run: pnpm exec vp run --filter t3 build:bundle
+
+      - name: Build Linux resource monitors
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --locked --release \
+            --manifest-path native/resource-monitor/Cargo.toml \
+            --target x86_64-unknown-linux-gnu
+          cargo build --locked --release \
+            --manifest-path native/resource-monitor/Cargo.toml \
+            --target aarch64-unknown-linux-gnu
+          install -D -m 0755 \
+            native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor \
+            apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor
+          install -D -m 0755 \
+            native/resource-monitor/target/aarch64-unknown-linux-gnu/release/t3-resource-monitor \
+            apps/server/dist/resource-monitor/linux-arm64/t3-resource-monitor
+          test -x apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor
+          test -x apps/server/dist/resource-monitor/linux-arm64/t3-resource-monitor
+
+      # T3-CUSTOM(expbkt3): The production host installs this verified artifact
+      # instead of rebuilding application code on the server.
+      - name: Prepare experimental deployment artifact
+        run: |
+          mkdir -p deployment-artifact/apps/web deployment-artifact/apps/server
+          cp -a apps/web/dist deployment-artifact/apps/web/
+          cp -a apps/server/dist deployment-artifact/apps/server/
+          printf '%s\n' "$GITHUB_SHA" > deployment-artifact/SHA
+          printf '%s\n' "$APP_VERSION" > deployment-artifact/VERSION
+          test -x deployment-artifact/apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor
+          test -x deployment-artifact/apps/server/dist/resource-monitor/linux-arm64/t3-resource-monitor
+
+      - name: Publish experimental deployment artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: expbkt3-${{ github.sha }}
+          path: deployment-artifact
+          if-no-files-found: error
+          retention-days: 7

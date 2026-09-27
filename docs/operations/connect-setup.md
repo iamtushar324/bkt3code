@@ -52,8 +52,20 @@ In Clerk's OAuth applications settings:
 Create a Clerk JWT template named `t3-relay` with claims:
 
 ```json
-{ "aud": "t3-code-relay" }
+{
+  "aud": "t3-code-relay",
+  "name": "{{user.full_name}}",
+  "email": "{{user.primary_email_address}}",
+  "picture": "{{user.image_url}}"
+}
 ```
+
+<!-- T3-CUSTOM(expbkt3): verified public claims populate the environment user directory. -->
+
+Clerk supplies `sub`, which T3 uses as the durable environment-user ID. The extra claims populate
+**Settings → Users**. The environment verifies the token's RS256 signature through Clerk JWKS,
+requires the Clerk issuer, and checks its configured audience. `T3CODE_CLERK_JWT_AUDIENCE` can
+override the server audience, but must match this template (normally `t3-code-relay`).
 
 Set `T3CODE_CLERK_JWT_TEMPLATE=t3-relay` for clients and
 `CLERK_JWT_AUDIENCE=t3-code-relay` for the relay. The production relay deployment environment

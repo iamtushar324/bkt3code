@@ -41,6 +41,11 @@ node_modules/
 *.log
 .env*
 !.env.example
+# T3-CUSTOM(expbkt3): BEGIN — .mcp.json is untracked here; it declared an
+# xcodebuildmcp server that spawned a per-worktree process tree, useless on
+# Linux servers. Developers who want it keep a local, untracked copy.
+.mcp.json
+# T3-CUSTOM(expbkt3): END
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/

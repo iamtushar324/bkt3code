@@ -41,6 +41,11 @@ results appear as each one responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+<!-- T3-CUSTOM(expbkt3): rolling usage ranges. -->
+
+Use **Past 24h** for an hourly chart of the rolling 24-hour period. **7 days**, **30 days**, and
+**90 days** use daily resolution. Cost and token toggles update the headline and chart.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
@@ -116,6 +121,23 @@ account and choose **Use reset** to redeem one. No hub plugin is required.
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
+
+<!-- T3-CUSTOM(expbkt3): per-thread usage breakdown. -->
+
+## Session cost
+
+Every thread shows what it would have cost at API list prices, as a small
+dollar pill in the thread header, next to the git actions on the desktop and web
+apps and beside the header buttons on mobile. Tap or click it for the
+breakdown: input, cached and output tokens, the cost per model, the cost per
+day for long-running sessions, and how the price was derived.
+
+The figure is an estimate. Subscriptions bill differently, so read it as a
+measure of how heavy a session is rather than as a bill. It is priced from the
+same public rate table the Usage page uses and gathered from the same provider
+transcripts, narrowed to this thread's provider session. A brand-new thread has
+no pill until its first turn lands; a model missing from the rate table shows
+tokens but no dollar figure.
 
 ## Subscription usage widget
 

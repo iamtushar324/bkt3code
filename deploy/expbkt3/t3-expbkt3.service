@@ -1,0 +1,27 @@
+# T3-CUSTOM(expbkt3): Isolated runtime unit for the experimental deployment.
+[Unit]
+Description=T3 Code (experimental MCP control center)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/repos/t3code-expbkt3
+Environment=HOME=/home/ubuntu
+ExecStart=/home/ubuntu/repos/t3code-expbkt3/deploy/expbkt3/start.sh
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=130
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+LimitNOFILE=65536
+MemoryAccounting=yes
+MemoryHigh=4G
+MemoryMax=6G
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

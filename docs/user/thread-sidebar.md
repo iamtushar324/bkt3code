@@ -150,3 +150,25 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Group threads
+
+The sidebar's **Group by** control (the caption above the thread list, or the
+**Group by** button on mobile) switches between lifecycle phases, projects, and
+**Custom** groups.
+
+A custom group is a label on the thread itself, so everyone who can see the
+thread sees the same group, on every device. To file a thread, open its menu
+and choose **Move to group**, pick an existing group or **New group…**, or
+**Remove from group**. In Custom mode, a group's header offers rename and
+delete; renaming relabels every thread in the group, and deleting one returns
+its threads to **Ungrouped**.
+
+Groups also work as a filter in every grouping mode: the filter menu's
+**Group** facet narrows the list to the selected groups, or to ungrouped
+threads.
+
+Agents can file the sessions they work on or create: `t3_update_session`
+accepts `customGroup` (or `null` to clear it), `t3_create_session` accepts it
+at creation, and `t3_list_sessions` reports and filters on it. Labels match
+case-insensitively, so an agent that reuses a label you typed joins your group.

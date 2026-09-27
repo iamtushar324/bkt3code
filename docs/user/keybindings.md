@@ -124,6 +124,22 @@ through the pages you have visited, like a browser's back and forward buttons.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+<!-- T3-CUSTOM(expbkt3): explicit settle, panel, and inherited-default commands. -->
+
+`thread.settle` settles the active thread or restores it when already settled. Its default is
+`mod+shift+s`, and it does not run while the terminal has focus.
+
+`rightPanel.toggleMaximized` maximizes or restores the right panel. Assign a shortcut in Settings.
+
+New threads inherit the target project's creation defaults and then its environment's defaults.
+To keep the current worktree, choose **New thread in this worktree**. Background submission with
+`mod+enter` opens another draft with the same workspace mode and base branch, without reusing the
+worktree just created.
+
+The command palette searches titles, projects, branches, user messages, and final responses across
+connected environments. Message search begins after two characters and uses SQLite's ASCII
+case-insensitive matching.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

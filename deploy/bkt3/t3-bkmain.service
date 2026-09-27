@@ -1,0 +1,30 @@
+[Unit]
+Description=T3 Code (Beknown bkmain)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/repos/t3code-bkmain
+ExecStart=/home/ubuntu/repos/t3code-bkmain/deploy/bkt3/start.sh
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=130
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+Environment=T3CODE_PROVIDER_SESSION_INACTIVITY_MS=600000
+LimitNOFILE=65536
+# Contain runaway builds/tests spawned inside agent worktrees: OOM-kill within
+# the service instead of taking down the host. Mirrors the drop-ins applied on
+# the box. Raised from 4G/6G once the steady-state working set (agent sessions
+# plus their provider processes) outgrew the original cap.
+MemoryAccounting=yes
+MemoryHigh=16G
+MemoryMax=16G
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

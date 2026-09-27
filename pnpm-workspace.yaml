@@ -146,6 +146,8 @@ overrides:
   "@expo/dom-webview": 57.0.1
   "@expo/metro-config": 57.0.12
   expo-constants: 57.0.16
+  # T3-CUSTOM(expbkt3): keep the Xcode 26.3 JSI fix applied on fresh lockfile resolution.
+  expo-modules-jsi: 57.0.6
   # Keep fresh resolution on the version carrying the permissions registry fix.
   expo-modules-core: 57.0.14
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
@@ -192,6 +194,8 @@ patchedDependencies:
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
+  # T3-CUSTOM(expbkt3): Xcode 26.3 constructor annotation fix (expo/expo#49214).
+  expo-modules-jsi@57.0.6: patches/expo-modules-jsi@57.0.6.patch
   expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
   expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch

@@ -473,6 +473,60 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "license": "MIT AND Apache-2.0",
+      "name": "@platejs/diff"
+    },
+    {
+      "license": "MIT",
+      "name": "khroma"
+    },
+    {
+      "name": "slate",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright © 2016–2023, Ian Storm Taylor"]
+      }
+    },
+    {
+      "name": "slate-dom",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright © 2016–2023, Ian Storm Taylor"]
+      }
+    },
+    {
+      "name": "slate-hyperscript",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright © 2016–2023, Ian Storm Taylor"]
+      }
+    },
+    {
+      "name": "slate-react",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright © 2016–2023, Ian Storm Taylor"]
+      }
+    },
+    {
+      "name": "jotai-x",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
+      "name": "zustand-x",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
+      "name": "standardwebhooks",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
     }
   ]
 }

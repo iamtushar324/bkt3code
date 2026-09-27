@@ -1,0 +1,121 @@
+# Source of truth for the ONLY file that `t3main` adds to upstream `main`.
+#
+# `t3main` is upstream main plus this workflow and a `.gitmodules` entry.
+# Edit this copy on `bkmain`, then copy it onto `t3main`:
+#
+#   git -C /home/ubuntu/repos/t3code checkout t3main
+#   cp /home/ubuntu/repos/t3code-bkmain/deploy/t3/deploy-t3.yml \
+#      /home/ubuntu/repos/t3code/.github/workflows/deploy-t3.yml
+#
+# The build uses no fork feature flags, so t3.dev stays an upstream-style
+# deployment.
+name: Validate and deploy t3
+
+on:
+  push:
+    branches: [t3main]
+  pull_request:
+    branches: [t3main]
+  workflow_dispatch:
+
+concurrency:
+  group: t3-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.10.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve upstream nightly version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags https://github.com/pingdotgg/t3code.git \
+            main:refs/remotes/upstream/main \
+            '+refs/tags/v*:refs/tags/upstream-v*'
+
+          upstream_sha="$(git merge-base HEAD refs/remotes/upstream/main)"
+          mapfile -t nightly_tags < <(
+            git tag --points-at "$upstream_sha" \
+              --list 'upstream-v*-nightly.*' \
+              --sort=-version:refname
+          )
+          nightly_tag="${nightly_tags[0]:-}"
+          if [[ -z "$nightly_tag" ]]; then
+            echo "No upstream nightly release tags integrated upstream commit $upstream_sha." >&2
+            exit 1
+          fi
+
+          nightly_version="${nightly_tag#upstream-v}"
+          if [[ ! "$nightly_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
+            echo "Invalid upstream nightly version: $nightly_version" >&2
+            exit 1
+          fi
+
+          echo "Resolved upstream nightly $nightly_version at $upstream_sha"
+          echo "APP_VERSION=$nightly_version" >> "$GITHUB_ENV"
+          echo "UPSTREAM_NIGHTLY_SHA=$upstream_sha" >> "$GITHUB_ENV"
+
+      - name: Align package versions to upstream nightly
+        run: node scripts/update-release-package-versions.ts "$APP_VERSION"
+
+      - name: Check formatting and lint
+        run: pnpm exec vp check
+
+      - name: Typecheck
+        run: pnpm exec vp run typecheck
+
+      # No test step, deliberately. This branch carries upstream application
+      # code, and upstream's own ci.yml gates `main` on lint, typecheck, and a
+      # build rather than the full suite. Running it here fails on
+      # apps/web/src/lib/imageCompression.test.ts, which times out on
+      # ubuntu-latest; the fix for that lives in the fork lineage, and porting
+      # it would mean editing upstream source on t3main. Fork branches
+      # (bkmain, expbkmain) do run the full suite.
+      - name: Build web client
+        run: pnpm exec vp run --filter @t3tools/web build
+
+      - name: Build server bundle
+        run: pnpm exec vp run --filter t3 build:bundle
+
+      # The t3.dev host installs this verified artifact instead of rebuilding
+      # application code on the shared dev server.
+      - name: Prepare deployment artifact
+        run: |
+          mkdir -p deployment-artifact/apps/web deployment-artifact/apps/server
+          cp -a apps/web/dist deployment-artifact/apps/web/
+          cp -a apps/server/dist deployment-artifact/apps/server/
+          printf '%s\n' "$GITHUB_SHA" > deployment-artifact/SHA
+          printf '%s\n' "$APP_VERSION" > deployment-artifact/VERSION
+
+      - name: Publish deployment artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-${{ github.sha }}
+          path: deployment-artifact
+          if-no-files-found: error
+          retention-days: 7

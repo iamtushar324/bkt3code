@@ -54,9 +54,11 @@ contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 Codex can ask a question and keep working. Answer it in the thread's question
 panel. The answer becomes a new message: it reaches the active turn, or starts
 another turn if Codex has finished. Unanswered questions survive reconnects.
-If you do not want to answer, dismiss the question from its panel. Dismissing
-closes it without sending anything to Codex. This requires a Codex version that
-supports async questions.
+They appear as a neutral question indicator while the agent remains **Running**
+or **Ready**; only questions that pause the agent show **Needs Input**. If you
+do not want to answer, dismiss the question from its panel. Dismissing closes it
+without sending anything to Codex. This requires a Codex version that supports
+async questions.
 
 ## Approve app access
 
