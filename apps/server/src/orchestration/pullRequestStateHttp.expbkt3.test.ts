@@ -250,6 +250,45 @@ describe("applyPullRequestState", () => {
     ).pipe(Effect.provide(engineLayer())),
   );
 
+  it.effect("treats a retried delivery whose update was rejected as stale, not a failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeRepo(`https://github.com/${repository}.git`);
+        yield* createProject("project-1", root);
+        yield* createThread("thread-branch", "project-1", "feature/thing");
+        // A first attempt of this delivery lost a race: the engine recorded a
+        // rejection under the command id the retry will reuse.
+        const engine = yield* OrchestrationEngineService;
+        yield* engine
+          .dispatch({
+            type: "thread.pull-request.sync",
+            commandId: CommandId.make("bridge:pr-state:delivery-retry:thread-branch:branch"),
+            threadId: ThreadId.make("thread-branch"),
+            projectId: ProjectId.make("project-1"),
+            snapshotSequence: 0,
+            expected: {
+              workspaceRoot: root,
+              branch: "some/other-branch",
+              worktreePath: null,
+              linkedPullRequest: null,
+              branchPullRequest: null,
+            },
+            branchPullRequest: null,
+          })
+          .pipe(Effect.ignore);
+
+        const retried = yield* applyPullRequestState(write({ deliveryId: "delivery-retry" }));
+        assert.deepStrictEqual(retried, {
+          applied: [],
+          ignored: [{ threadId: "thread-branch", reason: "stale" }],
+        });
+        // A new delivery for the same PR still applies.
+        const fresh = yield* applyPullRequestState(write({ deliveryId: "delivery-next" }));
+        assert.deepStrictEqual(fresh.applied, ["thread-branch"]);
+      }),
+    ).pipe(Effect.provide(engineLayer())),
+  );
+
   it.effect("reports nothing when no thread matches", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* applyPullRequestState(write({})), {
