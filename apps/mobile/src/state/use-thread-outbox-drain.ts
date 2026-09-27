@@ -12,6 +12,7 @@ import {
   type MessageId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+// T3-CUSTOM(expbkt3): outbox failure telemetry.
 import { recordThreadOutboxFailureUnsafe } from "@t3tools/client-runtime/outbox";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -749,6 +750,7 @@ export function useThreadOutboxDrain(): void {
   }, []);
 
   const makeDeliveryHelpers = useCallback((queuedMessage: QueuedThreadMessage) => {
+    // T3-CUSTOM(expbkt3): "restore" (silently requeue) became "fail" (stay visibly rejected).
     const reportFailure = (
       commandResult: AtomCommandResult<unknown, unknown>,
       stage: ThreadOutboxCommandStage,
@@ -921,6 +923,7 @@ export function useThreadOutboxDrain(): void {
         },
       });
       const failure = reportFailure(deliveryResult, "start-turn");
+      // T3-CUSTOM(expbkt3): durable outbox — a deterministic rejection stays visibly failed.
       if (failure?.action === "retry") {
         return false;
       }
@@ -1135,6 +1138,7 @@ export function useThreadOutboxDrain(): void {
     }
 
     for (const [threadKey, queuedMessages] of Object.entries(queuedMessagesByThreadKey)) {
+      // T3-CUSTOM(expbkt3): durable outbox — a failed message stays visible, not re-drained.
       const nextQueuedMessage = queuedMessages.find(
         (message) => message.deliveryState !== "failed",
       );

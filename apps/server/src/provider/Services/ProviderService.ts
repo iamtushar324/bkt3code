@@ -32,10 +32,12 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
+// T3-CUSTOM(expbkt3): BEGIN source-control identity — per-call execution options type.
 import type {
   ProviderAdapterCapabilities,
   ProviderSessionExecutionOptions,
 } from "./ProviderAdapter.ts";
+// T3-CUSTOM(expbkt3): END
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -48,6 +50,7 @@ export interface ProviderServiceShape {
   readonly startSession: (
     threadId: ThreadId,
     input: ProviderSessionStartInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
@@ -56,6 +59,7 @@ export interface ProviderServiceShape {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
@@ -70,6 +74,7 @@ export interface ProviderServiceShape {
    */
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
@@ -78,6 +83,7 @@ export interface ProviderServiceShape {
    */
   readonly respondToRequest: (
     input: ProviderRespondToRequestInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
@@ -86,6 +92,7 @@ export interface ProviderServiceShape {
    */
   readonly respondToUserInput: (
     input: ProviderRespondToUserInputInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
 
@@ -124,6 +131,7 @@ export interface ProviderServiceShape {
   /**
    * Roll back provider conversation state by a number of turns.
    */
+  // T3-CUSTOM(expbkt3): BEGIN source-control identity — per-call execution options.
   readonly rollbackConversation: (
     input: {
       readonly threadId: ThreadId;
@@ -131,6 +139,7 @@ export interface ProviderServiceShape {
     },
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<void, ProviderServiceError>;
+  // T3-CUSTOM(expbkt3): END
 
   /**
    * Upload a thread and return the provider's shareable feedback identifier.

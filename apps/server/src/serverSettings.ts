@@ -186,10 +186,12 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
+  // T3-CUSTOM(expbkt3): BEGIN redact the legacy MCP operator secret from the client payload.
   return {
     ...settings,
     providerInstances,
     usageLimitSources,
+    // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): The legacy server-wide MCP operator secret must
     // never be distributed to authenticated browser clients.
     experimental: {

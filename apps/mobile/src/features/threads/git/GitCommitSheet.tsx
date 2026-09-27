@@ -35,6 +35,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
+          // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
           input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,

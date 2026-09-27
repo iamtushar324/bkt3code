@@ -21,6 +21,7 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  // T3-CUSTOM(expbkt3): acting-user id for per-call execution options.
   UserId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -55,6 +56,7 @@ export interface ProviderAdapterCapabilities {
   readonly supportsConversationRollback?: boolean;
 }
 
+// T3-CUSTOM(expbkt3): BEGIN per-call execution options threaded into adapter startSession.
 export interface ProviderSessionExecutionOptions {
   readonly environment?: NodeJS.ProcessEnv;
   /** T3-CUSTOM(expbkt3): User whose delegated MCP grants back this ACP generation. */
@@ -66,6 +68,7 @@ export interface ProviderSessionExecutionOptions {
    */
   readonly identityEnvironment?: NodeJS.ProcessEnv;
 }
+// T3-CUSTOM(expbkt3): END
 
 export interface ProviderThreadTurnSnapshot {
   readonly id: TurnId;
@@ -89,6 +92,7 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly startSession: (
     input: ProviderSessionStartInput,
+    // T3-CUSTOM(expbkt3): source-control identity — per-call execution options.
     options?: ProviderSessionExecutionOptions,
   ) => Effect.Effect<ProviderSession, TError>;
 

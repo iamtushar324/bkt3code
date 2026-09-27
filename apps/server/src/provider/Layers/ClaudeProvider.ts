@@ -417,6 +417,8 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+// T3-CUSTOM(expbkt3): BEGIN parse `claude auth status` JSON to detect a logged-out
+// CLI and recover the authenticated account email/method for the provider status UI.
 type ClaudeAuthStatus = {
   readonly loggedIn: boolean;
   readonly authMethod?: string;
@@ -442,6 +444,7 @@ function parseClaudeAuthStatus(output: string): ClaudeAuthStatus | undefined {
     return undefined;
   }
 }
+// T3-CUSTOM(expbkt3): END
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
@@ -559,6 +562,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
+  // T3-CUSTOM(expbkt3): BEGIN probe `claude auth status` directly — the capabilities
+  // probe below silently returns nothing when the CLI is logged out, which used to
+  // surface as a generic warning instead of a clear "not authenticated" state.
   const authProbe = yield* runClaudeCommand(
     claudeSettings,
     ["auth", "status"],
@@ -600,6 +606,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       },
     });
   }
+  // T3-CUSTOM(expbkt3): END
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -629,8 +636,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
+      // T3-CUSTOM(expbkt3): fall back to the CLI auth-status method when capabilities omit one.
       authMethod: capabilities.tokenSource ?? authStatus.authMethod,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  // T3-CUSTOM(expbkt3): fall back to the CLI auth-status email/token source.
   const authEmail = capabilities.email ?? authStatus.email;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
@@ -660,6 +669,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
+        // T3-CUSTOM(expbkt3): prefer the `claude auth status` email when capabilities omit one.
         ...(authEmail ? { email: authEmail } : {}),
         ...(authMetadata ? authMetadata : {}),
       },

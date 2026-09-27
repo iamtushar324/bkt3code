@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { useBranches } from "../state/queries";
+// T3-CUSTOM(expbkt3): source-control identity — resolve the acting profile.
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { threadEnvironment } from "../state/threads";
@@ -38,6 +39,7 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
+  // T3-CUSTOM(expbkt3): BEGIN — source-control identity: which profile a git action runs as.
   const sourceControlProfiles = useEnvironmentQuery(
     selectedThread === null
       ? null
@@ -48,17 +50,19 @@ export function useSelectedThreadGitActions() {
   );
   const actingProfileLogin =
     sourceControlProfiles.data?.profiles.find(
-      // T3-CUSTOM(expbkt3): GitHub identity follows durable ownership.
+      // GitHub identity follows durable ownership.
       (profile) =>
         profile.ownerUserId !== null &&
         selectedThread?.ownerUserId != null &&
         String(profile.ownerUserId) === String(selectedThread.ownerUserId),
     )?.login ?? null;
+  // T3-CUSTOM(expbkt3): END
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
       cwd: selectedThreadCwd,
+      // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
       threadId: selectedThread?.id ?? null,
     }),
     { reportFailure: false },
@@ -105,6 +109,7 @@ export function useSelectedThreadGitActions() {
         return null;
       }
 
+      // T3-CUSTOM(expbkt3): BEGIN — source-control identity: resolve the thread's profile.
       const target = {
         environmentId: selectedThread.environmentId,
         cwd,
@@ -115,6 +120,7 @@ export function useSelectedThreadGitActions() {
           environmentId: selectedThread.environmentId,
           input: { cwd, threadId: selectedThread.id },
         });
+      // T3-CUSTOM(expbkt3): END
       const result = options?.quiet
         ? await execute()
         : await vcsActionManager.track(
@@ -163,6 +169,7 @@ export function useSelectedThreadGitActions() {
       const target = {
         environmentId: selectedThread.environmentId,
         cwd: selectedThreadCwd,
+        // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
         threadId: selectedThread.id,
       };
       setPendingConnectionError(null);
@@ -323,6 +330,7 @@ export function useSelectedThreadGitActions() {
       async ({ thread, cwd }) => {
         const result = await pull({
           environmentId: thread.environmentId,
+          // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
           input: { cwd, threadId: thread.id },
         });
         if (AsyncResult.isFailure(result)) {
@@ -399,6 +407,7 @@ export function useSelectedThreadGitActions() {
   );
 
   return {
+    // T3-CUSTOM(expbkt3): source-control identity — the profile a git action would run as.
     actingProfileLogin,
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,

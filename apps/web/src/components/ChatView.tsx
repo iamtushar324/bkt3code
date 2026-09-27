@@ -20,6 +20,7 @@ import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
+  // T3-CUSTOM(expbkt3): a fresh command id for the fork's explicit outbox retry.
   CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
@@ -1987,6 +1988,7 @@ export default function ChatView(props: ChatViewProps) {
               settings,
               fallbackDraftProject?.id ?? null,
               fallbackDraftProject ?? undefined,
+              // T3-CUSTOM(expbkt3): continues into the fork's default-model fallback chain below.
             ).settings.defaultModelSelection ??
               // T3-CUSTOM(expbkt3): the fork's global default thread model is the
               // last fallback before "no provider".
@@ -3066,6 +3068,7 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on); interactionMode carries its resolved default.
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeAvailable,
     provider: activeProviderStatus,
@@ -3104,6 +3107,7 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  // T3-CUSTOM(expbkt3): feeds the settled-turn question filter below.
   const terminalTurnIds = useMemo<ReadonlySet<string>>(() => {
     if (!activeLatestTurn || activeLatestTurn.state === "running") {
       return EMPTY_TERMINAL_TURN_IDS;
@@ -4002,6 +4006,7 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : vcsEnvironment.status({
           environmentId,
+          // T3-CUSTOM(expbkt3): threadId disambiguates project-settings overrides when a worktree cwd is shared across projects.
           input: {
             cwd: gitStatusCwd,
             ...(activeThread ? { threadId: activeThread.id } : {}),
@@ -6200,6 +6205,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return [];
     });
+    // T3-CUSTOM(expbkt3): clears a send latch that could get stuck by a turn that never settled.
     // Also clear the in-flight latch. It guards against double-sends within a
     // single send, but it is component-scoped: a send that never settles (a
     // dispatch lost on a dead socket, a server bootstrap that hung) used to
@@ -6448,6 +6454,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
 
+  // T3-CUSTOM(expbkt3): thread-visited tracking follows server truth, not local desync.
   useEffect(() => {
     if (!serverThread?.id) return;
     // T3-CUSTOM(expbkt3): A restarted client can hydrate completion after the shell timestamp.
@@ -8125,6 +8132,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    // T3-CUSTOM(expbkt3): BEGIN — submission-time workspace resolution for the fork's send path.
     // The environment selector and the send handler can run in adjacent browser
     // tasks. Read the draft store at submission time so the command cannot use
     // a stale render that still says "worktree" after the UI says "Current checkout".
@@ -8151,6 +8159,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const baseBranchForWorktree = shouldCreateWorktree ? sendWorkspace.branch : null;
+    // T3-CUSTOM(expbkt3): END
 
     const composerImagesSnapshot = [...composerImages];
     const composerFilesSnapshot = [...composerFiles];
@@ -8833,6 +8842,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: threadIdForSend,
+          // T3-CUSTOM(expbkt3): outbox — sends are isolated per environment/account.
           outboxIdentityKey,
           message: {
             messageId: messageIdForSend,
@@ -9021,6 +9031,7 @@ export default function ChatView(props: ChatViewProps) {
             );
           }
         }
+        // T3-CUSTOM(expbkt3): errorMessage is extracted so the stacked-toast marker below can reuse it.
         const errorMessage = error instanceof Error ? error.message : "Failed to send message.";
         setThreadError(threadIdForSend, errorMessage);
         // T3-CUSTOM(expbkt3): stacked per-thread toasts.
@@ -9462,6 +9473,7 @@ export default function ChatView(props: ChatViewProps) {
           text: outgoingMessageText,
           ...(context ? { context } : {}),
           turnId: null,
+          // T3-CUSTOM(expbkt3): team mode — attribute the optimistic message to its sender.
           sentByUserId: null,
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
@@ -9494,6 +9506,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId,
           input: {
             threadId: threadIdForSend,
+            // T3-CUSTOM(expbkt3): outbox — sends are isolated per environment/account.
             outboxIdentityKey,
             message: {
               messageId: messageIdForSend,
@@ -9632,6 +9645,7 @@ export default function ChatView(props: ChatViewProps) {
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
+        // T3-CUSTOM(expbkt3): source-control identity — active profile travels with the new thread.
         sourceControlProfileId: activeSourceControlProfileId,
         createdAt,
       },
@@ -9644,6 +9658,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: nextThreadId,
+          // T3-CUSTOM(expbkt3): outbox — sends are isolated per environment/account.
           outboxIdentityKey,
           message: {
             messageId: newMessageId(),
@@ -10310,6 +10325,7 @@ export default function ChatView(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            // T3-CUSTOM(expbkt3): source-control identity — active profile flows into the header's branch/PR controls.
             sourceControlProfiles={sourceControlProfiles}
             sourceControlProfileId={activeSourceControlProfileId}
             onNewThreadInProject={handleNewThreadInActiveProject}
@@ -10359,6 +10375,7 @@ export default function ChatView(props: ChatViewProps) {
             actions; the plain thread error adopts upstream's session-scoped dismissal mask. */}
               <ThreadErrorBanner
                 error={visibleThreadError}
+                // T3-CUSTOM(expbkt3): failed-outbox errors expose explicit retry/edit actions; a plain thread error keeps upstream's dismiss.
                 {...(failedOutboxItem
                   ? {
                       onRetry: onRetryFailedOutboxItem,
@@ -10626,6 +10643,7 @@ export default function ChatView(props: ChatViewProps) {
                                 : undefined
                             }
                             environmentUnavailable={activeEnvironmentUnavailableState}
+                            // T3-CUSTOM(expbkt3): outbox — queued sends surface in the composer so a user can retry or discard while offline.
                             queuedMessages={composerQueuedMessages}
                             onDiscardQueuedMessage={onDiscardQueuedOutboxItem}
                             queuedSendAllowed={!isLocalDraftThread}
@@ -10760,6 +10778,7 @@ export default function ChatView(props: ChatViewProps) {
                           )}
                         </div>
                       </div>
+                      {/* T3-CUSTOM(expbkt3): end of the plan review composer dock wrap. */}
                     </PlanReviewComposerDock>
                     <div
                       aria-hidden

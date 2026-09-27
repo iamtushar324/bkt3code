@@ -3,8 +3,10 @@ import {
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  // T3-CUSTOM(expbkt3): BEGIN — source-control profile identity for git actions.
   type GitHubSourceControlProfile,
   type SourceControlProfileId,
+  // T3-CUSTOM(expbkt3): END
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -36,6 +38,7 @@ import ProjectScriptsControl, {
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
+// T3-CUSTOM(expbkt3): environment identity in the header — added useHasMultipleEnvironments.
 import {
   // T3-CUSTOM(expbkt3): environment identity in the header.
   useHasMultipleEnvironments,

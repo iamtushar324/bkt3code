@@ -101,6 +101,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     Effect.andThen(
       SubscriptionRef.update(state, (current) => ({
         ...current,
+        // T3-CUSTOM(expbkt3): keep snapshot explicit alongside the status recompute,
+        // paired with the equal-sequence retention fix below in this file.
         snapshot: current.snapshot,
         status: shellStatusForSnapshot(current.snapshot),
       })),
@@ -130,6 +132,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       Effect.andThen(
         SubscriptionRef.update(state, (current) => ({
           ...current,
+          // T3-CUSTOM(expbkt3): keep snapshot explicit alongside the status recompute,
+          // paired with the equal-sequence retention fix below in this file.
           snapshot: current.snapshot,
           status: shellStatusForSnapshot(current.snapshot),
           error: Option.some(SHELL_SYNCHRONIZATION_ERROR_MESSAGE),
@@ -258,8 +262,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       }),
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
-        // A shell stream is the live source for sidebar rows and draft-to-thread
-        // promotion. An expected subscription failure must not permanently
+        // T3-CUSTOM(expbkt3): a shell stream is the live source for sidebar rows and
+        // draft-to-thread promotion. An expected subscription failure must not permanently
         // freeze the last snapshot; without this retry, only a page reload or a
         // full connection restart could make newly-created threads visible.
         retryExpectedFailureAfter: "250 millis",

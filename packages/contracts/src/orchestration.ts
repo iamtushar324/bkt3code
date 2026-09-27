@@ -457,6 +457,7 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: shared ownership/membership schema.
 /**
  * Ownership + membership fields shared by threads/projects (and their shells).
  *
@@ -470,6 +471,7 @@ const OwnerUserIdField = Schema.NullOr(UserId).pipe(
 const MemberUserIdsField = Schema.Array(UserId).pipe(
   Schema.withDecodingDefault(Effect.succeed([])),
 );
+// T3-CUSTOM(expbkt3): END
 
 export const ProjectIconColor = Schema.Literals([
   "gray",
@@ -574,6 +576,7 @@ export const OrchestrationProject = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
+  // T3-CUSTOM(expbkt3): team mode — owner/members travel with the project.
   ownerUserId: OwnerUserIdField,
   memberUserIds: MemberUserIdsField,
   createdAt: IsoDateTime,
@@ -601,9 +604,9 @@ export const OrchestrationMessage = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
-  // Clerk user who sent this message (team mode, user messages only). Null for
-  // assistant/system messages or single-user mode. Compat-defaulted so old rows
-  // decode.
+  // T3-CUSTOM(expbkt3): Clerk user who sent this message (team mode, user messages
+  // only). Null for assistant/system messages or single-user mode. Compat-defaulted
+  // so old rows decode.
   sentByUserId: Schema.NullOr(UserId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -648,11 +651,13 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  // T3-CUSTOM(expbkt3): BEGIN — session restart needs the provider's own resumable id.
   /**
    * The provider-native conversation/session identifier used to resume this
    * thread. It is absent until the provider reports its durable thread id.
    */
   providerThreadId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  // T3-CUSTOM(expbkt3): END
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -710,6 +715,7 @@ const OrchestrationLatestTurnState = Schema.Literals([
 ]);
 export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — derived turn duration: server-computed instead of a client clock.
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
   state: OrchestrationLatestTurnState,
@@ -748,6 +754,7 @@ export function computeTurnDurationMs(
   }
   return Math.max(0, completedMs - startedMs);
 }
+// T3-CUSTOM(expbkt3): END
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
 // Version changes even when a manual rename keeps the same text.
@@ -882,6 +889,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): source-control identity — the profile this thread uses.
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -892,6 +900,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread.
   ownerUserId: OwnerUserIdField,
   memberUserIds: MemberUserIdsField,
   createdAt: IsoDateTime,
@@ -976,6 +985,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
+  // T3-CUSTOM(expbkt3): team mode — owner/members travel with the project shell.
   ownerUserId: OwnerUserIdField,
   memberUserIds: MemberUserIdsField,
   createdAt: IsoDateTime,
@@ -994,6 +1004,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): source-control identity — the profile this thread shell uses.
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1003,6 +1014,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread shell.
   ownerUserId: OwnerUserIdField,
   memberUserIds: MemberUserIdsField,
   createdAt: IsoDateTime,
@@ -1253,6 +1265,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): source-control identity — the profile the new thread uses.
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1489,6 +1502,7 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — source-control identity: switch which profile a thread uses.
 const ThreadSourceControlProfileSetCommand = Schema.Struct({
   type: Schema.Literal("thread.source-control-profile.set"),
   commandId: CommandId,
@@ -1496,6 +1510,7 @@ const ThreadSourceControlProfileSetCommand = Schema.Struct({
   sourceControlProfileId: SourceControlProfileId,
   createdAt: IsoDateTime,
 });
+// T3-CUSTOM(expbkt3): END
 
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   projectId: ProjectId,
@@ -1505,6 +1520,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): source-control identity — the profile the bootstrapped thread uses.
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1651,20 +1667,24 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — session restart: recreate the provider session mid-thread.
 const ThreadSessionRestartCommand = Schema.Struct({
   type: Schema.Literal("thread.session.restart"),
   commandId: CommandId,
   threadId: ThreadId,
   createdAt: IsoDateTime,
 });
+// T3-CUSTOM(expbkt3): END
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: project membership/ownership commands.
   ProjectMemberAddCommand,
   ProjectMemberRemoveCommand,
   ProjectOwnerTransferCommand,
+  // T3-CUSTOM(expbkt3): END
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -1679,9 +1699,11 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadAutoSettleSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: thread membership/ownership commands.
   ThreadMemberAddCommand,
   ThreadMemberRemoveCommand,
   ThreadOwnerTransferCommand,
+  // T3-CUSTOM(expbkt3): END
   ThreadPullRequestLinkCommand,
   ThreadPullRequestUnlinkCommand,
   ThreadRuntimeModeSetCommand,
@@ -1694,6 +1716,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
+  // T3-CUSTOM(expbkt3): session restart.
   ThreadSessionRestartCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
@@ -1703,9 +1726,11 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: project membership/ownership commands.
   ProjectMemberAddCommand,
   ProjectMemberRemoveCommand,
   ProjectOwnerTransferCommand,
+  // T3-CUSTOM(expbkt3): END
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -1720,9 +1745,11 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadAutoSettleSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: thread membership/ownership commands.
   ThreadMemberAddCommand,
   ThreadMemberRemoveCommand,
   ThreadOwnerTransferCommand,
+  // T3-CUSTOM(expbkt3): END
   ThreadPullRequestLinkCommand,
   ThreadPullRequestUnlinkCommand,
   ThreadRuntimeModeSetCommand,
@@ -1735,6 +1762,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
+  // T3-CUSTOM(expbkt3): session restart.
   ThreadSessionRestartCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -1907,6 +1935,7 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  // T3-CUSTOM(expbkt3): source-control identity.
   ThreadSourceControlProfileSetCommand,
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
@@ -1940,9 +1969,11 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: project membership/ownership events.
   "project.member-added",
   "project.member-removed",
   "project.owner-transferred",
+  // T3-CUSTOM(expbkt3): END
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -1956,14 +1987,17 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.pin-reordered",
   "thread.auto-settle-set",
   "thread.meta-updated",
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: thread membership/ownership events.
   "thread.member-added",
   "thread.member-removed",
   "thread.owner-transferred",
+  // T3-CUSTOM(expbkt3): END
   "thread.pull-request-linked",
   "thread.pull-request-unlinked",
   "thread.pull-request-synced",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
+  // T3-CUSTOM(expbkt3): source-control identity.
   "thread.source-control-profile-set",
   "thread.message-sent",
   "thread.turn-start-requested",
@@ -1973,6 +2007,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
+  // T3-CUSTOM(expbkt3): session restart.
   "thread.session-restart-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
@@ -1995,6 +2030,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
+  // T3-CUSTOM(expbkt3): team mode — who created this project (audit trail).
   createdByUserId: Schema.optional(Schema.NullOr(UserId)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -2030,10 +2066,12 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): BEGIN — team mode creator, source-control identity profile.
   createdByUserId: Schema.optional(Schema.NullOr(UserId)),
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // T3-CUSTOM(expbkt3): END
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   // T3-CUSTOM(expbkt3): session priority at creation time.
@@ -2199,6 +2237,7 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+// T3-CUSTOM(expbkt3): source-control identity.
 export const ThreadSourceControlProfileSetPayload = Schema.Struct({
   threadId: ThreadId,
   previousSourceControlProfileId: Schema.NullOr(SourceControlProfileId),
@@ -2216,6 +2255,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   // Events persisted before the field existed carry no key at all.
   turnId: Schema.NullOr(TurnId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   streaming: Schema.Boolean,
+  // T3-CUSTOM(expbkt3): team mode.
   sentByUserId: Schema.optional(Schema.NullOr(UserId)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -2272,6 +2312,7 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// T3-CUSTOM(expbkt3): session restart.
 export const ThreadSessionRestartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
@@ -2303,6 +2344,7 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: thread/project membership and ownership payloads.
 export const ThreadMemberAddedPayload = Schema.Struct({
   threadId: ThreadId,
   userId: UserId,
@@ -2346,6 +2388,7 @@ export const ProjectOwnerTransferredPayload = Schema.Struct({
   transferredByUserId: Schema.NullOr(UserId),
   transferredAt: IsoDateTime,
 });
+// T3-CUSTOM(expbkt3): END
 /**
  * Which client connection dispatched the command that produced an event.
  * Stamped by the orchestration engine on client-dispatched commands; absent on
@@ -2364,6 +2407,7 @@ export const OrchestrationEventMetadata = Schema.Struct({
   adapterKey: Schema.optional(TrimmedNonEmptyString),
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
+  // T3-CUSTOM(expbkt3): team mode.
   /** Clerk user id of the operator who caused this event (audit trail). */
   actorUserId: Schema.optional(UserId),
   historyImport: Schema.optional(Schema.Boolean),
@@ -2470,6 +2514,7 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.meta-updated"),
     payload: ThreadMetaUpdatedPayload,
   }),
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: thread/project membership and ownership events.
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.member-added"),
@@ -2500,6 +2545,7 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("project.owner-transferred"),
     payload: ProjectOwnerTransferredPayload,
   }),
+  // T3-CUSTOM(expbkt3): END
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.pull-request-linked"),
@@ -2525,6 +2571,7 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.interaction-mode-set"),
     payload: ThreadInteractionModeSetPayload,
   }),
+  // T3-CUSTOM(expbkt3): source-control identity — thread's profile changed.
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.source-control-profile-set"),
@@ -2570,6 +2617,7 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.session-stop-requested"),
     payload: ThreadSessionStopRequestedPayload,
   }),
+  // T3-CUSTOM(expbkt3): session restart — recreate the provider session mid-thread.
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.session-restart-requested"),
@@ -2787,6 +2835,7 @@ export const OrchestrationRpcSchemas = {
   },
 } as const;
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: user directory for the client's member pickers.
 export const OrchestrationUser = Schema.Struct({
   id: UserId,
   name: Schema.NullOr(TrimmedNonEmptyString),
@@ -2802,6 +2851,7 @@ export const OrchestrationUsersResult = Schema.Struct({
   users: Schema.Array(OrchestrationUser),
 });
 export type OrchestrationUsersResult = typeof OrchestrationUsersResult.Type;
+// T3-CUSTOM(expbkt3): END
 
 export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
   "OrchestrationGetSnapshotError",

@@ -102,12 +102,14 @@ export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  // T3-CUSTOM(expbkt3): source-control identity — which thread's profile to use.
   threadId: Schema.optional(ThreadId),
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  // T3-CUSTOM(expbkt3): source-control identity — which thread's profile to use.
   threadId: Schema.optional(ThreadId),
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
@@ -151,6 +153,7 @@ export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
+  // T3-CUSTOM(expbkt3): source-control identity — which thread's profile to use.
   threadId: Schema.optional(ThreadId),
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
@@ -204,6 +207,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): BEGIN — plan review needs merge readiness at a glance.
   mergeability: Schema.optional(Schema.Literals(["mergeable", "conflicting", "unknown"])),
   mergeStateStatus: Schema.optional(TrimmedNonEmptyStringSchema),
   reviewDecision: Schema.optional(
@@ -211,6 +215,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   ),
   checksStatus: Schema.optional(Schema.Literals(["pass", "fail", "pending", "unknown"])),
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): END
   /**
    * Last provider-side activity (ISO), including comments and metadata edits.
    * This is not the time a change request closed or merged. Optional for old

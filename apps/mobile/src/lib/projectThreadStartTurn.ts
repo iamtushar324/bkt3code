@@ -7,6 +7,7 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  // T3-CUSTOM(expbkt3): source-control identity.
   type SourceControlProfileId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -37,6 +38,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  // T3-CUSTOM(expbkt3): source-control identity — which profile to create the thread with.
   readonly sourceControlProfileId?: SourceControlProfileId | null;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
@@ -77,6 +79,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         interactionMode: spec.interactionMode,
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
+        // T3-CUSTOM(expbkt3): source-control identity — the profile the new thread uses.
         sourceControlProfileId: spec.sourceControlProfileId ?? null,
         createdAt: spec.createdAt,
       },

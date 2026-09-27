@@ -324,6 +324,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,
+      // T3-CUSTOM(expbkt3): team mode — this synthetic pending-task project has no owner yet.
       ownerUserId: null,
       memberUserIds: [],
     };
@@ -960,9 +961,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const buildPendingTaskMessage = useCallback(
     (
       metadata: TurnCommandMetadata,
+      // T3-CUSTOM(expbkt3): the options bag grew a source-control identity field.
       options?: {
         readonly currentCheckoutBranch?: string | null;
-        // T3-CUSTOM(expbkt3): bind the selected source-control identity.
         readonly sourceControlProfileId?: QueuedThreadCreation["sourceControlProfileId"];
       },
     ): QueuedThreadMessage | null => {

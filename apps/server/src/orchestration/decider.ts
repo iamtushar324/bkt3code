@@ -9,6 +9,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  // T3-CUSTOM(expbkt3): team mode — acting operator id threaded through decisions.
   type UserId,
   type OrchestrationThread,
   type ThreadPullRequestKey,
@@ -184,6 +185,7 @@ type DecideOrchestrationCommandResult =
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
+  // T3-CUSTOM(expbkt3): team mode — actor threaded through command sequencing.
   actor = null,
 }: {
   readonly commands: ReadonlyArray<OrchestrationCommand>;
@@ -202,6 +204,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
     const decided = yield* decideOrchestrationCommand({
       command: nextCommand,
       readModel: nextReadModel,
+      // T3-CUSTOM(expbkt3): team mode — thread the acting operator to the nested decision.
       actor,
     });
     const nextEvents = Array.isArray(decided) ? decided : [decided];
@@ -221,6 +224,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  // T3-CUSTOM(expbkt3): team mode — acting operator (see actor doc below).
   actor = null,
   userInputActivity,
 }: {
@@ -277,6 +281,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           faviconPath: null,
           projectIcon: null,
           scripts: [],
+          // T3-CUSTOM(expbkt3): team mode — record the creating operator's ownership.
           createdByUserId: actor,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -366,6 +371,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (activeThreads.length > 0) {
         return yield* decideCommandSequence({
           readModel,
+          // T3-CUSTOM(expbkt3): team mode — carry the acting operator into the cascade.
           actor,
           commands: [
             ...activeThreads.map(

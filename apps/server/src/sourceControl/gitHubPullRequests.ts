@@ -18,11 +18,13 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
+  // T3-CUSTOM(expbkt3): BEGIN PR merge-readiness metadata fields.
   readonly mergeability?: "mergeable" | "conflicting" | "unknown";
   readonly mergeStateStatus?: string;
   readonly reviewDecision?: "approved" | "changes-requested" | "review-required" | "unknown";
   readonly checksStatus?: "pass" | "fail" | "pending" | "unknown";
   readonly autoMergeEnabled?: boolean;
+  // T3-CUSTOM(expbkt3): END
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -39,11 +41,13 @@ const GitHubPullRequestSchema = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
+  // T3-CUSTOM(expbkt3): BEGIN PR merge-readiness metadata raw fields.
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
   statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
   autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  // T3-CUSTOM(expbkt3): END
   isCrossRepository: Schema.optional(Schema.Boolean),
   // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
   // added later. Both fields stay optional so a version-drifted gh CLI can
@@ -65,6 +69,8 @@ const GitHubPullRequestSchema = Schema.Struct({
   ),
 });
 
+// T3-CUSTOM(expbkt3): BEGIN PR merge-readiness metadata normalizers — mergeability,
+// review decision, and CI checks status derived from the `gh pr list` JSON fields.
 function normalizeMergeability(value: string | null | undefined) {
   const normalized = value?.trim().toUpperCase();
   return normalized === "MERGEABLE"
@@ -104,6 +110,7 @@ function normalizeChecksStatus(rollup: ReadonlyArray<unknown> | null | undefined
   }
   return pending ? ("pending" as const) : ("pass" as const);
 }
+// T3-CUSTOM(expbkt3): END
 
 function trimOptionalString(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -151,6 +158,8 @@ function normalizeGitHubPullRequestRecord(
     closedAt: raw.closedAt ?? null,
     mergedAt: raw.mergedAt ?? null,
     updatedAt: raw.updatedAt ?? Option.none(),
+    // T3-CUSTOM(expbkt3): BEGIN PR merge-readiness metadata — mergeability, review
+    // decision, CI checks status, and auto-merge, surfaced to the UI and the Linear bridge.
     ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
     ...(raw.mergeable !== undefined ? { mergeability: normalizeMergeability(raw.mergeable) } : {}),
     ...(trimOptionalString(raw.mergeStateStatus)
@@ -165,6 +174,7 @@ function normalizeGitHubPullRequestRecord(
     ...(raw.autoMergeRequest !== undefined
       ? { autoMergeEnabled: raw.autoMergeRequest !== null }
       : {}),
+    // T3-CUSTOM(expbkt3): END
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

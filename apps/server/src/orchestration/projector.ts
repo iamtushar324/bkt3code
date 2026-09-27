@@ -8,6 +8,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  // T3-CUSTOM(expbkt3): turn duration tracking.
   computeTurnDurationMs,
   isImportedAgentSessionMessageId,
   OrchestrationCheckpointSummary,
@@ -370,6 +371,7 @@ export function projectEvent(
             faviconPath: payload.faviconPath ?? null,
             projectIcon: payload.projectIcon ?? null,
             scripts: payload.scripts,
+            // T3-CUSTOM(expbkt3): team mode — project ownership/membership.
             // Owner is the creator (team mode). Preserve a prior owner on
             // idempotent re-creation; otherwise seed from the created payload.
             ownerUserId: existing?.ownerUserId ?? payload.createdByUserId ?? null,
@@ -447,6 +449,9 @@ export function projectEvent(
           event.type,
           "payload",
         );
+        // T3-CUSTOM(expbkt3): team-mode ownership/tagging plus the source-control
+        // profile are threaded through thread creation; the existing lookup
+        // preserves them on idempotent re-creation (bootstrap retry).
         const existing = nextBase.threads.find((entry) => entry.id === payload.threadId);
         const thread: OrchestrationThread = yield* decodeForEvent(
           OrchestrationThread,
@@ -863,6 +868,7 @@ export function projectEvent(
             ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
+            // T3-CUSTOM(expbkt3): team mode — who sent this message.
             sentByUserId: payload.sentByUserId ?? null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -949,6 +955,8 @@ export function projectEvent(
                       thread.latestTurn?.turnId === session.activeTurnId
                         ? thread.latestTurn.assistantMessageId
                         : null,
+                    // T3-CUSTOM(expbkt3): turn duration tracking — null while running,
+                    // computed once the turn settles below.
                     durationMs: null,
                   }
                 : thread.latestTurn !== null &&
@@ -1077,6 +1085,7 @@ export function projectEvent(
                       : payload.completedAt,
                   completedAt: payload.completedAt,
                   assistantMessageId: payload.assistantMessageId,
+                  // T3-CUSTOM(expbkt3): turn duration tracking.
                   durationMs: computeTurnDurationMs(
                     thread.latestTurn?.turnId === payload.turnId
                       ? (thread.latestTurn.startedAt ?? payload.completedAt)
@@ -1123,6 +1132,7 @@ export function projectEvent(
                   startedAt: latestCheckpoint.completedAt,
                   completedAt: latestCheckpoint.completedAt,
                   assistantMessageId: latestCheckpoint.assistantMessageId,
+                  // T3-CUSTOM(expbkt3): turn duration tracking.
                   // Reverted turns collapse to a single checkpoint instant.
                   durationMs: 0,
                 };

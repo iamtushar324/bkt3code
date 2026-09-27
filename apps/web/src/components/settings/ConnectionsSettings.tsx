@@ -3335,6 +3335,7 @@ export function ConnectionsSettings() {
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
+              // T3-CUSTOM(expbkt3): managed primary is remote; see hasDesktopLocalBackend.
               primaryEnvironment?.label ??
               // T3-CUSTOM(expbkt3): managed primary is remote; see hasDesktopLocalBackend.
               (hasDesktopLocalBackend ? "This machine" : "Primary environment")

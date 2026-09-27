@@ -11,7 +11,7 @@ import {
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
-  EnvironmentHttpForbiddenError,
+  EnvironmentHttpForbiddenError, // T3-CUSTOM(expbkt3): 403 for a verified non-member Clerk token.
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
@@ -63,7 +63,7 @@ import { ClerkDirectory } from "./ClerkDirectory.ts";
 import * as ClerkIdentityVerifier from "./ClerkIdentityVerifier.ts";
 import * as EnvironmentUserService from "./EnvironmentUserService.ts";
 import * as SessionStore from "./SessionStore.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): environment user identity mode.
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -482,7 +482,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const identity = yield* resolveIdentity(args.payload.identityToken);
+            const identity = yield* resolveIdentity(args.payload.identityToken); // T3-CUSTOM(expbkt3): team mode identity resolution.
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
               deriveAuthClientMetadata({
@@ -539,7 +539,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             failEnvironmentInternal("browser_session_issuance_failed", error),
           ),
         ),
-      )
+      ) // T3-CUSTOM(expbkt3): BEGIN — team mode: direct Clerk sign-in mints a browser cookie for an already-verified operator.
       .handle(
         "clerkSession",
         Effect.fn("environment.auth.clerkSession")(
@@ -596,6 +596,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* EnvironmentAuthenticatedPrincipal;
+            // T3-CUSTOM(expbkt3): END
             // T3-CUSTOM(expbkt3): This endpoint receives the direct browser session token.
             const verified = yield* resolveDirectClerkIdentity(args.payload.identityToken);
             const identity = verified.identity;

@@ -15,6 +15,7 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
+  // T3-CUSTOM(expbkt3): default agent-session model (below).
   DEFAULT_MODEL,
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -22,6 +23,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import {
+  // T3-CUSTOM(expbkt3): default thread interaction mode (below).
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -43,12 +45,14 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+// T3-CUSTOM(expbkt3): BEGIN — source-control identity and team-mode user settings.
 import {
   GitHubSourceControlProfileMetadata,
   SourceControlIdentityMode,
   SourceControlProfileId,
 } from "./sourceControlProfiles.ts";
 import { EnvironmentUserIdentityMode } from "./users.ts";
+// T3-CUSTOM(expbkt3): END
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -440,6 +444,7 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3-CUSTOM(expbkt3): experimental phase-grouped sidebar layout.
   phaseGroupedSidebarEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -945,6 +950,7 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — external MCP exposure, and archived-session worktree reclaim.
 export const ExternalMcpSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1019,6 +1025,7 @@ export const ExperimentalSettings = Schema.Struct({
   sessionArchive: SessionArchiveSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ExperimentalSettings = typeof ExperimentalSettings.Type;
+// T3-CUSTOM(expbkt3): END
 
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
@@ -1373,6 +1380,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // T3-CUSTOM(expbkt3): BEGIN — source-control identity and team-mode user identity settings.
   sourceControlIdentityMode: SourceControlIdentityMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("machine" as const)),
   ),
@@ -1383,6 +1391,7 @@ export const ServerSettings = Schema.Struct({
     SourceControlProfileId,
     GitHubSourceControlProfileMetadata,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3-CUSTOM(expbkt3): END
   /**
    * The merge method pull requests start with; `null` reuses the method
    * last chosen on this device. Server-side so a project can override it
@@ -1415,6 +1424,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3-CUSTOM(expbkt3): experimental features (external MCP, session-archive reclaim).
   experimental: ExperimentalSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -1658,6 +1668,7 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): default agent-session model/runtime/interaction mode patch fields.
   defaultThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
   defaultThreadRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadInteractionMode: Schema.optionalKey(ProviderInteractionMode),
@@ -1672,11 +1683,13 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  // T3-CUSTOM(expbkt3): BEGIN — source-control and team-mode user identity patch fields.
   sourceControlIdentityMode: Schema.optionalKey(SourceControlIdentityMode),
   environmentUserIdentityMode: Schema.optionalKey(EnvironmentUserIdentityMode),
   sourceControlProfiles: Schema.optionalKey(
     Schema.Record(SourceControlProfileId, GitHubSourceControlProfileMetadata),
   ),
+  // T3-CUSTOM(expbkt3): END
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({
@@ -1685,6 +1698,7 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  // T3-CUSTOM(expbkt3): experimental features patch (external MCP, session-archive reclaim).
   experimental: Schema.optionalKey(
     Schema.Struct({
       externalMcp: Schema.optionalKey(
@@ -1801,6 +1815,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  // T3-CUSTOM(expbkt3): experimental phase-grouped sidebar layout.
   phaseGroupedSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): plan mode availability (fresh key, on by default).
   planModeAvailable: Schema.optionalKey(Schema.Boolean),

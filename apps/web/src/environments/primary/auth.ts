@@ -22,7 +22,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
-import { readManagedClerkIdentityToken } from "../../cloud/managedIdentity";
+import { readManagedClerkIdentityToken } from "../../cloud/managedIdentity"; // T3-CUSTOM(expbkt3): managed Clerk identity binding, used below.
 // T3-CUSTOM(expbkt3): identify the direct hosted build in server diagnostics.
 import { APP_VERSION } from "../../branding";
 // T3-CUSTOM(expbkt3): a managed BK build pairs with a central server by token exchange.
@@ -133,7 +133,7 @@ export interface ServerPairingLinkRecord {
 
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
-  readonly userId: string | null;
+  readonly userId: string | null; // T3-CUSTOM(expbkt3): member self-service device listing needs the owning user.
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly method: ServerAuthSessionMethod;

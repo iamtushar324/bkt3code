@@ -1,7 +1,10 @@
+// T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane: authenticated external operators alongside
+// scoped native agent sessions.
 /**
  * T3-CUSTOM(expbkt3): Streamable HTTP MCP endpoint for scoped native agents
  * and authenticated external operators.
  */
+// T3-CUSTOM(expbkt3): END
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -29,8 +32,10 @@ import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
 } from "./toolkits/preview/handlers.ts";
+// T3-CUSTOM(expbkt3): BEGIN — the fork's control toolkit (T3 MCP control plane).
 import { T3ControlToolkitHandlersLive } from "./toolkits/control/handlers.ts";
 import { T3ControlToolkit } from "./toolkits/control/tools.ts";
+// T3-CUSTOM(expbkt3): END
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
@@ -53,8 +58,10 @@ import {
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
+    // T3-CUSTOM(expbkt3): BEGIN — external MCP credentials (Settings-issued) are also valid here.
     message:
       "A valid provider-scoped or Settings-issued external MCP bearer credential is required.",
+    // T3-CUSTOM(expbkt3): END
   },
   {
     status: 401,
@@ -683,8 +690,8 @@ const McpTransportLive = McpServer.layerHttp({
 
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
-  T3ControlToolkitRegistrationLive,
-  WebUiRpcRegistrationLive,
+  T3ControlToolkitRegistrationLive, // T3-CUSTOM(expbkt3): T3 MCP control plane toolkit.
+  WebUiRpcRegistrationLive, // T3-CUSTOM(expbkt3): web UI RPC parity bridge.
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

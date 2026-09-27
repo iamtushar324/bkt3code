@@ -1646,6 +1646,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    // T3-CUSTOM(expbkt3): draft lineage — parent thread id is part of draft identity.
     (left.parentThreadId ?? null) === (right.parentThreadId ?? null) &&
     // T3-CUSTOM(expbkt3): two drafts with the same parent id on different
     // machines are different drafts; without this the store would treat a
@@ -1799,11 +1800,14 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        // T3-CUSTOM(expbkt3): BEGIN — draft lineage: normalize the persisted parent
+        // thread id, discarding anything that isn't a non-empty string.
         parentThreadId:
           typeof candidateDraftThread.parentThreadId === "string" &&
           candidateDraftThread.parentThreadId.length > 0
             ? (candidateDraftThread.parentThreadId as ThreadId)
             : null,
+        // T3-CUSTOM(expbkt3): END
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2549,6 +2553,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    // T3-CUSTOM(expbkt3): draft lineage — hydrate the parent thread id from persistence.
     parentThreadId: persistedDraftThread.parentThreadId ?? null,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
@@ -2825,12 +2830,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            // T3-CUSTOM(expbkt3): BEGIN — draft lineage: a project change drops the
+            // parent link (the child no longer makes sense in the new project),
+            // otherwise it is carried forward.
             const nextParentThreadId =
               options.parentThreadId === undefined
                 ? projectChanged
                   ? null
                   : (existing.parentThreadId ?? null)
                 : (options.parentThreadId ?? null);
+            // T3-CUSTOM(expbkt3): END
             const environmentSelection =
               options.environmentSelection ??
               (options.branch != null || options.worktreePath != null
@@ -2859,6 +2868,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              // T3-CUSTOM(expbkt3): draft lineage — carry the parent thread id forward.
               parentThreadId: nextParentThreadId,
               promotedTo: existing.promotedTo ?? null,
             };
@@ -2875,6 +2885,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              // T3-CUSTOM(expbkt3): draft lineage — a promoted draft's parent thread id
+              // is part of its identity for change detection.
               (nextDraftThread.parentThreadId ?? null) === (existing.parentThreadId ?? null) &&
               // T3-CUSTOM(expbkt3): the parent's environment is part of the identity.
               (nextDraftThread.parentEnvironmentId ?? null) ===

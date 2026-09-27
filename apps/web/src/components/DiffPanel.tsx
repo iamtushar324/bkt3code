@@ -181,7 +181,7 @@ export default function DiffPanel({
     activeThread !== null && activeThread !== undefined && activeCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
-          input: { cwd: activeCwd, threadId: activeThread.id },
+          input: { cwd: activeCwd, threadId: activeThread.id }, // T3-CUSTOM(expbkt3): thread-scoped source-control identity/lineage.
         })
       : null,
   );

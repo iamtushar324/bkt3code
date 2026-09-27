@@ -34,6 +34,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerSettings as ServerSettingsValue,
+  // T3-CUSTOM(expbkt3): acting-user id for MCP credential and identity plumbing.
   type UserId,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
@@ -76,10 +77,12 @@ import {
   ProviderValidationError,
   ProviderWorkspaceMissingError,
 } from "../Errors.ts";
+// T3-CUSTOM(expbkt3): BEGIN import the execution-options type for identity plumbing.
 import type {
   ProviderAdapterShape,
   ProviderSessionExecutionOptions,
 } from "../Services/ProviderAdapter.ts";
+// T3-CUSTOM(expbkt3): END
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -409,6 +412,7 @@ function toRuntimePayloadFromSession(
     readonly continueAfterServerUpdate?: TurnId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
+    // T3-CUSTOM(expbkt3): recovery must know a session needs its identity restored.
     readonly sourceControlIdentityRequired?: boolean;
   },
 ): Record<string, unknown> {
@@ -425,6 +429,7 @@ function toRuntimePayloadFromSession(
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
       : {}),
+    // T3-CUSTOM(expbkt3): surface the source-control identity flag to the read model.
     ...(extra?.sourceControlIdentityRequired !== undefined
       ? { sourceControlIdentityRequired: extra.sourceControlIdentityRequired }
       : {}),
@@ -987,9 +992,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN bind the MCP credential to the acting user.
   const prepareMcpSession = (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
+    // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): bind the MCP credential to the acting user.
     actorUserId: UserId | null = null,
   ) =>
@@ -1116,6 +1123,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       readonly continueAfterServerUpdate?: TurnId;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
+      // T3-CUSTOM(expbkt3): recovery must know a session needs its identity restored.
       readonly sourceControlIdentityRequired?: boolean;
     },
   ) =>
@@ -1340,11 +1348,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         );
       }
 
+      // T3-CUSTOM(expbkt3): MCP credential bound to the acting user before recovery restarts the session.
       yield* prepareMcpSession(
         input.binding.threadId,
         bindingInstanceId,
         executionOptions?.actorUserId ?? null,
       );
+      // T3-CUSTOM(expbkt3): BEGIN startSession now takes a second execution-options argument.
       const resumed = yield* adapter
         .startSession(
           {
@@ -1356,6 +1366,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
             runtimeMode: input.binding.runtimeMode ?? "full-access",
           },
+          // T3-CUSTOM(expbkt3): END
           // T3-CUSTOM(expbkt3): a recovered session is a freshly spawned
           // process, so it needs the identity markers too.
           withSessionIdentityEnvironment(executionOptions),
@@ -1475,6 +1486,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
+    // T3-CUSTOM(expbkt3): source-control identity — startSession takes the caller's execution options.
     function* (threadId, rawInput, executionOptions) {
       const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.startSession",

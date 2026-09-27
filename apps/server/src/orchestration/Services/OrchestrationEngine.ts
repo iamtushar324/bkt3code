@@ -66,16 +66,18 @@ export interface OrchestrationEngineShape {
    * @param command - Valid orchestration command.
    * @param options - Optional client origin (surface/app version) stamped into
    *   the metadata of every event the command produces.
-   *   T3-CUSTOM(expbkt3): `actorUserId` is the Clerk operator behind the
+   *   T3-CUSTOM(expbkt3): BEGIN — `actorUserId` is the Clerk operator behind the
    *   command (team mode); it is stamped into every produced event's
    *   `metadata.actorUserId` (audit trail) and threaded into the decider so
    *   `thread.create`/`project.create` record ownership. Omit (or pass null) in
    *   single-user mode for byte-for-byte unchanged behavior.
+   *   T3-CUSTOM(expbkt3): END
    * @returns Effect containing the sequence of the persisted event.
    *
    * Dispatch is serialized through an internal queue and deduplicated via
    * command receipts.
    */
+  // T3-CUSTOM(expbkt3): team mode — actorUserId flows through dispatch options.
   readonly dispatch: (
     command: OrchestrationCommand,
     options?: {

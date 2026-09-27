@@ -207,6 +207,7 @@ const ProviderRuntimeEventBase = Schema.Struct({
   // populates it (post-slice-4), routing flips to instance-id-only.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
+  // T3-CUSTOM(expbkt3): session restart.
   /** Fences late events emitted by a replaced provider session. */
   sessionGeneration: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,

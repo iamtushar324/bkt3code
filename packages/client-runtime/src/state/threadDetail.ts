@@ -53,6 +53,7 @@ export function mergeEnvironmentThread(
     branch: shell.branch,
     worktreePath: shell.worktreePath,
     latestTurn: shell.latestTurn,
+    // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread.
     ownerUserId: shell.ownerUserId,
     memberUserIds: shell.memberUserIds,
     createdAt: shell.createdAt,

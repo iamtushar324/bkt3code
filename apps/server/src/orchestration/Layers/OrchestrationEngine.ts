@@ -4,7 +4,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
-  UserId,
+  UserId, // T3-CUSTOM(expbkt3): acting operator for command attribution.
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
-  increment,
+  increment, // T3-CUSTOM(expbkt3): generic metric increment helper for fork metrics.
   metricAttributes,
   orchestrationCommandAckDuration,
   orchestrationCommandsTotal,
@@ -73,6 +73,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "project.create":
     case "project.meta.update":
     case "project.delete":
+    // T3-CUSTOM(expbkt3): team mode project membership/ownership commands.
     case "project.member.add":
     case "project.member.remove":
     case "project.owner.transfer":
@@ -252,7 +253,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
-          actor: envelope.actorUserId,
+          actor: envelope.actorUserId, // T3-CUSTOM(expbkt3): acting operator passed to the decider.
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
@@ -271,7 +272,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
         // Stamp the dispatching client's origin onto every event the command
         // produced. The decider stays pure; attribution is an engine concern.
-        const originStampedEvents =
+        const originStampedEvents = // T3-CUSTOM(expbkt3): renamed to make room for actor stamping below.
           envelope.origin === undefined
             ? plannedEvents
             : plannedEvents.map((planned) => ({

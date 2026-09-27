@@ -19,6 +19,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+// T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import {
   CurrentSourceControlExecutionEnvironment,
   mergeSourceControlEnvironment,
@@ -123,6 +124,8 @@ export const make = Effect.gen(function* () {
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
+    // T3-CUSTOM(expbkt3): BEGIN source-control identity — merge the caller's
+    // execution environment over the process env before spawning.
     const sourceControlExecutionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
     const environment = sourceControlExecutionEnvironment
       ? mergeSourceControlEnvironment(
@@ -130,6 +133,7 @@ export const make = Effect.gen(function* () {
           sourceControlExecutionEnvironment.environment,
         )
       : input.env;
+    // T3-CUSTOM(expbkt3): END
     const baseError = {
       operation: input.operation,
       command: input.command,

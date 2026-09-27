@@ -10,7 +10,7 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
-  EnvironmentUserId,
+  EnvironmentUserId, // T3-CUSTOM(expbkt3): managed auth — needed for the owning user id on sessions.
   ClientSurface,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -36,6 +36,7 @@ export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRe
 
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,
+  // T3-CUSTOM(expbkt3): managed auth — auth session records carry the owning environment user id.
   userId: Schema.NullOr(EnvironmentUserId),
   subject: Schema.String,
   scopes: AuthEnvironmentScopes,
@@ -50,6 +51,7 @@ export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
 export const CreateAuthSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
+  // T3-CUSTOM(expbkt3): managed auth — new sessions record the owning environment user id.
   userId: Schema.NullOr(EnvironmentUserId),
   subject: Schema.String,
   scopes: AuthEnvironmentScopes,
@@ -90,6 +92,7 @@ export const RevokeOtherAuthSessionsInput = Schema.Struct({
 });
 export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.Type;
 
+// T3-CUSTOM(expbkt3): managed auth — revoke every session owned by a user (e.g. on deprovision).
 export const RevokeAuthSessionsByUserInput = Schema.Struct({
   userId: EnvironmentUserId,
   revokedAt: Schema.DateTimeUtcFromString,
@@ -102,11 +105,13 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — managed auth: set the owning user id on an existing session (e.g. after login completes).
 export const SetAuthSessionUserInput = Schema.Struct({
   sessionId: AuthSessionId,
   userId: EnvironmentUserId,
 });
 export type SetAuthSessionUserInput = typeof SetAuthSessionUserInput.Type;
+// T3-CUSTOM(expbkt3): END
 export const SetAuthSessionClientConnectionInput = Schema.Struct({
   sessionId: AuthSessionId,
   surface: Schema.NullOr(ClientSurface),
@@ -138,6 +143,7 @@ export class AuthSessionRepository extends Context.Service<
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    // T3-CUSTOM(expbkt3): managed auth — revokeByUserId/setUser added to the repository service contract.
     readonly revokeByUserId: (
       input: RevokeAuthSessionsByUserInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
@@ -155,6 +161,7 @@ export class AuthSessionRepository extends Context.Service<
 
 const AuthSessionDbRow = Schema.Struct({
   sessionId: AuthSessionId,
+  // T3-CUSTOM(expbkt3): managed auth + client build identity — session row schema includes owning user id and app version.
   userId: Schema.NullOr(EnvironmentUserId),
   subject: Schema.String,
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
@@ -174,6 +181,7 @@ const AuthSessionDbRow = Schema.Struct({
 
 const AuthSessionRawDbRow = Schema.Struct({
   sessionId: Schema.String,
+  // T3-CUSTOM(expbkt3): managed auth + client build identity — raw decode row includes owning user id and app version.
   userId: Schema.Unknown,
   subject: Schema.Unknown,
   scopes: Schema.Unknown,
@@ -196,6 +204,7 @@ const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
 function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionRecord {
   return {
     sessionId: row.sessionId,
+    // T3-CUSTOM(expbkt3): managed auth + client build identity — carry owning user id and app version through the row mapper.
     userId: row.userId,
     subject: row.subject,
     scopes: row.scopes,
@@ -238,6 +247,7 @@ export const make = Effect.gen(function* () {
   const insertSessionRow = (ignoreExisting: boolean) =>
     SqlSchema.void({
       Request: CreateAuthSessionInput,
+      // T3-CUSTOM(expbkt3): BEGIN — managed auth + client build identity: persist the owning user id and app version on session creation.
       execute: (input) =>
         sql`
         INSERT INTO auth_sessions (
@@ -276,6 +286,7 @@ export const make = Effect.gen(function* () {
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
+      // T3-CUSTOM(expbkt3): END
     });
   const createSessionRow = insertSessionRow(false);
   const createSessionRowIfAbsent = insertSessionRow(true);
@@ -283,6 +294,7 @@ export const make = Effect.gen(function* () {
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
     Result: AuthSessionRawDbRow,
+    // T3-CUSTOM(expbkt3): BEGIN — managed auth + client build identity: select the owning user id and app version alongside existing session columns.
     execute: ({ sessionId }) =>
       sql`
         SELECT
@@ -305,6 +317,7 @@ export const make = Effect.gen(function* () {
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const revokeActiveSessionsForReplacement = SqlSchema.findAll({
@@ -325,6 +338,7 @@ export const make = Effect.gen(function* () {
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
+    // T3-CUSTOM(expbkt3): BEGIN — managed auth + client build identity: select the owning user id and app version alongside existing session columns.
     execute: ({ now, connectedSessionIds = [] }) =>
       sql`
         SELECT
@@ -349,6 +363,7 @@ export const make = Effect.gen(function* () {
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
         ORDER BY issued_at DESC, session_id DESC
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const setLastConnectedAtRow = SqlSchema.void({
@@ -362,6 +377,7 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: persist the owning user id onto a session.
   const setSessionUserRows = SqlSchema.findAll({
     Request: SetAuthSessionUserInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -374,6 +390,7 @@ export const make = Effect.gen(function* () {
         RETURNING session_id AS "sessionId"
       `,
   });
+  // T3-CUSTOM(expbkt3): END
 
   // COALESCE keeps the previous value when a client reports only one field, so
   // a partial report never nulls out data a fuller client stored earlier.
@@ -415,6 +432,7 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: bulk-revoke sessions by owning user id.
   const revokeSessionsByUserRows = SqlSchema.findAll({
     Request: RevokeAuthSessionsByUserInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -427,6 +445,7 @@ export const make = Effect.gen(function* () {
         RETURNING session_id AS "sessionId"
       `,
   });
+  // T3-CUSTOM(expbkt3): END
 
   const create: AuthSessionRepository["Service"]["create"] = (input) =>
     createSessionRow(input).pipe(
@@ -548,6 +567,7 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: revokeByUserId revokes every session owned by a user (e.g. on deprovision).
   const revokeByUserId: AuthSessionRepository["Service"]["revokeByUserId"] = (input) =>
     revokeSessionsByUserRows(input).pipe(
       Effect.mapError(
@@ -559,6 +579,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
+  // T3-CUSTOM(expbkt3): END
 
   const setLastConnectedAt: AuthSessionRepository["Service"]["setLastConnectedAt"] = (input) =>
     setLastConnectedAtRow(input).pipe(
@@ -571,6 +592,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: setUser attaches an owning environment user id to a session.
   const setUser: AuthSessionRepository["Service"]["setUser"] = (input) =>
     setSessionUserRows(input).pipe(
       Effect.mapError(
@@ -582,6 +604,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map((rows) => rows.length > 0),
     );
+  // T3-CUSTOM(expbkt3): END
 
   const setClientConnection: AuthSessionRepository["Service"]["setClientConnection"] = (input) =>
     setClientConnectionRow(input).pipe(
@@ -602,6 +625,7 @@ export const make = Effect.gen(function* () {
     listActive,
     revoke,
     revokeAllExcept,
+    // T3-CUSTOM(expbkt3): managed auth — expose revokeByUserId/setUser on the repository service.
     revokeByUserId,
     setLastConnectedAt,
     setUser,

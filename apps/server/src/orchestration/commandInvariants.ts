@@ -5,6 +5,7 @@ import type {
   OrchestrationThread,
   ProjectId,
   ThreadId,
+  // T3-CUSTOM(expbkt3): team mode — actor/owner/member ids for invariants below.
   UserId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -114,6 +115,7 @@ export function requireThread(input: {
   );
 }
 
+// T3-CUSTOM(expbkt3): team mode — ownership-transfer invariant.
 export function requireOwnershipTransferable(input: {
   readonly commandType: string;
   readonly entityLabel: string;
@@ -184,6 +186,7 @@ export function requireThreadAbsent(input: {
   );
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode add/remove membership invariants.
 /**
  * Membership invariants — the creator (owner) is a permanent member: they are
  * implicitly present and can never be added or removed. Adds are rejected for
@@ -242,6 +245,8 @@ export function requireMemberRemovable(input: {
   return Effect.void;
 }
 
+// T3-CUSTOM(expbkt3): END
+// T3-CUSTOM(expbkt3): generic non-negative-integer guard for fork command validation.
 export function requireNonNegativeInteger(input: {
   readonly commandType: OrchestrationCommand["type"];
   readonly field: string;

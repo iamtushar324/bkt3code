@@ -16,8 +16,9 @@ export type SettingsSheetTarget =
   | "SettingsClientStorage"
   | "SettingsDiagnostics"
   | "SettingsOpenSourceLicenses"
+  // T3-CUSTOM(expbkt3): BEGIN — fork source-control identity settings screen.
   | "SettingsUsage"
-  // T3-CUSTOM(expbkt3): fork Users settings screen.
   | "SettingsSourceControl";
+// T3-CUSTOM(expbkt3): END
 
 export type SettingsLegalDocumentTarget = "SettingsLegal";

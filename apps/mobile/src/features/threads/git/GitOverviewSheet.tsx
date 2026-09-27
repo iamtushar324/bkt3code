@@ -85,6 +85,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
+          // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
           input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
@@ -249,6 +250,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
       }
     >
+      {/* T3-CUSTOM(expbkt3): source-control identity — the profile a git action would run as. */}
       {gitActions.actingProfileLogin ? (
         <MetaCard label="GitHub identity" value={`@${gitActions.actingProfileLogin}`} />
       ) : null}

@@ -1262,9 +1262,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 <TerminalSurface
                   autoFocus={terminalAutoFocus}
                   buffer={terminalSurfaceBuffer}
-                  outputResetKey={
-                    `${terminal.output.generation}:${terminal.output.resetVersion}` /* T3-CUSTOM(expbkt3): reset native replay with upstream history. */
-                  }
+                  // T3-CUSTOM(expbkt3): reset native replay with upstream history.
+                  outputResetKey={`${terminal.output.generation}:${terminal.output.resetVersion}`}
                   fontSize={fontSize}
                   isRunning={isRunning}
                   keyboardFocusRequest={keyboardFocusRequest}

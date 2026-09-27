@@ -91,6 +91,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+// T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -4275,6 +4276,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           detail: "Failed to close Claude runtime query.",
           cause,
         }),
+      // T3-CUSTOM(expbkt3): surface a failed close as a runtime error too.
     }).pipe(
       // T3-CUSTOM(expbkt3): surface a failed close as a runtime error too.
       Effect.tapError((error) =>
@@ -4412,6 +4414,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   };
 
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
+    // T3-CUSTOM(expbkt3): source-control identity — startSession takes the caller's execution environment.
     function* (input, executionOptions) {
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
@@ -4438,9 +4441,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
+      // T3-CUSTOM(expbkt3): BEGIN source-control identity — merge the per-call
+      // execution environment so Claude attributes git/PR actions to the driving user.
       const sessionEnvironment = executionOptions?.environment
         ? mergeSourceControlEnvironment(claudeEnvironment, executionOptions.environment)
         : claudeEnvironment;
+      // T3-CUSTOM(expbkt3): END
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 

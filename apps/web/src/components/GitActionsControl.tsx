@@ -12,6 +12,7 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
   SourceControlPublishRepositoryResult,
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
   SourceControlProfileId,
   SourceControlRepositoryVisibility,
   VcsStatusResult,
@@ -184,15 +185,18 @@ function requestVcsStatusRefresh(
   refresh: RefreshVcsStatus,
   environmentId: ScopedThreadRef["environmentId"] | null,
   cwd: string | null,
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
   threadId: ScopedThreadRef["threadId"] | null,
 ): void {
   if (environmentId === null || cwd === null) {
     return;
   }
+  // T3-CUSTOM(expbkt3): BEGIN — pass along the thread id so the refresh uses its source-control profile.
   void refresh({
     environmentId,
     input: { cwd, ...(threadId !== null ? { threadId } : {}) },
   });
+  // T3-CUSTOM(expbkt3): END
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
@@ -422,6 +426,7 @@ interface PublishRepositoryDialogProps {
   /** Thread the dialog was opened from, so the new repository can open beside it. */
   readonly threadRef: ScopedThreadRef | null;
   readonly gitCwd: string;
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
   readonly threadId: ScopedThreadRef["threadId"] | null;
   readonly sourceControlProfileId: SourceControlProfileId | null;
 }
@@ -454,9 +459,12 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     () => ({
       environmentId: props.environmentId,
       cwd: props.gitCwd,
+      // T3-CUSTOM(expbkt3): BEGIN — source-control profile identity for git actions.
       threadId: props.threadId,
       sourceControlProfileId: props.sourceControlProfileId,
+      // T3-CUSTOM(expbkt3): END
     }),
+    // T3-CUSTOM(expbkt3): props.sourceControlProfileId and props.threadId dependencies for the scope above.
     [props.environmentId, props.gitCwd, props.sourceControlProfileId, props.threadId],
   );
   const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
@@ -1140,10 +1148,12 @@ export default function GitActionsControl({
     activeEnvironmentId !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: activeEnvironmentId,
+          // T3-CUSTOM(expbkt3): BEGIN — includes the thread id so status queries use its source-control profile.
           input: {
             cwd: gitCwd,
             ...(activeThreadRef ? { threadId: activeThreadRef.threadId } : {}),
           },
+          // T3-CUSTOM(expbkt3): END
         })
       : null,
   );
@@ -1252,12 +1262,14 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
+        // T3-CUSTOM(expbkt3): BEGIN — passes the thread id so status refresh honors its source-control profile.
         requestVcsStatusRefresh(
           refreshVcsStatus,
           activeEnvironmentId,
           gitCwd,
           activeThreadRef?.threadId ?? null,
         );
+        // T3-CUSTOM(expbkt3): END
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -1276,6 +1288,7 @@ export default function GitActionsControl({
       window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
+    // T3-CUSTOM(expbkt3): activeThreadRef?.threadId dependency for the refresh below.
   }, [activeEnvironmentId, activeThreadRef?.threadId, gitCwd, refreshVcsStatus]);
 
   const openExistingPr = useCallback(async () => {
@@ -1478,6 +1491,7 @@ export default function GitActionsControl({
         }
 
         const error = squashAtomCommandFailure(result);
+        // T3-CUSTOM(expbkt3): surfaces a "Convert origin to HTTPS" action when the failure is an SSH-remote error.
         const errorToastData = sourceControlErrorToastData(error);
         toastManager.update(
           resolvedProgressToastId,
@@ -1485,6 +1499,7 @@ export default function GitActionsControl({
             type: "error",
             title: "Action failed",
             description: error instanceof Error ? error.message : "An error occurred.",
+            // T3-CUSTOM(expbkt3): errorToastData carries the SSH-remote conversion action.
             ...(errorToastData !== undefined ? { data: errorToastData } : {}),
           }),
         );
@@ -1961,9 +1976,11 @@ export default function GitActionsControl({
       >
         <DialogPopup>
           <DialogHeader>
+            {/* T3-CUSTOM(expbkt3): BEGIN — shows the acting source-control identity in the commit dialog title. */}
             <DialogTitle>
               {actingProfileLogin ? `Commit as @${actingProfileLogin}` : COMMIT_DIALOG_TITLE}
             </DialogTitle>
+            {/* T3-CUSTOM(expbkt3): END */}
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -2126,6 +2143,7 @@ export default function GitActionsControl({
         environmentId={activeEnvironmentId}
         threadRef={activeThreadRef}
         gitCwd={gitCwd}
+        // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
         threadId={activeThreadRef?.threadId ?? null}
         sourceControlProfileId={sourceControlProfileId}
       />

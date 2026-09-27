@@ -93,6 +93,7 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly dpopProof: string;
+  // T3-CUSTOM(expbkt3): team mode — the DPoP twin of bootstrapRemoteBearerSession's operator binding.
   readonly identityToken?: string;
   readonly timeoutMs?: number;
 }) {
@@ -107,6 +108,7 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
         subject_token: input.credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
+        // T3-CUSTOM(expbkt3): team mode — binds the operator identity to the DPoP exchange.
         ...(input.identityToken ? { identity_token: input.identityToken } : {}),
         ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
         ...clientMetadataTokenExchangeFields(input.clientMetadata),

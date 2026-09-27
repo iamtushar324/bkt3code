@@ -156,6 +156,7 @@ export interface ThreadDetailScreenProps {
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
+  // T3-CUSTOM(expbkt3): durable outbox — a rejected queued message stays visible until retry/edit.
   readonly failedOutboxDetail: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -171,6 +172,7 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  // T3-CUSTOM(expbkt3): durable outbox — retry or edit a rejected queued message.
   readonly onRetryFailedOutbox: () => void;
   readonly onEditFailedOutbox: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;

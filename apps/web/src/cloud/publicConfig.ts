@@ -74,6 +74,8 @@ export function hasCloudPublicConfig(): boolean {
   return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN team mode — sign-in only needs the Clerk publishable key, distinct
+// from the fuller relay config `hasCloudPublicConfig()` requires.
 /**
  * Whether a Clerk publishable key is configured for this build. Team-mode
  * sign-in (via `POST /api/auth/clerk-session`) needs only this key — not the
@@ -95,6 +97,7 @@ export function resolveAppClerkMode(): AppClerkMode {
   if (!config.clerkPublishableKey) return "disabled";
   return config.clerkJwtTemplate && config.relayUrl ? "cloud" : "identity";
 }
+// T3-CUSTOM(expbkt3): END team mode Clerk config helpers.
 
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();

@@ -12,9 +12,11 @@ import {
   AuthAccessTokenResult,
   AuthBrowserSessionRequest,
   AuthBrowserSessionResult,
+  // T3-CUSTOM(expbkt3): team mode — Clerk sign-in.
   AuthClerkSessionRequest,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
+  // T3-CUSTOM(expbkt3): team mode — operator identity binding.
   AuthIdentityBindingRequest,
   AuthIdentityBindingResult,
   AuthPairingCredentialResult,
@@ -29,11 +31,14 @@ import {
 } from "./auth.ts";
 import {
   AuthSessionId,
+  // T3-CUSTOM(expbkt3): BEGIN — team mode operator id, and schemas for source-control
+  // pull-request-link resolution below.
   EnvironmentUserId,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  // T3-CUSTOM(expbkt3): END
   DpopFailureReason,
   ThreadId,
   TrimmedNonEmptyString,
@@ -45,8 +50,10 @@ import {
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
+  // T3-CUSTOM(expbkt3): team mode — user directory for the client.
   OrchestrationUsersResult,
 } from "./orchestration.ts";
+// T3-CUSTOM(expbkt3): provider catalog endpoint.
 import { ServerProviders } from "./server.ts";
 import {
   PullRequestDiffInput,
@@ -83,9 +90,11 @@ export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidRe
 export const EnvironmentAuthInvalidReason = Schema.Literals([
   "missing_credential",
   "invalid_credential",
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: identity-binding failure reasons.
   "missing_identity",
   "invalid_identity",
   "blocked_identity",
+  // T3-CUSTOM(expbkt3): END
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
@@ -111,6 +120,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  // T3-CUSTOM(expbkt3): team mode — identity binding/lookup failures.
   "identity_management_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
@@ -325,9 +335,10 @@ const EnvironmentSessionCreationErrors = [
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
 ] as const;
-// Clerk sign-in exchange: a bad/expired token is `auth_invalid` (401); a valid
-// token for someone outside the configured org is `forbidden` (403) so the SPA
-// can show "not a member — try a different account" distinctly from a retry.
+// T3-CUSTOM(expbkt3): team mode — Clerk sign-in exchange: a bad/expired token is
+// `auth_invalid` (401); a valid token for someone outside the configured org is
+// `forbidden` (403) so the SPA can show "not a member — try a different account"
+// distinctly from a retry.
 const EnvironmentClerkSessionErrors = [
   EnvironmentAuthInvalidError,
   EnvironmentHttpForbiddenError,
@@ -407,6 +418,7 @@ export type OrchestrationPullRequestLinksResult = typeof OrchestrationPullReques
 
 export interface EnvironmentSessionPrincipalShape {
   readonly sessionId: AuthSessionId;
+  // T3-CUSTOM(expbkt3): team mode — the Clerk-authenticated operator, when there is one.
   readonly userId: EnvironmentUserId | null;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
@@ -513,6 +525,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       error: EnvironmentSessionCreationErrors,
     }),
   )
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: Clerk sign-in exchange and operator identity binding.
   .add(
     HttpApiEndpoint.post("clerkSession", "/api/auth/clerk-session", {
       payload: AuthClerkSessionRequest,
@@ -528,6 +541,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       error: EnvironmentAuthenticationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // T3-CUSTOM(expbkt3): END
   .add(
     HttpApiEndpoint.post("token", "/oauth/token", {
       headers: OptionalDpopProofHeaders,
@@ -619,6 +633,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // T3-CUSTOM(expbkt3): BEGIN — provider catalog and team-mode user directory for the client.
   .add(
     HttpApiEndpoint.get("providers", "/api/orchestration/providers", {
       headers: OptionalBearerHeaders,
@@ -633,6 +648,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // T3-CUSTOM(expbkt3): END
   .add(
     HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
       headers: OptionalBearerHeaders,
@@ -642,6 +658,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // T3-CUSTOM(expbkt3): source-control identity — resolve pull requests linked to threads.
   .add(
     HttpApiEndpoint.get(
       "pullRequestLinks",

@@ -361,6 +361,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }
   const httpBaseUrl = entry.httpBaseUrl;
   const wsBaseUrl = entry.wsBaseUrl;
+  // T3-CUSTOM(expbkt3): pass a descriptor-fetch timeout so a starting local backend can't stall the primary.
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl,
     // T3-CUSTOM(expbkt3): a starting local backend must not hold up the primary.

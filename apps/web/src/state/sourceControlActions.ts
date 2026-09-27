@@ -15,7 +15,7 @@ import type {
   GitStackedAction,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
-  SourceControlProfileId,
+  SourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity type.
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -40,8 +40,11 @@ export type SourceControlActionKind =
 export interface SourceControlActionScope {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  // T3-CUSTOM(expbkt3): BEGIN — thread-scoped git actions and source-control
+  // identity: see resolveScope and useSourceControlPublishRepositoryAction.
   readonly threadId?: ThreadId | null;
   readonly sourceControlProfileId?: SourceControlProfileId | null;
+  // T3-CUSTOM(expbkt3): END
 }
 
 interface SourceControlActionState<
@@ -126,8 +129,11 @@ function resolveScope(scope: SourceControlActionScope) {
   return {
     environmentId: scope.environmentId,
     cwd: scope.cwd,
+    // T3-CUSTOM(expbkt3): BEGIN — thread-scoped git actions and source-control
+    // identity: carry both through to callers that resolve a scope.
     threadId: scope.threadId ?? null,
     sourceControlProfileId: scope.sourceControlProfileId ?? null,
+    // T3-CUSTOM(expbkt3): END
   };
 }
 
@@ -172,6 +178,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
+          // T3-CUSTOM(expbkt3): thread-scoped git actions — see resolveScope.
           input: { cwd: scope.cwd, ...(scope.threadId ? { threadId: scope.threadId } : {}) },
         })
       : null,
@@ -189,6 +196,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
         ),
       );
     }
+    // T3-CUSTOM(expbkt3): thread-scoped git actions — see resolveScope.
     return pull({
       environmentId: target.environmentId,
       input: { cwd: target.cwd, ...(target.threadId ? { threadId: target.threadId } : {}) },
@@ -211,6 +219,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
+          // T3-CUSTOM(expbkt3): thread-scoped git actions — see resolveScope.
           input: { cwd: scope.cwd, ...(scope.threadId ? { threadId: scope.threadId } : {}) },
         })
       : null,
@@ -268,6 +277,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
+          // T3-CUSTOM(expbkt3): thread-scoped git actions — see resolveScope.
           input: { cwd: scope.cwd, ...(scope.threadId ? { threadId: scope.threadId } : {}) },
         })
       : null,
@@ -294,6 +304,8 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
       }
       return publishRepository({
         environmentId: target.environmentId,
+        // T3-CUSTOM(expbkt3): source-control identity — publish with the chosen
+        // git identity profile instead of whatever is default in the cwd.
         input: {
           cwd: target.cwd,
           ...(target.sourceControlProfileId
@@ -356,6 +368,7 @@ export interface PullRequestResolutionTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly reference: string | null;
+  // T3-CUSTOM(expbkt3): thread-scoped git actions — see readCachedPullRequestResolution.
   readonly threadId?: ThreadId | null;
 }
 
@@ -368,6 +381,7 @@ export function readCachedPullRequestResolution(
   return Option.getOrNull(
     AsyncResult.value(
       appAtomRegistry.get(
+        // T3-CUSTOM(expbkt3): BEGIN — thread-scoped git actions in the cached PR-resolution read.
         gitEnvironment.pullRequestResolution({
           environmentId: target.environmentId,
           input: {
@@ -376,6 +390,7 @@ export function readCachedPullRequestResolution(
             ...(target.threadId ? { threadId: target.threadId } : {}),
           },
         }),
+        // T3-CUSTOM(expbkt3): END
       ),
     ),
   );
@@ -386,6 +401,9 @@ export function usePullRequestResolutionState(target: PullRequestResolutionTarge
     target.environmentId !== null && target.cwd !== null && target.reference !== null
       ? gitEnvironment.pullRequestResolution({
           environmentId: target.environmentId,
+          // T3-CUSTOM(expbkt3): thread-scoped git actions — pass the thread id so
+          // this thread's PR resolution query doesn't race another thread's on
+          // the same cwd.
           input: {
             cwd: target.cwd,
             reference: target.reference,

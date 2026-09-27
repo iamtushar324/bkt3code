@@ -73,6 +73,7 @@ export interface GitStatusDetails {
   hasOriginRemote: boolean;
   isDefaultBranch: boolean;
   branch: string | null;
+  // T3-CUSTOM(expbkt3): lineage — the ref this branch was created from.
   baseRef: string | null;
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;

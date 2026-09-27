@@ -124,9 +124,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
+  // T3-CUSTOM(expbkt3): experimental control centre projects-route visibility.
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
-      item.to !== "/settings/projects" ||
+      item.to !== "/settings/projects" || // T3-CUSTOM(expbkt3): see EXPERIMENTAL_CONTROL_CENTER_ENABLED below.
       // T3-CUSTOM(expbkt3): the experimental control centre puts its own projects
       // list on this route, which is reachable without a project selection.
       EXPERIMENTAL_CONTROL_CENTER_ENABLED ||

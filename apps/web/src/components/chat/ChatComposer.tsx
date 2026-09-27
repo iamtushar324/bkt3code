@@ -1212,7 +1212,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
-  sendQueuesWhileUnavailable?: boolean;
+  sendQueuesWhileUnavailable?: boolean; // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
@@ -1245,7 +1245,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         sendDisabledReason={props.sendDisabledReason}
         isConnecting={props.isConnecting}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        sendQueuesWhileUnavailable={props.sendQueuesWhileUnavailable ?? false}
+        sendQueuesWhileUnavailable={props.sendQueuesWhileUnavailable ?? false} // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
@@ -1370,6 +1370,7 @@ export interface ChatComposerProps {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
+  // T3-CUSTOM(expbkt3): durable outbox queue while disconnected.
   /**
    * Messages persisted in the durable outbox for the active thread, shown in
    * a panel above the input and auto-sent once the environment reconnects.
@@ -1530,9 +1531,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
+    // T3-CUSTOM(expbkt3): BEGIN — durable outbox queue while disconnected.
     queuedMessages,
     onDiscardQueuedMessage,
     queuedSendAllowed,
+    // T3-CUSTOM(expbkt3): END
     activePendingApproval,
     pendingApprovals,
     pendingUserInputs,
@@ -2073,7 +2076,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
-    planModeEnabled: settings.planModeAvailable,
+    planModeEnabled: settings.planModeAvailable, // T3-CUSTOM(expbkt3): fork setting is planModeAvailable (fresh key, default on).
     provider: selectedProviderStatus,
     interactionMode: requestedInteractionMode,
   });
@@ -2696,7 +2699,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-    planModeAvailable: settings.planModeAvailable,
+    planModeAvailable: settings.planModeAvailable, // T3-CUSTOM(expbkt3): fork setting is planModeAvailable (fresh key, default on).
   });
   const providerTraitsPickerInput = {
     provider: selectedProvider,
@@ -2708,7 +2711,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-    planModeAvailable: settings.planModeAvailable,
+    planModeAvailable: settings.planModeAvailable, // T3-CUSTOM(expbkt3): fork setting is planModeAvailable (fresh key, default on).
     isComposerOwned: true,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
@@ -2750,7 +2753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting ||
     noProviderAvailable ||
     projectSelectionRequired ||
-    (environmentUnavailable !== null && !sendQueuesWhileEnvironmentUnavailable) ||
+    (environmentUnavailable !== null && !sendQueuesWhileEnvironmentUnavailable) || // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
@@ -6387,7 +6390,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </ComposerBanner.Body>
                     ) : null}
                   </div>
-                ) : queuedMessages !== undefined && queuedMessages.length > 0 ? (
+                ) : queuedMessages !== undefined && queuedMessages.length > 0 ? ( // T3-CUSTOM(expbkt3): durable outbox queue panel.
                   // T3-CUSTOM(expbkt3): durable offline sends stay visible in the composer drawer.
                   <ComposerQueuedMessages
                     messages={queuedMessages}

@@ -340,7 +340,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
-  "turnId" | "state" | "startedAt" | "completedAt" | "durationMs"
+  "turnId" | "state" | "startedAt" | "completedAt" | "durationMs" // T3-CUSTOM(expbkt3): server-stored turn duration.
 >;
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
@@ -765,13 +765,15 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
+      // T3-CUSTOM(expbkt3): BEGIN — agent-spawn/agent-UI rows never fold.
       // User input batches stay visible after their turn settles, and
       // agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
+      // T3-CUSTOM(expbkt3): END
       if (
         entry.kind === "work" &&
-        (entry.entry.questionAnswer !== undefined || workEntryStaysVisible(entry.entry))
+        (entry.entry.questionAnswer !== undefined || workEntryStaysVisible(entry.entry)) // T3-CUSTOM(expbkt3): agent-spawn/agent-UI rows never fold.
       ) {
         continue;
       }
@@ -807,6 +809,7 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    // T3-CUSTOM(expbkt3): BEGIN — server-stored duration, so it never drifts with the browser clock.
     // Prefer the server-stored duration for the settled turn — it is computed
     // from server-side timestamps, so it never depends on the browser clock.
     // Older cached rows have no durationMs, so keep deriving as a fallback.
@@ -822,6 +825,7 @@ function deriveTurnFolds(input: {
               maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
                 lastEntryEnd,
             );
+    // T3-CUSTOM(expbkt3): END
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
@@ -1240,7 +1244,7 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       if (
         timelineEntry.entry.questionAnswer !== undefined ||
-        workEntryStaysVisible(timelineEntry.entry) ||
+        workEntryStaysVisible(timelineEntry.entry) || // T3-CUSTOM(expbkt3): agent-spawn/agent-UI rows never fold.
         timelineEntry.entry.tone === "error"
       ) {
         const spawn = timelineEntry.entry.agentSpawn;
@@ -1266,7 +1270,7 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.questionAnswer !== undefined ||
-          workEntryStaysVisible(nextEntry.entry) ||
+          workEntryStaysVisible(nextEntry.entry) || // T3-CUSTOM(expbkt3): agent-spawn/agent-UI rows never fold.
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||

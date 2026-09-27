@@ -435,7 +435,7 @@ export const WS_METHODS = {
   projectCloneRetry: "projectClone.retry",
   subscribeProjectClones: "subscribeProjectClones",
 
-  // Environment user management methods
+  // T3-CUSTOM(expbkt3): team mode — environment user management methods live in rpcFork.ts
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -602,6 +602,7 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
+  // T3-CUSTOM(expbkt3): team mode — settings updates can fail on user management too.
   error: Schema.Union([
     ServerSettingsError,
     EnvironmentUserManagementError,
@@ -905,6 +906,7 @@ const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLook
 const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
   payload: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
+  // T3-CUSTOM(expbkt3): fork source-control profiles add their own failure mode.
   error: Schema.Union([
     SourceControlRepositoryError,
     SourceControlProfileError,
@@ -1038,6 +1040,7 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([
     GitManagerServiceError,
     SourceControlProfileError,
@@ -1049,12 +1052,14 @@ const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
 const WsVcsPullRpc = Rpc.make(WS_METHODS.vcsPull, {
   payload: VcsPullInput,
   success: VcsPullResult,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([GitCommandError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
   payload: VcsStatusInput,
   success: VcsStatusResult,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([
     GitManagerServiceError,
     SourceControlProfileError,
@@ -1078,6 +1083,7 @@ const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
   payload: GitRunStackedActionInput,
   success: GitActionProgressEvent,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([
     GitManagerServiceError,
     SourceControlProfileError,
@@ -1089,6 +1095,7 @@ const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
 const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   payload: GitPullRequestRefInput,
   success: GitResolvePullRequestResult,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([
     GitManagerServiceError,
     SourceControlProfileError,
@@ -1099,6 +1106,7 @@ const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
 const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
+  // T3-CUSTOM(expbkt3): source-control identity — surfaces the profile's own failure mode.
   error: Schema.Union([
     GitManagerServiceError,
     SourceControlProfileError,
@@ -1160,12 +1168,14 @@ const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileCont
 const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
+  // T3-CUSTOM(expbkt3): a source-control-profile-bound terminal surfaces that failure mode too.
   error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
+  // T3-CUSTOM(expbkt3): a source-control-profile-bound terminal surfaces that failure mode too.
   error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
   stream: true,
 });
@@ -1188,6 +1198,7 @@ const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
 const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
   payload: TerminalRestartInput,
   success: TerminalSessionSnapshot,
+  // T3-CUSTOM(expbkt3): a source-control-profile-bound terminal surfaces that failure mode too.
   error: Schema.Union([TerminalError, SourceControlProfileError, EnvironmentAuthorizationError]),
 });
 

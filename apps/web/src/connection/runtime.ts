@@ -54,4 +54,4 @@ const connectionLayer = backgroundActivityReporterLayer.pipe(
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,
   Layer.Error<ConnectionLayerSource>
-> = Atom.keepAlive(Atom.runtime(connectionLayer));
+> = Atom.keepAlive(Atom.runtime(connectionLayer)); // T3-CUSTOM(expbkt3): keep the connection runtime alive across route changes for managed/relay reconnection.

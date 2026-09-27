@@ -38,6 +38,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+// T3-CUSTOM(expbkt3): team mode — decode the operator identity out of bootstrap tokens.
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
@@ -84,6 +85,8 @@ const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: recover which operator a bootstrap token belongs to,
+// so the cached DPoP token can carry that identity forward.
 function identitySubject(token: string | undefined): string | null {
   if (!token) return null;
   try {
@@ -93,6 +96,7 @@ function identitySubject(token: string | undefined): string | null {
     return null;
   }
 }
+// T3-CUSTOM(expbkt3): END
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"

@@ -13,7 +13,7 @@ import {
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
-  UserId,
+  UserId, // T3-CUSTOM(expbkt3): message sender identity.
   IsoDateTime,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -33,6 +33,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   context: Schema.optional(OrchestrationMessageContext),
   isStreaming: Schema.Boolean,
+  // T3-CUSTOM(expbkt3): message sender identity — the environment user who sent this message.
   sentByUserId: Schema.NullOr(UserId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

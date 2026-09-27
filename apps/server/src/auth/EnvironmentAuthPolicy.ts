@@ -68,7 +68,7 @@ export const make = Effect.gen(function* () {
       environmentId: yield* serverEnvironment.getEnvironmentId,
       development: config.devUrl !== undefined,
     }),
-    ...(clerk !== undefined ? { clerk } : {}),
+    ...(clerk !== undefined ? { clerk } : {}), // T3-CUSTOM(expbkt3): team mode — surface the clerk descriptor built above.
   };
 
   return EnvironmentAuthPolicy.of({

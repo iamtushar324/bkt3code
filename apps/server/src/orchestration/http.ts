@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  // T3-CUSTOM(expbkt3): team mode — resolves the request's durable actor.
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import {
 } from "../auth/http.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+// T3-CUSTOM(expbkt3): team mode access control, plus the providers/PR-link routes.
 import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
 import { filterReadModel, filterShellSnapshot } from "./accessRules.ts";
 import { checkCommandAccess } from "./commandAccess.ts";
@@ -36,6 +38,8 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
+    // T3-CUSTOM(expbkt3): bootstrap turn starts, plus team-mode access control
+    // and the services the new provider/PR-link/user-directory routes need.
     const turnStartBootstrap = yield* TurnStartBootstrap;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const accessControl = yield* OrchestrationAccessControl;
@@ -44,6 +48,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
     const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
 
+    // T3-CUSTOM(expbkt3): team mode — resolve the durable actor behind this request.
     // Resolve the operating durable user, or null for an unrestricted local operator.
     const currentActorUserId = Effect.gen(function* () {
       const principal = yield* EnvironmentAuthenticatedPrincipal;
@@ -58,6 +63,8 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.snapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          // T3-CUSTOM(expbkt3): team mode — resolve the acting operator, then
+          // filter this route's snapshot to their access.
           const actorUserId = yield* currentActorUserId;
           // Serve the lightweight command read model (thread bodies empty)
           // instead of the fully hydrated snapshot. Hydrating every message

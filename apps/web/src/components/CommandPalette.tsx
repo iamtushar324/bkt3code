@@ -1994,9 +1994,9 @@ function OpenCommandPaletteDialog(props: {
     });
   }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
 
+  // T3-CUSTOM(expbkt3): BEGIN — GitHub identity/profile management entry.
   actionItems.push({
     kind: "action",
-    // T3-CUSTOM(expbkt3): BEGIN — GitHub identity/profile management entry.
     value: "action:source-control-settings",
     searchTerms: ["github", "source control", "identity", "profile", "token", "settings"],
     title: "Manage GitHub profiles",

@@ -1,3 +1,6 @@
+// T3-CUSTOM(expbkt3): imports for kept fork features (team mode/access control,
+// source-control profiles, lineage, plan review, agent UI, session archive,
+// Linear status); this block's ordering shifted as those imports were added.
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import {
   sameUsageLimitCommandCoverage,
@@ -116,6 +119,7 @@ import {
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+// T3-CUSTOM(expbkt3): team-mode access control + Clerk directory service imports.
 import { OrchestrationAccessControl } from "./orchestration/Services/AccessControl.ts";
 import { OrchestrationAccessControlLive } from "./orchestration/Layers/AccessControl.ts";
 import { ClerkDirectory, ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
@@ -541,8 +545,10 @@ const makeWsRpcLayer = (
             );
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
+      // T3-CUSTOM(expbkt3): BEGIN team-mode access control + Clerk directory services for this connection.
       const accessControl = yield* OrchestrationAccessControl;
       const clerkDirectory = yield* ClerkDirectory;
+      // T3-CUSTOM(expbkt3): END
       // T3-CUSTOM(expbkt3): Identity binding preserves the transport subject, so
       // authorization must prefer the durable user attached to the session;
       // unidentified local operators remain unrestricted.
@@ -584,8 +590,10 @@ const makeWsRpcLayer = (
       const dispatchFromClient: OrchestrationEngine.OrchestrationEngineShape["dispatch"] = (
         command,
       ) =>
+        // T3-CUSTOM(expbkt3): BEGIN actorUserId threaded into the dispatch call for ownership + audit trail.
         orchestrationEngine.dispatch(command, {
           ...(hasClientOrigin ? { origin: clientOrigin } : {}),
+          // T3-CUSTOM(expbkt3): END
           // T3-CUSTOM(expbkt3): acting operator for ownership + audit trail.
           actorUserId,
         });
@@ -738,9 +746,12 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      // T3-CUSTOM(expbkt3): BEGIN source-control profile services for this connection
+      // (thread/user profile execution context, per-thread action lock).
       const sourceControlProfiles = yield* SourceControlProfileService.SourceControlProfileService;
       const sourceControlActionLock =
         yield* ThreadSourceControlActionLock.ThreadSourceControlActionLock;
+      // T3-CUSTOM(expbkt3): END
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -834,6 +845,8 @@ const makeWsRpcLayer = (
           ),
         );
 
+      // T3-CUSTOM(expbkt3): BEGIN repository identity enrichment (codename worktrees):
+      // project events carry the resolved repository identity to every client.
       const enrichProjectEvent = (
         event: OrchestrationEvent,
       ): Effect.Effect<OrchestrationEvent, never, never> => {
@@ -880,6 +893,7 @@ const makeWsRpcLayer = (
 
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
+      // T3-CUSTOM(expbkt3): END
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
@@ -981,9 +995,11 @@ const makeWsRpcLayer = (
         switch (event.type) {
           case "project.created":
           case "project.meta-updated":
+          // T3-CUSTOM(expbkt3): BEGIN team mode — membership/ownership changes also refresh the project shell.
           case "project.member-added":
           case "project.member-removed":
           case "project.owner-transferred":
+            // T3-CUSTOM(expbkt3): END
             return projectUpsertOrRemove(ProjectId.make(event.aggregateId), event.sequence);
           case "project.deleted":
             return Effect.succeedSome({
@@ -1956,6 +1972,7 @@ const makeWsRpcLayer = (
             ),
           );
       };
+      // T3-CUSTOM(expbkt3): BEGIN wraps dispatch with the per-connection authorization check (wsVisibility.ts).
       const dispatchNormalizedCommand = (normalizedCommand: OrchestrationCommand) =>
         authorizeNormalizedCommand(normalizedCommand).pipe(
           Effect.andThen(dispatchAuthorizedCommand(normalizedCommand)),
@@ -2032,6 +2049,8 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      // T3-CUSTOM(expbkt3): BEGIN source-control identity — per-thread/user profile
+      // resolution and environment injection for Git operations.
       const resolveSelectedSourceControlEnvironment = Effect.fn(
         "ws.resolveSelectedSourceControlEnvironment",
       )(function* (
@@ -2263,6 +2282,7 @@ const makeWsRpcLayer = (
           );
           return { ...input, env } as A;
         });
+      // T3-CUSTOM(expbkt3): END
 
       // T3-CUSTOM(expbkt3): BEGIN fork RPC handlers (wsForkHandlers.ts)
       const forkHandlers = makeForkWsHandlers({
@@ -2549,6 +2569,8 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getTurnDiff,
+            // T3-CUSTOM(expbkt3): BEGIN team mode — require thread access before loading the diff;
+            // pass through an already-typed error instead of double-wrapping it.
             Effect.gen(function* () {
               yield* requireThreadAccess(input.threadId);
               return yield* checkpointDiffQuery.getTurnDiff(input);
@@ -2562,11 +2584,14 @@ const makeWsRpcLayer = (
                     }),
               ),
             ),
+            // T3-CUSTOM(expbkt3): END
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getFullThreadDiff,
+            // T3-CUSTOM(expbkt3): BEGIN team mode — require thread access before loading the diff;
+            // pass through an already-typed error instead of double-wrapping it.
             Effect.gen(function* () {
               yield* requireThreadAccess(input.threadId);
               return yield* checkpointDiffQuery.getFullThreadDiff(input);
@@ -2580,6 +2605,7 @@ const makeWsRpcLayer = (
                     }),
               ),
             ),
+            // T3-CUSTOM(expbkt3): END
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.searchThreads]: (input) =>
@@ -2662,6 +2688,7 @@ const makeWsRpcLayer = (
                 Stream.flatMap((items) => Stream.fromIterable(items)),
               );
 
+              // T3-CUSTOM(expbkt3): team mode — filter the shell snapshot by actor visibility.
               const loadSnapshot = Effect.gen(function* () {
                 const rawSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
                 const visibleSnapshot =
@@ -2685,6 +2712,7 @@ const makeWsRpcLayer = (
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
+              // T3-CUSTOM(expbkt3): team mode — filter live/coalesced shell items by actor visibility.
               const synchronizedThenLive = applyShellItemVisibility(
                 liveBudget.deliver(
                   input.requestCompletionMarker === true
@@ -2732,6 +2760,7 @@ const makeWsRpcLayer = (
                     synchronizedThenLive,
                   );
                 }
+                // T3-CUSTOM(expbkt3): BEGIN team mode — filter the replay catch-up stream by actor visibility.
                 const catchUpStream = applyShellVisibility(
                   coalesceShellStream(
                     // Replay only through the head captured above. Newer events
@@ -2740,6 +2769,7 @@ const makeWsRpcLayer = (
                     // buffer indefinitely while waiting for an empty page.
                     orchestrationEngine.readEvents(afterSequence, replayGap),
                   ),
+                  // T3-CUSTOM(expbkt3): END
                 ).pipe(
                   Stream.mapError(
                     (cause) =>
@@ -2767,9 +2797,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
             projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              // T3-CUSTOM(expbkt3): BEGIN team mode — filter the archived shell snapshot by actor visibility.
               Effect.map((snapshot) =>
                 actorUserId === null ? snapshot : filterShellSnapshot(snapshot, actorUserId),
               ),
+              // T3-CUSTOM(expbkt3): END
               Effect.tapError((cause) =>
                 Effect.logError("orchestration archived shell snapshot load failed", { cause }),
               ),
@@ -2794,6 +2826,7 @@ const makeWsRpcLayer = (
                 return Stream.make(knownMissing);
               }
 
+              // T3-CUSTOM(expbkt3): BEGIN
               // Team mode: reject a thread the operator can't access (as
               // not-found — no existence leak).
               if (actorUserId !== null) {
@@ -2804,12 +2837,14 @@ const makeWsRpcLayer = (
                   return Stream.make(yield* missingThreadSubscriptions.mark(input));
                 }
               }
+              // T3-CUSTOM(expbkt3): END
 
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
                 isThreadDetailEvent(event);
 
+              // T3-CUSTOM(expbkt3): team mode feature (see below).
               // Close the stream once the operator is untagged from this thread
               // so an open viewer who loses access is kicked out live.
               const takeUntilSelfRemoved = <E, R>(
@@ -2897,12 +2932,15 @@ const makeWsRpcLayer = (
                               }),
                           ),
                         );
+                // T3-CUSTOM(expbkt3): BEGIN split out so a genuinely oversized replay (still a hard
+                // error below) can be told apart from a thread that is simply gone/inaccessible.
                 const replayFitsBudget =
                   replayStats !== null &&
                   replayStats.eventCount <= THREAD_RESUME_MAX_EVENTS &&
                   replayStats.payloadBytes <= ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES;
                 replayTooLarge = replayStats !== null && !replayFitsBudget;
                 if (replayFitsBudget) {
+                  // T3-CUSTOM(expbkt3): END
                   const catchUpStream = orchestrationEngine
                     .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
                     .pipe(
@@ -2927,7 +2965,9 @@ const makeWsRpcLayer = (
                             .pipe(Effect.as(bufferedLiveStream)),
                         )
                       : bufferedLiveStream;
+                  // T3-CUSTOM(expbkt3): BEGIN team mode — close the replay stream when the actor is removed from the thread.
                   const replay = takeUntilSelfRemoved(Stream.concat(catchUpStream, afterCatchUp));
+                  // T3-CUSTOM(expbkt3): END
                   if (!replayStats.hasCreateEvent) {
                     return replay;
                   }
@@ -2937,6 +2977,8 @@ const makeWsRpcLayer = (
                 // Oversized replays and invalid cursors also use the snapshot path.
               }
 
+              // T3-CUSTOM(expbkt3): renamed so the branch below can tell "no snapshot" apart from
+              // "oversized replay" (paired with missingThreadSubscriptions).
               const loadedSnapshot = yield* projectionSnapshotQuery
                 .getThreadDetailSnapshot(
                   input.threadId,
@@ -2956,6 +2998,9 @@ const makeWsRpcLayer = (
                   ),
                 );
 
+              // T3-CUSTOM(expbkt3): terminal "not found" response for a missing thread, distinguishing
+              // an oversized replay (still a hard error) from a genuinely deleted/inaccessible
+              // thread (soft, cached via missingThreadSubscriptions so old clients stop retrying).
               if (Option.isNone(loadedSnapshot)) {
                 // The recreated thread can already be deleted. Preserve the
                 // bounded replay and shell removal instead of retrying a
@@ -2981,6 +3026,7 @@ const makeWsRpcLayer = (
                         .pipe(Effect.as(bufferedLiveStream)),
                     )
                   : bufferedLiveStream;
+              // T3-CUSTOM(expbkt3): BEGIN team mode — close the snapshot delivery stream when the actor is removed from the thread.
               return takeUntilSelfRemoved(
                 Stream.concat(
                   Stream.make({
@@ -2993,6 +3039,7 @@ const makeWsRpcLayer = (
                   afterSnapshot,
                 ),
               );
+              // T3-CUSTOM(expbkt3): END
             }),
             { "rpc.aggregate": "orchestration" },
           ),
@@ -3258,6 +3305,8 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        // T3-CUSTOM(expbkt3): BEGIN admin-gated identity-mode changes; source-control profile
+        // metadata is writable only through the dedicated profile RPCs, not a generic patch.
         [WS_METHODS.serverUpdateSettings]: ({ patch }) => {
           // Profile metadata is writable only through the credential-aware
           // source-control profile RPCs. A generic settings client must not be
@@ -3291,6 +3340,7 @@ const makeWsRpcLayer = (
             },
           );
         },
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -3628,6 +3678,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
+            // T3-CUSTOM(expbkt3): BEGIN source-control identity — run the lookup under the
+            // resolved profile's execution environment.
             Effect.gen(function* () {
               const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
                 input.sourceControlProfileId,
@@ -3637,6 +3689,7 @@ const makeWsRpcLayer = (
                 executionEnvironment,
               );
             }),
+            // T3-CUSTOM(expbkt3): END
             {
               "rpc.aggregate": "source-control",
             },
@@ -3644,6 +3697,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlCloneRepository,
+            // T3-CUSTOM(expbkt3): BEGIN source-control identity — run the clone under the resolved
+            // profile, rejecting SSH remotes for a GitHub-profile clone.
             Effect.gen(function* () {
               const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
                 input.sourceControlProfileId,
@@ -3667,6 +3722,7 @@ const makeWsRpcLayer = (
                 executionEnvironment,
               );
             }),
+            // T3-CUSTOM(expbkt3): END
             {
               "rpc.aggregate": "source-control",
             },
@@ -3733,6 +3789,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
+            // T3-CUSTOM(expbkt3): BEGIN source-control identity — run the publish under the
+            // resolved profile's execution environment.
             Effect.gen(function* () {
               const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
                 input.sourceControlProfileId,
@@ -3752,6 +3810,7 @@ const makeWsRpcLayer = (
                 executionEnvironment,
               );
             }),
+            // T3-CUSTOM(expbkt3): END
             {
               "rpc.aggregate": "source-control",
             },
@@ -3872,7 +3931,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentSessionsImport,
+            // T3-CUSTOM(expbkt3): BEGIN wraps importRecentAgentThreads with the access check below.
             Effect.gen(function* () {
+              // T3-CUSTOM(expbkt3): END
               // T3-CUSTOM(expbkt3): imported history obeys project access and ownership.
               if (
                 actorUserId !== null &&
@@ -4679,6 +4740,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
+            // T3-CUSTOM(expbkt3): BEGIN calls the fork's wrapper (defined above) so this route also
+            // gets the team-mode/source-control layers; serverSelfUpdate is threaded through for
+            // the reused MCP web-UI bridge.
             makeAuthenticatedWsRpcHandlerLayer(
               session,
               clientOrigin,
@@ -4686,6 +4750,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               serverSelfUpdate,
               clientAnalyticsProps,
             ).pipe(
+              // T3-CUSTOM(expbkt3): END
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),

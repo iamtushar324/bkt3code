@@ -3,7 +3,7 @@ import {
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
-  EnvironmentUserId,
+  EnvironmentUserId, // T3-CUSTOM(expbkt3): durable user binding for team mode / Clerk sessions.
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
@@ -42,7 +42,7 @@ import {
 
 export interface IssuedSession {
   readonly sessionId: AuthSessionId;
-  readonly userId: EnvironmentUserId | null;
+  readonly userId: EnvironmentUserId | null; // T3-CUSTOM(expbkt3): durable user binding.
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
@@ -53,7 +53,7 @@ export interface IssuedSession {
 
 export interface VerifiedSession {
   readonly sessionId: AuthSessionId;
-  readonly userId: EnvironmentUserId | null;
+  readonly userId: EnvironmentUserId | null; // T3-CUSTOM(expbkt3): durable user binding.
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
@@ -347,6 +347,8 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: sessions can be bound to a durable environment
+// user and revoked by that user (e.g. removing a member revokes all their sessions).
 export class UserSessionsRevocationError extends Schema.TaggedError<UserSessionsRevocationError>()(
   "UserSessionsRevocationError",
   {
@@ -371,6 +373,7 @@ export class SessionUserBindingError extends Schema.TaggedError<SessionUserBindi
     return "Failed to bind the session to an environment user.";
   }
 }
+// T3-CUSTOM(expbkt3): END
 
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
@@ -381,6 +384,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  // T3-CUSTOM(expbkt3): team mode's user-scoped revoke/bind errors.
   UserSessionsRevocationError,
   SessionUserBindingError,
 ]);
@@ -407,7 +411,7 @@ export class SessionStore extends Context.Service<
       readonly method?: ServerAuthSessionMethod;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
-      readonly userId?: EnvironmentUserId;
+      readonly userId?: EnvironmentUserId; // T3-CUSTOM(expbkt3): bind the issued session to a durable user.
       readonly proofKeyThumbprint?: string;
       /**
        * Atomically revoke active sessions with the same subject and method
@@ -442,6 +446,8 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    // T3-CUSTOM(expbkt3): BEGIN — team mode: revoke every session for a user, or bind a
+    // session to one after the fact (e.g. Clerk sign-in completing on an existing cookie).
     readonly revokeByUserId: (
       userId: EnvironmentUserId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
@@ -449,6 +455,7 @@ export class SessionStore extends Context.Service<
       sessionId: AuthSessionId,
       userId: EnvironmentUserId,
     ) => Effect.Effect<void, SessionCredentialInternalError>;
+    // T3-CUSTOM(expbkt3): END
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly recordClientConnection: (
@@ -502,7 +509,7 @@ function toClientMetadata(record: {
   readonly deviceType: AuthClientMetadata["deviceType"];
   readonly os: string | null;
   readonly browser: string | null;
-  readonly appVersion: string | null;
+  readonly appVersion: string | null; // T3-CUSTOM(expbkt3): client build identity.
 }): AuthClientMetadata {
   return {
     ...(record.label ? { label: record.label } : {}),
@@ -511,7 +518,7 @@ function toClientMetadata(record: {
     deviceType: record.deviceType,
     ...(record.os ? { os: record.os } : {}),
     ...(record.browser ? { browser: record.browser } : {}),
-    ...(record.appVersion ? { appVersion: record.appVersion } : {}),
+    ...(record.appVersion ? { appVersion: record.appVersion } : {}), // T3-CUSTOM(expbkt3): client build identity.
   };
 }
 
@@ -599,7 +606,7 @@ export const make = Effect.gen(function* () {
       return Option.some(
         toAuthClientSession({
           sessionId: row.value.sessionId,
-          userId: row.value.userId,
+          userId: row.value.userId, // T3-CUSTOM(expbkt3): durable user binding.
           subject: row.value.subject,
           scopes: row.value.scopes,
           method: row.value.method,
@@ -789,7 +796,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId,
-        userId: input?.userId ?? null,
+        userId: input?.userId ?? null, // T3-CUSTOM(expbkt3): durable user binding.
         token: `${encodedPayload}.${signature}`,
         method: claims.method,
         client,
@@ -889,7 +896,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId: claims.sid,
-        userId: row.value.userId,
+        userId: row.value.userId, // T3-CUSTOM(expbkt3): durable user binding.
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
@@ -999,7 +1006,7 @@ export const make = Effect.gen(function* () {
 
     return {
       sessionId: row.value.sessionId,
-      userId: row.value.userId,
+      userId: row.value.userId, // T3-CUSTOM(expbkt3): durable user binding.
       token,
       method: row.value.method,
       client: toClientMetadata(row.value.client),
@@ -1021,7 +1028,7 @@ export const make = Effect.gen(function* () {
       return rows.map((row) =>
         toAuthClientSession({
           sessionId: row.sessionId,
-          userId: row.userId,
+          userId: row.userId, // T3-CUSTOM(expbkt3): durable user binding.
           subject: row.subject,
           scopes: row.scopes,
           method: row.method,
@@ -1091,6 +1098,8 @@ export const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: revoke every session for a user (member
+  // removal) and bind an existing session to a user after the fact (Clerk sign-in).
   const revokeByUserId: SessionStore["Service"]["revokeByUserId"] = Effect.fn(
     "SessionStore.revokeByUserId",
   )(function* (userId) {
@@ -1132,6 +1141,7 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(session)) yield* emitUpsert(session.value);
     },
   );
+  // T3-CUSTOM(expbkt3): END
 
   return SessionStore.of({
     cookieName,
@@ -1146,8 +1156,8 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
-    revokeByUserId,
-    bindUserId,
+    revokeByUserId, // T3-CUSTOM(expbkt3): team mode member removal.
+    bindUserId, // T3-CUSTOM(expbkt3): team mode Clerk sign-in binding.
     markConnected,
     markDisconnected,
     recordClientConnection,

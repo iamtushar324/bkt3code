@@ -18,6 +18,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
 
   const upsertProjectionThreadSessionRow = SqlSchema.void({
     Request: ProjectionThreadSession,
+    // T3-CUSTOM(expbkt3): BEGIN — persist the provider's own thread id so it can resume its native conversation.
     execute: (row) =>
       sql`
         INSERT INTO projection_thread_sessions (
@@ -53,6 +54,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           last_error = excluded.last_error,
           updated_at = excluded.updated_at
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const getProjectionThreadSessionRow = SqlSchema.findOneOption({
@@ -65,7 +67,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
-          provider_thread_id AS "providerThreadId",
+          provider_thread_id AS "providerThreadId", -- T3-CUSTOM(expbkt3): provider's own thread id, for resuming its native conversation.
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",

@@ -48,6 +48,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+// T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 
 import {
@@ -2255,6 +2256,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
+  // T3-CUSTOM(expbkt3): source-control identity — startSession takes the caller's execution environment.
   const startSession: CodexAdapterShape["startSession"] = (input, executionOptions) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2276,12 +2278,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        // T3-CUSTOM(expbkt3): BEGIN source-control identity — merge the per-call
+        // execution environment so Codex attributes git/PR actions to the driving user.
         const sessionEnvironment = executionOptions?.environment
           ? mergeSourceControlEnvironment(
               options?.environment ?? process.env,
               executionOptions.environment,
             )
           : options?.environment;
+        // T3-CUSTOM(expbkt3): END
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,

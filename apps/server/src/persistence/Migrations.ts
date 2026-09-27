@@ -46,6 +46,9 @@ import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexe
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
+// T3-CUSTOM(expbkt3): BEGIN — legacy fork block (frozen indices 33-42, already
+// applied in production); these fork-owned migration files replaced what
+// upstream originally shipped at 33-41 before the 1000+ lane existed.
 import Migration0033 from "./Migrations/033_ProjectionOwnershipMembership.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadMessageSender.ts";
 import Migration0035 from "./Migrations/035_BackfillProjectionThreadLatestTurn.ts";
@@ -55,6 +58,7 @@ import Migration0038 from "./Migrations/038_CatchupSummaries.ts";
 import Migration0039 from "./Migrations/039_CatchupSummaryStatus.ts";
 import Migration0040 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0041 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
+// T3-CUSTOM(expbkt3): END
 // T3-CUSTOM(expbkt3): Per-user MCP profiles and personal access tokens.
 import Migration0042 from "./Migrations/042_UserMcpProfiles.ts";
 // T3-CUSTOM(expbkt3): upstream ships this as migration 35. See the allocation

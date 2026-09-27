@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
+// T3-CUSTOM(expbkt3): derived turn duration.
 import { computeTurnDurationMs } from "@t3tools/contracts";
 import type {
   MessageId,
@@ -123,9 +124,11 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          // T3-CUSTOM(expbkt3): source-control identity — the profile a new thread's git ops use.
           sourceControlProfileId: event.payload.sourceControlProfileId,
           branchPullRequest: null,
           latestTurn: null,
+          // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread.
           ownerUserId: event.payload.createdByUserId ?? null,
           // T3-CUSTOM(expbkt3): BEGIN — creation tags the authenticated owner too.
           memberUserIds:
@@ -156,6 +159,8 @@ export function applyThreadDetailEvent(
     case "thread.deleted":
       return { kind: "deleted" };
 
+    // T3-CUSTOM(expbkt3): BEGIN — source-control identity: which profile a thread's
+    // git operations run under.
     case "thread.source-control-profile-set":
       return event.payload.threadId === thread.id
         ? {
@@ -167,6 +172,7 @@ export function applyThreadDetailEvent(
             },
           }
         : { kind: "unchanged" };
+    // T3-CUSTOM(expbkt3): END
 
     case "thread.archived":
       return {
@@ -472,10 +478,12 @@ export function applyThreadDetailEvent(
             state: "interrupted",
             startedAt: latestTurn.startedAt ?? event.payload.createdAt,
             completedAt: latestTurn.completedAt ?? event.payload.createdAt,
+            // T3-CUSTOM(expbkt3): BEGIN — derived turn duration.
             durationMs: computeTurnDurationMs(
               latestTurn.startedAt ?? event.payload.createdAt,
               latestTurn.completedAt ?? event.payload.createdAt,
             ),
+            // T3-CUSTOM(expbkt3): END
           },
           updatedAt: event.occurredAt,
         },
@@ -494,6 +502,7 @@ export function applyThreadDetailEvent(
         ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        // T3-CUSTOM(expbkt3): team mode — who sent this message in a shared thread.
         sentByUserId: event.payload.sentByUserId ?? null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
@@ -534,7 +543,8 @@ export function applyThreadDetailEvent(
         event.payload.role === "assistant" &&
           event.payload.turnId !== null &&
           (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
-          ? withTurnDuration({
+          ? // T3-CUSTOM(expbkt3): BEGIN — derived turn duration.
+            withTurnDuration({
               turnId: event.payload.turnId,
               state: settlesTurn
                 ? thread.latestTurn?.state === "interrupted"
@@ -557,7 +567,7 @@ export function applyThreadDetailEvent(
                   ? (thread.latestTurn.completedAt ?? null)
                   : null,
               assistantMessageId: event.payload.messageId,
-            })
+            }) // T3-CUSTOM(expbkt3): END
           : thread.latestTurn,
       );
 
@@ -592,7 +602,8 @@ export function applyThreadDetailEvent(
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
-          ? withTurnDuration({
+          ? // T3-CUSTOM(expbkt3): BEGIN — derived turn duration.
+            withTurnDuration({
               turnId: event.payload.session.activeTurnId,
               state: "running",
               requestedAt:
@@ -608,18 +619,19 @@ export function applyThreadDetailEvent(
                 thread.latestTurn?.turnId === event.payload.session.activeTurnId
                   ? thread.latestTurn.assistantMessageId
                   : null,
-            })
+            }) // T3-CUSTOM(expbkt3): END
           : thread.latestTurn !== null &&
               thread.latestTurn.state === "running" &&
               settledTurnState !== null
-            ? withTurnDuration({
+            ? // T3-CUSTOM(expbkt3): BEGIN — derived turn duration.
+              withTurnDuration({
                 ...thread.latestTurn,
                 state: settledTurnState,
                 // A running turn's completedAt can only hold a mid-turn
                 // placeholder checkpoint timestamp — the session leaving
                 // "running" is the authoritative turn end.
                 completedAt: event.payload.session.updatedAt,
-              })
+              }) // T3-CUSTOM(expbkt3): END
             : thread.latestTurn,
       );
 
@@ -701,7 +713,8 @@ export function applyThreadDetailEvent(
       const latestTurn =
         !diffTurnStillRunning &&
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
-          ? withTurnDuration({
+          ? // T3-CUSTOM(expbkt3): BEGIN — derived turn duration.
+            withTurnDuration({
               turnId: event.payload.turnId,
               state:
                 thread.latestTurn?.state === "interrupted"
@@ -711,7 +724,7 @@ export function applyThreadDetailEvent(
               startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,
               assistantMessageId: event.payload.assistantMessageId,
-            })
+            }) // T3-CUSTOM(expbkt3): END
           : thread.latestTurn;
 
       return {
@@ -768,7 +781,7 @@ export function applyThreadDetailEvent(
                   startedAt: latestCheckpoint.completedAt,
                   completedAt: latestCheckpoint.completedAt,
                   assistantMessageId: latestCheckpoint.assistantMessageId ?? null,
-                  // Reverted turns collapse to a single checkpoint instant.
+                  // T3-CUSTOM(expbkt3): reverted turns collapse to a single checkpoint instant.
                   durationMs: 0,
                 },
           updatedAt: event.occurredAt,

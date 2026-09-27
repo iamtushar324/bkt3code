@@ -1,18 +1,21 @@
+// T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane (external session/project control via MCP).
 /**
  * T3-CUSTOM(expbkt3): Per-invocation capability and session-scope enforcement
  * for the experimental T3 MCP control plane.
  */
+// T3-CUSTOM(expbkt3): END
 import {
   type EnvironmentId,
   McpCapabilityUnavailableError,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
-  type UserId,
+  type UserId, // T3-CUSTOM(expbkt3): control-plane actor identity.
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
+// T3-CUSTOM(expbkt3): union grows with the control-plane capabilities below.
 export type McpCapability =
   | "preview"
   | "device"
@@ -37,6 +40,7 @@ export interface McpInvocationScope {
   readonly issuedAt: number;
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — MCP control-plane operator/session-creation gating.
 export function isExternalMcpOperator(scope: McpInvocationScope): boolean {
   return scope.principal === "external-operator";
 }
@@ -44,6 +48,7 @@ export function isExternalMcpOperator(scope: McpInvocationScope): boolean {
 export function canCreateMcpSessions(scope: McpInvocationScope): boolean {
   return scope.capabilities.has("t3.session.create") || isExternalMcpOperator(scope);
 }
+// T3-CUSTOM(expbkt3): END
 
 export class McpInvocationContext extends Context.Service<
   McpInvocationContext,

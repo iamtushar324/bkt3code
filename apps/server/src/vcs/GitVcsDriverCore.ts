@@ -109,6 +109,7 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetail
   hasOriginRemote: false,
   isDefaultBranch: false,
   branch: null,
+  // T3-CUSTOM(expbkt3): lineage — the ref this branch was created from.
   baseRef: null,
   upstreamRef: null,
   hasWorkingTreeChanges: false,
@@ -138,6 +139,7 @@ type TraceTailState = {
 class StatusRemoteRefreshCacheKey extends Data.Class<{
   gitCommonDir: string;
   remoteName: string;
+  // T3-CUSTOM(expbkt3): source-control identity — cache key varies by acting profile.
   sourceControlProfileId: string | null;
 }> {}
 
@@ -879,6 +881,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .spawn(
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
+              // T3-CUSTOM(expbkt3): BEGIN merge the caller's source-control identity
+              // environment into the spawned git process's env.
               env: {
                 ...(sourceControlExecutionEnvironment
                   ? mergeSourceControlEnvironment(
@@ -886,6 +890,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                       sourceControlExecutionEnvironment.environment,
                     )
                   : { ...process.env, ...input.env }),
+                // T3-CUSTOM(expbkt3): END
                 ...trace2Monitor.env,
               },
             }),
@@ -1356,6 +1361,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const statusRemoteRefreshFailureCounts = new Map<string, number>();
+  // T3-CUSTOM(expbkt3): source-control identity — key includes the acting profile.
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}\0${cacheKey.sourceControlProfileId ?? "machine"}`;
   const recordStatusRemoteRefreshFailure = (cacheKey: StatusRemoteRefreshCacheKey) => {
@@ -1401,6 +1407,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
+    // T3-CUSTOM(expbkt3): source-control identity — refresh runs under the caller's profile.
     const sourceControlExecutionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
     const upstream = yield* resolveCurrentUpstream(cwd);
     if (!upstream) return;
@@ -1411,6 +1418,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       new StatusRemoteRefreshCacheKey({
         gitCommonDir,
         remoteName: upstream.remoteName,
+        // T3-CUSTOM(expbkt3): source-control identity — cache key varies by acting profile.
         sourceControlProfileId: sourceControlExecutionEnvironment?.profileId ?? null,
       }),
     ).pipe(Effect.ignore);
@@ -2002,6 +2010,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       hasOriginRemote: hasPrimaryRemote,
       isDefaultBranch,
       branch: refName,
+      // T3-CUSTOM(expbkt3): lineage — the worktree's configured starting ref.
       baseRef: configuredBaseRef,
       upstreamRef,
       hasWorkingTreeChanges,
@@ -2057,6 +2066,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,
         refName: details.branch,
+        // T3-CUSTOM(expbkt3): lineage — surface the worktree's configured starting ref.
         baseRef: details.baseRef,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,

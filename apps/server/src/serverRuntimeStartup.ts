@@ -39,6 +39,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationReactor from "./orchestration/Services/OrchestrationReactor.ts";
+// T3-CUSTOM(expbkt3): team-mode ownership backfill deps.
 import { runOwnershipBackfill } from "./orchestration/ownershipBackfill.ts";
 import { ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -980,6 +981,7 @@ export const make = (options?: StartupOptions) =>
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
       yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
+      // T3-CUSTOM(expbkt3): BEGIN team-mode ownership backfill.
       // Team mode only: converge pre-ownership records. This is idempotent and
       // fail-soft, so it is parked alongside the other auxiliary roots rather
       // than holding readiness — a full pass once cost bkt3.dev ~146 s of
@@ -991,6 +993,7 @@ export const make = (options?: StartupOptions) =>
           runOwnershipBackfill.pipe(Effect.provide(ClerkDirectoryLive)),
         ),
       );
+      // T3-CUSTOM(expbkt3): END
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
 

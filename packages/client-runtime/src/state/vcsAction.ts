@@ -6,6 +6,7 @@ import {
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
+  // T3-CUSTOM(expbkt3): source-control identity — thread id joins the vcs action target key.
   ThreadId,
   type ThreadId as ThreadIdType,
   WS_METHODS,
@@ -59,12 +60,14 @@ export interface VcsActionState {
 export interface VcsActionTarget {
   readonly environmentId: EnvironmentIdType | null;
   readonly cwd: string | null;
+  // T3-CUSTOM(expbkt3): source-control identity — which thread a vcs action targets.
   readonly threadId?: ThreadIdType | null;
 }
 
 export interface ResolvedVcsActionTarget {
   readonly environmentId: EnvironmentIdType;
   readonly cwd: string;
+  // T3-CUSTOM(expbkt3): source-control identity — which thread a resolved vcs action belongs to.
   readonly threadId: ThreadIdType | null;
 }
 
@@ -165,6 +168,7 @@ export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
 
 const nowMs = (): number => DateTime.toEpochMillis(DateTime.nowUnsafe());
 let nextLocalActionId = 0;
+// T3-CUSTOM(expbkt3): source-control identity — decode the thread id joined into the key.
 const decodeVcsActionTargetKey = Schema.decodeUnknownSync(
   Schema.Tuple([EnvironmentId, Schema.String, Schema.NullOr(ThreadId)]),
 );
@@ -185,13 +189,16 @@ export function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {
     return null;
   }
+  // T3-CUSTOM(expbkt3): source-control identity — thread id joins the target key.
   return JSON.stringify([target.environmentId, target.cwd, target.threadId ?? null]);
 }
 
 export function parseVcsActionTargetKey(key: string): ResolvedVcsActionTarget {
   try {
+    // T3-CUSTOM(expbkt3): BEGIN — source-control identity: thread id travels in the target key.
     const [environmentId, cwd, threadId] = decodeVcsActionTargetKey(JSON.parse(key));
     return { environmentId, cwd, threadId };
+    // T3-CUSTOM(expbkt3): END
   } catch (cause) {
     throw new VcsActionTargetKeyParseError({ keyLength: key.length, cause });
   }
@@ -466,6 +473,7 @@ export function createVcsActionManager<R, E>(
           actionId: transportActionId,
           cwd: target.cwd,
           action: input.action,
+          // T3-CUSTOM(expbkt3): source-control identity — bind the action to its owning thread.
           ...(target.threadId !== null ? { threadId: target.threadId } : {}),
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),

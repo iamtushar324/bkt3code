@@ -5,6 +5,7 @@ import {
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+// T3-CUSTOM(expbkt3): team mode — Clerk-gated pairing route.
 import { ClerkSignInGate } from "../components/auth/ClerkSignInGate";
 import { hasClerkPublicConfig } from "../cloud/publicConfig";
 // T3-CUSTOM(expbkt3): team-mode detection reads the server's clerk descriptor.

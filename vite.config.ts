@@ -277,8 +277,8 @@ export default defineConfig({
           ],
         },
       },
+      // T3-CUSTOM(expbkt3): BEGIN — fork UI style debt. Upstream adopted the shadcn
       {
-        // T3-CUSTOM(expbkt3): BEGIN — fork UI style debt. Upstream adopted the shadcn
         // style rules after these fork surfaces were written with raw palette colours
         // and arbitrary values. Restyling them onto theme tokens is real work with no
         // behaviour change, so they are exempt here instead of blocking merges. The list

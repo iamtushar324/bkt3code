@@ -18,6 +18,7 @@ export class RemoteDpopAccessToken extends Schema.Class<RemoteDpopAccessToken>(
   accessToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
   dpopThumbprint: Schema.String,
+  // T3-CUSTOM(expbkt3): team mode — cache which operator identity this token was bound to.
   identitySubject: Schema.optional(Schema.String),
 }) {}
 

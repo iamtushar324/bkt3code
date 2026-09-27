@@ -170,6 +170,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    // T3-CUSTOM(expbkt3): BEGIN — log a diagnosable reason when the ping/pong keepalive
+    // drops a connection, instead of a bare disconnect.
     let lastPongAtMillis: number | null = null;
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
@@ -190,6 +192,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }),
         ),
       ),
+      // T3-CUSTOM(expbkt3): END
       onDisconnect: Deferred.isDone(connected).pipe(
         Effect.flatMap((wasConnected) =>
           Deferred.fail(

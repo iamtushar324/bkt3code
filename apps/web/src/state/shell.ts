@@ -24,6 +24,9 @@ export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntim
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
+// T3-CUSTOM(expbkt3): BEGIN — custom groups: only prune stale custom groups once
+// every environment shell has confirmed live, so a group isn't pruned just
+// because its environment hasn't reported its threads back yet.
 export const allEnvironmentShellsLiveAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   if (!catalog.isReady || catalog.entries.size === 0) return false;
@@ -32,6 +35,7 @@ export const allEnvironmentShellsLiveAtom = Atom.make((get) => {
   }
   return true;
 }).pipe(Atom.withLabel("all-environment-shells-live"));
+// T3-CUSTOM(expbkt3): END
 
 // T3-CUSTOM(expbkt3): BEGIN — per-environment visibility for notification alerts.
 /** Which environments exist, and which of them this client can actually see. */

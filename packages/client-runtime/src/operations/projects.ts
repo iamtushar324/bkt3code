@@ -344,6 +344,7 @@ export function findExistingAddProject(input: {
 export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
+  // T3-CUSTOM(expbkt3): BEGIN — project nickname replaces the inferred path-derived title.
   readonly title: string;
   readonly workspaceRoot: string;
   readonly createdAt: string;
@@ -357,6 +358,7 @@ export function buildProjectCreateCommand(input: {
     commandId: input.commandId,
     projectId: input.projectId,
     title,
+    // T3-CUSTOM(expbkt3): END
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,

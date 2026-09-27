@@ -63,6 +63,7 @@ import { useReviewFileVisibility } from "./reviewFileVisibility";
 import { useReviewSections } from "./useReviewSections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
+// T3-CUSTOM(expbkt3): reconcile an error with the empty/no-diff states below.
 import { resolveReviewAvailability, resolveReviewResultPresentation } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
@@ -210,6 +211,7 @@ function ReviewSelectionActionBar(props: {
     >
       {props.onOpenComment ? (
         <Pressable
+          // T3-CUSTOM(expbkt3): accessibility label/role for the comment action button.
           accessibilityLabel={props.title}
           accessibilityRole="button"
           className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5"
@@ -224,6 +226,7 @@ function ReviewSelectionActionBar(props: {
       )}
 
       <Pressable
+        // T3-CUSTOM(expbkt3): accessibility label/role for the clear-selection button.
         accessibilityLabel="Clear selected diff lines"
         accessibilityRole="button"
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
@@ -689,6 +692,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
 
+    // T3-CUSTOM(expbkt3): an error must not also present as a clean/empty diff.
     if (reviewResultPresentation.showUnavailable) {
       children.push(
         <View
@@ -700,6 +704,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         >
           <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
+          {/* T3-CUSTOM(expbkt3): BEGIN — retry an unavailable review without leaving the sheet. */}
           <Pressable
             accessibilityLabel="Retry review"
             accessibilityRole="button"
@@ -708,6 +713,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
           >
             <Text className="text-xs font-t3-bold text-primary-foreground">Try again</Text>
           </Pressable>
+          {/* T3-CUSTOM(expbkt3): END */}
         </View>,
       );
     }
@@ -721,6 +727,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     }
 
     return <>{children}</>;
+    // T3-CUSTOM(expbkt3): retry callback and the gated-unavailable flag joined the deps.
   }, [error, parsedDiffNotice, refreshSelectedSection, reviewResultPresentation.showUnavailable]);
   const headerSubtitle = [
     headerDiffSummary.additions,
@@ -861,7 +868,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     This thread has no ready turn diffs and the worktree diff is empty.
                   </Text>
                 </View>
-              ) : selectedSection?.isLoading && selectedSection.diff === null ? (
+              ) : // T3-CUSTOM(expbkt3): selectedSection may be null once gated by reviewResultPresentation.
+              selectedSection?.isLoading && selectedSection.diff === null ? (
                 <View
                   className={cn(
                     "items-center gap-3 px-4 py-6",
@@ -887,6 +895,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       Platform.OS === "android" && "mt-2 text-center",
                     )}
                   >
+                    {/* T3-CUSTOM(expbkt3): showSuccessfulEmpty can be true with no selected section. */}
                     {selectedSection?.subtitle ?? "This diff is empty."}
                   </Text>
                 </View>

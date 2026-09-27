@@ -1,8 +1,9 @@
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
-// T3-CUSTOM(expbkt3): thread-owned identity schemas live in sourceControlProfiles.ts
+// T3-CUSTOM(expbkt3): BEGIN — source-control identity schemas live in sourceControlProfiles.ts
 import { SourceControlProfileId } from "./sourceControlProfiles.ts";
+// T3-CUSTOM(expbkt3): END
 
 export const SourceControlProviderKind = Schema.Literals([
   "github",
@@ -24,6 +25,7 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — plan review: merge readiness enums for a change request.
 export const ChangeRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type ChangeRequestMergeability = typeof ChangeRequestMergeability.Type;
 export const ChangeRequestReviewDecision = Schema.Literals([
@@ -35,6 +37,7 @@ export const ChangeRequestReviewDecision = Schema.Literals([
 export type ChangeRequestReviewDecision = typeof ChangeRequestReviewDecision.Type;
 export const ChangeRequestChecksStatus = Schema.Literals(["pass", "fail", "pending", "unknown"]);
 export type ChangeRequestChecksStatus = typeof ChangeRequestChecksStatus.Type;
+// T3-CUSTOM(expbkt3): END
 
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
@@ -49,11 +52,13 @@ export const ChangeRequest = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
+  // T3-CUSTOM(expbkt3): BEGIN — plan review needs merge readiness at a glance.
   mergeability: Schema.optional(ChangeRequestMergeability),
   mergeStateStatus: Schema.optional(TrimmedNonEmptyString),
   reviewDecision: Schema.optional(ChangeRequestReviewDecision),
   checksStatus: Schema.optional(ChangeRequestChecksStatus),
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): END
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -85,6 +90,7 @@ export const SourceControlRepositoryLookupInput = Schema.Struct({
   provider: SourceControlProviderKind,
   repository: TrimmedNonEmptyString,
   cwd: Schema.optional(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): source-control identity — which profile to look up with.
   sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
@@ -95,6 +101,7 @@ export const SourceControlCloneRepositoryInput = Schema.Struct({
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
   protocol: Schema.optional(SourceControlCloneProtocol),
+  // T3-CUSTOM(expbkt3): source-control identity — which profile to clone with.
   sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlCloneRepositoryInput = typeof SourceControlCloneRepositoryInput.Type;
@@ -113,6 +120,7 @@ export const SourceControlPublishRepositoryInput = Schema.Struct({
   visibility: SourceControlRepositoryVisibility,
   remoteName: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
+  // T3-CUSTOM(expbkt3): source-control identity — which profile to publish under.
   sourceControlProfileId: Schema.optional(SourceControlProfileId),
 });
 export type SourceControlPublishRepositoryInput = typeof SourceControlPublishRepositoryInput.Type;

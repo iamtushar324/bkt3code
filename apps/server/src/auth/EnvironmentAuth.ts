@@ -9,7 +9,7 @@ import {
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
-  type EnvironmentUserId,
+  type EnvironmentUserId, // T3-CUSTOM(expbkt3): durable user identity carried on sessions.
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -70,7 +70,7 @@ export interface IssuedBearerSession {
 
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
-  readonly userId: EnvironmentUserId | null;
+  readonly userId: EnvironmentUserId | null; // T3-CUSTOM(expbkt3): durable user binding for team mode / Clerk sessions.
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
@@ -431,7 +431,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly createBrowserSession: (
       credential: string,
       requestMetadata: AuthClientMetadata,
-      input?: { readonly userId?: EnvironmentUserId },
+      input?: { readonly userId?: EnvironmentUserId }, // T3-CUSTOM(expbkt3): bind a durable user to the issued session.
     ) => Effect.Effect<
       {
         readonly response: AuthBrowserSessionResult;
@@ -441,6 +441,8 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
+    // T3-CUSTOM(expbkt3): BEGIN — team mode: mint a cookie session for an already-verified
+    // Clerk operator without going through bootstrap-credential consumption.
     /**
      * Issue a browser-session cookie for an already-verified Clerk operator.
      *
@@ -453,6 +455,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly createClerkBrowserSession: (
       input: {
         readonly subject: string;
+        // T3-CUSTOM(expbkt3): END
         // T3-CUSTOM(expbkt3): Direct Clerk sessions retain their durable user binding.
         readonly userId: EnvironmentUserId;
         readonly label?: string;
@@ -663,7 +666,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map((session) => ({
         sessionId: session.sessionId,
-        userId: session.userId,
+        userId: session.userId, // T3-CUSTOM(expbkt3): durable user binding for team mode / Clerk sessions.
         subject: session.subject,
         method: session.method,
         scopes: session.scopes,
@@ -1180,7 +1183,7 @@ export const make = Effect.gen(function* () {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             Effect.map((session) => ({
               sessionId: session.sessionId,
-              userId: session.userId,
+              userId: session.userId, // T3-CUSTOM(expbkt3): durable user binding for team mode / Clerk sessions.
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
@@ -1199,7 +1202,7 @@ export const make = Effect.gen(function* () {
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
     createBrowserSession,
-    createClerkBrowserSession,
+    createClerkBrowserSession, // T3-CUSTOM(expbkt3): team mode Clerk sessions.
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,

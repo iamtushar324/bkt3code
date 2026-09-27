@@ -8,16 +8,17 @@
  * prefix only Vite knows gets answered with index.html; a prefix only the
  * server knows redirect-loops through the proxy.
  */
+// T3-CUSTOM(expbkt3): BEGIN — reformatted to a multi-line array to add the
+// experimental attachment and control-plane prefixes below.
 export const DEV_PROXIED_PATH_PREFIXES = [
   "/api",
   "/oauth",
   "/.well-known",
   "/ws",
-  // T3-CUSTOM(expbkt3): BEGIN — experimental attachment and control planes.
   "/attachments",
   "/mcp",
-  // T3-CUSTOM(expbkt3): END
 ] as const;
+// T3-CUSTOM(expbkt3): END
 
 export function isDevProxiedPath(pathname: string): boolean {
   return DEV_PROXIED_PATH_PREFIXES.some(

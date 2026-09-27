@@ -82,6 +82,7 @@ export interface ProjectionThreadDetailQuery {
   readonly activityKinds?: ReadonlyArray<string>;
 }
 
+// T3-CUSTOM(expbkt3): team mode — thread ownership/membership read for authorization.
 /**
  * Ownership/tag fields for a single thread, read without the active-only
  * filter so archived threads remain authorizable.

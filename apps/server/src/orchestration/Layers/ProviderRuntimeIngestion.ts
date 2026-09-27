@@ -1887,6 +1887,8 @@ const make = Effect.gen(function* () {
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
                 : "ready";
+            // T3-CUSTOM(expbkt3): turn.aborted handling, plus its lastError
+            // reason threaded into the status computation below.
             // An aborted turn ends the turn but leaves the session usable, matching
             // what the adapters already do locally on abort.
             case "turn.aborted":
@@ -1953,6 +1955,8 @@ const make = Effect.gen(function* () {
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
+              // T3-CUSTOM(expbkt3): preserve the provider's own durable thread id
+              // across restarts/resumes instead of dropping it on every update.
               providerThreadId:
                 event.type === "thread.started"
                   ? (event.payload.providerThreadId ?? thread.session?.providerThreadId ?? null)

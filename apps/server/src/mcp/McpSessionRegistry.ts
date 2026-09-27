@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane: credentials now carry an actor identity,
+// personal upstream MCP integrations, and login-bound lifetimes (see imports and fields below).
 /**
  * T3-CUSTOM(expbkt3): Issues and revokes capability-scoped credentials for the
  * experimental T3 MCP endpoint.
@@ -13,27 +15,30 @@ import {
   type UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
+// T3-CUSTOM(expbkt3): END
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime"; // T3-CUSTOM(expbkt3): login expiry math.
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream"; // T3-CUSTOM(expbkt3): watch auth session changes to revoke credentials on logout.
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
 
-import * as SessionStore from "../auth/SessionStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts"; // T3-CUSTOM(expbkt3): tie MCP credentials to logins.
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): external MCP on/off switch.
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
-import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
+import * as UserMcpProfileStore from "./UserMcpProfileStore.ts"; // T3-CUSTOM(expbkt3): personal MCP integrations + external tokens.
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  // T3-CUSTOM(expbkt3): BEGIN — actor identity for control-plane capabilities, and the
+  // caller-gated capability set made optional for pre-existing fork call sites.
   readonly actorUserId?: UserId | null;
   /**
    * Capabilities the caller gates ("preview", "device").
@@ -41,6 +46,7 @@ export interface McpCredentialRequest {
    * caller-side gate keep the fork's previous unconditional preview grant.
    */
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
+  // T3-CUSTOM(expbkt3): END
 }
 
 export interface McpIssuedCredential {
@@ -68,7 +74,7 @@ export interface McpSessionRegistryShape {
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
-  readonly revokeLogin: (authSessionId: AuthSessionId) => Effect.Effect<void>;
+  readonly revokeLogin: (authSessionId: AuthSessionId) => Effect.Effect<void>; // T3-CUSTOM(expbkt3): revoke on logout.
   readonly revokeAll: Effect.Effect<void>;
 }
 
@@ -80,6 +86,8 @@ export class McpSessionRegistry extends Context.Service<
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
+  // T3-CUSTOM(expbkt3): BEGIN — a credential's lifetime is now tied to the login(s) that
+  // produced it, not just liveness pings.
   /**
    * The authenticated logins this credential was issued from. `undefined` means
    * the credential is not login-derived (single-user/unrestricted local mode)
@@ -92,6 +100,7 @@ interface CredentialRecord {
    * on the record because upstream removed `expiresAt` from McpInvocationScope.
    */
   readonly expiresAt: number;
+  // T3-CUSTOM(expbkt3): END
 }
 
 interface RegistryState {
@@ -100,6 +109,9 @@ interface RegistryState {
 
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
+  // T3-CUSTOM(expbkt3): BEGIN — backstop lifetime for credentials that no login governs,
+  // and the external-user idle window. Upstream dropped both when it moved to a pure
+  // liveness model; the fork still binds credentials to logins.
   /**
    * T3-CUSTOM(expbkt3): backstop lifetime for credentials that no login
    * governs, and the external-user idle window. Upstream dropped both when it
@@ -107,7 +119,10 @@ export interface McpSessionRegistryOptions {
    */
   readonly maximumLifetimeMs?: number;
   readonly idleTimeoutMs?: number;
+  // T3-CUSTOM(expbkt3): END
   readonly now?: () => number;
+  // T3-CUSTOM(expbkt3): BEGIN — hooks the fork's registry construction wires up: the
+  // external-MCP settings switch, personal MCP profiles, external tokens, and active logins.
   readonly loadExternalMcpSettings?: () => Effect.Effect<{
     readonly enabled: boolean;
     readonly apiKey: string;
@@ -122,7 +137,11 @@ export interface McpSessionRegistryOptions {
    * dies with them.
    */
   readonly listActiveLogins?: (userId: UserId) => Effect.Effect<ReadonlyArray<McpLoginBinding>>;
+  // T3-CUSTOM(expbkt3): END
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — idle timeout for external-user credentials and the absolute
+// backstop lifetime for credentials no login governs (single-user/unrestricted local mode).
 
 // External-user credentials are resolved from persistent settings on every
 // request, so their invocation scope can remain short-lived.
@@ -134,6 +153,7 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
 // login that produced it; this backstop only bounds credentials that no login
 // governs (single-user/unrestricted local mode).
 const DEFAULT_MAXIMUM_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
+// T3-CUSTOM(expbkt3): END
 
 /**
  * How long a credential outlives the last sign of life from its provider
@@ -156,6 +176,7 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
+// T3-CUSTOM(expbkt3): BEGIN — constant-time comparison for the external-operator API key.
 const tokenHashesMatch = (left: string, right: string): boolean => {
   const leftBytes = Buffer.from(left, "hex");
   const rightBytes = Buffer.from(right, "hex");
@@ -164,6 +185,7 @@ const tokenHashesMatch = (left: string, right: string): boolean => {
     NodeCrypto.timingSafeEqual(leftBytes, rightBytes)
   );
 };
+// T3-CUSTOM(expbkt3): END
 
 // A wildcard bind is reachable on loopback, which is where the provider
 // subprocesses run; anything else is announced as the address it bound.
@@ -182,7 +204,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS;
+  const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS; // T3-CUSTOM(expbkt3): backstop for non-login-bound credentials.
   const endpoint = NetAddress.isInetAddress(httpServer.address)
     ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
     : "http://127.0.0.1/mcp";
@@ -211,7 +233,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const actorUserId = request.actorUserId ?? null;
+      const actorUserId = request.actorUserId ?? null; // T3-CUSTOM(expbkt3): control-plane actor identity.
       // T3-CUSTOM(expbkt3): A user-bound credential is an extension of the
       // login that produced it. It never expires from inactivity, and it dies
       // when every login it was issued from is gone.
@@ -327,6 +349,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
+      // T3-CUSTOM(expbkt3): renamed to make room for the external-user/operator fallback below.
       const providerScope = yield* SynchronizedRef.modify(state, ({ records }) => {
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
@@ -453,6 +476,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 let activeMcpSessionRegistry: McpSessionRegistryShape | undefined;
 
 const make = Effect.acquireRelease(
+  // T3-CUSTOM(expbkt3): BEGIN — wires the registry to server settings (external MCP switch),
+  // personal MCP profiles/tokens, and active login tracking; revokes credentials on logout.
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const sessions = yield* SessionStore.SessionStore;
@@ -488,6 +513,7 @@ const make = Effect.acquireRelease(
           Effect.orElseSucceed((): ReadonlyArray<McpLoginBinding> => []),
         ),
     });
+    // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): Logout and client revocation both remove the auth
     // session; provider MCP credentials issued from it must die with it.
     yield* sessions.streamChanges.pipe(

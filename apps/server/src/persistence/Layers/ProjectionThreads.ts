@@ -28,6 +28,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
+    // T3-CUSTOM(expbkt3): BEGIN — persist the fork's added thread metadata columns (source-control identity, ownership, priority/custom group, Linear/Mattermost links, parent-thread lineage) alongside existing ones.
     execute: (row) =>
       sql`
         INSERT INTO projection_threads (
@@ -156,11 +157,13 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
           deleted_at = excluded.deleted_at
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const getProjectionThreadRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadInput,
     Result: ProjectionThreadDbRow,
+    // T3-CUSTOM(expbkt3): BEGIN — select the fork's added thread metadata columns (source-control identity, ownership, priority/custom group, Linear/Mattermost links, parent-thread lineage) alongside existing ones.
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -207,6 +210,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   // T3-CUSTOM(expbkt3): session-history backfill coverage set.

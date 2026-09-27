@@ -4,7 +4,7 @@ import {
   ChatAttachment,
   OrchestrationMessageContext,
   CheckpointRef,
-  computeTurnDurationMs,
+  computeTurnDurationMs, // T3-CUSTOM(expbkt3): turn duration shown in the shell.
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -33,7 +33,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadTitleState,
   ThreadId,
-  UserId,
+  UserId, // T3-CUSTOM(expbkt3): team mode ownership/membership.
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   type ThreadPullRequestLink,
@@ -177,11 +177,13 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
 });
+// T3-CUSTOM(expbkt3): BEGIN — team mode: row shape used to authorize access by owner/membership.
 const ProjectionThreadAccessRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
   projectId: ProjectionThread.fields.projectId,
   ownerUserId: ProjectionThread.fields.ownerUserId,
 });
+// T3-CUSTOM(expbkt3): END
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
@@ -367,7 +369,7 @@ function mapLatestTurn(
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     assistantMessageId: row.assistantMessageId,
-    durationMs: computeTurnDurationMs(row.startedAt, row.completedAt),
+    durationMs: computeTurnDurationMs(row.startedAt, row.completedAt), // T3-CUSTOM(expbkt3): turn duration shown in the shell.
     ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
       ? {
           sourceProposedPlan: {
@@ -396,7 +398,7 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
-    providerThreadId: row.providerThreadId,
+    providerThreadId: row.providerThreadId, // T3-CUSTOM(expbkt3): surfaced on the session row for the shell.
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
@@ -407,7 +409,7 @@ function mapSessionRow(
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
   repositoryIdentity: OrchestrationProject["repositoryIdentity"],
-  memberUserIds: ReadonlyArray<UserId> = [],
+  memberUserIds: ReadonlyArray<UserId> = [], // T3-CUSTOM(expbkt3): team mode project membership.
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
@@ -420,8 +422,10 @@ function mapProjectShellRow(
     faviconPath: row.faviconPath ?? null,
     projectIcon: row.projectIcon ?? null,
     scripts: row.scripts,
+    // T3-CUSTOM(expbkt3): BEGIN — team mode: project ownership/membership.
     ownerUserId: row.ownerUserId,
     memberUserIds,
+    // T3-CUSTOM(expbkt3): END
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -544,6 +548,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: thread/project membership rows, hydrated and
+  // grouped the same way as the other per-entity collections (sessions/messages).
   // Membership rows are hydrated in bulk (one query, grouped by id) alongside
   // the other per-entity collections — same shape as sessions/messages.
   const ThreadMemberRow = Schema.Struct({ threadId: ThreadId, userId: UserId });
@@ -618,6 +624,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     }
     return byProject;
   };
+  // T3-CUSTOM(expbkt3): END
 
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.UndefinedOr(
@@ -639,7 +646,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode project ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -665,11 +672,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          source_control_profile_id AS "sourceControlProfileId",
+          source_control_profile_id AS "sourceControlProfileId", -- T3-CUSTOM(expbkt3): source-control identity.
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode thread ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -678,12 +685,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          -- T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+          -- links, and thread lineage (parent thread/environment).
           priority,
           custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
           linear_issue_url AS "linearIssueUrl",
           mattermost_thread_url AS "mattermostThreadUrl",
           parent_thread_id AS "parentThreadId",
           parent_environment_id AS "parentEnvironmentId",
+          -- T3-CUSTOM(expbkt3): END
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -723,11 +733,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          source_control_profile_id AS "sourceControlProfileId",
+          source_control_profile_id AS "sourceControlProfileId", -- T3-CUSTOM(expbkt3): source-control identity.
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode thread ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -736,12 +746,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          -- T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+          -- links, and thread lineage (parent thread/environment).
           priority,
           custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
           linear_issue_url AS "linearIssueUrl",
           mattermost_thread_url AS "mattermostThreadUrl",
           parent_thread_id AS "parentThreadId",
           parent_environment_id AS "parentEnvironmentId",
+          -- T3-CUSTOM(expbkt3): END
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -808,11 +821,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          source_control_profile_id AS "sourceControlProfileId",
+          source_control_profile_id AS "sourceControlProfileId", -- T3-CUSTOM(expbkt3): source-control identity.
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode thread ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -821,12 +834,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          -- T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+          -- links, and thread lineage (parent thread/environment).
           priority,
           custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
           linear_issue_url AS "linearIssueUrl",
           mattermost_thread_url AS "mattermostThreadUrl",
           parent_thread_id AS "parentThreadId",
           parent_environment_id AS "parentEnvironmentId",
+          -- T3-CUSTOM(expbkt3): END
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -861,7 +877,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
-          sent_by_user_id AS "sentByUserId",
+          sent_by_user_id AS "sentByUserId", -- T3-CUSTOM(expbkt3): team mode message attribution.
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1310,7 +1326,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode project ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -1337,7 +1353,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode project ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -1425,11 +1441,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          source_control_profile_id AS "sourceControlProfileId",
+          source_control_profile_id AS "sourceControlProfileId", -- T3-CUSTOM(expbkt3): source-control identity.
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode thread ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -1438,12 +1454,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          -- T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+          -- links, and thread lineage (parent thread/environment).
           priority,
           custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
           linear_issue_url AS "linearIssueUrl",
           mattermost_thread_url AS "mattermostThreadUrl",
           parent_thread_id AS "parentThreadId",
           parent_environment_id AS "parentEnvironmentId",
+          -- T3-CUSTOM(expbkt3): END
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -1465,6 +1484,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — team mode: minimal row for authorizing a thread by
+  // owner/project membership.
   // Deliberately not filtered on `archived_at`: authorization must still resolve
   // for an archived thread so its owner can unarchive/delete/retag it.
   const getThreadAccessRowById = SqlSchema.findOneOption({
@@ -1482,6 +1503,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         LIMIT 1
       `,
   });
+  // T3-CUSTOM(expbkt3): END
 
   // T3-CUSTOM(expbkt3): Keep the bounded project-thread query aligned with
   // upstream's shell schema additions.
@@ -1500,11 +1522,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          source_control_profile_id AS "sourceControlProfileId",
+          source_control_profile_id AS "sourceControlProfileId", -- T3-CUSTOM(expbkt3): source-control identity.
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
-          owner_user_id AS "ownerUserId",
+          owner_user_id AS "ownerUserId", -- T3-CUSTOM(expbkt3): team mode thread ownership.
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -1513,12 +1535,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          -- T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+          -- links, and thread lineage (parent thread/environment).
           priority,
           custom_group AS "customGroup", -- T3-CUSTOM(expbkt3): custom sidebar group.
           linear_issue_url AS "linearIssueUrl",
           mattermost_thread_url AS "mattermostThreadUrl",
           parent_thread_id AS "parentThreadId",
           parent_environment_id AS "parentEnvironmentId",
+          -- T3-CUSTOM(expbkt3): END
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -1648,7 +1673,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
-          sent_by_user_id AS "sentByUserId",
+          sent_by_user_id AS "sentByUserId", -- T3-CUSTOM(expbkt3): team mode message attribution.
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1897,7 +1922,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
-          provider_thread_id AS "providerThreadId",
+          provider_thread_id AS "providerThreadId", -- T3-CUSTOM(expbkt3): surfaced on the session row for the shell.
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
@@ -2457,6 +2482,8 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate thread/project membership
+          // alongside everything else the startup snapshot loads.
           listThreadMemberRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2473,6 +2500,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): END
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2495,6 +2523,7 @@ pending_approval_requests AS (
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            // T3-CUSTOM(expbkt3): team mode membership rows.
             threadMemberRows,
             projectMemberRows,
             stateRows,
@@ -2507,6 +2536,7 @@ pending_approval_requests AS (
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              // T3-CUSTOM(expbkt3): team mode membership grouping.
               const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
               const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
 
@@ -2533,7 +2563,7 @@ pending_approval_requests AS (
                   ...(row.context !== null ? { context: row.context } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
-                  sentByUserId: row.sentByUserId,
+                  sentByUserId: row.sentByUserId, // T3-CUSTOM(expbkt3): message sender attribution.
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                 });
@@ -2611,7 +2641,7 @@ pending_approval_requests AS (
                   startedAt: row.startedAt,
                   completedAt: row.completedAt,
                   assistantMessageId: row.assistantMessageId,
-                  durationMs: computeTurnDurationMs(row.startedAt, row.completedAt),
+                  durationMs: computeTurnDurationMs(row.startedAt, row.completedAt), // T3-CUSTOM(expbkt3): turn duration shown in the shell.
                   ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
                     ? {
                         sourceProposedPlan: {
@@ -2632,7 +2662,7 @@ pending_approval_requests AS (
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
                     : {}),
-                  providerThreadId: row.providerThreadId,
+                  providerThreadId: row.providerThreadId, // T3-CUSTOM(expbkt3): surfaced on the session row for the shell.
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
@@ -2656,6 +2686,7 @@ pending_approval_requests AS (
                 faviconPath: row.faviconPath ?? null,
                 projectIcon: row.projectIcon ?? null,
                 scripts: row.scripts,
+                // T3-CUSTOM(expbkt3): team mode project ownership/membership.
                 ownerUserId: row.ownerUserId,
                 memberUserIds: memberUserIdsByProject.get(row.projectId) ?? [],
                 createdAt: row.createdAt,
@@ -2672,7 +2703,7 @@ pending_approval_requests AS (
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
-                sourceControlProfileId: row.sourceControlProfileId,
+                sourceControlProfileId: row.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
                 ...mapThreadPullRequests(
                   pullRequestsByThread.get(row.threadId) ?? [],
                   row.projectId,
@@ -2680,6 +2711,7 @@ pending_approval_requests AS (
                 ),
                 branchPullRequest: row.branchPullRequest,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
                 ownerUserId: row.ownerUserId,
                 memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                 createdAt: row.createdAt,
@@ -2690,12 +2722,15 @@ pending_approval_requests AS (
                 unsettledAt: row.unsettledAt,
                 snoozedUntil: row.snoozedUntil,
                 snoozedAt: row.snoozedAt,
+                // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+                // links, and thread lineage (parent thread/environment).
                 priority: row.priority,
                 customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
                 linearIssueUrl: row.linearIssueUrl ?? null,
                 mattermostThreadUrl: row.mattermostThreadUrl ?? null,
                 parentThreadId: row.parentThreadId ?? null,
                 parentEnvironmentId: row.parentEnvironmentId ?? null,
+                // T3-CUSTOM(expbkt3): END
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 activeOrderKey: row.activeOrderKey ?? null,
@@ -2802,6 +2837,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate thread/project membership.
           listThreadMemberRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2818,6 +2854,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): END
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2837,6 +2874,7 @@ pending_approval_requests AS (
             pullRequestRows,
             sessionRows,
             latestTurnRows,
+            // T3-CUSTOM(expbkt3): team mode membership rows.
             threadMemberRows,
             projectMemberRows,
             stateRows,
@@ -2854,6 +2892,7 @@ pending_approval_requests AS (
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
               const threads: OrchestrationThread[] = [];
+              // T3-CUSTOM(expbkt3): team mode membership grouping.
               const memberUserIdsByThread = groupThreadMemberIds(threadMemberRows);
               const memberUserIdsByProject = groupProjectMemberIds(projectMemberRows);
 
@@ -2874,6 +2913,7 @@ pending_approval_requests AS (
                   faviconPath: row.faviconPath ?? null,
                   projectIcon: row.projectIcon ?? null,
                   scripts: row.scripts,
+                  // T3-CUSTOM(expbkt3): team mode project ownership/membership.
                   ownerUserId: row.ownerUserId,
                   memberUserIds: memberUserIdsByProject.get(row.projectId) ?? [],
                   createdAt: row.createdAt,
@@ -2967,7 +3007,7 @@ pending_approval_requests AS (
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
-                  sourceControlProfileId: row.sourceControlProfileId,
+                  sourceControlProfileId: row.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
                   ...mapThreadPullRequests(
                     pullRequestsByThread.get(row.threadId) ?? [],
                     row.projectId,
@@ -2975,6 +3015,7 @@ pending_approval_requests AS (
                   ),
                   branchPullRequest: row.branchPullRequest,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
                   ownerUserId: row.ownerUserId,
                   memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                   createdAt: row.createdAt,
@@ -2985,12 +3026,15 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+                  // links, and thread lineage (parent thread/environment).
                   priority: row.priority,
                   customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
                   linearIssueUrl: row.linearIssueUrl ?? null,
                   mattermostThreadUrl: row.mattermostThreadUrl ?? null,
                   parentThreadId: row.parentThreadId ?? null,
                   parentEnvironmentId: row.parentEnvironmentId ?? null,
+                  // T3-CUSTOM(expbkt3): END
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -3067,6 +3111,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate thread/project membership.
           listThreadMemberRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -3083,6 +3128,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): END
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -3095,6 +3141,7 @@ pending_approval_requests AS (
       )
       .pipe(
         Effect.flatMap(
+          // T3-CUSTOM(expbkt3): team mode membership rows join the other decoded collections.
           ([
             projectRows,
             threadRows,
@@ -3149,6 +3196,7 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed(
+                        // T3-CUSTOM(expbkt3): team mode project membership.
                         mapProjectShellRow(
                           row,
                           repositoryIdentities.get(row.projectId) ?? null,
@@ -3168,7 +3216,7 @@ pending_approval_requests AS (
                         interactionMode: row.interactionMode,
                         branch: row.branch,
                         worktreePath: row.worktreePath,
-                        sourceControlProfileId: row.sourceControlProfileId,
+                        sourceControlProfileId: row.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
                         branchPullRequest: row.branchPullRequest,
                         ...mapThreadPullRequests(
                           pullRequestsByThread.get(row.threadId) ?? [],
@@ -3176,6 +3224,7 @@ pending_approval_requests AS (
                           repositoryIdentities.get(row.projectId),
                         ),
                         latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                        // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
                         ownerUserId: row.ownerUserId,
                         memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                         createdAt: row.createdAt,
@@ -3186,12 +3235,15 @@ pending_approval_requests AS (
                         unsettledAt: row.unsettledAt,
                         snoozedUntil: row.snoozedUntil,
                         snoozedAt: row.snoozedAt,
+                        // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+                        // links, and thread lineage (parent thread/environment).
                         priority: row.priority,
                         customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
                         linearIssueUrl: row.linearIssueUrl ?? null,
                         mattermostThreadUrl: row.mattermostThreadUrl ?? null,
                         parentThreadId: row.parentThreadId ?? null,
                         parentEnvironmentId: row.parentEnvironmentId ?? null,
+                        // T3-CUSTOM(expbkt3): END
                         pinnedAt: row.pinnedAt,
                         pinOrderKey: row.pinOrderKey ?? null,
                         activeOrderKey: row.activeOrderKey ?? null,
@@ -3298,6 +3350,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate thread/project membership.
           listThreadMemberRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -3314,6 +3367,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          // T3-CUSTOM(expbkt3): END
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -3326,6 +3380,7 @@ pending_approval_requests AS (
       )
       .pipe(
         Effect.flatMap(
+          // T3-CUSTOM(expbkt3): team mode membership rows join the other decoded collections.
           ([
             projectRows,
             threadRows,
@@ -3379,6 +3434,7 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null && activeProjectIds.has(row.projectId)
                     ? Result.succeed(
+                        // T3-CUSTOM(expbkt3): team mode project membership.
                         mapProjectShellRow(
                           row,
                           repositoryIdentities.get(row.projectId) ?? null,
@@ -3396,7 +3452,7 @@ pending_approval_requests AS (
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
-                  sourceControlProfileId: row.sourceControlProfileId,
+                  sourceControlProfileId: row.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
                   branchPullRequest: row.branchPullRequest,
                   ...mapThreadPullRequests(
                     pullRequestsByThread.get(row.threadId) ?? [],
@@ -3404,6 +3460,7 @@ pending_approval_requests AS (
                     repositoryIdentities.get(row.projectId),
                   ),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
                   ownerUserId: row.ownerUserId,
                   memberUserIds: memberUserIdsByThread.get(row.threadId) ?? [],
                   createdAt: row.createdAt,
@@ -3414,12 +3471,15 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+                  // links, and thread lineage (parent thread/environment).
                   priority: row.priority,
                   customGroup: row.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
                   linearIssueUrl: row.linearIssueUrl ?? null,
                   mattermostThreadUrl: row.mattermostThreadUrl ?? null,
                   parentThreadId: row.parentThreadId ?? null,
                   parentEnvironmentId: row.parentEnvironmentId ?? null,
+                  // T3-CUSTOM(expbkt3): END
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -3531,7 +3591,8 @@ pending_approval_requests AS (
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : Effect.all({
+            : // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate this project's membership too.
+              Effect.all({
                 repositoryIdentity: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
                 memberRows: listProjectMemberRowsByProjectId({
                   projectId: option.value.projectId,
@@ -3544,6 +3605,7 @@ pending_approval_requests AS (
                   ),
                 ),
               }).pipe(
+                // T3-CUSTOM(expbkt3): END
                 Effect.map(({ repositoryIdentity, memberRows }) =>
                   Option.some({
                     id: option.value.projectId,
@@ -3556,6 +3618,7 @@ pending_approval_requests AS (
                     faviconPath: option.value.faviconPath ?? null,
                     projectIcon: option.value.projectIcon ?? null,
                     scripts: option.value.scripts,
+                    // T3-CUSTOM(expbkt3): team mode project ownership/membership.
                     ownerUserId: option.value.ownerUserId,
                     memberUserIds: memberRows.map((row) => row.userId),
                     createdAt: option.value.createdAt,
@@ -3597,7 +3660,8 @@ pending_approval_requests AS (
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : Effect.all({
+          : // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate this project's membership too.
+            Effect.all({
               repositoryIdentity: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
               memberRows: listProjectMemberRowsByProjectId({
                 projectId: option.value.projectId,
@@ -3619,6 +3683,7 @@ pending_approval_requests AS (
                   ),
                 ),
               ),
+              // T3-CUSTOM(expbkt3): END
             ),
       ),
     );
@@ -3735,6 +3800,8 @@ pending_approval_requests AS (
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
+      // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate this thread's membership alongside
+      // everything else a single-thread shell needs.
       const [threadRow, latestTurnRow, sessionRow, memberRows, pullRequestRows] = yield* Effect.all(
         [
           getActiveThreadRowById({ threadId }).pipe(
@@ -3779,6 +3846,7 @@ pending_approval_requests AS (
           ),
         ],
       );
+      // T3-CUSTOM(expbkt3): END
 
       if (Option.isNone(threadRow)) {
         return Option.none<OrchestrationThreadShell>();
@@ -3793,7 +3861,7 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
-        sourceControlProfileId: threadRow.value.sourceControlProfileId,
+        sourceControlProfileId: threadRow.value.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
         ...mapThreadPullRequests(
           pullRequestRows.map(mapPullRequestRow),
           threadRow.value.projectId,
@@ -3804,6 +3872,7 @@ pending_approval_requests AS (
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
         ownerUserId: threadRow.value.ownerUserId,
         memberUserIds: memberRows.map((row) => row.userId),
         createdAt: threadRow.value.createdAt,
@@ -3814,12 +3883,15 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+        // links, and thread lineage (parent thread/environment).
         priority: threadRow.value.priority,
         customGroup: threadRow.value.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
         linearIssueUrl: threadRow.value.linearIssueUrl ?? null,
         mattermostThreadUrl: threadRow.value.mattermostThreadUrl ?? null,
         parentThreadId: threadRow.value.parentThreadId ?? null,
         parentEnvironmentId: threadRow.value.parentEnvironmentId ?? null,
+        // T3-CUSTOM(expbkt3): END
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
@@ -4098,6 +4170,7 @@ pending_approval_requests AS (
         checkpointRows,
         latestTurnRow,
         sessionRow,
+        // T3-CUSTOM(expbkt3): BEGIN — team mode: hydrate this thread's membership too.
         memberRows,
       ] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
@@ -4168,6 +4241,7 @@ pending_approval_requests AS (
             ),
           ),
         ),
+        // T3-CUSTOM(expbkt3): END
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -4183,7 +4257,7 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
-        sourceControlProfileId: threadRow.value.sourceControlProfileId,
+        sourceControlProfileId: threadRow.value.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
         ...mapThreadPullRequests(
           pullRequestRows.map(mapPullRequestRow),
           threadRow.value.projectId,
@@ -4194,6 +4268,7 @@ pending_approval_requests AS (
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        // T3-CUSTOM(expbkt3): team mode thread ownership/membership.
         ownerUserId: threadRow.value.ownerUserId,
         memberUserIds: memberRows.map((row) => row.userId),
         createdAt: threadRow.value.createdAt,
@@ -4204,12 +4279,15 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        // T3-CUSTOM(expbkt3): BEGIN — priority, custom sidebar group, Linear/Mattermost
+        // links, and thread lineage (parent thread/environment).
         priority: threadRow.value.priority,
         customGroup: threadRow.value.customGroup ?? null, // T3-CUSTOM(expbkt3): custom sidebar group.
         linearIssueUrl: threadRow.value.linearIssueUrl ?? null,
         mattermostThreadUrl: threadRow.value.mattermostThreadUrl ?? null,
         parentThreadId: threadRow.value.parentThreadId ?? null,
         parentEnvironmentId: threadRow.value.parentEnvironmentId ?? null,
+        // T3-CUSTOM(expbkt3): END
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
@@ -4224,7 +4302,7 @@ pending_approval_requests AS (
             text: row.text,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
-            sentByUserId: row.sentByUserId,
+            sentByUserId: row.sentByUserId, // T3-CUSTOM(expbkt3): message sender attribution.
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
@@ -4420,7 +4498,7 @@ pending_approval_requests AS (
     getUserInputActivity,
     listActivitiesByKind,
     getSnapshot,
-    listLatestProposedPlansForActiveThreads,
+    listLatestProposedPlansForActiveThreads, // T3-CUSTOM(expbkt3): bounded startup projection reads.
     // T3-CUSTOM(expbkt3): bounded list/startup projection reads.
     getShellSnapshot,
     listThreadsWithPullRequests,

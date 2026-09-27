@@ -30,6 +30,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+// T3-CUSTOM(expbkt3): source-control identity for rollback attribution.
 import { SourceControlProfileService } from "../../sourceControl/SourceControlProfileService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -87,7 +88,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
-  const sourceControlProfiles = yield* Effect.serviceOption(SourceControlProfileService);
+  const sourceControlProfiles = yield* Effect.serviceOption(SourceControlProfileService); // T3-CUSTOM(expbkt3): source-control identity.
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -870,8 +871,11 @@ const make = Effect.gen(function* () {
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
+      // T3-CUSTOM(expbkt3): BEGIN — resolve the source-control profile (if any) driving
+      // this rollback, so the provider process sees the right git identity/environment.
       const sourceControlContext = yield* Option.match(sourceControlProfiles, {
         onNone: () => Effect.succeed(null),
+        // T3-CUSTOM(expbkt3): END
         // T3-CUSTOM(expbkt3): attribution follows durable thread ownership.
         onSome: (profiles) =>
           profiles.resolveThreadExecutionContext(thread.id, thread.ownerUserId, {}),

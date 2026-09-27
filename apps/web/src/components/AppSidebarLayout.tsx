@@ -25,11 +25,13 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
+// T3-CUSTOM(expbkt3): reformatted multi-line to add the phase-grouped sidebar hooks below.
 import {
   // T3-CUSTOM(expbkt3): BEGIN — phase-grouped sidebar variant.
   useClientSettings,
   useClientSettingsHydrated,
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): original useSettings imports, reflowed onto their own lines.
   useEnvironmentIdentificationMode,
   useLegacySidebarEnabled,
 } from "../hooks/useSettings";

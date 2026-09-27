@@ -67,12 +67,14 @@ import {
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
+// T3-CUSTOM(expbkt3): BEGIN — durable outbox: retry/edit a rejected queued message.
 import {
   enqueueThreadOutboxMessage,
   retryQueuedThreadMessage,
   updateThreadOutboxMessage,
 } from "./thread-outbox";
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
+// T3-CUSTOM(expbkt3): END
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -252,6 +254,7 @@ export function useThreadComposerState() {
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
+  // T3-CUSTOM(expbkt3): durable outbox — a failed delivery is surfaced separately, not queued.
   const selectedThreadQueueCount = selectedThreadQueuedMessages.filter(
     (message) => message.deliveryState !== "failed",
   ).length;
@@ -807,6 +810,7 @@ export function useThreadComposerState() {
     [selectedEnvironmentRuntime?.serverConfig, selectedThread?.modelSelection, selectedThreadKey],
   );
 
+  // T3-CUSTOM(expbkt3): BEGIN — durable outbox: retry or edit a rejected queued message.
   const onRetryFailedOutboxMessage = useCallback(async () => {
     if (!failedOutboxMessage) return;
     try {
@@ -840,12 +844,14 @@ export function useThreadComposerState() {
       );
     }
   }, [failedOutboxMessage, selectedThreadKey]);
+  // T3-CUSTOM(expbkt3): END
 
   return {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
     selectedThreadQueueCount,
+    // T3-CUSTOM(expbkt3): durable outbox — surface the rejection detail for the composer notice.
     failedOutboxDetail: failedOutboxMessage?.failureDetail ?? null,
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
@@ -867,6 +873,7 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    // T3-CUSTOM(expbkt3): durable outbox — retry or edit a rejected queued message.
     onRetryFailedOutboxMessage,
     onEditFailedOutboxMessage,
   };

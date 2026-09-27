@@ -13,7 +13,7 @@ export function applyShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: OrchestrationShellStreamEvent,
 ): OrchestrationShellSnapshot {
-  // Team-mode visibility may expand one durable event into multiple derived
+  // T3-CUSTOM(expbkt3): team-mode visibility may expand one durable event into multiple derived
   // shell frames (for example, parent project then new thread) that deliberately
   // share a sequence. Applying equal-sequence frames is safe because every
   // operation below is idempotent; only genuinely older frames are stale.

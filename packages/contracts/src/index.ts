@@ -4,6 +4,7 @@ export * from "./composerContext.ts";
 export * from "./composerContextClipboard.ts";
 export * from "./background.ts";
 export * from "./auth.ts";
+// T3-CUSTOM(expbkt3): team mode — user directory schemas.
 export * from "./users.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";

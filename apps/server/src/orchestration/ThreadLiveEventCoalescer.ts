@@ -192,6 +192,8 @@ export const makeThreadLiveEventCoalescer = Effect.fn("makeThreadLiveEventCoales
               // that boundary after the final update from the run.
               yield* flushPending();
               if (input.kind === "synchronized") {
+                // T3-CUSTOM(expbkt3): reuse the narrowed input instead of rebuilding the
+                // literal, so this stays correct if the synchronized variant gains fields.
                 yield* budget.retain(input).pipe(
                   Effect.flatMap((marker) => Queue.offer(output, marker)),
                   Effect.uninterruptible,

@@ -1,10 +1,12 @@
 import * as Crypto from "effect/Crypto";
+// T3-CUSTOM(expbkt3): BEGIN — durable outbox: persist a turn locally before it is sent.
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 import {
+  // T3-CUSTOM(expbkt3): END
   CommandId,
   WS_METHODS,
   type EnvironmentId,
@@ -18,6 +20,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
+  // T3-CUSTOM(expbkt3): durable outbox commands run against the raw runtime, not an environment.
   createRuntimeCommand,
 } from "./runtime.ts";
 import {
@@ -297,6 +300,8 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   const commands = {
+    // T3-CUSTOM(expbkt3): BEGIN — durable outbox: let a client drop a pending turn
+    // that was persisted before send (see startThreadTurnDurably above).
     discardOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:discard-outbox",
       execute: (message: DiscardDurableOutboxInput, registry) =>
@@ -311,6 +316,7 @@ export function createThreadEnvironmentAtoms<R, E>(
           );
         }),
     }),
+    // T3-CUSTOM(expbkt3): END
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

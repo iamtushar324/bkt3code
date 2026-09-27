@@ -16,7 +16,7 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
-  type OrchestrationUser,
+  type OrchestrationUser, // T3-CUSTOM(expbkt3): environment user attribution.
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
@@ -287,11 +287,13 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  // T3-CUSTOM(expbkt3): BEGIN — collaborator attribution label.
   /**
    * First name to attribute a user message to, or null when it shouldn't be
    * shown (single-collaborator thread, no author, or single-user mode).
    */
   resolveMessageSenderName: (message: { readonly sentByUserId: UserId | null }) => string | null;
+  // T3-CUSTOM(expbkt3): END
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
@@ -337,6 +339,7 @@ interface TimelineRowActivityState {
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
 
+// T3-CUSTOM(expbkt3): collaborator attribution — first name to label a message with.
 /** First name to attribute a message to: given name, else email local-part. */
 function firstNameOfUser(user: OrchestrationUser): string {
   const name = user.name?.trim();
@@ -517,7 +520,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isPreparingWorktree = false,
   isCompacting = false,
   activeTurnStartedAt,
-  agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
+  agentPanelModel = EMPTY_AGENT_PANEL_MODEL, // T3-CUSTOM(expbkt3): plan review preview renders this component without agent panel data.
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
@@ -1174,6 +1177,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
+  // T3-CUSTOM(expbkt3): collaborator attribution — label another member's message with their name.
   const memoizedThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const threadShellForSenders = useThreadShell(memoizedThreadRef);
   const { resolveUser: resolveOrgUser } = useOrgMembers();
@@ -1215,7 +1219,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
-      resolveMessageSenderName,
+      resolveMessageSenderName, // T3-CUSTOM(expbkt3): collaborator attribution label.
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -1224,8 +1228,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
       onOpenPlanReview,
       planReviewDocumentId,
+      // T3-CUSTOM(expbkt3): END
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
@@ -1254,7 +1260,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
-      resolveMessageSenderName,
+      resolveMessageSenderName, // T3-CUSTOM(expbkt3): collaborator attribution label.
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -1263,8 +1269,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
       onOpenPlanReview,
       planReviewDocumentId,
+      // T3-CUSTOM(expbkt3): END
       onToggleTurnFold,
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
@@ -2023,7 +2031,7 @@ function MessageAuthorHeading({ children }: { children: string }) {
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const senderName = ctx.resolveMessageSenderName(row.message);
+  const senderName = ctx.resolveMessageSenderName(row.message); // T3-CUSTOM(expbkt3): collaborator attribution label.
   const { onImageExpand, onFileOpen } = ctx;
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
@@ -2180,9 +2188,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
+      {/* T3-CUSTOM(expbkt3): BEGIN — collaborator attribution label on shared threads. */}
       {senderName ? (
         <span className="px-1 text-xs font-medium text-muted-foreground">{senderName}</span>
       ) : null}
+      {/* T3-CUSTOM(expbkt3): END */}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
@@ -2597,9 +2607,11 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
         onOpenPlanReview={ctx.onOpenPlanReview}
         planReviewDocumentId={ctx.planReviewDocumentId}
         reviewable={row.proposedPlan.implementedAt === null}
+        // T3-CUSTOM(expbkt3): END
       />
     </div>
   );
@@ -4108,6 +4120,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   );
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — anchored plan feedback, rendered as a quotation.
 /**
  * T3-CUSTOM(expbkt3): anchored plan feedback, rendered as a quotation.
  *
@@ -4151,6 +4164,7 @@ function UserMessagePlanReviewCommentCard({ comment }: { comment: ReviewCommentC
     </div>
   );
 }
+// T3-CUSTOM(expbkt3): END
 
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
   const ctx = use(TimelineRowCtx);

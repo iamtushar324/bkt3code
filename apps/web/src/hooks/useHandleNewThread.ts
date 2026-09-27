@@ -4,6 +4,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+// T3-CUSTOM(expbkt3): multi-line to add the EnvironmentId type import below.
 import {
   DEFAULT_SERVER_SETTINGS,
   // T3-CUSTOM(expbkt3): a child thread can start on another machine.
@@ -230,7 +231,7 @@ export function useNewThreadHandler() {
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
-            hasStartFromOriginOption ||
+            hasStartFromOriginOption || // T3-CUSTOM(expbkt3): joins the parent-thread check below.
             hasParentThreadIdOption; // T3-CUSTOM(expbkt3)
           // Resurrecting an empty stored draft must not resurrect its stale
           // context: explicit workspace options win outright; otherwise the
@@ -243,6 +244,7 @@ export function useNewThreadHandler() {
           // below and does not follow this guard.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
+            // T3-CUSTOM(expbkt3): carry parent-thread lineage into the resurrected draft's context.
             workspaceContext = {
               ...pickExplicitWorkspaceOptions(options),
               // T3-CUSTOM(expbkt3): always written alongside explicit options
@@ -371,7 +373,7 @@ export function useNewThreadHandler() {
           hasBranchOption ||
           hasWorktreePathOption ||
           hasEnvModeOption ||
-          hasStartFromOriginOption ||
+          hasStartFromOriginOption || // T3-CUSTOM(expbkt3): joins the parent-thread check below.
           hasParentThreadIdOption // T3-CUSTOM(expbkt3)
         ) {
           setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));

@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): BEGIN — personal MCP integrations: users can register upstream MCP
+// servers (e.g. Bifrost) that get proxied into the provider session alongside T3's own tools.
 import {
   BIFROST_MCP_INTEGRATION_ID,
   type EnvironmentId,
@@ -20,16 +22,17 @@ export function upstreamMcpServerName(server: McpUpstreamServerConfig): string {
   if (server.id === BIFROST_MCP_INTEGRATION_ID) return BIFROST_MCP_INTEGRATION_ID;
   return `t3_user_${server.id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
 }
+// T3-CUSTOM(expbkt3): END
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly actorUserId: UserId | null;
+  readonly actorUserId: UserId | null; // T3-CUSTOM(expbkt3): control-plane actor identity.
   readonly endpoint: string;
   readonly authorizationHeader: string;
-  readonly upstreamServers: ReadonlyArray<McpUpstreamServerConfig>;
+  readonly upstreamServers: ReadonlyArray<McpUpstreamServerConfig>; // T3-CUSTOM(expbkt3): personal MCP integrations to proxy.
   /** Capabilities the credential grants ("preview", "device"). */
   readonly capabilities: ReadonlySet<string>;
   /**

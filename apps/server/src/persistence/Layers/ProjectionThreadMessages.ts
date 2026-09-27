@@ -40,6 +40,7 @@ function toProjectionThreadMessage(
     role: row.role,
     text: row.text,
     isStreaming: row.isStreaming === 1,
+    // T3-CUSTOM(expbkt3): message sender identity — carry the owning user id through the row mapper.
     sentByUserId: row.sentByUserId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -57,6 +58,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       const nextAttachmentsJson =
         row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
       const nextContextJson = row.context !== undefined ? JSON.stringify(row.context) : null;
+      // T3-CUSTOM(expbkt3): BEGIN — message sender identity carried through upsert, preserved on conflict.
       return sql`
         INSERT INTO projection_thread_messages (
           message_id,
@@ -120,6 +122,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `;
+      // T3-CUSTOM(expbkt3): END
     },
   });
 
@@ -129,6 +132,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       const nextAttachmentsJson =
         row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
       const nextContextJson = row.context !== undefined ? JSON.stringify(row.context) : null;
+      // T3-CUSTOM(expbkt3): BEGIN — message sender identity carried through the streaming append path.
       return sql`
         INSERT INTO projection_thread_messages (
           message_id,
@@ -175,6 +179,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           sent_by_user_id = COALESCE(excluded.sent_by_user_id, projection_thread_messages.sent_by_user_id),
           updated_at = excluded.updated_at
       `;
+      // T3-CUSTOM(expbkt3): END
     },
   });
 
@@ -192,7 +197,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
-          sent_by_user_id AS "sentByUserId",
+          sent_by_user_id AS "sentByUserId", -- T3-CUSTOM(expbkt3): message sender identity.
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -290,7 +295,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
-          sent_by_user_id AS "sentByUserId",
+          sent_by_user_id AS "sentByUserId", -- T3-CUSTOM(expbkt3): message sender identity.
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages

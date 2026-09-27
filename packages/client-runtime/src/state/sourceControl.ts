@@ -25,6 +25,9 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       label: "environment-data:source-control:repository",
       tag: WS_METHODS.sourceControlLookupRepository,
     }),
+    // T3-CUSTOM(expbkt3): BEGIN — source-control identity: durable per-environment git
+    // profiles (credentials a thread can be bound to), plus thread ownership/remote
+    // conversion commands that travel with a profile.
     profiles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:source-control:profiles",
       tag: WS_METHODS.sourceControlProfilesList,
@@ -92,6 +95,7 @@ export function createSourceControlEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
       },
     }),
+    // T3-CUSTOM(expbkt3): END
     cloneRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:clone-repository",
       tag: WS_METHODS.sourceControlCloneRepository,

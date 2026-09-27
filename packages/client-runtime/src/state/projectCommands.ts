@@ -111,6 +111,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
+    // T3-CUSTOM(expbkt3): BEGIN — team mode: membership and ownership commands for a project.
     addMember: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:add-member",
       execute: (input: AddProjectMemberInput) => addProjectMember(input),
@@ -129,6 +130,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
+    // T3-CUSTOM(expbkt3): END
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

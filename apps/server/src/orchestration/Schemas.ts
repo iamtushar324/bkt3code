@@ -8,6 +8,7 @@ import {
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
   ThreadRuntimeModeSetPayload as ContractsThreadRuntimeModeSetPayloadSchema,
   ThreadInteractionModeSetPayload as ContractsThreadInteractionModeSetPayloadSchema,
+  // T3-CUSTOM(expbkt3): source-control identity — per-thread git profile contract.
   ThreadSourceControlProfileSetPayload as ContractsThreadSourceControlProfileSetPayloadSchema,
   ThreadDeletedPayload as ContractsThreadDeletedPayloadSchema,
   ThreadUnarchivedPayload as ContractsThreadUnarchivedPayloadSchema,
@@ -32,6 +33,7 @@ import {
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  // T3-CUSTOM(expbkt3): explicit session-restart + team-mode (membership/ownership) contracts.
   ThreadSessionRestartRequestedPayload as ContractsThreadSessionRestartRequestedPayloadSchema,
   ThreadMemberAddedPayload as ContractsThreadMemberAddedPayloadSchema,
   ThreadMemberRemovedPayload as ContractsThreadMemberRemovedPayloadSchema,
@@ -52,6 +54,7 @@ export const ThreadSettledPayload = ContractsThreadSettledPayloadSchema;
 export const ThreadMetaUpdatedPayload = ContractsThreadMetaUpdatedPayloadSchema;
 export const ThreadRuntimeModeSetPayload = ContractsThreadRuntimeModeSetPayloadSchema;
 export const ThreadInteractionModeSetPayload = ContractsThreadInteractionModeSetPayloadSchema;
+// T3-CUSTOM(expbkt3): source-control identity — per-thread git profile.
 export const ThreadSourceControlProfileSetPayload =
   ContractsThreadSourceControlProfileSetPayloadSchema;
 export const ThreadDeletedPayload = ContractsThreadDeletedPayloadSchema;
@@ -82,6 +85,8 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+// T3-CUSTOM(expbkt3): BEGIN — explicit provider reconnect (session-restart), plus
+// team-mode membership and ownership-transfer event contracts.
 export const ThreadSessionRestartRequestedPayload =
   ContractsThreadSessionRestartRequestedPayloadSchema;
 
@@ -91,3 +96,4 @@ export const ThreadOwnerTransferredPayload = ContractsThreadOwnerTransferredPayl
 export const ProjectMemberAddedPayload = ContractsProjectMemberAddedPayloadSchema;
 export const ProjectMemberRemovedPayload = ContractsProjectMemberRemovedPayloadSchema;
 export const ProjectOwnerTransferredPayload = ContractsProjectOwnerTransferredPayloadSchema;
+// T3-CUSTOM(expbkt3): END

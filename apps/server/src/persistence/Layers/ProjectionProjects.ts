@@ -29,6 +29,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const upsertProjectionProjectRow = SqlSchema.void({
     Request: ProjectionProject,
+    // T3-CUSTOM(expbkt3): BEGIN — project ownership: persist and preserve the owning environment user id on upsert.
     execute: (row) =>
       sql`
         INSERT INTO projection_projects (
@@ -76,11 +77,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           updated_at = excluded.updated_at,
           deleted_at = excluded.deleted_at
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const getProjectionProjectRow = SqlSchema.findOneOption({
     Request: GetProjectionProjectInput,
     Result: ProjectionProjectDbRow,
+    // T3-CUSTOM(expbkt3): BEGIN — project ownership: select the owning environment user id alongside existing project columns.
     execute: ({ projectId }) =>
       sql`
         SELECT
@@ -100,6 +103,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
         FROM projection_projects
         WHERE project_id = ${projectId}
       `,
+    // T3-CUSTOM(expbkt3): END
   });
 
   const upsert: ProjectionProjectRepositoryShape["upsert"] = (row) =>

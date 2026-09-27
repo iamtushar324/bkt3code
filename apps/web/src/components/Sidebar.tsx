@@ -1155,41 +1155,41 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         ? {
             // Monitoring is calm background presence, not active progress
             // (monitoring-pill D6), so it keeps the label at full strength.
-            label: `Monitoring${asyncQuestionSuffix}`,
+            label: `Monitoring${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
             icon: "monitoring" as const,
             className: "text-foreground dark:text-white",
           }
         : status === "approval"
           ? {
-              label: `Approval${asyncQuestionSuffix}`,
+              label: `Approval${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
               icon: "approval" as const,
               className: "text-warning-foreground",
             }
           : status === "input"
             ? {
-                label: `Input${asyncQuestionSuffix}`,
+                label: `Input${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
                 icon: "input" as const,
                 className: "text-indigo-600 dark:text-indigo-300",
               }
             : status === "failed"
               ? {
-                  label: `Failed${asyncQuestionSuffix}`,
+                  label: `Failed${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
                   icon: "failed" as const,
                   className: "text-red-700 dark:text-red-300",
                 }
               : isWoke
                 ? {
-                    label: `Woke${asyncQuestionSuffix}`,
+                    label: `Woke${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
                     icon: "woke" as const,
                     className: "text-warning-foreground",
                   }
                 : isUnread
                   ? {
-                      label: `Done${asyncQuestionSuffix}`,
+                      label: `Done${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
                       icon: "done" as const,
                       className: "text-emerald-700 dark:text-emerald-300",
                     }
-                  : thread.hasPendingAsyncUserInput
+                  : thread.hasPendingAsyncUserInput // T3-CUSTOM(expbkt3): message-mode question shows as its own "Question" status.
                     ? { label: "Question", icon: null, className: "text-muted-foreground" }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";

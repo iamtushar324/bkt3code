@@ -1,7 +1,9 @@
+// T3-CUSTOM(expbkt3): BEGIN — collaborative preview automation (multi-client browser control) is fork-only.
 /**
  * T3-CUSTOM(expbkt3): Safely brokers collaborative preview automation for
  * provider-session MCP principals.
  */
+// T3-CUSTOM(expbkt3): END
 import {
   PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,

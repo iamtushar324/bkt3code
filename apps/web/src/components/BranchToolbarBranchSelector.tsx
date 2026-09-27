@@ -239,7 +239,7 @@ export function BranchToolbarBranchSelector({
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: branchCwd, threadId },
+          input: { cwd: branchCwd, threadId }, // T3-CUSTOM(expbkt3): thread-scoped source-control identity/lineage.
         }),
   );
   const trimmedBranchQuery = branchQuery.trim();

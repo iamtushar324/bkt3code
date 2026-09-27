@@ -6,7 +6,7 @@ import {
   settlePromise,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react"; // T3-CUSTOM(expbkt3): useState powers the managed-auth readiness gate below.
 
 import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
@@ -67,11 +67,12 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   });
   const observedAccountRef = useRef<string | null | undefined>(undefined);
   const accountTransitionRef = useRef<Promise<void> | null>(null);
+  // T3-CUSTOM(expbkt3): gate rendering on managed relay auth readiness so children never see a flash of signed-out state.
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!isLoaded) {
-      setReady(false);
+      setReady(false); // T3-CUSTOM(expbkt3): keep children hidden until Clerk auth state is loaded.
       return;
     }
 
@@ -102,7 +103,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
     if (!isSignedIn || !userId) {
       deactivateManagedRelayAuthentication();
-      setReady(true);
+      setReady(true); // T3-CUSTOM(expbkt3): reveal children once we know there's no signed-in account.
       if (previousAccount !== null) {
         void queueAccountCleanup();
       }
@@ -111,7 +112,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       const activateSession = () => {
         if (!cancelled) {
           activateManagedRelayAuthentication(userId, tokenProvider);
-          setReady(true);
+          setReady(true); // T3-CUSTOM(expbkt3): reveal children once managed relay auth is active.
         }
       };
       const activateAfterTransition = (transition: Promise<void>) => {
@@ -124,7 +125,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
         })();
       };
       if (previousAccount !== undefined && previousAccount !== null && previousAccount !== userId) {
-        setReady(false);
+        setReady(false); // T3-CUSTOM(expbkt3): hide children while switching managed relay accounts.
         deactivateManagedRelayAuthentication();
         activateAfterTransition(queueAccountCleanup());
       } else {
@@ -138,5 +139,5 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => () => deactivateManagedRelayAuthentication(), []);
 
-  return ready ? children : null;
+  return ready ? children : null; // T3-CUSTOM(expbkt3): don't render children until managed relay auth settles.
 }

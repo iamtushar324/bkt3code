@@ -92,11 +92,13 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  // T3-CUSTOM(expbkt3): BEGIN — t3_show_ui render handle.
   /**
    * T3-CUSTOM(expbkt3): render handle left by a `t3_show_ui` call. The document
    * itself is fetched on demand; this is only the key to it.
    */
   agentUi?: unknown;
+  // T3-CUSTOM(expbkt3): END
 }
 
 const workLogCollapseKey = Symbol();

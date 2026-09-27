@@ -73,8 +73,10 @@ import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/Provide
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+// T3-CUSTOM(expbkt3): BEGIN personal MCP profile store and upstream MCP proxy route.
 import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import { mcpUpstreamProxyRouteLayer } from "./mcp/McpUpstreamProxy.ts";
+// T3-CUSTOM(expbkt3): END
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 // T3-CUSTOM(expbkt3): BEGIN — native plan review.
 import * as PlanIngestListener from "./planreview/PlanIngestListener.ts";
@@ -427,6 +429,7 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+// T3-CUSTOM(expbkt3): per-user source-control identity profiles.
 const SourceControlProfileServiceLayerLive = SourceControlProfileService.layer.pipe(
   Layer.provide(GitHubCli.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(ServerSettingsLayerLive),
@@ -506,18 +509,23 @@ const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+// T3-CUSTOM(expbkt3): renamed from upstream's `AuthLayerLive` — the fork's own
+// `AuthLayerLive` below layers environment-user and Clerk identity on top.
 const EnvironmentAuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
   Layer.provide(ServerSecretStore.layer),
 );
 
+// T3-CUSTOM(expbkt3): BEGIN `AuthLayerLive` now layers the environment-user
+// directory and Clerk identity verification over upstream's environment auth.
 const AuthLayerLive = EnvironmentUserService.layer.pipe(
   Layer.provide(PersistenceLayerLive),
   Layer.provide(ServerSettingsLayerLive),
   Layer.provideMerge(EnvironmentAuthLayerLive),
   Layer.provideMerge(ClerkIdentityVerifier.layer),
 );
+// T3-CUSTOM(expbkt3): END
 
 // T3-CUSTOM(expbkt3): provider sessions read owner and sender identity from the
 // same environment-user directory the auth layer already builds.
@@ -600,11 +608,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(CheckpointingLayerLive),
   // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
   // GitHub-hosted pull request media with the repository's credential.
+  // T3-CUSTOM(expbkt3): BEGIN group source-control services with the profile/lock additions below.
   Layer.provideMerge(
     Layer.mergeAll(
       SourceControlProviderRegistryLayerLive,
       PullRequestServiceLive,
       GitHubCli.layer,
+      // T3-CUSTOM(expbkt3): END
       // T3-CUSTOM(expbkt3): per-user source-control profiles and per-thread action lock.
       SourceControlProfileServiceLayerLive,
       ThreadSourceControlActionLock.layer,
@@ -698,8 +708,10 @@ const commandReadinessLayer = HttpRouter.middleware(
     ),
   { global: true },
 );
-// T3-CUSTOM(expbkt3): Build one memoized user profile + credential registry
-// pair and provide both to the native T3 MCP transport and upstream proxy.
+// T3-CUSTOM(expbkt3): BEGIN — Build one memoized user profile + credential
+// registry pair and provide both to the native T3 MCP transport and upstream
+// proxy, with the MCP routes composed under the Clerk/access-control layers
+// team mode needs to authorize them.
 const PersonalMcpRouteServicesLive = McpSessionRegistry.layer;
 
 const McpRoutesLive = Layer.mergeAll(
@@ -719,6 +731,7 @@ const McpRoutesLive = Layer.mergeAll(
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
+      // T3-CUSTOM(expbkt3): Clerk-backed identity resolution for the auth route.
       Layer.provide(authHttpApiLayer.pipe(Layer.provide(ClerkDirectoryLive))),
       Layer.provide(connectHttpApiLayer),
       // T3-CUSTOM(expbkt3): orchestration routes require Clerk-backed access control.
@@ -1077,6 +1090,8 @@ const makeServerLayer = Layer.unwrap(
       }),
     );
 
+    // T3-CUSTOM(expbkt3): renamed from upstream's `runtimeServicesLive` — the
+    // fork layers a bootstrap dispatcher and other services on top of it below.
     const runtimeBaseServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),

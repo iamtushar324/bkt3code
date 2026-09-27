@@ -8,10 +8,12 @@ import {
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: identity binding test types.
   type AuthIdentityBindingRequest,
   type AuthIdentityBindingResult,
+  // T3-CUSTOM(expbkt3): END
   type AuthPairingCredentialResult,
-  type AuthSessionLogoutResult,
+  type AuthSessionLogoutResult, // T3-CUSTOM(expbkt3): managed auth — session logout test type.
   type AuthSessionState,
   type ExecutionEnvironmentDescriptor,
   type EnvironmentAuthInvalidError,
@@ -34,10 +36,12 @@ type BrowserSessionHandler = (
 interface EnvironmentHttpTestScenario {
   readonly descriptor?: () => Effect.Effect<ExecutionEnvironmentDescriptor>;
   readonly session?: () => Effect.Effect<AuthSessionState>;
-  readonly logout?: () => Effect.Effect<AuthSessionLogoutResult>;
+  readonly logout?: () => Effect.Effect<AuthSessionLogoutResult>; // T3-CUSTOM(expbkt3): managed auth — session logout scenario hook.
   readonly browserSession?: BrowserSessionHandler;
+  // T3-CUSTOM(expbkt3): BEGIN — managed auth: identity binding scenario hook.
   readonly bindIdentity?: (
     payload: AuthIdentityBindingRequest,
+    // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): Allow auth rejection scenarios in browser bootstrap tests.
   ) => Effect.Effect<AuthIdentityBindingResult, EnvironmentAuthInvalidError>;
   readonly pairingCredential?: (
@@ -48,9 +52,9 @@ interface EnvironmentHttpTestScenario {
 export interface EnvironmentHttpTestCalls {
   descriptor: number;
   session: number;
-  logout: number;
+  logout: number; // T3-CUSTOM(expbkt3): managed auth — session logout call count.
   browserSession: Array<AuthBrowserSessionRequest>;
-  bindIdentity: Array<AuthIdentityBindingRequest>;
+  bindIdentity: Array<AuthIdentityBindingRequest>; // T3-CUSTOM(expbkt3): managed auth — identity binding call log.
   pairingCredential: Array<AuthCreatePairingCredentialInput>;
 }
 
@@ -63,7 +67,7 @@ const authenticatedAuth: Context.Service.Shape<typeof EnvironmentAuthenticatedAu
   httpEffect.pipe(
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("test-session"),
-      userId: null,
+      userId: null, // T3-CUSTOM(expbkt3): managed auth — principal carries a bound user id.
       subject: "test-client",
       method: "browser-session-cookie",
       scopes: new Set<AuthEnvironmentScope>(),
@@ -75,9 +79,9 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
   const calls: EnvironmentHttpTestCalls = {
     descriptor: 0,
     session: 0,
-    logout: 0,
+    logout: 0, // T3-CUSTOM(expbkt3): managed auth — session logout call count.
     browserSession: [],
-    bindIdentity: [],
+    bindIdentity: [], // T3-CUSTOM(expbkt3): managed auth — identity binding call log.
     pairingCredential: [],
   };
 
@@ -103,6 +107,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 return yield* scenario.session?.() ?? unexpectedEndpoint("auth.session");
               }),
             )
+            // T3-CUSTOM(expbkt3): BEGIN — managed auth: test double for session logout.
             .handle(
               "logout",
               Effect.fn("test.environment.auth.logout")(function* () {
@@ -110,6 +115,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 return yield* scenario.logout?.() ?? unexpectedEndpoint("auth.logout");
               }),
             )
+            // T3-CUSTOM(expbkt3): END
             .handle(
               "browserSession",
               Effect.fn("test.environment.auth.browserSession")(function* ({ payload }) {
@@ -119,6 +125,8 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            // T3-CUSTOM(expbkt3): BEGIN — managed auth: test doubles for the Clerk
+            // session and identity-binding endpoints.
             .handle("clerkSession", () => unexpectedEndpoint("auth.clerkSession"))
             .handle(
               "bindIdentity",
@@ -129,6 +137,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            // T3-CUSTOM(expbkt3): END
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
             .handle(

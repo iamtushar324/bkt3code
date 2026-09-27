@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): import reformatted to multi-line to fit the fork's added icons below.
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -16,8 +17,10 @@ import { useDesktopLocalBootstraps } from "../../connection/useDesktopLocalBoots
 import { EXPERIMENTAL_CONTROL_CENTER_ENABLED } from "../../experimentalFeatures";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+// T3-CUSTOM(expbkt3): lifecycle counters.
 import { useServerConfigs, useThreadShells } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+// T3-CUSTOM(expbkt3): environment-connection notices.
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -371,6 +374,8 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   );
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — surfaces connecting/failed desktop-local secondary
+// environment bootstraps as sidebar notices.
 export function SidebarEnvironmentNotices() {
   const { environments } = useEnvironments();
   const secondaries = useDesktopLocalBootstraps();
@@ -434,3 +439,4 @@ export function SidebarEnvironmentNotices() {
     </SidebarGroup>
   );
 }
+// T3-CUSTOM(expbkt3): END

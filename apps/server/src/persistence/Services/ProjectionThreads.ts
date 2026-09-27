@@ -41,10 +41,12 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  // T3-CUSTOM(expbkt3): source-control identity — which git profile a thread's commits are attributed to.
   sourceControlProfileId: Schema.NullOr(SourceControlProfileId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurnId: Schema.NullOr(TurnId),
+  // T3-CUSTOM(expbkt3): thread ownership — the environment user this thread belongs to.
   ownerUserId: Schema.NullOr(UserId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

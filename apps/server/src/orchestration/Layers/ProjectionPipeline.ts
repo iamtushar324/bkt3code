@@ -43,8 +43,10 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+// T3-CUSTOM(expbkt3): BEGIN — team mode: project membership projection.
 import { ProjectionMembershipRepository } from "../../persistence/Services/ProjectionMemberships.ts";
 import { ProjectionMembershipRepositoryLive } from "../../persistence/Layers/ProjectionMemberships.ts";
+// T3-CUSTOM(expbkt3): END
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -148,11 +150,13 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
 // equivalent inline copy, which is dropped here to keep one implementation.
 
 function derivePendingUserInputCountFromActivities(
+  // T3-CUSTOM(expbkt3): message-mode/native request distinction below.
   activities: ReadonlyArray<ProjectionThreadActivity>,
   terminalTurnIds: ReadonlySet<string>,
 ): number {
   const openRequestIds = new Set<string>();
   const ordered = [...activities].toSorted(
+    // T3-CUSTOM(expbkt3): stable chronological ordering before replay.
     (left, right) =>
       (left.sequence ?? -1) - (right.sequence ?? -1) ||
       left.createdAt.localeCompare(right.createdAt) ||
@@ -521,7 +525,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
-    const projectionMembershipRepository = yield* ProjectionMembershipRepository;
+    const projectionMembershipRepository = yield* ProjectionMembershipRepository; // T3-CUSTOM(expbkt3): team mode.
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -542,13 +546,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             faviconPath: event.payload.faviconPath ?? null,
             projectIcon: event.payload.projectIcon ?? null,
             scripts: event.payload.scripts,
-            ownerUserId: event.payload.createdByUserId ?? null,
+            ownerUserId: event.payload.createdByUserId ?? null, // T3-CUSTOM(expbkt3): team mode project ownership.
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
           });
           return;
 
+        // T3-CUSTOM(expbkt3): BEGIN — team mode: project membership/ownership projections.
         case "project.member-added":
           yield* projectionMembershipRepository.upsertProjectMember({
             projectId: event.payload.projectId,
@@ -594,6 +599,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           return;
         }
+        // T3-CUSTOM(expbkt3): END
 
         case "project.meta-updated": {
           const existingRow = yield* projectionProjectRepository.getById({
@@ -657,6 +663,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
+      // T3-CUSTOM(expbkt3): BEGIN — shell summary now tracks pending approvals and
+      // pending (native + message-mode) user-input counts, not just the latest message.
       const [
         latestUserMessageAt,
         hasActionableProposedPlan,
@@ -688,13 +696,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         terminalTurnIds,
       );
       const pendingAsyncUserInputCount = derivePendingAsyncUserInputCountFromActivities(activities);
+      // T3-CUSTOM(expbkt3): END
 
       yield* projectionThreadRepository.upsert({
         ...existingRow.value,
         latestUserMessageAt,
         pendingApprovalCount,
         pendingUserInputCount,
-        pendingAsyncUserInputCount,
+        pendingAsyncUserInputCount, // T3-CUSTOM(expbkt3): message-mode requests, neutral shell indicator.
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
       });
     });
@@ -717,11 +726,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
-            sourceControlProfileId: event.payload.sourceControlProfileId,
+            sourceControlProfileId: event.payload.sourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity.
             linkedPullRequest: null,
             branchPullRequest: null,
             latestTurnId: null,
-            ownerUserId: event.payload.createdByUserId ?? null,
+            ownerUserId: event.payload.createdByUserId ?? null, // T3-CUSTOM(expbkt3): team mode thread ownership.
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             archivedAt: null,
@@ -797,6 +806,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
+        // T3-CUSTOM(expbkt3): BEGIN — team mode: thread ownership transfer keeps membership consistent.
         case "thread.owner-transferred": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -826,6 +836,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           return;
         }
+        // T3-CUSTOM(expbkt3): END
 
         case "thread.archived": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -1183,6 +1194,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        // T3-CUSTOM(expbkt3): BEGIN — source-control identity: persist a thread's chosen profile.
         case "thread.source-control-profile-set": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -1197,6 +1209,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
+        // T3-CUSTOM(expbkt3): END
 
         case "thread.deleted": {
           // A draft retry can re-create this id later in the log. During
@@ -1283,6 +1296,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            // T3-CUSTOM(expbkt3): BEGIN — fixes a bug upstream still has: "latest turn"
+            // must only advance on a real turn, not on every session update.
             // "Latest turn" is the most recent turn, not the currently-active
             // one. A settling session carries activeTurnId: null, so assigning
             // it directly wiped the reference as soon as a turn finished —
@@ -1290,6 +1305,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             // bootstrap (which then got wrongly "resumed"), and dropping the
             // turn's duration/state from the UI. Only advance on a real turn.
             latestTurnId: event.payload.session.activeTurnId ?? existingRow.value.latestTurnId,
+            // T3-CUSTOM(expbkt3): END
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
@@ -1595,7 +1611,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         status: event.payload.session.status,
         providerName: event.payload.session.providerName,
         providerInstanceId: event.payload.session.providerInstanceId ?? null,
-        providerThreadId: event.payload.session.providerThreadId ?? null,
+        providerThreadId: event.payload.session.providerThreadId ?? null, // T3-CUSTOM(expbkt3): surfaced on the session row for the shell.
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
@@ -2448,6 +2464,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
-  Layer.provideMerge(ProjectionMembershipRepositoryLive),
+  Layer.provideMerge(ProjectionMembershipRepositoryLive), // T3-CUSTOM(expbkt3): team mode.
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );

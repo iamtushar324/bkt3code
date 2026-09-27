@@ -5,6 +5,7 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  // T3-CUSTOM(expbkt3): thread shell shape used by the session-execution helpers.
   type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProjectId,
@@ -13,6 +14,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
+  // T3-CUSTOM(expbkt3): per-turn credential actor / message sender attribution.
   type UserId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -36,6 +38,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+// T3-CUSTOM(expbkt3): recreate a worktree deleted out from under a live thread.
 import { decideWorktreeRecovery, describeWorktreeRecreation } from "../threadWorktreeRecovery.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import {
@@ -49,6 +52,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+// T3-CUSTOM(expbkt3): execution options carrying source-control/identity environment.
 import type { ProviderSessionExecutionOptions } from "../../provider/Services/ProviderAdapter.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -70,6 +74,7 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+// T3-CUSTOM(expbkt3): source-control identity profiles for provider sessions.
 import { SourceControlProfileService } from "../../sourceControl/SourceControlProfileService.ts";
 // T3-CUSTOM(expbkt3): session-identity markers injected into provider sessions.
 import {
@@ -95,6 +100,7 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
+      // T3-CUSTOM(expbkt3): explicit provider reconnect (MCP session_action "restart").
       | "thread.session-restart-requested"
       | "thread.settled"
       | "thread.session-set";
@@ -135,6 +141,7 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
+// T3-CUSTOM(expbkt3): exported for reuse by fork-only call sites.
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
@@ -193,6 +200,8 @@ function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServic
   );
 }
 
+// T3-CUSTOM(expbkt3): dead-session interrupt detection pairs with
+// setThreadSessionInterrupted below to let Stop settle a turn with no live process.
 /**
  * An interrupt that could not be delivered because nothing was running.
  *
@@ -479,6 +488,8 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // T3-CUSTOM(expbkt3): Stop must always be able to unstick a thread — settle
+  // the session as interrupted even when there is nothing left to interrupt.
   const setThreadSessionInterrupted = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly createdAt: string;
@@ -562,6 +573,8 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  // T3-CUSTOM(expbkt3): source-control identity — resolves the execution
+  // options a provider call needs from durable thread ownership.
   const resolveSourceControlExecutionOptions = Effect.fnUntraced(function* (
     thread: Pick<OrchestrationThreadShell, "id" | "ownerUserId" | "modelSelection">,
     method: string,
@@ -751,12 +764,11 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      // T3-CUSTOM(expbkt3): who is credited as acting operator for this session start.
       readonly actorUserId?: UserId | null;
-      /**
-       * T3-CUSTOM(expbkt3): the user who actually sent this message, with no
-       * owner fallback — an inferred sender is the misattribution this exists
-       * to prevent.
-       */
+      // T3-CUSTOM(expbkt3): the user who actually sent this message, with no
+      // owner fallback — an inferred sender is the misattribution this exists
+      // to prevent.
       readonly messageSenderUserId?: UserId | null;
       // First-turn prompt seed. A manual title that still equals this seed was
       // written by the client's auto-title, not a user rename.
@@ -768,6 +780,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    // T3-CUSTOM(expbkt3): per-turn credential actor for multi-user sessions.
     const desiredCredentialActor = options?.actorUserId ?? thread.ownerUserId;
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
@@ -890,6 +903,7 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
+    // T3-CUSTOM(expbkt3): recreate a worktree deleted out from under a live thread.
     yield* ensureThreadWorktree({
       thread,
       workspaceRoot: project?.workspaceRoot ?? null,
@@ -928,6 +942,8 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderDriverKind;
     }) =>
       providerService
+        // T3-CUSTOM(expbkt3): two-arg call — session params plus the resolved
+        // source-control/identity execution options and credential actor.
         .startSession(
           threadId,
           {
@@ -957,6 +973,8 @@ const make = Effect.gen(function* () {
             detail: `Provider session '${session.threadId}' started without a provider instance id.`,
           });
         }
+        // T3-CUSTOM(expbkt3): remember which actor/identity this session was bound
+        // with, and preserve the provider's own durable thread id across restarts.
         threadCredentialActors.set(threadId, desiredCredentialActor);
         threadSessionIdentities.set(threadId, desiredSessionIdentity);
         yield* setThreadSession({
@@ -1019,6 +1037,8 @@ const make = Effect.gen(function* () {
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
+        // T3-CUSTOM(expbkt3): also restart when the credential actor or the
+        // bound session identity has drifted from what this turn needs.
         !shouldRestartForModelSelectionChange &&
         !credentialActorChanged &&
         !sessionIdentityChanged
@@ -1047,6 +1067,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        // T3-CUSTOM(expbkt3): log the multi-user restart triggers alongside upstream's.
         credentialActorChanged,
         sessionIdentityChanged,
         hasResumeCursor: resumeCursor !== undefined,
@@ -1077,8 +1098,9 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    // T3-CUSTOM(expbkt3): owner/sender attribution for the send-turn request.
     readonly actorUserId?: UserId | null;
-    /** T3-CUSTOM(expbkt3): sender of this message, never the owner by fallback. */
+    // T3-CUSTOM(expbkt3): sender of this message, never the owner by fallback.
     readonly messageSenderUserId?: UserId | null;
     readonly createdAt: string;
     readonly titleSeed?: string;
@@ -1093,6 +1115,7 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
       pendingTurnStart: true,
+      // T3-CUSTOM(expbkt3): owner and sender attribution carried into session start.
       actorUserId: input.actorUserId ?? thread.ownerUserId,
       messageSenderUserId: input.messageSenderUserId ?? null,
     });
@@ -1447,7 +1470,7 @@ const make = Effect.gen(function* () {
     processThreadTitleRegenerationSafely,
   );
 
-  // T3-CUSTOM(expbkt3): native account commands precede busy-turn steering too.
+  // T3-CUSTOM(expbkt3): BEGIN — native account commands precede busy-turn steering too.
   const processNativeAuthCommand = Effect.fn("processNativeAuthCommand")(function* (
     thread: Pick<OrchestrationThreadShell, "id" | "session" | "modelSelection" | "runtimeMode">,
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
@@ -1502,6 +1525,7 @@ const make = Effect.gen(function* () {
     });
     return true;
   });
+  // T3-CUSTOM(expbkt3): END
 
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     receivedEvent: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
@@ -1910,10 +1934,11 @@ const make = Effect.gen(function* () {
               ),
             );
           }
-          // T3-CUSTOM(expbkt3): END
+          // Every other failure falls through to upstream's stop-and-recover path.
           return recoverInterruptFailure(cause);
         }),
       );
+    // T3-CUSTOM(expbkt3): END
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1936,6 +1961,7 @@ const make = Effect.gen(function* () {
       });
     }
 
+    // T3-CUSTOM(expbkt3): identity-scoped execution options for the approval response.
     const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
       thread,
       "thread.approval.respond",
@@ -1988,6 +2014,7 @@ const make = Effect.gen(function* () {
         });
       }
 
+      // T3-CUSTOM(expbkt3): identity-scoped execution options for the user-input response.
       const sessionExecutionOptions = yield* resolveSessionExecutionOptions(
         thread,
         "thread.user-input.respond",
@@ -2093,7 +2120,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // T3-CUSTOM(expbkt3): explicit provider reconnect (MCP session_action "restart").
+  // T3-CUSTOM(expbkt3): BEGIN — explicit provider reconnect (MCP session_action "restart").
   const processSessionRestartRequested = Effect.fn("processSessionRestartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.session-restart-requested" }>,
   ) {
@@ -2115,6 +2142,7 @@ const make = Effect.gen(function* () {
         : thread.modelSelection;
     yield* ensureSessionForThread(thread.id, event.payload.createdAt, { modelSelection });
   });
+  // T3-CUSTOM(expbkt3): END
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,

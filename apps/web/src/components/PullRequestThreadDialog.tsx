@@ -59,7 +59,7 @@ export function PullRequestThreadDialog({
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd, threadId },
+          input: { cwd, threadId }, // T3-CUSTOM(expbkt3): thread-scoped source-control identity/lineage.
         }),
   );
   const sourceControlPresentation = useMemo(
@@ -86,7 +86,7 @@ export function PullRequestThreadDialog({
     () => ({
       environmentId,
       cwd,
-      threadId,
+      threadId, // T3-CUSTOM(expbkt3): thread-scoped source-control identity/lineage.
     }),
     [cwd, environmentId, threadId],
   );

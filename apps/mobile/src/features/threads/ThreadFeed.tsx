@@ -121,12 +121,14 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "../../components/CopyTextButton";
+// T3-CUSTOM(expbkt3): BEGIN — the fork's plan-review card needs this type.
 import {
   parseReviewCommentMessageSegments,
   // T3-CUSTOM(expbkt3): the fork's plan-review card renders this shape; upstream
   // extracted the file-review card, which left this type unimported here.
   type ReviewInlineComment,
 } from "../review/reviewCommentSelection";
+// T3-CUSTOM(expbkt3): END
 import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import {
   ReviewCommentCard,
@@ -1933,9 +1935,8 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
   );
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — anchored plan feedback, rendered as a quotation.
 /**
- * T3-CUSTOM(expbkt3): anchored plan feedback, rendered as a quotation.
- *
  * Mirrors the web card. A plan comment's `filePath` is a plan title and its
  * anchor is prose, so the file card printed a bare filename and put the quote in
  * a horizontally scrolling monospace strip.
@@ -2003,6 +2004,7 @@ const PlanReviewCommentCard = memo(function PlanReviewCommentCard(props: {
     </View>
   );
 });
+// T3-CUSTOM(expbkt3): END
 
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;

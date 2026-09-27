@@ -25,6 +25,7 @@ if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
 }
 
+// T3-CUSTOM(expbkt3): identity-only mode also needs the publishable key/mode split.
 const clerkPublishableKey = resolveClerkPublishableKey();
 const clerkMode = resolveAppClerkMode();
 

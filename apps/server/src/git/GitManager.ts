@@ -3,7 +3,7 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as ByteSize from "effect/ByteSize";
-import * as Data from "effect/Data";
+import * as Data from "effect/Data"; // T3-CUSTOM(expbkt3): profile-scoped remote-status cache key.
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -65,6 +65,7 @@ import {
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+// T3-CUSTOM(expbkt3): source-control identity — PR/remote-status caches isolate by profile.
 import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -468,6 +469,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
+    // T3-CUSTOM(expbkt3): BEGIN — PR review/merge readiness (used by settlement and status).
     ...(summary.isDraft !== undefined ? { isDraft: summary.isDraft } : {}),
     ...(summary.mergeability !== undefined ? { mergeability: summary.mergeability } : {}),
     ...(summary.mergeStateStatus !== undefined
@@ -478,6 +480,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.autoMergeEnabled !== undefined
       ? { autoMergeEnabled: summary.autoMergeEnabled }
       : {}),
+    // T3-CUSTOM(expbkt3): END
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -713,10 +716,13 @@ function shouldPreferSshRemote(url: string | null): boolean {
   return isSshRemoteUrl(url);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — source-control identity: the remote-status cache is keyed
+// per profile so two identities working the same cwd don't share stale results.
 class RemoteStatusCacheKey extends Data.Class<{
   readonly cwd: string;
   readonly sourceControlProfileId: string | null;
 }> {}
+// T3-CUSTOM(expbkt3): END
 
 function toPullRequestHeadRemoteInfo(pr: {
   isCrossRepository?: boolean | undefined;
@@ -1041,6 +1047,8 @@ export const make = Effect.gen(function* () {
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
   const normalizeStatusCacheKey = canonicalizeExistingPath;
+  // T3-CUSTOM(expbkt3): BEGIN — source-control identity: normalize the remote-status
+  // cache key to (canonical cwd, profile id) so profiles don't share cached results.
   const normalizeRemoteStatusCacheKey = Effect.fn("normalizeRemoteStatusCacheKey")(function* (
     cwd: string,
   ) {
@@ -1051,12 +1059,13 @@ export const make = Effect.gen(function* () {
       sourceControlProfileId: executionEnvironment?.profileId ?? null,
     });
   });
+  // T3-CUSTOM(expbkt3): END
   const nonRepositoryStatusDetails = {
     isRepo: false,
     hasOriginRemote: false,
     isDefaultBranch: false,
     branch: null,
-    baseRef: null,
+    baseRef: null, // T3-CUSTOM(expbkt3): worktree origin for the experimental sidebar.
     upstreamRef: null,
     hasWorkingTreeChanges: false,
     workingTree: { files: [], insertions: 0, deletions: 0 },
@@ -1272,10 +1281,13 @@ export const make = Effect.gen(function* () {
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
+    // T3-CUSTOM(expbkt3): BEGIN — source-control identity: PR lookups are cached per
+    // (cwd, profile) so two identities working the same repo don't share stale PR state.
     const executionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
     const sourceControlProfileId = executionEnvironment?.profileId ?? null;
     const branchKey = `${cwd}\u0000${details.branch}\u0000${sourceControlProfileId ?? "machine"}`;
     const cacheKey = prLookupCacheKey(cwd, sourceControlProfileId, details);
+    // T3-CUSTOM(expbkt3): END
     if (refreshMissingPullRequest) {
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
@@ -1383,6 +1395,7 @@ export const make = Effect.gen(function* () {
       pr,
     } satisfies VcsStatusRemoteResult;
   });
+  // T3-CUSTOM(expbkt3): BEGIN — source-control identity: cache key now carries the profile.
   const remoteStatusResultCache = yield* Cache.makeWith(
     (key: RemoteStatusCacheKey) => readRemoteStatus(key.cwd),
     {
@@ -1390,8 +1403,10 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
     },
   );
+  // T3-CUSTOM(expbkt3): END
   const invalidateRemoteStatusResultCache = (cwd: string) =>
     normalizeRemoteStatusCacheKey(cwd).pipe(
+      // T3-CUSTOM(expbkt3): profile-scoped cache key.
       Effect.flatMap((cacheKey) => Cache.invalidate(remoteStatusResultCache, cacheKey)),
     );
 
@@ -1660,6 +1675,8 @@ export const make = Effect.gen(function* () {
     cwd: string,
     headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,
   ) {
+    // T3-CUSTOM(expbkt3): BEGIN — a repo with no remotes at all is unpublished by
+    // definition; skip the provider lookup instead of treating it as "keep looking".
     if (headContext.headBranch.length === 0) {
       return null;
     }
@@ -1681,6 +1698,7 @@ export const make = Effect.gen(function* () {
     if (remoteNames.length === 0) {
       return "no-remote" as const;
     }
+    // T3-CUSTOM(expbkt3): END
     const matchesRef = (pattern: string) =>
       gitCore
         .execute({
@@ -1700,13 +1718,15 @@ export const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
       if (configuredRemote !== null && configuredMerge !== null) {
-        return null;
+        return null; // T3-CUSTOM(expbkt3): tri-state result, not a plain boolean.
       }
 
       const [tracksAnyRemote, tracksThisBranch] = yield* Effect.all(
         [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
         { concurrency: "unbounded" },
       );
+      // T3-CUSTOM(expbkt3): tri-state result distinguishes "no remote at all" from
+      // "tracks a remote but not this branch" for the PR-badge fallback above.
       return tracksAnyRemote && !tracksThisBranch ? ("unpublished" as const) : null;
     }).pipe(Effect.orElseSucceed(() => null));
   });
@@ -2224,9 +2244,9 @@ export const make = Effect.gen(function* () {
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
-      const cacheKey = yield* normalizeRemoteStatusCacheKey(input.cwd);
+      const cacheKey = yield* normalizeRemoteStatusCacheKey(input.cwd); // T3-CUSTOM(expbkt3): profile-scoped key.
       if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
-        return yield* readRemoteStatus(cacheKey.cwd, options);
+        return yield* readRemoteStatus(cacheKey.cwd, options); // T3-CUSTOM(expbkt3): key is now an object.
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);
     },

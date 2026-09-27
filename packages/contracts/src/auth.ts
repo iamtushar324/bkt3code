@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): team mode — decoding default for AuthClientSession.userId.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
@@ -5,9 +6,11 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import {
   AuthSessionId,
   ClientSurface,
+  // T3-CUSTOM(expbkt3): team mode — operator identity and forward-compatible decoding.
   EnvironmentUserId,
   ForwardCompatibleArray,
   TrimmedNonEmptyString,
+  // T3-CUSTOM(expbkt3): team mode — operator identity.
   UserId,
   ClientWebDeployment,
 } from "./baseSchemas.ts";
@@ -149,6 +152,7 @@ export const AuthEnvironmentBootstrapTokenType =
  * the right UX without embedding server-specific auth logic or assuming a
  * single access method.
  */
+// T3-CUSTOM(expbkt3): BEGIN — team mode: advertise Clerk sign-in config to the client.
 /**
  * Runtime hint that lets the SPA detect team mode and configure its Clerk
  * sign-in surface without any build-time coupling. Present only when the server
@@ -160,6 +164,7 @@ export const ServerAuthClerkDescriptor = Schema.Struct({
   organizationId: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type ServerAuthClerkDescriptor = typeof ServerAuthClerkDescriptor.Type;
+// T3-CUSTOM(expbkt3): END
 
 export const ServerAuthDescriptor = Schema.Struct({
   policy: ServerAuthPolicy,
@@ -201,6 +206,7 @@ export const userIdFromSubject = (subject: string): UserId | null => {
 
 export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,
+  // T3-CUSTOM(expbkt3): team mode — binds the operator identity to the bearer bootstrap.
   identityToken: Schema.optionalKey(TrimmedNonEmptyString),
   // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
   client_version: Schema.optionalKey(TrimmedNonEmptyString),
@@ -310,6 +316,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
+  // T3-CUSTOM(expbkt3): team mode — the Clerk-authenticated operator, when there is one.
   userId: Schema.NullOr(EnvironmentUserId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   subject: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,

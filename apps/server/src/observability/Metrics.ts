@@ -42,6 +42,7 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
   },
 );
 
+// T3-CUSTOM(expbkt3): BEGIN — authoritative thread-execution state machine metrics.
 export const threadExecutionTransitionsTotal = Metric.counter(
   "t3_thread_execution_transitions_total",
   { description: "Authoritative thread execution state transitions." },
@@ -79,6 +80,7 @@ export const threadExecutionInvariantRepairsTotal = Metric.counter(
   "t3_thread_execution_invariant_repairs_total",
   { description: "Execution/provider/projection mismatches repaired by the periodic audit." },
 );
+// T3-CUSTOM(expbkt3): END
 
 // T3-CUSTOM(expbkt3): leaked provider runtime processes reaped at the OS level.
 export const providerRuntimeOrphanProcessesKilledTotal = Metric.counter(
@@ -105,6 +107,7 @@ export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_ev
   description: "Total canonical provider runtime events processed.",
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — provider rate-limit metrics.
 export const providerRateLimitUpdatesTotal = Metric.counter(
   "t3_provider_rate_limit_updates_total",
   { description: "Normalized provider rate-limit updates processed." },
@@ -114,6 +117,7 @@ export const providerRateLimitRefreshFailuresTotal = Metric.counter(
   "t3_provider_rate_limit_refresh_failures_total",
   { description: "Provider rate-limit refresh failures." },
 );
+// T3-CUSTOM(expbkt3): END
 
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
@@ -141,11 +145,13 @@ export const increment = (
   amount = 1,
 ) => Metric.update(Metric.withAttributes(metric, metricAttributes(attributes)), amount);
 
+// T3-CUSTOM(expbkt3): BEGIN — gauge-style set, used by the thread-execution snapshot metric.
 export const setMetric = (
   metric: Metric.Metric<number, unknown>,
   attributes: Readonly<Record<string, unknown>>,
   value: number,
 ) => Metric.update(Metric.withAttributes(metric, metricAttributes(attributes)), value);
+// T3-CUSTOM(expbkt3): END
 
 export interface WithMetricsOptions {
   readonly counter?: Metric.Metric<number, unknown>;

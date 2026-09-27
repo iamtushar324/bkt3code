@@ -444,6 +444,8 @@ export const resolveServerConfig = (
       persistedObservabilitySettings.otlpLogsUrl,
     );
 
+    // T3-CUSTOM(expbkt3): BEGIN — team mode: Clerk config is opt-in, only enabled when a
+    // secret key is provided.
     // Clerk team mode is opt-in: only enabled when a secret key is provided.
     // Absent ⇒ single-user mode with no behavior change.
     const trimToUndefined = (value: string | undefined): string | undefined => {
@@ -461,6 +463,7 @@ export const resolveServerConfig = (
             defaultOwnerUserId: trimToUndefined(env.defaultOwnerUserId),
             defaultOwnerEmail: trimToUndefined(env.defaultOwnerEmail),
           };
+    // T3-CUSTOM(expbkt3): END
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -497,7 +500,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
-      clerkAuth,
+      clerkAuth, // T3-CUSTOM(expbkt3): team mode Clerk config.
     };
 
     return config;

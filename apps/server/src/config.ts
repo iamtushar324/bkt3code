@@ -28,6 +28,7 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode: optional Clerk-backed multi-user config.
 /**
  * Optional Clerk team-mode configuration.
  *
@@ -48,6 +49,7 @@ export interface ServerClerkAuthConfig {
   /** Fallback: resolve the legacy-backfill owner by email via Clerk. */
   readonly defaultOwnerEmail: string | undefined;
 }
+// T3-CUSTOM(expbkt3): END
 
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
@@ -122,7 +124,7 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
-    readonly clerkAuth: ServerClerkAuthConfig | undefined;
+    readonly clerkAuth: ServerClerkAuthConfig | undefined; // T3-CUSTOM(expbkt3): team mode Clerk config.
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -251,7 +253,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
-    clerkAuth: undefined,
+    clerkAuth: undefined, // T3-CUSTOM(expbkt3): team mode off in tests by default.
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

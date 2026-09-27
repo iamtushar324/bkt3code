@@ -488,10 +488,12 @@ export function buildLocalDraftThread(
     settledAt: null,
     deletedAt: null,
     latestTurn: null,
+    // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread.
     ownerUserId: null,
     memberUserIds: [],
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    // T3-CUSTOM(expbkt3): source-control identity — profile travels with the thread.
     sourceControlProfileId: null,
     checkpoints: [],
     pullRequests: [],
@@ -892,6 +894,7 @@ export function cloneComposerImageForRetry(
   }
 }
 
+// T3-CUSTOM(expbkt3): outbox send gate — keep the composer sendable while a disconnected environment queues sends.
 export function deriveOutboxSendGate(options: {
   isLocalSendBusy: boolean;
   hasPendingOutboxItem: boolean;

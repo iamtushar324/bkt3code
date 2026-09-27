@@ -504,6 +504,7 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  // T3-CUSTOM(expbkt3): BEGIN — source-control identity: resolve the thread owner's profile.
   const sourceControlProfilesQuery = useEnvironmentQuery(
     environmentId === null ? null : sourceControlEnvironment.profiles({ environmentId, input: {} }),
   );
@@ -516,6 +517,7 @@ function ThreadRouteContent(
         selectedThread?.ownerUserId != null &&
         String(profile.ownerUserId) === String(selectedThread.ownerUserId),
     ) ?? null;
+  // T3-CUSTOM(expbkt3): END
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -537,6 +539,7 @@ function ThreadRouteContent(
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
+    // T3-CUSTOM(expbkt3): source-control identity in the subtitle.
     currentSourceControlProfile ? `@${currentSourceControlProfile.login}` : null,
   ]
     .filter(Boolean)
@@ -546,6 +549,7 @@ function ThreadRouteContent(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
+          // T3-CUSTOM(expbkt3): source-control identity — resolve the thread's profile.
           input: { cwd: selectedThreadCwd, threadId: selectedThread.id },
         })
       : null,
@@ -1126,6 +1130,7 @@ function ThreadRouteContent(
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
+          // T3-CUSTOM(expbkt3): durable outbox — a rejected queued message stays visible.
           failedOutboxDetail={composer.failedOutboxDetail}
           queuedMessages={composer.selectedThreadQueuedMessages}
           dispatchingMessageId={composer.dispatchingQueuedMessageId}

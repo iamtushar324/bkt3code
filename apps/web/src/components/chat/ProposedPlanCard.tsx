@@ -13,7 +13,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
-import { ArrowRightIcon, EllipsisIcon, LoaderCircleIcon } from "lucide-react";
+import { ArrowRightIcon, EllipsisIcon, LoaderCircleIcon } from "lucide-react"; // T3-CUSTOM(expbkt3): icons for the native plan review entry point.
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -39,18 +39,22 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
   onOpenPlanReview,
   planReviewDocumentId,
   reviewable = false,
+  // T3-CUSTOM(expbkt3): END
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
   onOpenPlanReview?: ((documentId: string) => void) | undefined;
   planReviewDocumentId?: string | null | undefined;
   reviewable?: boolean | undefined;
+  // T3-CUSTOM(expbkt3): END
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -200,8 +204,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {canCollapse || (reviewable && onOpenPlanReview) ? (
+        {canCollapse || (reviewable && onOpenPlanReview) ? ( // T3-CUSTOM(expbkt3): native timeline plan review entry point.
           <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {/* T3-CUSTOM(expbkt3): BEGIN — layout host for the plan review button alongside the collapse button. */}
             {canCollapse ? (
               <Button
                 size="sm"
@@ -212,6 +217,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
                 {expanded ? "Collapse plan" : "Expand plan"}
               </Button>
             ) : null}
+            {/* T3-CUSTOM(expbkt3): END */}
             {/* T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point. */}
             {reviewable && onOpenPlanReview ? (
               planReviewDocumentId ? (

@@ -58,6 +58,7 @@ function threadDetailToShell(
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
+    // T3-CUSTOM(expbkt3): source-control identity — the profile this thread shell uses.
     sourceControlProfileId: thread.sourceControlProfileId,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
@@ -85,6 +86,7 @@ function threadDetailToShell(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    // T3-CUSTOM(expbkt3): team mode — owner/members travel with the thread shell.
     ownerUserId: thread.ownerUserId,
     memberUserIds: thread.memberUserIds,
   };

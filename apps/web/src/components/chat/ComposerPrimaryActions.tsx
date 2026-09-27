@@ -26,6 +26,7 @@ interface ComposerPrimaryActionsProps {
   sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
+  // T3-CUSTOM(expbkt3): BEGIN — durable queued send while environment unavailable.
   /**
    * When true, the plain send button stays enabled while the environment is
    * unavailable: the message is queued durably and auto-sends on reconnect.
@@ -33,6 +34,7 @@ interface ComposerPrimaryActionsProps {
    * connection and keep honoring isEnvironmentUnavailable.
    */
   sendQueuesWhileUnavailable?: boolean;
+  // T3-CUSTOM(expbkt3): END
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
@@ -78,7 +80,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   sendDisabledReason,
   isConnecting,
   isEnvironmentUnavailable,
-  sendQueuesWhileUnavailable = false,
+  sendQueuesWhileUnavailable = false, // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
   isPreparingWorktree,
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
@@ -233,10 +235,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isSendBusy ||
         isSendDisabled ||
         isConnecting ||
+        // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
         (isEnvironmentUnavailable && !sendQueuesWhileUnavailable) ||
         !hasSendableContent
       }
       aria-label={
+        // T3-CUSTOM(expbkt3): durable queued send while environment unavailable.
         isEnvironmentUnavailable && !sendQueuesWhileUnavailable
           ? "Environment disconnected"
           : sendDisabledReason
