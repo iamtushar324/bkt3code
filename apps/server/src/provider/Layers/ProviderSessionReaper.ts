@@ -23,6 +23,8 @@ import {
   type ProviderSessionReaperShape,
 } from "../Services/ProviderSessionReaper.ts";
 import { forkParked } from "../../serverActivation.ts";
+// T3-CUSTOM(expbkt3): the sweep lists only bindings it can act on.
+import { listLiveProviderBindings } from "../liveProviderBindings.expbkt3.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 // T3-CUSTOM(expbkt3): BEGIN - OS-level sweep for leaked provider runtimes.
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -306,7 +308,10 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       yield* sweepOrphanProcesses;
       const orphanProcessesDoneMs = yield* Clock.currentTimeMillis;
 
-      const bindings = yield* directory.listBindings();
+      // T3-CUSTOM(expbkt3): decode only non-stopped bindings; the loop skips the rest.
+      const bindings = yield* listLiveProviderBindings(directory).pipe(
+        Effect.provide(reconcileContext),
+      );
       const now = yield* Clock.currentTimeMillis;
       let reapedCount = 0;
 
@@ -425,7 +430,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       const sweepDoneMs = yield* Clock.currentTimeMillis;
       yield* Effect.logInfo("provider.session.reaper.sweep-complete", {
         reapedCount,
-        totalBindings: bindings.length,
+        // Only non-stopped bindings are listed (listLiveProviderBindings).
+        liveBindings: bindings.length,
         durationMs: sweepDoneMs - sweepStartedMs,
         orphanedTurnsMs: orphanedTurnsDoneMs - sweepStartedMs,
         orphanProcessesMs: orphanProcessesDoneMs - orphanedTurnsDoneMs,
