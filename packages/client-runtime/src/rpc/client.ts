@@ -1,5 +1,6 @@
 import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,10 @@ import { RpcClientError } from "effect/unstable/rpc";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+
+// T3-CUSTOM(expbkt3): an attempt that stays healthy this long after its first
+// value earns a fresh retry budget; longer than the longest retry delay (8 s).
+const RETRY_BUDGET_RESET_AFTER_MS = 10_000;
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -243,8 +248,10 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
               const subscribeToSession = (
                 retryAttempt = 0,
               ): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
-                Stream.suspend(() =>
-                  Stream.unwrap(
+                Stream.suspend(() => {
+                  // T3-CUSTOM(expbkt3): when this attempt first delivered a value.
+                  let firstValueAtMs: number | null = null;
+                  return Stream.unwrap(
                     Effect.gen(function* () {
                       const input = yield* makeInput(session);
                       const completeObservation = yield* observer.observe({
@@ -259,9 +266,13 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         // Per-array so the server's batches reach consumers intact
                         // (Stream.tap re-chunks to single items).
                         Stream.mapArrayEffect((items) =>
-                          Ref.set(retryState, { session, attempt: 0, dormant: false }).pipe(
-                            Effect.as(items),
-                          ),
+                          Effect.gen(function* () {
+                            if (firstValueAtMs === null) {
+                              firstValueAtMs = yield* Clock.currentTimeMillis;
+                            }
+                            yield* Ref.set(retryState, { session, attempt: 0, dormant: false });
+                            return items;
+                          }),
                         ),
                       );
                     }),
@@ -316,32 +327,52 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         }
                         // T3-CUSTOM(expbkt3): a policy may end retries without
                         // waiting for the whole WebSocket session to be replaced.
-                        const retryDelay =
-                          typeof retryExpectedFailureAfter === "function"
-                            ? retryExpectedFailureAfter(retryAttempt, cause)
-                            : Option.some(retryExpectedFailureAfter);
-                        const rememberAttempt = Stream.fromEffect(
-                          Ref.set(retryState, {
-                            session,
-                            attempt: retryAttempt + 1,
-                            dormant: Option.isNone(retryDelay),
-                          }),
-                        ).pipe(Stream.drain);
-                        if (Option.isNone(retryDelay)) {
-                          return Stream.concat(handled, rememberAttempt);
-                        }
-                        return handled.pipe(
-                          Stream.concat(rememberAttempt),
-                          Stream.concat(
-                            Stream.fromEffect(Effect.sleep(retryDelay.value)).pipe(Stream.drain),
+                        // The budget resets once an attempt has stayed healthy for
+                        // RETRY_BUDGET_RESET_AFTER_MS after its first value: a busy
+                        // stream that fails, recovers, and fails again much later
+                        // must not run out of retries and go dormant until
+                        // reconnect, while one that fails right after each value
+                        // still exhausts its budget instead of looping at the
+                        // shortest delay.
+                        return Stream.unwrap(
+                          Clock.currentTimeMillis.pipe(
+                            Effect.map((nowMs) => {
+                              const attempt =
+                                firstValueAtMs !== null &&
+                                nowMs - firstValueAtMs >= RETRY_BUDGET_RESET_AFTER_MS
+                                  ? 0
+                                  : retryAttempt;
+                              const retryDelay =
+                                typeof retryExpectedFailureAfter === "function"
+                                  ? retryExpectedFailureAfter(attempt, cause)
+                                  : Option.some(retryExpectedFailureAfter);
+                              const rememberAttempt = Stream.fromEffect(
+                                Ref.set(retryState, {
+                                  session,
+                                  attempt: attempt + 1,
+                                  dormant: Option.isNone(retryDelay),
+                                }),
+                              ).pipe(Stream.drain);
+                              if (Option.isNone(retryDelay)) {
+                                return Stream.concat(handled, rememberAttempt);
+                              }
+                              return handled.pipe(
+                                Stream.concat(rememberAttempt),
+                                Stream.concat(
+                                  Stream.fromEffect(Effect.sleep(retryDelay.value)).pipe(
+                                    Stream.drain,
+                                  ),
+                                ),
+                                Stream.concat(subscribeToSession(attempt + 1)),
+                              );
+                            }),
                           ),
-                          Stream.concat(subscribeToSession(retryAttempt + 1)),
                         );
                       }
                       return Stream.failCause(cause);
                     }),
-                  ),
-                );
+                  );
+                });
               return Stream.unwrap(
                 Ref.modify(retryState, (current) => {
                   if (current.session === session) {
