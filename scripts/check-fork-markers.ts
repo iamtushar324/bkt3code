@@ -12,7 +12,10 @@
  *   node scripts/check-fork-markers.ts --write-baseline [--force]
  *
  * Files ADDED by the fork are fork-owned and skipped. Files MODIFIED relative
- * to the upstream mirror are checked hunk by hunk.
+ * to the upstream mirror are checked hunk by hunk. Lines identical to the
+ * newest upstream commit (`FORK_UPSTREAM_REF`) are upstream's even when the
+ * fork has not merged it yet, so `git cherry-pick -x` of an upstream fix needs
+ * no markers.
  *
  * Runs under bare `node` in CI with no dependency install, so it deliberately
  * uses node builtins and console rather than the Effect APIs.
@@ -186,7 +189,37 @@ function unmarkedInHunk(
   );
 }
 
-function findViolations(base: string, files: ReadonlyArray<string>): Violation[] {
+/** Every HEAD line number covered by `hunks`. */
+function hunkLines(hunks: ReadonlyArray<readonly [number, number]>): ReadonlySet<number> {
+  const lines = new Set<number>();
+  for (const [start, count] of hunks) {
+    for (let offset = 0; offset < count; offset += 1) lines.add(start + offset);
+  }
+  return lines;
+}
+
+/**
+ * Drops unmarked lines that are identical to the upstream tip's version of the
+ * file. A `git cherry-pick -x` of an upstream fix the fork has not merged yet
+ * differs from the merge-base, but it is upstream's code, not a fork edit, and
+ * wrapping it in markers would only create conflicts in the merge that brings
+ * the same commit in. `changedFromTip` holds the HEAD lines that differ from
+ * the tip; `null` means there is no separate tip to compare with.
+ */
+function withoutUpstreamLines(
+  unmarked: ReadonlyArray<number>,
+  changedFromTip: ReadonlySet<number> | null,
+): number[] {
+  return changedFromTip === null
+    ? [...unmarked]
+    : unmarked.filter((line) => changedFromTip.has(line));
+}
+
+function findViolations(
+  base: string,
+  files: ReadonlyArray<string>,
+  upstreamTip: string | null = null,
+): Violation[] {
   const violations: Violation[] = [];
   for (const file of files) {
     if (isExempt(file) || !NodeFS.existsSync(file)) continue;
@@ -196,8 +229,12 @@ function findViolations(base: string, files: ReadonlyArray<string>): Violation[]
     const contents = NodeFS.readFileSync(file, "utf8");
     const lines = contents.split("\n");
     const marked = markedLines(contents);
+    const changedFromTip = upstreamTip === null ? null : hunkLines(addedHunks(upstreamTip, file));
     for (const [start, count] of addedHunks(base, file)) {
-      const unmarked = unmarkedInHunk(lines, marked, start, count);
+      const unmarked = withoutUpstreamLines(
+        unmarkedInHunk(lines, marked, start, count),
+        changedFromTip,
+      );
       if (unmarked.length === 0) continue;
       const first = unmarked[0] ?? start;
       const lookbehind = Array.from(
@@ -299,8 +336,9 @@ function main(): number {
   const force = argv.has("--force");
 
   const base = git(["merge-base", "HEAD", UPSTREAM_REF]).trim();
+  const tip = git(["rev-parse", UPSTREAM_REF]).trim();
   const { modified, added } = changedFiles(base);
-  const violations = findViolations(base, modified);
+  const violations = findViolations(base, modified, tip === base ? null : tip);
   const offending = new Set(violations.map((violation) => violation.file));
 
   if (writeBaseline) {
@@ -374,4 +412,4 @@ if (
   process.exit(main());
 }
 
-export { isExempt, markedLines, unmarkedInHunk };
+export { isExempt, markedLines, unmarkedInHunk, withoutUpstreamLines };

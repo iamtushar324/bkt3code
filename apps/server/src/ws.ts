@@ -111,6 +111,8 @@ import {
 } from "./orchestration/Normalizer.ts";
 // T3-CUSTOM(expbkt3): durable bootstrap dispatch lives in its own module.
 import * as OrchestrationCommandDispatcher from "./orchestration/dispatchCommand.ts";
+// T3-CUSTOM(expbkt3): thread catch-up replays are sent in batches.
+import { batchThreadReplay } from "./orchestration/threadReplayBatches.expbkt3.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadExecutionSupervisor } from "./execution/ThreadExecutionSupervisor.ts";
@@ -1899,26 +1901,30 @@ const makeWsRpcLayer = (
               // in-memory state (no event replay, no per-thread DB round trip)
               // and reuses the live path's visibility filter, so a resuming
               // client converges on execution exactly like a fresh snapshot.
-              const currentShellExecutionStream = applyShellItemVisibility(
-                Stream.unwrap(
-                  projectionSnapshotQuery.getShellSnapshot().pipe(
-                    Effect.flatMap((shell) =>
-                      executionSupervisor.getSnapshots(shell.threads.map((thread) => thread.id)),
+              // Visibility is applied once to the shell rather than per frame:
+              // a per-frame check re-read each thread (5 statements) for every
+              // thread on every team-mode resume. Same owner/member rule.
+              const currentShellExecutionStream = Stream.unwrap(
+                projectionSnapshotQuery.getShellSnapshot().pipe(
+                  Effect.map((shell) =>
+                    actorUserId === null ? shell : filterShellSnapshot(shell, actorUserId),
+                  ),
+                  Effect.flatMap((shell) =>
+                    executionSupervisor.getSnapshots(shell.threads.map((thread) => thread.id)),
+                  ),
+                  Effect.map((executions) =>
+                    Stream.fromIterable(
+                      [...executions.values()].map((execution) => ({
+                        kind: "execution" as const,
+                        execution,
+                      })),
                     ),
-                    Effect.map((executions) =>
-                      Stream.fromIterable(
-                        [...executions.values()].map((execution) => ({
-                          kind: "execution" as const,
-                          execution,
-                        })),
-                      ),
-                    ),
-                    // A failed reconciliation must not fail the subscription:
-                    // the client is no worse off than before this stream existed.
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("shell execution resync failed", { cause }).pipe(
-                        Effect.as(Stream.empty),
-                      ),
+                  ),
+                  // A failed reconciliation must not fail the subscription:
+                  // the client is no worse off than before this stream existed.
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("shell execution resync failed", { cause }).pipe(
+                      Effect.as(Stream.empty),
                     ),
                   ),
                 ),
@@ -2207,6 +2213,8 @@ const makeWsRpcLayer = (
                         kind: "event" as const,
                         event: projectActivityEvent(event),
                       })),
+                      // T3-CUSTOM(expbkt3): one frame per batch, not per event.
+                      batchThreadReplay,
                       Stream.mapError(
                         (cause) =>
                           new OrchestrationGetSnapshotError({
@@ -3655,10 +3663,6 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
-
-              yield* providerRegistry
-                .refresh()
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,

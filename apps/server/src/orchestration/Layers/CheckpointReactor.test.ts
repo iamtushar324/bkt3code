@@ -299,6 +299,7 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly workspaceRefresh?: (cwd: string) => Effect.Effect<void>;
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
     readonly initializeGit?: boolean;
@@ -380,10 +381,10 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
       Layer.provideMerge(
-        WorkspaceEntries.layer.pipe(
-          Layer.provide(WorkspacePaths.layer),
-          Layer.provideMerge(VcsDriverRegistry.layer),
-        ),
+        (options?.workspaceRefresh
+          ? Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: options.workspaceRefresh })
+          : WorkspaceEntries.layer
+        ).pipe(Layer.provide(WorkspacePaths.layer), Layer.provideMerge(VcsDriverRegistry.layer)),
       ),
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(VcsProcess.layer),
@@ -507,6 +508,76 @@ describe("CheckpointReactor", () => {
       pullRequestRefreshes,
     };
   }
+
+  // Single-workspace form of upstream d17f46d76's test: its second-workspace
+  // half needs a harness option from an upstream commit not picked here.
+  effectIt.effect(
+    "finalizes checkpoints while entry refresh is blocked and coalesces later scans",
+    () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const refreshCalls: string[] = [];
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            seedFilesystemCheckpoints: false,
+            workspaceRefresh: (cwd) =>
+              Effect.gen(function* () {
+                refreshCalls.push(cwd);
+                if (refreshCalls.length === 1) {
+                  yield* Deferred.succeed(entered, undefined);
+                  yield* Deferred.await(release);
+                }
+              }),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        for (const index of [0, 1, 2, 3]) {
+          const turnId = asTurnId(`turn-refresh-${index}`);
+          harness.provider.emit({
+            type: "turn.started",
+            eventId: EventId.make(`evt-refresh-start-${index}`),
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+          });
+          if (index === 0)
+            expect(yield* harness.nextReceipt).toMatchObject({
+              type: "checkpoint.baseline.captured",
+              threadId,
+            });
+          NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), `snapshot ${index}\n`);
+          harness.provider.emit({
+            type: "turn.completed",
+            eventId: EventId.make(`evt-refresh-complete-${index}`),
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:01.000Z",
+            threadId,
+            turnId,
+            payload: { state: "completed" },
+          });
+          expect(yield* harness.nextReceipt).toMatchObject({
+            type: "checkpoint.diff.finalized",
+            threadId,
+            turnId,
+          });
+          expect(yield* harness.nextReceipt).toMatchObject({
+            type: "turn.processing.quiesced",
+            threadId,
+            turnId,
+          });
+          if (index === 0) yield* Deferred.await(entered);
+        }
+        expect(refreshCalls).toEqual([harness.cwd]);
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 4), "README.md"),
+        ).toBe("snapshot 3\n");
+        yield* Deferred.succeed(release, undefined);
+        yield* Effect.promise(harness.drain);
+        expect(refreshCalls).toEqual([harness.cwd, harness.cwd]);
+      }),
+  );
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>
     Effect.gen(function* () {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { isExempt, markedLines, unmarkedInHunk } from "./check-fork-markers.ts";
+import {
+  isExempt,
+  markedLines,
+  unmarkedInHunk,
+  withoutUpstreamLines,
+} from "./check-fork-markers.ts";
 
 describe("markedLines", () => {
   it("covers every line inside a BEGIN/END block", () => {
@@ -113,5 +118,17 @@ describe("isExempt", () => {
   it("does not exempt ordinary source files", () => {
     expect(isExempt("apps/server/src/ws.ts")).toBe(false);
     expect(isExempt("packages/contracts/src/rpc.ts")).toBe(false);
+  });
+});
+
+describe("withoutUpstreamLines", () => {
+  it("keeps every unmarked line when there is no newer upstream tip", () => {
+    expect(withoutUpstreamLines([3, 4, 9], null)).toEqual([3, 4, 9]);
+  });
+
+  it("drops lines identical to the upstream tip, such as a cherry-picked fix", () => {
+    // Lines 3-4 came from a cherry-pick (unchanged against the tip); line 9 is a fork edit.
+    expect(withoutUpstreamLines([3, 4, 9], new Set([9]))).toEqual([9]);
+    expect(withoutUpstreamLines([3, 4], new Set())).toEqual([]);
   });
 });

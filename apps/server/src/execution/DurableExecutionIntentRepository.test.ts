@@ -678,4 +678,51 @@ layer("DurableExecutionIntentRepository", (it) => {
       assert.isTrue(repaired.value.runnable);
     }),
   );
+
+  // T3-CUSTOM(expbkt3): the startup repair only reads the activity ledger of
+  // threads that have a waiting intent, so one thread's open approval can
+  // neither hold nor release another thread's intent.
+  it.effect("repairs waiting intents per thread from that thread's own requests", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const repository = yield* DurableExecutionIntentRepository;
+      const blockedThreadId = ThreadId.make("thread-still-blocked");
+      const resolvedThreadId = ThreadId.make("thread-resolved");
+      const idleThreadId = ThreadId.make("thread-without-intent");
+      yield* sql`
+        INSERT INTO projection_thread_execution_intents (
+          work_item_id, thread_id, message_id, command_id, request_event_sequence,
+          desired_state, phase, delivery_certainty, runnable, accepted_at, updated_at
+        ) VALUES
+          ('still-blocked', ${blockedThreadId}, 'message-blocked', 'command-blocked', 30,
+           'running', 'waiting-for-approval', 'never-delivered', 0,
+           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('resolved', ${resolvedThreadId}, 'message-resolved', 'command-resolved', 31,
+           'running', 'waiting-for-approval', 'never-delivered', 0,
+           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('blocked-request', ${blockedThreadId}, NULL, 'approval', 'approval.requested',
+           'Approve', '{"requestId":"blocked"}', 32, '2026-01-01T00:00:01.000Z'),
+          ('resolved-request', ${resolvedThreadId}, NULL, 'approval', 'approval.requested',
+           'Approve', '{"requestId":"resolved"}', 33, '2026-01-01T00:00:01.000Z'),
+          ('resolved-answer', ${resolvedThreadId}, NULL, 'approval', 'approval.resolved',
+           'Approved', '{"requestId":"resolved"}', 34, '2026-01-01T00:00:02.000Z'),
+          ('idle-request', ${idleThreadId}, NULL, 'approval', 'approval.requested',
+           'Approve', '{"requestId":"resolved"}', 35, '2026-01-01T00:00:03.000Z')
+      `;
+
+      yield* repository.reconcileStartup({ at: "2026-01-01T00:00:04.000Z" });
+      const blocked = yield* repository.getByWorkItemId({ workItemId: "still-blocked" });
+      const resolved = yield* repository.getByWorkItemId({ workItemId: "resolved" });
+      assert.isTrue(blocked._tag === "Some" && resolved._tag === "Some");
+      if (blocked._tag === "None" || resolved._tag === "None") return;
+      assert.strictEqual(blocked.value.phase, "waiting-for-approval");
+      assert.strictEqual(resolved.value.phase, "recovering");
+      assert.isTrue(resolved.value.runnable);
+    }),
+  );
 });

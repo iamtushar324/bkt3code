@@ -13,13 +13,20 @@ export type ConnectionWakeup =
   // and deliberately not an "application active" wakeup — nobody is waiting on
   // the app, so it must not reset backoff or trigger resubscription on its own.
   | "connection-heartbeat"
+  // T3-CUSTOM(expbkt3): a window regained focus after a short absence. The
+  // supervisor probes the session (and cuts a retry wait short) like
+  // "application-active", but streams are not resubscribed: a quick alt-tab
+  // must not rebuild the shell and replay every open thread.
+  | "application-focus"
   | "credentials-changed";
 
 export function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||
-    reason === "application-active-reconnect"
+    // T3-CUSTOM(expbkt3): focus wakes count as the user returning.
+    reason === "application-active-reconnect" ||
+    reason === "application-focus"
   );
 }
 

@@ -95,6 +95,8 @@ import {
 } from "@t3tools/shared/terminalLabels";
 // T3-CUSTOM(expbkt3): durable execution drives the working label.
 import { describeThreadExecution } from "@t3tools/shared/threadExecution";
+// T3-CUSTOM(expbkt3): workspace setup checklist in the working row.
+import { deriveWorkspacePreparation } from "@t3tools/client-runtime/state/workspace-preparation";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -3392,6 +3394,13 @@ export default function ChatView(props: ChatViewProps) {
     shellExecution: routeServerThreadShell?.execution,
   });
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): worktree and setup progress stand in for "Thinking".
+  const workspacePreparationIntent =
+    activeThread?.execution?.intent ?? routeServerThreadShell?.execution?.intent ?? null;
+  const workspacePreparation = useMemo(
+    () => deriveWorkspacePreparation(workspacePreparationIntent),
+    [workspacePreparationIntent],
+  );
   const optimisticCompactionMessage = optimisticUserMessages.at(-1);
   const pendingCompactionMessage =
     isSendBusy &&
@@ -9726,7 +9735,10 @@ export default function ChatView(props: ChatViewProps) {
               ) : null}
               {/* T3-CUSTOM(expbkt3): show accepted durable workspace progress when
                   the resolved-request path never materialized a legacy bootstrap. */}
-              {!activeThread.bootstrap && activeThread.execution?.intent?.bootstrap ? (
+              {/* T3-CUSTOM(expbkt3): the working-row checklist replaces this line while it shows. */}
+              {!activeThread.bootstrap &&
+              activeThread.execution?.intent?.bootstrap &&
+              !(isWorking && workspacePreparation !== null) ? (
                 <DurableBootstrapStatus bootstrap={activeThread.execution.intent.bootstrap} />
               ) : null}
               {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -9745,6 +9757,9 @@ export default function ChatView(props: ChatViewProps) {
                 // T3-CUSTOM(expbkt3): durable execution labels and running clock.
                 workingStatusLabel={workingStatusLabel}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                // T3-CUSTOM(expbkt3): workspace setup checklist in the working row.
+                workspacePreparation={paintOnlyDisplayedTimeline ? null : workspacePreparation}
+                onShowWorkspaceOutput={showBootstrapOutput}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 activeTurnStartedAt={
                   paintOnlyDisplayedTimeline || phase !== "running" ? null : activeWorkStartedAt

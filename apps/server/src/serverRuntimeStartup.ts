@@ -58,6 +58,8 @@ import {
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
+// T3-CUSTOM(expbkt3): startup phase duration logs live in a fork module.
+import { withStartupPhaseTiming } from "./startupPhaseTiming.expbkt3.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -342,7 +344,8 @@ const maybeOpenBrowser = (target: string) =>
   });
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
+  // T3-CUSTOM(expbkt3): each phase logs its duration, so a slow boot names its phase.
+  withStartupPhaseTiming(phase, effect).pipe(
     Effect.annotateSpans({ "startup.phase": phase }),
     Effect.withSpan(`server.startup.${phase}`),
   );

@@ -252,6 +252,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): BEGIN - OS resume/unlock, so the renderer reconnects at once.
+  onSystemResumed: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+
+    ipcRenderer.on(IpcChannels.SYSTEM_RESUMED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SYSTEM_RESUMED_CHANNEL, wrappedListener);
+    };
+  },
+  // T3-CUSTOM(expbkt3): END
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

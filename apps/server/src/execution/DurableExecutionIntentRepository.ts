@@ -663,6 +663,13 @@ const make = Effect.gen(function* () {
               )
             )
             AND json_extract(payload_json, '$.requestId') IS NOT NULL
+            -- Only threads this statement can update: keeps the read on the
+            -- (thread_id, kind) index instead of scanning every activity.
+            AND thread_id IN (
+              SELECT thread_id FROM projection_thread_execution_intents
+              WHERE desired_state = 'running'
+                AND phase IN ('waiting-for-approval', 'waiting-for-input')
+            )
           ), blocking_threads AS (
             SELECT DISTINCT thread_id
             FROM request_lifecycle

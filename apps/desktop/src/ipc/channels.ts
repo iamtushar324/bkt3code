@@ -29,6 +29,9 @@ export const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 // T3-CUSTOM(expbkt3): the main process asks the renderer to surface the
 // update-ready UI, after a click on the native update notification.
 export const UPDATE_REVEAL_CHANNEL = "desktop:update-reveal";
+// T3-CUSTOM(expbkt3): the OS resumed from sleep or unlocked; the renderer
+// reconnects at once instead of waiting out a probe on a dead socket.
+export const SYSTEM_RESUMED_CHANNEL = "desktop:system-resumed";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 export const GET_SYSTEM_LOCALE_CHANNEL = "desktop:get-system-locale";
 export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-environment-bootstraps";

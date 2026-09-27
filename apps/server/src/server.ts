@@ -78,6 +78,10 @@ import * as PlanReviewDocuments from "./persistence/PlanReviewDocuments.ts";
 import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
 import { plannotatorProxyRouteLayer } from "./plannotator/http.ts";
 // T3-CUSTOM(expbkt3): END
+// T3-CUSTOM(expbkt3): event feed for followers such as the Linear bridge.
+import { eventFeedRouteLayer } from "./orchestration/eventFeedHttp.expbkt3.ts";
+// T3-CUSTOM(expbkt3): pull-request state pushed by the Linear bridge.
+import { pullRequestStateRouteLayer } from "./orchestration/pullRequestStateHttp.expbkt3.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -172,6 +176,8 @@ import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 // T3-CUSTOM(expbkt3): archived-session worktree reclaim
 import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
 import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
+// T3-CUSTOM(expbkt3): 6-hourly SQLite statistics refresh.
+import { SqliteOptimizeScheduleLive } from "./persistence/sqliteOptimize.expbkt3.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
 // T3-CUSTOM(expbkt3): archive-time history export reads activities, thread
 // rows (for the soft-deleted backfill), and provider resume cursors.
@@ -675,9 +681,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(GitLayerLive),
   // T3-CUSTOM(expbkt3): the session archive is merged into the VCS group rather
   // than added as its own `pipe` step — the chain is already at TypeScript's
-  // 20-overload ceiling for `.pipe`.
+  // 20-overload ceiling for `.pipe`. The 6-hourly SQLite optimize rides along.
   Layer.provideMerge(
-    Layer.mergeAll(VcsLayerLive, SessionArchiveLayerLive, SessionArchiveSweeperLayerLive),
+    Layer.mergeAll(
+      VcsLayerLive,
+      SessionArchiveLayerLive,
+      SessionArchiveSweeperLayerLive,
+      SqliteOptimizeScheduleLive,
+    ),
   ),
   Layer.provideMerge(ProviderExecutionRuntimeLayerLive),
   Layer.provideMerge(
@@ -779,6 +790,8 @@ const PlannotatorAndMcpRoutesLive = Layer.mergeAll(
   plannotatorProxyRouteLayer,
   mcpUpstreamProxyRouteLayer,
   McpHttpServer.layer,
+  eventFeedRouteLayer,
+  pullRequestStateRouteLayer,
 ).pipe(
   // One registry instance authenticates both the native and upstream MCP
   // routes; separate instances would not recognize each other's run tokens.

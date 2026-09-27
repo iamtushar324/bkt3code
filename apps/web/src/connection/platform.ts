@@ -21,7 +21,6 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
-  Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
@@ -75,6 +74,14 @@ import {
 } from "./desktopLocal";
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
+// T3-CUSTOM(expbkt3): focus wakeups probe unless the window was away >= 60 s.
+import {
+  coalescedWakeupsLayer,
+  type FocusWakeup,
+  makeFocusWakeupTracker,
+} from "./focusWakeup.expbkt3";
+// T3-CUSTOM(expbkt3): desktop-local discovery must not delay the primary.
+import { DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS } from "./desktopLocalDiscovery.expbkt3";
 
 let nextObservedRpcRequestId = 0;
 
@@ -115,26 +122,60 @@ const applicationActiveFrom = (register: (emit: () => void) => () => void) =>
     ).pipe(Effect.asVoid),
   );
 
-const wakeupsLayer = Wakeups.layer({
+// T3-CUSTOM(expbkt3): BEGIN focus probes unless the window was away >= 60 s,
+// and the desktop shell's resume/unlock event reconnects at once.
+const focusTracker = makeFocusWakeupTracker();
+
+const focusWakeups = Stream.callback<FocusWakeup>((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const onFocus = (event: FocusEvent) =>
+        Queue.offerUnsafe(queue, focusTracker.onFocus(event.timeStamp));
+      window.addEventListener("focus", onFocus);
+      window.addEventListener("blur", focusTracker.markInactive);
+      return () => {
+        window.removeEventListener("focus", onFocus);
+        window.removeEventListener("blur", focusTracker.markInactive);
+      };
+    }),
+    (cleanup) => Effect.sync(cleanup),
+  ).pipe(Effect.asVoid),
+);
+
+const systemResumeWakeups = Stream.callback<"application-active-reconnect">((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(
+      () =>
+        window.desktopBridge?.onSystemResumed?.(() =>
+          Queue.offerUnsafe(queue, "application-active-reconnect"),
+        ) ?? (() => {}),
+    ),
+    (cleanup) => Effect.sync(cleanup),
+  ).pipe(Effect.asVoid),
+);
+// T3-CUSTOM(expbkt3): END
+
+// T3-CUSTOM(expbkt3): one resubscribe per return, however many events it fires.
+const wakeupsLayer = coalescedWakeupsLayer({
   changes: Stream.merge(
     // Tab/window became visible again.
     applicationActiveFrom((emit) => {
       const listener = () => {
         if (document.visibilityState === "visible") {
+          // T3-CUSTOM(expbkt3): the focus that usually follows only probes.
+          focusTracker.markResynced();
           emit();
+        } else {
+          // T3-CUSTOM(expbkt3): hidden time counts toward the focus resync.
+          focusTracker.markInactive();
         }
       };
       document.addEventListener("visibilitychange", listener);
       return () => document.removeEventListener("visibilitychange", listener);
     }),
     Stream.merge(
-      // Window regained focus — fire unconditionally. Covers the always-visible
-      // desktop window that never emits `visibilitychange` after a sleep, so the
-      // supervisor still runs a liveness probe on wake.
-      applicationActiveFrom((emit) => {
-        window.addEventListener("focus", emit);
-        return () => window.removeEventListener("focus", emit);
-      }),
+      // T3-CUSTOM(expbkt3): focus probes; a resume from sleep reconnects.
+      Stream.merge(focusWakeups, systemResumeWakeups),
       Stream.merge(
         // Network connectivity returned.
         applicationActiveFrom((emit) => {
@@ -377,9 +418,11 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }
   const httpBaseUrl = entry.httpBaseUrl;
   const wsBaseUrl = entry.wsBaseUrl;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl,
+    // T3-CUSTOM(expbkt3): a starting local backend must not hold up the primary.
+    timeoutMs: DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,

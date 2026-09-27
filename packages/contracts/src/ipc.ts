@@ -1338,6 +1338,9 @@ export interface DesktopBridge {
   // labelled choice. Optional so a web build and an older preload both compile.
   onUpdateReveal?: (listener: () => void) => () => void;
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): fired when the OS resumes from sleep or the screen
+  // unlocks. Optional so a web build and an older preload both compile.
+  onSystemResumed?: (listener: () => void) => () => void;
   /** Present when the desktop shell accepts `t3 app` activation requests. */
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;

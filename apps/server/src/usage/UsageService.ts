@@ -30,6 +30,11 @@ import {
 // T3-CUSTOM(expbkt3): per-thread cost.
 import type { ThreadId, ThreadUsage } from "@t3tools/contracts";
 import { aggregateThreadUsage } from "./threadUsage.ts";
+// T3-CUSTOM(expbkt3): per-thread transcript listing and cache-write debounce.
+import {
+  listThreadTranscriptFiles,
+  shouldPersistAfterThreadRead,
+} from "./threadTranscriptFiles.expbkt3.ts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -613,6 +618,17 @@ export const make = Effect.gen(function* () {
 
   // T3-CUSTOM(expbkt3): BEGIN one thread's cost. Same scan, same cache, same
   // rates as the summary; only the fold differs (see threadUsage.ts).
+  // A thread read only opens that thread's own transcripts, and rewrites the
+  // (23 MB in prod) scan cache at most every THREAD_USAGE_PERSIST_INTERVAL_MS;
+  // the rest lands with the next summary scan or on shutdown.
+  let lastThreadUsagePersistMs: number | null = null;
+  const persistScanCacheAfterThreadRead = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (!shouldPersistAfterThreadRead(lastThreadUsagePersistMs, nowMs)) return;
+    lastThreadUsagePersistMs = nowMs;
+    yield* persistScanCache();
+  });
+  yield* Effect.addFinalizer(() => persistScanCache());
   const readThreadUsage = Effect.fn("UsageService.readThreadUsage")(function* (input: {
     readonly threadId: ThreadId;
     readonly sessionIds: ReadonlyArray<string>;
@@ -627,13 +643,19 @@ export const make = Effect.gen(function* () {
     );
     const records: UsageRecord[] = [];
     if (input.sessionIds.length > 0) {
-      for (const { provider, dir } of dirs) {
+      for (const { provider, dir, fileName } of dirs) {
         const exists = yield* fileSystem
           .exists(dir)
           .pipe(Effect.catchCause(() => Effect.succeed(false)));
         if (!exists) continue;
         const files = yield* Effect.promise(() =>
-          listTranscriptFiles(dir, input.sinceMs - MTIME_SLACK_MS),
+          listThreadTranscriptFiles({
+            provider,
+            dir,
+            fileName,
+            sessionIds: input.sessionIds,
+            sinceMs: input.sinceMs - MTIME_SLACK_MS,
+          }),
         );
         for (const file of files) {
           const parsed = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
@@ -641,7 +663,7 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    yield* persistScanCache();
+    yield* persistScanCacheAfterThreadRead;
     const readAt = yield* DateTime.now;
     return aggregateThreadUsage({
       threadId: input.threadId,

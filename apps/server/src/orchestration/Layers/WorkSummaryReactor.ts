@@ -211,7 +211,10 @@ const make = Effect.gen(function* () {
     // request against an archived session takes. The projector has already put a
     // spinner on the row, so resolve it: returning quietly here left archived
     // rows spinning on "Summarizing…" forever on expbkt3.
-    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId);
+    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId, {
+      // Summaries read messages and turns only; skip every activity payload.
+      activityKinds: [],
+    });
     if (Option.isNone(threadOption)) {
       yield* dispatchUpdate({
         threadId: input.threadId,

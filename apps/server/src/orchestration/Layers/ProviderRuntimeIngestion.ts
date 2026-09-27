@@ -51,6 +51,8 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
+// T3-CUSTOM(expbkt3): no-op session-set filter lives in a fork module.
+import { dispatchSessionSetUnlessNoOp } from "../sessionSetDedupe.expbkt3.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
@@ -1724,7 +1726,12 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
+          // T3-CUSTOM(expbkt3): status pings that change nothing but updatedAt are dropped.
+          yield* dispatchSessionSetUnlessNoOp(
+            orchestrationEngine,
+            event.type,
+            thread.session,
+          )({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
             threadId: thread.id,

@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): durable work-item claims, retry timing, and fenced dispatch.
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -702,6 +703,7 @@ export const makeDurableExecutionCoordinator = Effect.fn("makeDurableExecutionCo
     const start: DurableExecutionCoordinatorShape["start"] = Effect.fn(
       "DurableExecutionCoordinator.start",
     )(function* () {
+      const reconcileStartedAt = yield* Clock.currentTimeMillis;
       const recoveredLeases = yield* repository.reconcileStartup({ at: yield* now() }).pipe(
         Effect.catchCause((cause) =>
           Effect.logError("durable execution startup reconciliation failed", {
@@ -710,6 +712,11 @@ export const makeDurableExecutionCoordinator = Effect.fn("makeDurableExecutionCo
           }).pipe(Effect.as(0)),
         ),
       );
+      yield* Effect.logInfo("durable execution startup reconciliation finished", {
+        owner: options.ownerId,
+        recoveredLeases,
+        durationMs: (yield* Clock.currentTimeMillis) - reconcileStartedAt,
+      });
       if (recoveredLeases > 0) {
         yield* increment(
           durableExecutionLeaseRecoveriesTotal,

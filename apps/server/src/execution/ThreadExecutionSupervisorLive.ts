@@ -226,10 +226,95 @@ const make = Effect.fn("ThreadExecutionSupervisor.make")(function* () {
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   // T3-CUSTOM(expbkt3): desired state and provider observation travel together.
-  const withCurrentIntent = (snapshot: ThreadExecutionSnapshot) =>
-    Effect.all([
-      sql<ExecutionIntentSnapshotRow>`
-      SELECT intent.work_item_id AS "workItemId", intent.message_id AS "messageId",
+  // One set of queries covers any number of threads: a shell snapshot of ~200
+  // threads used to run 3 statements per thread on the single sqlite
+  // connection (~600 statements, >1 s cold in prod) for every HTTP shell read
+  // and shell resume.
+  const mergeCurrentIntent = (
+    snapshot: ThreadExecutionSnapshot,
+    row: ExecutionIntentSnapshotRow | undefined,
+    blockers: ReadonlyArray<{ readonly kind: string }>,
+    resolutions: ReadonlyArray<{ readonly requestId: string }>,
+  ): ThreadExecutionSnapshot => {
+    const hasPersistedApprovalBlocker = blockers.some(
+      (blocker) => blocker.kind === "approval.requested",
+    );
+    // The map protects events that arrive before their activity projection;
+    // it is never trusted after a restart, where the SQL ledger above wins.
+    const inMemoryBlockers = blockingRequestIds.get(snapshot.threadId);
+    if (inMemoryBlockers !== undefined) {
+      for (const resolution of resolutions) inMemoryBlockers.delete(resolution.requestId);
+      if (inMemoryBlockers.size === 0) blockingRequestIds.delete(snapshot.threadId);
+    }
+    const hasInMemoryBlocker = (blockingRequestIds.get(snapshot.threadId)?.size ?? 0) > 0;
+    const hasBlocker = blockers.length > 0 || hasInMemoryBlocker;
+    const hasApprovalBlocker =
+      hasPersistedApprovalBlocker ||
+      (blockers.length === 0 &&
+        hasInMemoryBlocker &&
+        snapshot.turn?.state === "waiting-for-approval");
+    const canReconcileTurn =
+      snapshot.turn !== null &&
+      !isTerminalTurn(snapshot) &&
+      snapshot.activity !== "stopping" &&
+      snapshot.turn.state !== "stopping";
+    const repairedSnapshot =
+      hasBlocker && canReconcileTurn
+        ? {
+            ...snapshot,
+            activity: "blocked" as const,
+            turn: {
+              ...snapshot.turn,
+              state: hasApprovalBlocker
+                ? ("waiting-for-approval" as const)
+                : ("waiting-for-input" as const),
+            },
+          }
+        : !hasBlocker &&
+            canReconcileTurn &&
+            snapshot.activity === "blocked" &&
+            (snapshot.turn?.state === "waiting-for-approval" ||
+              snapshot.turn?.state === "waiting-for-input")
+          ? {
+              ...snapshot,
+              activity: "active" as const,
+              turn: { ...snapshot.turn, state: "running" as const },
+            }
+          : snapshot;
+    const { intent: _staleIntent, ...withoutIntent } = repairedSnapshot;
+    if (row === undefined) return withoutIntent;
+    const bootstrap = bootstrapSnapshotFromRow(row);
+    return {
+      ...withoutIntent,
+      intent: {
+        workItemId: row.workItemId,
+        messageId: MessageId.make(row.messageId),
+        desiredState: row.desiredState,
+        phase: row.phase,
+        acceptedAt: row.acceptedAt,
+        updatedAt: row.updatedAt,
+        ...(bootstrap === undefined ? {} : { bootstrap }),
+        recovery: {
+          attempt: row.recoveryAttempts,
+          maximumAttempts: row.maximumRecoveryAttempts,
+          nextAttemptAt: row.nextAttemptAt,
+          reason: row.lastFailureDetail ?? row.lastFailureType,
+          userActionRequired: row.phase === "recovery-exhausted",
+        },
+      },
+    } satisfies ThreadExecutionSnapshot;
+  };
+
+  const withCurrentIntents = (
+    snapshots: ReadonlyArray<ThreadExecutionSnapshot>,
+  ): Effect.Effect<ReadonlyArray<ThreadExecutionSnapshot>> => {
+    if (snapshots.length === 0) return Effect.succeed([]);
+    const threadIds = JSON.stringify(snapshots.map((snapshot) => snapshot.threadId));
+    return Effect.all([
+      sql<ExecutionIntentSnapshotRow & { readonly threadId: string }>`
+      SELECT * FROM (
+        SELECT intent.thread_id AS "threadId",
+             intent.work_item_id AS "workItemId", intent.message_id AS "messageId",
              intent.desired_state AS "desiredState", intent.phase,
              intent.recovery_attempts AS "recoveryAttempts",
              intent.maximum_recovery_attempts AS "maximumRecoveryAttempts",
@@ -240,25 +325,28 @@ const make = Effect.fn("ThreadExecutionSupervisor.make")(function* () {
              intent.bootstrap_json AS "bootstrapJson",
              bootstrap.worktree_phase AS "worktreePhase",
              bootstrap.setup_phase AS "setupPhase",
-             bootstrap.setup_terminal_id AS "setupTerminalId"
-      FROM projection_thread_execution_intents AS intent
-      LEFT JOIN thread_execution_bootstrap_operations AS bootstrap
-        ON bootstrap.work_item_id = intent.work_item_id
-      WHERE intent.thread_id = ${snapshot.threadId}
-        AND intent.dismissed_at IS NULL
-        AND (intent.desired_state = 'running' OR intent.phase = 'recovery-exhausted')
-      ORDER BY CASE WHEN intent.desired_state = 'running' THEN 0 ELSE 1 END,
-               intent.request_event_sequence DESC, intent.accepted_at DESC
-      LIMIT 1
+             bootstrap.setup_terminal_id AS "setupTerminalId",
+             ROW_NUMBER() OVER (
+               PARTITION BY intent.thread_id
+               ORDER BY CASE WHEN intent.desired_state = 'running' THEN 0 ELSE 1 END,
+                        intent.request_event_sequence DESC, intent.accepted_at DESC
+             ) AS "intentOrder"
+        FROM projection_thread_execution_intents AS intent
+        LEFT JOIN thread_execution_bootstrap_operations AS bootstrap
+          ON bootstrap.work_item_id = intent.work_item_id
+        WHERE intent.thread_id IN (SELECT value FROM json_each(${threadIds}))
+          AND intent.dismissed_at IS NULL
+          AND (intent.desired_state = 'running' OR intent.phase = 'recovery-exhausted')
+      ) WHERE "intentOrder" = 1
       `,
       // T3-CUSTOM(expbkt3): The durable activity ledger, rather than the
       // newest queued intent or this process's event history, owns blocking.
       // This makes reconnects and simultaneous native requests deterministic.
-      sql<PersistedBlockerRow>`
+      sql<PersistedBlockerRow & { readonly threadId: string; readonly turnId: string | null }>`
         WITH unresolved AS (
-          SELECT requested.kind, requested.turn_id
+          SELECT requested.thread_id, requested.kind, requested.turn_id
           FROM projection_thread_activities AS requested
-          WHERE requested.thread_id = ${snapshot.threadId}
+          WHERE requested.thread_id IN (SELECT value FROM json_each(${threadIds}))
             AND requested.kind IN ('approval.requested', 'user-input.requested')
             AND json_extract(requested.payload_json, '$.requestId') IS NOT NULL
             AND COALESCE(json_extract(requested.payload_json, '$.responseMode'), '') <> 'message'
@@ -288,24 +376,22 @@ const make = Effect.fn("ThreadExecutionSupervisor.make")(function* () {
             )
             AND (
               requested.turn_id IS NULL
-              OR (
-                requested.turn_id = ${snapshot.turn?.providerTurnId ?? ""}
-                AND NOT EXISTS (
+              -- The per-thread provider turn match is applied in JS below.
+              OR NOT EXISTS (
                 SELECT 1 FROM projection_turns AS turn
                 WHERE turn.thread_id = requested.thread_id AND turn.turn_id = requested.turn_id
                   AND turn.state IN ('completed', 'interrupted', 'error')
-                )
               )
             )
         )
-        SELECT kind FROM unresolved
+        SELECT thread_id AS "threadId", kind, turn_id AS "turnId" FROM unresolved
       `,
       // T3-CUSTOM(expbkt3): A persisted terminal stale response retires the
       // short-lived live-event fallback map once its projection lands.
-      sql<PersistedResolutionRow>`
-        SELECT DISTINCT json_extract(payload_json, '$.requestId') AS "requestId"
+      sql<PersistedResolutionRow & { readonly threadId: string }>`
+        SELECT DISTINCT thread_id AS "threadId", json_extract(payload_json, '$.requestId') AS "requestId"
         FROM projection_thread_activities
-        WHERE thread_id = ${snapshot.threadId}
+        WHERE thread_id IN (SELECT value FROM json_each(${threadIds}))
           -- T3-CUSTOM(expbkt3): avoid decoding unrelated tool history during every sync.
           AND kind IN ('approval.resolved', 'user-input.resolved', 'provider.user-input.respond.failed')
           AND json_extract(payload_json, '$.requestId') IS NOT NULL
@@ -324,82 +410,32 @@ const make = Effect.fn("ThreadExecutionSupervisor.make")(function* () {
       `,
     ]).pipe(
       Effect.map(([rows, blockers, resolutions]) => {
-        const row = rows[0];
-        const hasPersistedApprovalBlocker = blockers.some(
-          (blocker) => blocker.kind === "approval.requested",
-        );
-        // The map protects events that arrive before their activity projection;
-        // it is never trusted after a restart, where the SQL ledger above wins.
-        const inMemoryBlockers = blockingRequestIds.get(snapshot.threadId);
-        if (inMemoryBlockers !== undefined) {
-          for (const resolution of resolutions) inMemoryBlockers.delete(resolution.requestId);
-          if (inMemoryBlockers.size === 0) blockingRequestIds.delete(snapshot.threadId);
-        }
-        const hasInMemoryBlocker = (blockingRequestIds.get(snapshot.threadId)?.size ?? 0) > 0;
-        const hasBlocker = blockers.length > 0 || hasInMemoryBlocker;
-        const hasApprovalBlocker =
-          hasPersistedApprovalBlocker ||
-          (blockers.length === 0 &&
-            hasInMemoryBlocker &&
-            snapshot.turn?.state === "waiting-for-approval");
-        const canReconcileTurn =
-          snapshot.turn !== null &&
-          !isTerminalTurn(snapshot) &&
-          snapshot.activity !== "stopping" &&
-          snapshot.turn.state !== "stopping";
-        const repairedSnapshot =
-          hasBlocker && canReconcileTurn
-            ? {
-                ...snapshot,
-                activity: "blocked" as const,
-                turn: {
-                  ...snapshot.turn,
-                  state: hasApprovalBlocker
-                    ? ("waiting-for-approval" as const)
-                    : ("waiting-for-input" as const),
-                },
-              }
-            : !hasBlocker &&
-                canReconcileTurn &&
-                snapshot.activity === "blocked" &&
-                (snapshot.turn?.state === "waiting-for-approval" ||
-                  snapshot.turn?.state === "waiting-for-input")
-              ? {
-                  ...snapshot,
-                  activity: "active" as const,
-                  turn: { ...snapshot.turn, state: "running" as const },
-                }
-              : snapshot;
-        const { intent: _staleIntent, ...withoutIntent } = repairedSnapshot;
-        if (row === undefined) return withoutIntent;
-        const bootstrap = bootstrapSnapshotFromRow(row);
-        return {
-          ...withoutIntent,
-          intent: {
-            workItemId: row.workItemId,
-            messageId: MessageId.make(row.messageId),
-            desiredState: row.desiredState,
-            phase: row.phase,
-            acceptedAt: row.acceptedAt,
-            updatedAt: row.updatedAt,
-            ...(bootstrap === undefined ? {} : { bootstrap }),
-            recovery: {
-              attempt: row.recoveryAttempts,
-              maximumAttempts: row.maximumRecoveryAttempts,
-              nextAttemptAt: row.nextAttemptAt,
-              reason: row.lastFailureDetail ?? row.lastFailureType,
-              userActionRequired: row.phase === "recovery-exhausted",
-            },
-          },
-        } satisfies ThreadExecutionSnapshot;
+        const rowByThread = new Map(rows.map((row) => [row.threadId, row] as const));
+        const blockersByThread = Map.groupBy(blockers, (blocker) => blocker.threadId);
+        const resolutionsByThread = Map.groupBy(resolutions, (resolution) => resolution.threadId);
+        return snapshots.map((snapshot) => {
+          const providerTurnId = snapshot.turn?.providerTurnId ?? "";
+          return mergeCurrentIntent(
+            snapshot,
+            rowByThread.get(snapshot.threadId),
+            (blockersByThread.get(snapshot.threadId) ?? []).filter(
+              (blocker) => blocker.turnId === null || blocker.turnId === providerTurnId,
+            ),
+            resolutionsByThread.get(snapshot.threadId) ?? [],
+          );
+        });
       }),
       Effect.catchCause((cause) =>
         Effect.logWarning("durable execution intent snapshot join failed", {
-          threadId: snapshot.threadId,
+          threadIds: snapshots.map((snapshot) => snapshot.threadId),
           cause,
-        }).pipe(Effect.as(snapshot)),
+        }).pipe(Effect.as(snapshots)),
       ),
     );
+  };
+
+  const withCurrentIntent = (snapshot: ThreadExecutionSnapshot) =>
+    Effect.map(withCurrentIntents([snapshot]), (merged) => merged[0] ?? snapshot);
 
   const emptySnapshot = (threadId: ThreadId, observedAt: string): ThreadExecutionSnapshot => ({
     threadId,
@@ -1153,9 +1189,13 @@ const make = Effect.fn("ThreadExecutionSupervisor.make")(function* () {
     });
 
   const getSnapshots: ThreadExecutionSupervisorShape["getSnapshots"] = (threadIds) =>
-    Effect.forEach(threadIds, (threadId) => getSnapshot(threadId)).pipe(
-      Effect.map((entries) => new Map(entries.map((entry) => [entry.threadId, entry]))),
-    );
+    Effect.gen(function* () {
+      const now = yield* nowIso;
+      const entries = yield* withCurrentIntents(
+        threadIds.map((threadId) => state.get(threadId) ?? emptySnapshot(threadId, now)),
+      );
+      return new Map(entries.map((entry) => [entry.threadId, entry]));
+    });
 
   // T3-CUSTOM(expbkt3): coordinator changes get a revisioned websocket frame.
   const refreshIntent: ThreadExecutionSupervisorShape["refreshIntent"] = (threadId) =>

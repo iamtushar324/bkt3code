@@ -1,5 +1,7 @@
 import {
   AuthAdministrativeScopes,
+  // T3-CUSTOM(expbkt3): extra scope grantable on issued sessions.
+  AuthExternalSyncWriteScope,
   AuthSessionId,
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
@@ -76,6 +78,13 @@ const baseUrlFlag = Flag.string("base-url").pipe(
   Flag.optional,
 );
 
+// T3-CUSTOM(expbkt3): extra scopes beyond the administrative set, for service tokens.
+const withScopeFlag = Flag.choice("with-scope", [AuthExternalSyncWriteScope]).pipe(
+  Flag.withDescription(
+    "Also grant this scope (repeatable). `external-sync:write` lets a syncer post pull-request state.",
+  ),
+  Flag.atLeast(0),
+);
 const tokenOnlyFlag = Flag.boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -166,6 +175,8 @@ const sessionIssueCommand = Command.make("issue", {
   subject: subjectFlag,
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
+  // T3-CUSTOM(expbkt3): extra scopes for service tokens.
+  withScope: withScopeFlag,
 }).pipe(
   Command.withDescription("Issue a scoped bearer access token for headless or remote clients."),
   Command.withHandler((flags) =>
@@ -174,7 +185,8 @@ const sessionIssueCommand = Command.make("issue", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.issueSession({
-            scopes: AuthAdministrativeScopes,
+            // T3-CUSTOM(expbkt3): administrative scopes plus any `--with-scope`.
+            scopes: [...AuthAdministrativeScopes, ...new Set(flags.withScope)],
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),

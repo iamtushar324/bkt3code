@@ -19,6 +19,8 @@ import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
+// T3-CUSTOM(expbkt3): T3_EXTERNAL_PR_SYNC gate for the two PR reactors.
+import { unlessExternalPullRequestSync } from "../externalPullRequestSync.expbkt3.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -47,9 +49,14 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* threadDeletionReactor.start();
     // T3-CUSTOM(expbkt3): archive-time session history export.
     yield* archiveExportReactor.start();
-    yield* threadPullRequestReactor.start();
+    // T3-CUSTOM(expbkt3): off when T3_EXTERNAL_PR_SYNC hands PR state to the bridge.
+    yield* unlessExternalPullRequestSync(
+      "ThreadPullRequestReactor",
+      threadPullRequestReactor.start(),
+    );
     yield* threadSettlementReactor.start();
-    yield* pullRequestSyncReactor.start();
+    // T3-CUSTOM(expbkt3): off when T3_EXTERNAL_PR_SYNC hands PR state to the bridge.
+    yield* unlessExternalPullRequestSync("PullRequestSyncReactor", pullRequestSyncReactor.start());
     yield* agentAwarenessRelay.start();
   });
 

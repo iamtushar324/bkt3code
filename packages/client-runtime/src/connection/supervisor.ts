@@ -452,6 +452,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (
             next.reason === "application-active" ||
             next.reason === "application-active-probe" ||
+            next.reason === "application-focus" ||
             next.reason === "connection-heartbeat"
           ) {
             // T3-CUSTOM(expbkt3): END heartbeats reuse the foreground wake probe
