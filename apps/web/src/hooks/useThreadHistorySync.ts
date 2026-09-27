@@ -53,11 +53,12 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
   const sessionStatus = thread?.session?.status;
   const sessionRunning = sessionStatus === "running" || sessionStatus === "starting";
   const visible = useSyncExternalStore(subscribeVisibility, documentVisible, () => true);
-  // When the thread last became live; the first page waits out the settle period.
+  // When this thread last became live (or was switched to); the first page
+  // waits out the settle period.
   const liveSince = useRef<number | null>(null);
   useEffect(() => {
     liveSince.current = status === "live" ? Date.now() : null;
-  }, [status]);
+  }, [status, environmentId, threadId]);
 
   useEffect(() => {
     if (!OFFLINE_HISTORY_SYNC_ENABLED || environmentId === null || threadId === null) {
