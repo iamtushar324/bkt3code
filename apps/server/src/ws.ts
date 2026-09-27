@@ -111,6 +111,8 @@ import {
 } from "./orchestration/Normalizer.ts";
 // T3-CUSTOM(expbkt3): durable bootstrap dispatch lives in its own module.
 import * as OrchestrationCommandDispatcher from "./orchestration/dispatchCommand.ts";
+// T3-CUSTOM(expbkt3): thread catch-up replays are sent in batches.
+import { batchThreadReplay } from "./orchestration/threadReplayBatches.expbkt3.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadExecutionSupervisor } from "./execution/ThreadExecutionSupervisor.ts";
@@ -2211,6 +2213,8 @@ const makeWsRpcLayer = (
                         kind: "event" as const,
                         event: projectActivityEvent(event),
                       })),
+                      // T3-CUSTOM(expbkt3): one frame per batch, not per event.
+                      batchThreadReplay,
                       Stream.mapError(
                         (cause) =>
                           new OrchestrationGetSnapshotError({
