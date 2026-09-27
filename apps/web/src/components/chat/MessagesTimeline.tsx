@@ -136,6 +136,9 @@ import {
 } from "lucide-react";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiSurfaceRow, resolveAgentUiSurface } from "../../fork/agentUiSurface";
+// T3-CUSTOM(expbkt3): workspace setup checklist replaces "Thinking" until the agent starts.
+import type { WorkspacePreparationView } from "@t3tools/client-runtime/state/workspace-preparation";
+import { WorkspacePreparationRow } from "../thread-bootstrap/WorkspacePreparationRow";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -306,6 +309,9 @@ interface TimelineRowSharedState {
 interface TimelineRowActivityState {
   isWorking: boolean;
   isPreparingWorktree: boolean;
+  // T3-CUSTOM(expbkt3): durable workspace preparation for the working row.
+  workspacePreparation: WorkspacePreparationView | null;
+  onShowWorkspaceOutput: ((terminalId: string) => void) | undefined;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
@@ -407,6 +413,9 @@ interface MessagesTimelineProps {
   onOpenAgents?: () => void;
   isWorking: boolean;
   isPreparingWorktree?: boolean;
+  // T3-CUSTOM(expbkt3): durable workspace preparation for the working row.
+  workspacePreparation?: WorkspacePreparationView | null;
+  onShowWorkspaceOutput?: (terminalId: string) => void;
   isCompacting?: boolean;
   activeTurnStartedAt: string | null;
   workingStatusLabel?: string;
@@ -477,6 +486,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onCiteAssistantText,
   isWorking,
   isPreparingWorktree = false,
+  // T3-CUSTOM(expbkt3): durable workspace preparation for the working row.
+  workspacePreparation = null,
+  onShowWorkspaceOutput,
   isCompacting = false,
   activeTurnStartedAt,
   workingStatusLabel = "Working",
@@ -1031,11 +1043,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => ({
       isWorking,
       isPreparingWorktree,
+      // T3-CUSTOM(expbkt3): durable workspace preparation for the working row.
+      workspacePreparation,
+      onShowWorkspaceOutput,
       isCompacting,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
     }),
-    [isCompacting, isRevertingCheckpoint, isWorking, isPreparingWorktree, latestTurn?.turnId],
+    [
+      isCompacting,
+      isRevertingCheckpoint,
+      isWorking,
+      isPreparingWorktree,
+      workspacePreparation,
+      onShowWorkspaceOutput,
+      latestTurn?.turnId,
+    ],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -2136,7 +2159,31 @@ function ProposedPlanTimelineRow({
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, workspacePreparation, onShowWorkspaceOutput } =
+    use(TimelineRowActivityCtx);
+  // T3-CUSTOM(expbkt3): BEGIN — the checklist replaces the timer while the workspace is
+  // prepared, and stays as a collapsed checkmark above it once the agent takes over.
+  if (workspacePreparation && !isPreparingWorktree && !isCompacting) {
+    return (
+      <div className="border-b border-border/60 pb-2 pt-1">
+        <WorkspacePreparationRow
+          view={workspacePreparation}
+          onShowOutput={onShowWorkspaceOutput}
+          renderActiveLabel={(label) => (
+            <span
+              ref={observeVisibleAnimation}
+              className="relative shrink-0 overflow-hidden whitespace-nowrap"
+            >
+              {label}
+              <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay>
+            </span>
+          )}
+        />
+        {workspacePreparation.state === "ready" ? <WorkingTimerLine row={row} /> : null}
+      </div>
+    );
+  }
+  // T3-CUSTOM(expbkt3): END
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
       <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
@@ -2170,12 +2217,31 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   );
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — the plain working line under a finished checklist.
+function WorkingTimerLine({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  return (
+    <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+      {row.createdAt ? (
+        <>
+          {row.label} for <WorkingTimer createdAt={row.createdAt} />
+        </>
+      ) : (
+        `${row.label}...`
+      )}
+    </div>
+  );
+}
+// T3-CUSTOM(expbkt3): END
+
 function ThinkingTimelineRow() {
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, workspacePreparation } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
     <div className="min-h-7">
-      {isPreparingWorktree || isCompacting ? null : (
+      {/* T3-CUSTOM(expbkt3): no "Thinking" until the agent has the prompt. */}
+      {isPreparingWorktree ||
+      isCompacting ||
+      (workspacePreparation !== null && !workspacePreparation.agentStarted) ? null : (
         <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
       )}
     </div>

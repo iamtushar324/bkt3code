@@ -76,6 +76,8 @@ import {
   DurableExecutionIntentRepository,
   DurableExecutionIntentRepositoryLive,
 } from "../../execution/DurableExecutionIntentRepository.ts";
+// T3-CUSTOM(expbkt3): durable bootstrap setup without a real terminal.
+import { ProjectSetupScriptRunner } from "../../project/ProjectSetupScriptRunner.ts";
 import { SourceControlProfileService } from "../../sourceControl/SourceControlProfileService.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -275,6 +277,8 @@ describe("ProviderCommandReactor", () => {
     readonly durableNativeCommands?: boolean;
     readonly drainDeletionThrough?: (sequence: number) => Effect.Effect<void>;
     readonly executionSupervisor?: ThreadExecutionSupervisorShape;
+    // T3-CUSTOM(expbkt3): durable bootstrap setup without a real terminal.
+    readonly setupScriptRunner?: ProjectSetupScriptRunner["Service"];
     readonly activeTurnInput?: "steer" | "queue";
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
@@ -711,6 +715,12 @@ describe("ProviderCommandReactor", () => {
           ? Layer.succeed(ThreadExecutionSupervisor, input.executionSupervisor)
           : Layer.empty,
       ),
+      // T3-CUSTOM(expbkt3): durable bootstrap setup without a real terminal.
+      Layer.provide(
+        input?.setupScriptRunner
+          ? Layer.succeed(ProjectSetupScriptRunner, input.setupScriptRunner)
+          : Layer.empty,
+      ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
@@ -839,6 +849,16 @@ describe("ProviderCommandReactor", () => {
           SELECT delivery_certainty AS "deliveryCertainty", desired_state AS "desiredState", runnable, phase, provider_turn_id AS "providerTurnId", last_failure_type AS "lastFailureType"
           FROM projection_thread_execution_intents WHERE work_item_id = ${workItemId}`;
             return rows[0];
+          }),
+        ),
+      // T3-CUSTOM(expbkt3): durable bootstrap setup phase as clients would read it.
+      readBootstrapSetupPhase: () =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows = yield* sql<{ readonly setupPhase: string }>`
+              SELECT setup_phase AS "setupPhase" FROM thread_execution_bootstrap_operations`;
+            return rows[0]?.setupPhase;
           }),
         ),
       seedNativeConversation: () =>
@@ -1090,6 +1110,62 @@ describe("ProviderCommandReactor", () => {
       expect(harness.tryHandlePromptCommand).toHaveBeenCalledTimes(1);
     }),
   );
+
+  // T3-CUSTOM(expbkt3): BEGIN — clients learn setup started before the agent runs.
+  effectIt.effect("publishes the running setup step before the setup script finishes", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* ThreadExecutionSupervisor;
+      // The setup phase each client-visible refresh carried, in order.
+      const refreshedSetupPhases: Array<string | undefined> = [];
+      const setupStarted = yield* Deferred.make<ReadonlyArray<string | undefined>>();
+      let harness: Awaited<ReturnType<typeof createHarness>> | undefined;
+      const readSetupPhase = () => harness!.readBootstrapSetupPhase();
+      harness = yield* Effect.promise(() =>
+        createHarness({
+          durableNativeCommands: true,
+          executionSupervisor: {
+            ...supervisor,
+            refreshIntent: (threadId) =>
+              Effect.promise(readSetupPhase).pipe(
+                Effect.tap((phase) => Effect.sync(() => refreshedSetupPhases.push(phase))),
+                Effect.andThen(supervisor.refreshIntent(threadId)),
+              ),
+          },
+          setupScriptRunner: {
+            runForThread: () =>
+              Deferred.succeed(setupStarted, [...refreshedSetupPhases]).pipe(
+                Effect.as({ status: "no-script" } as const),
+              ),
+          },
+          tryHandlePromptCommandEffect: () => Effect.succeed(true),
+        }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("setup-progress-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/provider-project-worktree",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("setup-progress"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("setup-progress-message"),
+          role: "user",
+          text: "/logout",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        bootstrap: { runSetupScript: true },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      expect(yield* Deferred.await(setupStarted)).toContain("running");
+      expect(yield* Deferred.await(harness.nativeCompletion)).toBe("setup-progress");
+    }),
+  );
+  // T3-CUSTOM(expbkt3): END
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",

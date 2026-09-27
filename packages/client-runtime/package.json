@@ -283,6 +283,10 @@
       "types": "./src/state/threadExecutionPresentation.ts",
       "default": "./src/state/threadExecutionPresentation.ts"
     },
+    "./state/workspace-preparation": {
+      "types": "./src/state/workspacePreparation.ts",
+      "default": "./src/state/workspacePreparation.ts"
+    },
     "./state/cached-thread-search": {
       "types": "./src/state/cachedThreadSearch.ts",
       "default": "./src/state/cachedThreadSearch.ts"

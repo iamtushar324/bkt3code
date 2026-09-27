@@ -10,6 +10,8 @@ import type {
 } from "@t3tools/client-runtime/state/threads";
 // T3-CUSTOM(expbkt3): durable execution presentation drives the recovery banner.
 import { deriveThreadExecutionPresentation } from "@t3tools/client-runtime/state/thread-execution-presentation";
+// T3-CUSTOM(expbkt3): worktree and setup progress stand in for "Thinking".
+import { deriveWorkspacePreparation } from "@t3tools/client-runtime/state/workspace-preparation";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -352,6 +354,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     intent: props.selectedThread.execution?.intent ?? null,
     providerActivity: props.selectedThread.execution?.activity ?? "idle",
   });
+  // T3-CUSTOM(expbkt3): BEGIN — no "Thinking" until the agent has the prompt.
+  const workspacePreparation = deriveWorkspacePreparation(
+    props.selectedThread.execution?.intent ?? null,
+  );
+  const feedActiveWorkStartedAt =
+    workspacePreparation !== null && !workspacePreparation.agentStarted
+      ? null
+      : props.activeWorkStartedAt;
+  // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): use the supervisor's terminal turn state, not the
   // lagging latest-turn projection, for an explicit stopped/failed outcome.
   const executionOutcome = getThreadExecutionOutcome(props.selectedThread.execution);
@@ -405,6 +416,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     if (props.creationState?.kind === "failed") {
       return null;
+    }
+    // T3-CUSTOM(expbkt3): name the workspace step instead of timing a turn.
+    if (workspacePreparation !== null && !workspacePreparation.agentStarted) {
+      return { kind: "preparing", label: workspacePreparation.label };
     }
     if (threadSyncLabel !== null) {
       return { kind: "syncing", label: threadSyncLabel };
@@ -920,7 +935,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             latestTurn={feedLatestTurn}
             execution={props.selectedThread.execution ?? null}
             turnSummaries={props.selectedThreadTurnSummaries}
-            activeWorkStartedAt={props.activeWorkStartedAt}
+            // T3-CUSTOM(expbkt3): no "Thinking" row while the workspace is prepared.
+            activeWorkStartedAt={feedActiveWorkStartedAt}
             listRef={listRef}
             freeze={freeze}
             anchorMessageId={anchorMessageId}
