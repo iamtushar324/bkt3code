@@ -799,6 +799,36 @@ export function applyThreadDetailEvent(
           },
         };
       }
+      // T3-CUSTOM(expbkt3): BEGIN — an in-order context-window update drops the
+      // rows it supersedes in one linear pass instead of re-filtering, re-sorting
+      // and re-indexing the whole history. These updates are ~20% of a busy
+      // thread's activities, so replaying a long thread paid a full sort for each.
+      // Same result as the path below: the array is sorted, the id is unseen and
+      // the new row sorts at/after the tail, so it simply goes last.
+      if (
+        supersedesContextWindow &&
+        ids !== undefined &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !ids.has(activity.id)
+      ) {
+        const activities: OrchestrationThreadActivity[] = [];
+        for (const entry of thread.activities) {
+          if (entry.turnId === activity.turnId && isResolvableContextWindowActivity(entry)) {
+            ids.delete(entry.id);
+          } else {
+            activities.push(entry);
+          }
+        }
+        activities.push(activity);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
+        return {
+          kind: "updated",
+          thread: { ...thread, activities, updatedAt: event.occurredAt },
+        };
+      }
+      // T3-CUSTOM(expbkt3): END
       const activities = pipe(
         thread.activities,
         Arr.filter(
