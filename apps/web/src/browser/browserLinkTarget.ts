@@ -12,6 +12,8 @@ import type { BrowserLinkTarget } from "@t3tools/contracts";
 
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+// T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+import { effectiveBrowserLinkTarget } from "~/fork/effectiveBrowserLinkTarget";
 
 export interface ResolveLinkTargetInput {
   readonly url: string;
@@ -59,7 +61,8 @@ export function isWebUrl(url: string): boolean {
  */
 export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkTarget> {
   await ensureClientSettingsHydrated();
-  return getClientSettings().browserLinkTarget;
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+  return effectiveBrowserLinkTarget(getClientSettings());
 }
 
 /** Whether the in-app target is available at all in this client. */

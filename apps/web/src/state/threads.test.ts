@@ -68,6 +68,10 @@ function detail(
     activities: [],
     checkpoints: [],
     session: session(threadId, status),
+    // T3-CUSTOM(expbkt3): fork-required thread fields.
+    sourceControlProfileId: null,
+    ownerUserId: null,
+    memberUserIds: [],
   };
   return AsyncResult.success<EnvironmentThreadState>({
     ...EMPTY_ENVIRONMENT_THREAD_STATE,

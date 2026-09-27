@@ -66,6 +66,7 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
+// T3-CUSTOM(expbkt3): preserve the formatter boundary in this upstream component.
 function FileSearchField(props: {
   ariaLabel: string;
   name: string;

@@ -4,7 +4,13 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  // T3-CUSTOM(expbkt3): a child thread can start on another machine.
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -40,6 +46,11 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  // T3-CUSTOM(expbkt3): promote the eventual thread as a child of this thread.
+  parentThreadId?: ThreadId | null;
+  // T3-CUSTOM(expbkt3): the environment that parent lives on, when the child is
+  // being started somewhere else — typically because the parent's host is down.
+  parentEnvironmentId?: EnvironmentId | null;
 }
 
 // The workspace options the caller passed explicitly, shaped for the draft
@@ -51,6 +62,12 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    // T3-CUSTOM(expbkt3): explicit parent-thread picks ride along with the
+    // other explicit workspace options.
+    ...(options?.parentThreadId !== undefined ? { parentThreadId: options.parentThreadId } : {}),
+    ...(options?.parentEnvironmentId !== undefined
+      ? { parentEnvironmentId: options.parentEnvironmentId }
+      : {}),
   };
 }
 
@@ -71,6 +88,11 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        // T3-CUSTOM(expbkt3): promote the eventual thread as a child of this thread.
+        parentThreadId?: ThreadId | null;
+        // T3-CUSTOM(expbkt3): the parent's environment, when the child is being
+        // started on a different machine from the session it continues.
+        parentEnvironmentId?: EnvironmentId | null;
         replace?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
@@ -168,6 +190,7 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const hasParentThreadIdOption = options?.parentThreadId !== undefined; // T3-CUSTOM(expbkt3)
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -207,7 +230,8 @@ export function useNewThreadHandler() {
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
-            hasStartFromOriginOption;
+            hasStartFromOriginOption ||
+            hasParentThreadIdOption; // T3-CUSTOM(expbkt3)
           // Resurrecting an empty stored draft must not resurrect its stale
           // context: explicit workspace options win outright; otherwise the
           // env context resets to the configured defaults so drafts seeded
@@ -219,7 +243,14 @@ export function useNewThreadHandler() {
           // below and does not follow this guard.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
-            workspaceContext = pickExplicitWorkspaceOptions(options);
+            workspaceContext = {
+              ...pickExplicitWorkspaceOptions(options),
+              // T3-CUSTOM(expbkt3): always written alongside explicit options
+              // so a resurrected draft never keeps a stale parent from a
+              // previous seeding.
+              parentThreadId: options?.parentThreadId ?? null,
+              parentEnvironmentId: options?.parentEnvironmentId ?? null,
+            };
           } else if (!isDraftAlreadyOpen) {
             const defaultEnvMode = await resolveDefaultEnvMode();
             if (routeChangedSinceRequest()) {
@@ -257,6 +288,7 @@ export function useNewThreadHandler() {
                 envMode: defaultEnvMode,
                 newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
               }),
+              parentThreadId: null, // T3-CUSTOM(expbkt3)
             };
           }
           if (workspaceContext) {
@@ -339,7 +371,8 @@ export function useNewThreadHandler() {
           hasBranchOption ||
           hasWorktreePathOption ||
           hasEnvModeOption ||
-          hasStartFromOriginOption
+          hasStartFromOriginOption ||
+          hasParentThreadIdOption // T3-CUSTOM(expbkt3)
         ) {
           setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
         }
@@ -404,6 +437,9 @@ export function useNewThreadHandler() {
           threadId,
           createdAt,
           branch: options?.branch ?? null,
+          // T3-CUSTOM(expbkt3): session lineage for the eventual thread.
+          parentThreadId: options?.parentThreadId ?? null,
+          parentEnvironmentId: options?.parentEnvironmentId ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: initialEnvMode,
           startFromOrigin:

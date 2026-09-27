@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+// T3-CUSTOM(expbkt3): identity-bearing pairing.
+import * as Option from "effect/Option";
 
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
@@ -17,7 +19,11 @@ import {
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
   secondaryBearerRefreshAtEpochMs,
+  // T3-CUSTOM(expbkt3): the operator's Clerk identity capability.
+  teamEnvironmentIdentity,
 } from "./platform.ts";
+// T3-CUSTOM(expbkt3): drive the capability through its real token provider.
+import { setTeamClerkTokenProvider } from "../state/teamIdentityToken.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -223,3 +229,45 @@ describe("primary topology cache", () => {
     ).toBeUndefined();
   });
 });
+
+// T3-CUSTOM(expbkt3): BEGIN — identity-bearing pairing.
+//
+// `TeamIdentityBridge` registers Clerk's `getToken`; this capability is what
+// carries the result into `preparePairingRegistration`. The failure mode being
+// guarded is silent: a capability that always reports "no identity" still pairs
+// fine against a single-user environment and only fails against a team-mode one,
+// where it reads like a bad pairing code.
+describe("team environment identity capability", () => {
+  it.effect("presents the operator's Clerk token while signed in", () =>
+    Effect.gen(function* () {
+      setTeamClerkTokenProvider(() => Promise.resolve("clerk-session-token"));
+
+      const token = yield* teamEnvironmentIdentity.identityToken;
+
+      expect(token).toEqual(Option.some("clerk-session-token"));
+      setTeamClerkTokenProvider(null);
+    }),
+  );
+
+  it.effect("reports no identity when signed out, without failing the connection", () =>
+    Effect.gen(function* () {
+      setTeamClerkTokenProvider(null);
+
+      const token = yield* teamEnvironmentIdentity.identityToken;
+
+      expect(Option.isNone(token)).toBe(true);
+    }),
+  );
+
+  it.effect("reports no identity when Clerk cannot issue a token", () =>
+    Effect.gen(function* () {
+      setTeamClerkTokenProvider(() => Promise.reject(new Error("Clerk unavailable")));
+
+      const token = yield* teamEnvironmentIdentity.identityToken;
+
+      expect(Option.isNone(token)).toBe(true);
+      setTeamClerkTokenProvider(null);
+    }),
+  );
+});
+// T3-CUSTOM(expbkt3): END

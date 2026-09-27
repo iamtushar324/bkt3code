@@ -185,7 +185,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 onPromptChange={() => {}}
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
-                planModeEnabled={settings.planModeEnabled}
+                // T3-CUSTOM(expbkt3): the fork gates plan traits on planModeAvailable.
+                planModeAvailable={settings.planModeAvailable}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   setModel(createModelSelection(selection.instanceId, selection.model, options))

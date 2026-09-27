@@ -150,6 +150,8 @@ import {
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
+// T3-CUSTOM(expbkt3): a phone has no right-click, so a held press stands in for it.
+import { useLongPressContextMenu } from "../mobile/useLongPressContextMenu";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -1093,7 +1095,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitCwd, threadId: thread.id }, // T3-CUSTOM(expbkt3): per-thread vcs status
         })
       : null,
   );
@@ -1111,6 +1113,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  // T3-CUSTOM(expbkt3): a message-mode question is visible without changing
+  // the row's truthful Running/Ready state or promoting it to Needs Input.
+  const asyncQuestionSuffix = thread.hasPendingAsyncUserInput ? " · Question" : "";
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -1140,7 +1145,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const topStatus =
     status === "working"
       ? {
-          label: "Working",
+          label: `Working${asyncQuestionSuffix}`, // T3-CUSTOM(expbkt3): async question suffix
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
@@ -1150,41 +1155,43 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         ? {
             // Monitoring is calm background presence, not active progress
             // (monitoring-pill D6), so it keeps the label at full strength.
-            label: "Monitoring",
+            label: `Monitoring${asyncQuestionSuffix}`,
             icon: "monitoring" as const,
             className: "text-foreground dark:text-white",
           }
         : status === "approval"
           ? {
-              label: "Approval",
+              label: `Approval${asyncQuestionSuffix}`,
               icon: "approval" as const,
               className: "text-warning-foreground",
             }
           : status === "input"
             ? {
-                label: "Input",
+                label: `Input${asyncQuestionSuffix}`,
                 icon: "input" as const,
                 className: "text-indigo-600 dark:text-indigo-300",
               }
             : status === "failed"
               ? {
-                  label: "Failed",
+                  label: `Failed${asyncQuestionSuffix}`,
                   icon: "failed" as const,
                   className: "text-red-700 dark:text-red-300",
                 }
               : isWoke
                 ? {
-                    label: "Woke",
+                    label: `Woke${asyncQuestionSuffix}`,
                     icon: "woke" as const,
                     className: "text-warning-foreground",
                   }
                 : isUnread
                   ? {
-                      label: "Done",
+                      label: `Done${asyncQuestionSuffix}`,
                       icon: "done" as const,
                       className: "text-emerald-700 dark:text-emerald-300",
                     }
-                  : null;
+                  : thread.hasPendingAsyncUserInput
+                    ? { label: "Question", icon: null, className: "text-muted-foreground" }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1252,6 +1259,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
     },
     [onContextMenu, threadRef],
+  );
+  // T3-CUSTOM(expbkt3): same menu, reached by holding the row on a touch screen.
+  const longPressContextMenu = useLongPressContextMenu(
+    useCallback(
+      (position: { x: number; y: number }) => onContextMenu(threadRef, position),
+      [onContextMenu, threadRef],
+    ),
   );
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
@@ -1623,6 +1637,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
+                // T3-CUSTOM(expbkt3): touch long-press opens the row menu.
+                {...longPressContextMenu}
               />
             }
           >
@@ -1779,6 +1795,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
+              // T3-CUSTOM(expbkt3): touch long-press opens the row menu.
+              {...longPressContextMenu}
             />
           }
         >

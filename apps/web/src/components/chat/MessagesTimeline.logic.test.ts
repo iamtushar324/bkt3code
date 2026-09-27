@@ -58,6 +58,8 @@ describe("streaming row projection", () => {
         createdAt: time(0),
         updatedAt: time(0),
         streaming: false,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
       {
         id: MessageId.make("history-assistant"),
@@ -67,6 +69,8 @@ describe("streaming row projection", () => {
         createdAt: time(3),
         updatedAt: time(4),
         streaming: false,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
       {
         id: MessageId.make("live-user"),
@@ -76,6 +80,8 @@ describe("streaming row projection", () => {
         createdAt: time(5),
         updatedAt: time(5),
         streaming: false,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
       {
         id: MessageId.make("live-assistant"),
@@ -85,6 +91,8 @@ describe("streaming row projection", () => {
         createdAt: time(7),
         updatedAt: time(7),
         streaming: true,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
     ];
     const work: WorkLogEntry[] = [
@@ -114,7 +122,14 @@ describe("streaming row projection", () => {
     const timeline = deriveTimelineEntriesWithState(messages, [], work);
     const input = {
       timelineEntries: timeline.entries,
-      latestTurn: { turnId, state: "running", startedAt: time(5), completedAt: null },
+      latestTurn: {
+        // T3-CUSTOM(expbkt3): fork turn fixtures include persisted duration.
+        durationMs: null,
+        turnId,
+        state: "running",
+        startedAt: time(5),
+        completedAt: null,
+      },
       runningTurnId: turnId,
       isWorking: true,
       activeTurnStartedAt: time(5),
@@ -386,6 +401,10 @@ describe("streaming row projection", () => {
     });
     const liveMessage = initial.messages.at(-1)!;
     let thread: OrchestrationThread = {
+      // T3-CUSTOM(expbkt3): fork-required field.
+      sourceControlProfileId: null,
+      ownerUserId: null,
+      memberUserIds: [],
       id: ThreadId.make("streaming-thread"),
       projectId: ProjectId.make("project"),
       title: "Long thread",
@@ -1158,6 +1177,8 @@ describe("deriveMessagesTimelineRows", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
         streaming: false,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
     } as const;
     const assistantEntry = {
@@ -1172,6 +1193,8 @@ describe("deriveMessagesTimelineRows", () => {
         createdAt: "2026-01-01T00:00:30Z",
         updatedAt: "2026-01-01T00:00:30Z",
         streaming: true,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
     } as const;
     const withoutMessages = deriveMessagesTimelineRows({
@@ -1262,6 +1285,8 @@ describe("deriveMessagesTimelineRows", () => {
       stages: [stage("setup-script", "running"), stage("agent", "done")],
     };
     const liveTurn = {
+      // T3-CUSTOM(expbkt3): fork turn fixtures include persisted duration.
+      durationMs: null,
       turnId: "turn-1" as never,
       state: "running",
       startedAt: "2026-01-01T00:00:11Z",
@@ -1364,6 +1389,8 @@ describe("deriveMessagesTimelineRows", () => {
 
   it("keeps subagent spawn rows outside turn folds even after they settle", () => {
     const firstMessage: ChatMessage = {
+      // T3-CUSTOM(expbkt3): fork-required field.
+      sentByUserId: null,
       id: MessageId.make("assistant-first-entry"),
       role: "assistant",
       text: "Fanning out.",
@@ -1505,6 +1532,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -1519,6 +1547,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:10Z",
             updatedAt: "2026-01-01T00:00:11Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -1533,6 +1562,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:20Z",
             updatedAt: "2026-01-01T00:00:30Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -1568,6 +1598,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:10Z",
             updatedAt: "2026-01-01T00:00:11Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -1582,6 +1613,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:20Z",
             updatedAt: "2026-01-01T00:00:30Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -1590,6 +1622,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "running",
         startedAt: "2026-01-01T00:00:19Z",
         completedAt: null,
+        durationMs: null,
       },
       isWorking: false,
       activeTurnStartedAt: null,
@@ -1631,6 +1664,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -1645,6 +1679,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:20Z",
             updatedAt: "2026-01-01T00:00:30Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -1681,6 +1716,7 @@ describe("deriveMessagesTimelineRows", () => {
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
           streaming: false,
+          sentByUserId: null,
         },
       },
       {
@@ -1695,6 +1731,7 @@ describe("deriveMessagesTimelineRows", () => {
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
           streaming: false,
+          sentByUserId: null,
         },
       },
       {
@@ -1721,6 +1758,7 @@ describe("deriveMessagesTimelineRows", () => {
           createdAt: "2026-01-01T00:00:20Z",
           updatedAt: "2026-01-01T00:00:22Z",
           streaming: false,
+          sentByUserId: null,
         },
       },
     ];
@@ -1795,6 +1833,8 @@ describe("deriveMessagesTimelineRows", () => {
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
           streaming: false,
+          // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+          sentByUserId: null,
         },
       },
       ...Array.from({ length: 3 }, (_, index) => ({
@@ -1815,6 +1855,8 @@ describe("deriveMessagesTimelineRows", () => {
 
     const input = {
       latestTurn: {
+        // T3-CUSTOM(expbkt3): persisted duration may be absent.
+        durationMs: null,
         turnId,
         state: "error" as const,
         startedAt: "2026-01-01T00:00:00Z",
@@ -1864,6 +1906,8 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-first" as never,
           role: "assistant" as const,
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           text: "The main result is ready.",
           turnId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:01Z",
@@ -1878,6 +1922,8 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-middle" as never,
           role: "assistant" as const,
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           text: "I am checking one more detail.",
           turnId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:03Z",
@@ -1892,6 +1938,8 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-final" as never,
           role: "assistant" as const,
+          // T3-CUSTOM(expbkt3): fork-required sender identity.
+          sentByUserId: null,
           text: "Verification finished.",
           turnId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:05Z",
@@ -1924,6 +1972,8 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: at,
       updatedAt: at,
       streaming: false,
+      // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+      sentByUserId: null,
     },
   });
 
@@ -1939,6 +1989,8 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: at,
       updatedAt: at,
       streaming: false,
+      // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+      sentByUserId: null,
     },
   });
 
@@ -2309,6 +2361,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -2335,6 +2388,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:09Z",
             updatedAt: "2026-01-01T00:00:09Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -2361,6 +2415,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:14Z",
             updatedAt: "2026-01-01T00:00:14Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -2375,6 +2430,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:17Z",
             updatedAt: "2026-01-01T00:00:17Z",
             streaming: true,
+            sentByUserId: null,
           },
         },
       ],
@@ -2383,6 +2439,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "running",
         startedAt: "2026-01-01T00:00:14Z",
         completedAt: null,
+        durationMs: null,
       },
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:14Z",
@@ -2420,6 +2477,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "interrupted",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:47Z",
+        durationMs: null,
       },
       isWorking: false,
       activeTurnStartedAt: null,
@@ -2466,6 +2524,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:20Z",
             updatedAt: "2026-01-01T00:00:22Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -2480,6 +2539,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:01:00Z",
             updatedAt: "2026-01-01T00:01:00Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -2488,6 +2548,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "completed",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:22Z",
+        durationMs: null,
       },
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:01:00Z",
@@ -2522,6 +2583,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:05Z",
             updatedAt: "2026-01-01T00:00:06Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -2542,6 +2604,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: null,
+        durationMs: null,
       },
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
@@ -2572,6 +2635,8 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
             streaming: false,
+            // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+            sentByUserId: null,
           },
         },
         {
@@ -2614,6 +2679,8 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:08Z",
             updatedAt: "2026-01-01T00:00:08Z",
             streaming: false,
+            // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+            sentByUserId: null,
           },
         },
         {
@@ -2632,6 +2699,8 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork turn fixtures include persisted duration.
+        durationMs: null,
         turnId: "turn-after-restart" as never,
         state: "running",
         startedAt: "2026-01-01T00:01:00Z",
@@ -2712,6 +2781,8 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork-required turn duration.
+        durationMs: null,
         turnId: "turn-1" as never,
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
@@ -2759,6 +2830,8 @@ describe("deriveMessagesTimelineRows", () => {
           kind: "message",
           createdAt: "2026-01-01T00:00:06Z",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: "assistant-commentary" as never,
             role: "assistant",
             text: "Checking another thing.",
@@ -2785,6 +2858,8 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork-required turn duration.
+        durationMs: null,
         turnId: "turn-1" as never,
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
@@ -2879,6 +2954,8 @@ describe("deriveMessagesTimelineRows", () => {
           kind: "message",
           createdAt: "2026-01-01T00:00:06Z",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: "assistant-commentary" as never,
             role: "assistant",
             text: "Starting another command.",
@@ -2905,6 +2982,8 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork-required turn duration.
+        durationMs: null,
         turnId: "turn-1" as never,
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
@@ -2946,6 +3025,8 @@ describe("deriveMessagesTimelineRows", () => {
           kind: "message",
           createdAt: "2026-01-01T00:01:00Z",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: "user-followup" as never,
             role: "user",
             text: "continue",
@@ -2987,6 +3068,8 @@ describe("deriveMessagesTimelineRows", () => {
           kind: "message",
           createdAt: "2026-01-01T00:00:06Z",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required sender identity.
+            sentByUserId: null,
             id: "assistant-commentary" as never,
             role: "assistant",
             text: "Starting another command.",
@@ -3013,6 +3096,8 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       latestTurn: {
+        // T3-CUSTOM(expbkt3): fork-required turn duration.
+        durationMs: null,
         turnId: "turn-1" as never,
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
@@ -3058,6 +3143,8 @@ describe("deriveMessagesTimelineRows", () => {
           },
         ],
         latestTurn: {
+          // T3-CUSTOM(expbkt3): persisted duration may be absent.
+          durationMs: null,
           turnId,
           state: "running",
           startedAt: "2026-01-01T00:00:00Z",
@@ -3107,6 +3194,8 @@ describe("deriveMessagesTimelineRows", () => {
                 },
               ],
         latestTurn: {
+          // T3-CUSTOM(expbkt3): fork turn fixtures include persisted duration.
+          durationMs: null,
           turnId: "turn-1" as never,
           state: "running",
           startedAt: "2026-01-01T00:00:00Z",
@@ -3168,6 +3257,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:01:00Z",
             updatedAt: "2026-01-01T00:01:00Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -3188,6 +3278,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "completed",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:25Z",
+        durationMs: null,
       },
       runningTurnId: "turn-2" as never,
       isWorking: true,
@@ -3217,6 +3308,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:10Z",
             updatedAt: "2026-01-01T00:00:11Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
         {
@@ -3231,6 +3323,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:20Z",
             updatedAt: "2026-01-01T00:00:30Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -3264,6 +3357,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:10Z",
             updatedAt: "2026-01-01T00:00:11Z",
             streaming: false,
+            sentByUserId: null,
           },
         },
       ],
@@ -3272,6 +3366,7 @@ describe("deriveMessagesTimelineRows", () => {
         state: "running",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: null,
+        durationMs: null,
       },
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
@@ -3400,7 +3495,14 @@ describe("deriveMessagesTimelineRows", () => {
     }));
     const input = {
       timelineEntries: deriveTimelineEntries([], [], [...tools, answer]),
-      latestTurn: { turnId, state: "completed", startedAt: time(0), completedAt: time(6) },
+      latestTurn: {
+        turnId,
+        state: "completed",
+        startedAt: time(0),
+        completedAt: time(6),
+        // T3-CUSTOM(expbkt3): fork-required field.
+        durationMs: null,
+      },
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -3712,6 +3814,8 @@ describe("computeStableMessagesTimelineRows", () => {
         createdAt: startedAt,
         updatedAt: startedAt,
         streaming: true,
+        // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+        sentByUserId: null,
       },
     };
     const initial = computeStableMessagesTimelineRows(
@@ -3747,6 +3851,7 @@ describe("computeStableMessagesTimelineRows", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       streaming: false,
+      sentByUserId: null,
     };
     const secondUserMessage = {
       id: "user-2" as never,
@@ -3756,6 +3861,7 @@ describe("computeStableMessagesTimelineRows", () => {
       createdAt: "2026-01-01T00:00:10Z",
       updatedAt: "2026-01-01T00:00:10Z",
       streaming: false,
+      sentByUserId: null,
     };
 
     const rows = deriveMessagesTimelineRows({
@@ -3852,6 +3958,7 @@ describe("computeStableMessagesTimelineRows", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       streaming: false,
+      sentByUserId: null,
     };
     const secondUserMessage = {
       id: "user-2" as never,
@@ -3861,6 +3968,7 @@ describe("computeStableMessagesTimelineRows", () => {
       createdAt: "2026-01-01T00:00:10Z",
       updatedAt: "2026-01-01T00:00:10Z",
       streaming: false,
+      sentByUserId: null,
     };
 
     const firstRows = deriveMessagesTimelineRows({

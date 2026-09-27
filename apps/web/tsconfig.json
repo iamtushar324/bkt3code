@@ -25,6 +25,7 @@
       }
     ]
   },
+  // T3-CUSTOM(expbkt3): BEGIN - vite.config.ts bakes the managed environment in.
   "include": [
     "src",
     "vite",
@@ -33,6 +34,8 @@
     "test",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
+    "../../scripts/lib/bk-managed-environment.ts",
     "../../scripts/lib/third-party-licenses.ts"
   ]
+  // T3-CUSTOM(expbkt3): END
 }

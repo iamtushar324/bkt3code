@@ -91,7 +91,7 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: undefined,
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).toEqual({
@@ -113,7 +113,7 @@ describe("getComposerProviderState", () => {
         booleanDescriptor("fastMode"),
       ]),
       modelOptions: selections(["effort", "low"], ["fastMode", true]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).toEqual({
@@ -132,7 +132,7 @@ describe("getComposerProviderState", () => {
         booleanDescriptor("fastMode"),
       ]),
       modelOptions: selections(["effort", "high"], ["fastMode", false]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -146,7 +146,7 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("thinking")]),
       modelOptions: selections(["effort", "max"], ["thinking", false]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).toEqual({
@@ -172,7 +172,7 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state.promptEffort).toBe("high");
@@ -190,7 +190,7 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "build"]));
@@ -204,7 +204,7 @@ describe("getComposerProviderState", () => {
         selectDescriptor("agent", [{ id: "plan", label: "Plan", isDefault: true }]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state).toEqual({
@@ -225,7 +225,7 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: undefined,
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toBeUndefined();
@@ -237,7 +237,7 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([]),
       modelOptions: selections(["anything", "value"]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).toEqual({
@@ -260,7 +260,7 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["variant", "max"], ["agent", "build"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -276,7 +276,7 @@ describe("getComposerProviderState", () => {
         model: "missing-model",
         models: modelWith([]),
         modelOptions: selections(["unknown", "value"]),
-        planModeEnabled: true,
+        planModeAvailable: true,
       });
 
       expect(state.modelOptionsForDispatch).toBeUndefined();
@@ -289,7 +289,7 @@ describe("getComposerProviderState", () => {
       model: "opencode/kimi-k3",
       models: [],
       modelOptions: selections(["variant", "max"], ["agent", "build"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -318,7 +318,7 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["effort", "low"], ["unknown", "value"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["effort", "low"]));
@@ -330,7 +330,7 @@ describe("getComposerProviderState", () => {
       model: "opencode/kimi-k3",
       models: [],
       modelOptions: selections(["variant", "max"], ["agent", "plan"]),
-      planModeEnabled: false,
+      planModeAvailable: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["variant", "max"]));
@@ -355,7 +355,7 @@ describe("getComposerProviderState", () => {
         "Ultrathink:\nInvestigate this failure",
       ),
       modelOptions: selections(["effort", "medium"]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).toEqual({
@@ -377,7 +377,7 @@ describe("getComposerProviderState", () => {
         "Ultrathink:\nInvestigate this failure",
       ),
       modelOptions: undefined,
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state).not.toHaveProperty("composerFrameClassName");
@@ -391,7 +391,7 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("fastMode", true)]),
       modelOptions: undefined,
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
@@ -403,7 +403,7 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("fastMode", true)]),
       modelOptions: selections(["fastMode", true]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", true]));
@@ -415,7 +415,7 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("fastMode", true)]),
       modelOptions: selections(["fastMode", false]),
-      planModeEnabled: true,
+      planModeAvailable: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
@@ -483,7 +483,7 @@ describe("provider traits render guards", () => {
       modelOptions: undefined,
       prompt: "",
       onPromptChange: () => {},
-      planModeEnabled: true,
+      planModeAvailable: true,
     };
 
     expect(renderProviderTraitsPicker(args)).toBeNull();

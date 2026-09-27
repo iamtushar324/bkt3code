@@ -196,6 +196,8 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+// T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+import { effectiveBrowserLinkTarget } from "../fork/effectiveBrowserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -2471,7 +2473,8 @@ function useChatMarkdownState({
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
-  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+  const linkTargetPreference = useClientSettings(effectiveBrowserLinkTarget);
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (

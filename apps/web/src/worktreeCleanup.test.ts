@@ -11,6 +11,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.make("thread-1"),
     environmentId: localEnvironmentId,
     projectId: ProjectId.make("project-1"),
+    ownerUserId: null,
+    memberUserIds: [],
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -33,6 +35,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    sourceControlProfileId: null,
     ...overrides,
   };
 }

@@ -278,6 +278,40 @@ export default defineConfig({
         },
       },
       {
+        // T3-CUSTOM(expbkt3): BEGIN — fork UI style debt. Upstream adopted the shadcn
+        // style rules after these fork surfaces were written with raw palette colours
+        // and arbitrary values. Restyling them onto theme tokens is real work with no
+        // behaviour change, so they are exempt here instead of blocking merges. The list
+        // is a ratchet: remove a file once it is restyled; never add upstream files.
+        files: [
+          "apps/web/src/components/PhaseGroupedSidebar.tsx",
+          "apps/web/src/components/sidebar/SidebarChrome.tsx",
+          "apps/web/src/components/sidebar/PhaseGroupedSidebar.logic.ts",
+          "apps/web/src/components/sidebar/PhaseSidebar*.tsx",
+          "apps/web/src/components/sidebar/RunningSession*.tsx",
+          "apps/web/src/components/sidebar/SidebarSearchAction.tsx",
+          "apps/web/src/components/sidebar/LinearIssueTagDialog.tsx",
+          "apps/web/src/components/sidebar/Mattermost*.tsx",
+          "apps/web/src/components/sidebar/MoveUnderSessionDialog.tsx",
+          "apps/web/src/components/sidebar/NewThreadProjectPicker.tsx",
+          "apps/web/src/components/chat/ThreadCostControl.tsx",
+          "apps/web/src/components/environment/**",
+          "apps/web/src/components/members/**",
+          "apps/web/src/components/planreview/**",
+          "apps/web/src/components/settings/ActiveProjectsSettingsPanel.tsx",
+          "apps/web/src/components/settings/ExternalMcpSettingsSection.tsx",
+          "apps/web/src/components/settings/SessionArchive*.tsx",
+          "apps/web/src/fork/**",
+        ],
+        rules: {
+          "shadcn/no-raw-colors": "off",
+          "shadcn/no-arbitrary-values": "off",
+          "shadcn/no-restyle": "off",
+          "shadcn/no-unknown-classes": "off",
+        },
+      },
+      // T3-CUSTOM(expbkt3): END
+      {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
         rules: { "shadcn/no-arbitrary-values": "off" },
@@ -308,6 +342,17 @@ export default defineConfig({
           "apps/mobile/src/features/home/HomeHeader.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
+          // T3-CUSTOM(expbkt3): Symbol/native controls require resolved palette values, not className styling.
+          "apps/mobile/src/features/environments/EnvironmentAppearanceButton.tsx",
+          "apps/mobile/src/features/environments/EnvironmentAppearanceEditor.tsx",
+          "apps/mobile/src/features/members/ThreadMembersSheet.tsx",
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarGroupBySheet.tsx",
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarList.tsx",
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarPane.tsx",
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarRowView.tsx",
+          "apps/mobile/src/features/planreview/PlanReviewSheet.tsx",
+          "apps/mobile/src/features/planreview/PlanReviewThreadBanner.tsx",
+          "apps/mobile/src/features/threadusage/ThreadUsageSheet.tsx",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",

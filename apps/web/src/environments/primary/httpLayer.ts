@@ -5,6 +5,10 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 
 import { readDesktopPrimaryBearerToken } from "./desktopAuth";
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
+// T3-CUSTOM(expbkt3): BEGIN - a managed BK build authorizes with a DPoP-bound token.
+import { isBkManagedPrimary } from "../../fork/managedEnvironment";
+import { authorizeManagedPrimaryRequest } from "../../fork/managedPrimaryHttp";
+// T3-CUSTOM(expbkt3): END
 
 function isSameOriginBrowserPrimary(): boolean {
   if (
@@ -19,6 +23,17 @@ function isSameOriginBrowserPrimary(): boolean {
 }
 
 function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpClient {
+  // T3-CUSTOM(expbkt3): BEGIN - a managed BK build's primary token is bound to this
+  // device's key, so every request carries a freshly signed proof over its own method
+  // and URL. A static bearer header cannot express that.
+  if (isBkManagedPrimary()) {
+    return client.pipe(
+      HttpClient.mapRequestEffect((request) =>
+        Effect.promise(() => authorizeManagedPrimaryRequest(request)),
+      ),
+    );
+  }
+  // T3-CUSTOM(expbkt3): END
   return client.pipe(
     HttpClient.mapRequestEffect((request) =>
       Effect.promise(readDesktopPrimaryBearerToken).pipe(

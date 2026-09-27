@@ -25,7 +25,18 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  // T3-CUSTOM(expbkt3): BEGIN — phase-grouped sidebar variant.
+  useClientSettings,
+  useClientSettingsHydrated,
+  // T3-CUSTOM(expbkt3): END
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
+// T3-CUSTOM(expbkt3): BEGIN — phase-grouped sidebar variant.
+import PhaseGroupedSidebar from "./PhaseGroupedSidebar";
+import { shouldUsePhaseGroupedSidebar } from "./sidebar/sidebarVariant";
+// T3-CUSTOM(expbkt3): END
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -225,6 +236,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  // T3-CUSTOM(expbkt3): BEGIN — phase-grouped sidebar variant.
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const phaseGroupedSidebarEnabled = useClientSettings(
+    (settings) => settings.phaseGroupedSidebarEnabled,
+  );
+  const usePhaseGroupedSidebar = shouldUsePhaseGroupedSidebar({
+    clientSettingsHydrated,
+    phaseGroupedSidebarEnabled,
+    pathname,
+  });
+  // T3-CUSTOM(expbkt3): END
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -321,6 +343,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
               <SidebarChromeHeader isElectron={isElectron} />
               <SettingsSidebarNav pathname={pathname} />
             </>
+          ) : /* T3-CUSTOM(expbkt3): phase-grouped variant retains precedence. */
+          usePhaseGroupedSidebar ? (
+            <PhaseGroupedSidebar />
           ) : legacySidebarEnabled ? (
             <LegacyThreadSidebar />
           ) : (

@@ -29,6 +29,8 @@ import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+// T3-CUSTOM(expbkt3): memorable worktree codenames.
+import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { pullRequestListLines } from "./pullRequest/pullRequestListLines";
 import {
@@ -415,10 +417,13 @@ export function ThreadWorktreeIndicator({
     return null;
   }
 
+  // T3-CUSTOM(expbkt3): lead with the codename — the raw directory name is a
+  // hex token nobody can hold in their head.
+  const codename = resolveWorktreeCodename(worktreePath);
   const displayPath = formatWorktreePathForDisplay(worktreePath);
   const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
+    ? `Worktree ${codename} (${thread.branch}) · ${displayPath}`
+    : `Worktree ${codename} · ${displayPath}`;
 
   return (
     <Tooltip>

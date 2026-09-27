@@ -12,6 +12,8 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+// T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+import { IntegratedBrowserLinkInterceptor } from "../fork/integratedBrowserLinks";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -191,6 +193,8 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+  const { routeThreadRef } = useHandleNewThread();
   // Both thread routes render here, not in their own leaf components, so the
   // draft-to-thread promotion keeps one ChatView mounted across the swap.
   const threadTarget = useParams({
@@ -200,6 +204,8 @@ function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      {/* T3-CUSTOM(expbkt3): every link opens in the integrated browser. */}
+      <IntegratedBrowserLinkInterceptor threadRef={routeThreadRef} />
       {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
     </>
   );

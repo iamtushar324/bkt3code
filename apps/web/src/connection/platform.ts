@@ -1,6 +1,8 @@
 import {
   ClientPresentation,
   CloudSession,
+  // T3-CUSTOM(expbkt3): team-mode identity for remote pairing.
+  EnvironmentIdentity,
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
@@ -42,13 +44,26 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
+// T3-CUSTOM(expbkt3): attach the built client version to connection metadata.
 import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
+// T3-CUSTOM(expbkt3): the operator's Clerk token, for identity-bearing pairing.
+import { readTeamClerkToken } from "../state/teamIdentityToken";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+// T3-CUSTOM(expbkt3): BEGIN - cache slot for the primary registration in managed builds,
+// and the DPoP authorization a managed primary connection is prepared with.
+import { bkPrimaryRegistrationCacheKey } from "../fork/managedEnvironment";
+import { readManagedPrimaryDpopAuthorization } from "../fork/managedPrimaryConnection";
+import {
+  primaryRegistrationFallback,
+  storedPlatformRegistration,
+  writePersistedPrimaryRegistration,
+} from "../fork/platformRegistrationCache";
+// T3-CUSTOM(expbkt3): END
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -61,6 +76,8 @@ import {
 } from "./desktopLocal";
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
+// T3-CUSTOM(expbkt3): desktop-local discovery must not delay the primary.
+import { DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS } from "./desktopLocalDiscovery.expbkt3";
 
 let nextObservedRpcRequestId = 0;
 
@@ -176,6 +193,16 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — present the operator's Clerk identity when pairing a
+// remote fork environment. Never fails: an absent token means "no identity to
+// present", and the environment's own identity mode decides whether that is
+// acceptable. Exported so the wiring from Clerk through to pairing is testable —
+// a silently-null token here is exactly the failure this feature has to avoid.
+export const teamEnvironmentIdentity: typeof EnvironmentIdentity.Service = EnvironmentIdentity.of({
+  identityToken: Effect.promise(readTeamClerkToken).pipe(Effect.map(Option.fromNullishOr)),
+});
+// T3-CUSTOM(expbkt3): END
+
 const capabilitiesLayer = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientPresentation.of({
@@ -215,6 +242,8 @@ const capabilitiesLayer = Layer.effectContext(
     const identity = RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,
     });
+    // T3-CUSTOM(expbkt3): the operator's Clerk identity, for remote pairing.
+    const environmentIdentity = teamEnvironmentIdentity;
     const primaryAuth = PrimaryEnvironmentAuth.of({
       bearerToken: Effect.tryPromise({
         try: readDesktopPrimaryBearerToken,
@@ -224,6 +253,10 @@ const capabilitiesLayer = Layer.effectContext(
             detail: `Could not load the desktop primary credential: ${String(cause)}`,
           }),
       }).pipe(Effect.map(Option.fromNullishOr)),
+      // T3-CUSTOM(expbkt3): BEGIN - a managed BK build's primary token is DPoP-bound.
+      // Absent in every other build, which leaves the bearer path above untouched.
+      dpopAuthorization: readManagedPrimaryDpopAuthorization,
+      // T3-CUSTOM(expbkt3): END
     });
     const ssh = SshEnvironmentGateway.of({
       provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target) {
@@ -286,6 +319,8 @@ const capabilitiesLayer = Layer.effectContext(
     return Context.make(CloudSession, cloudSession).pipe(
       Context.add(PrimaryEnvironmentAuth, primaryAuth),
       Context.add(RelayDeviceIdentity, identity),
+      // T3-CUSTOM(expbkt3): team-mode identity for remote pairing.
+      Context.add(EnvironmentIdentity, environmentIdentity),
       Context.add(ClientPresentation, presentation),
       Context.add(SshEnvironmentGateway, ssh),
     );
@@ -326,9 +361,11 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }
   const httpBaseUrl = entry.httpBaseUrl;
   const wsBaseUrl = entry.wsBaseUrl;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl,
+    // T3-CUSTOM(expbkt3): a starting local backend must not hold up the primary.
+    timeoutMs: DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
@@ -421,7 +458,12 @@ export function primaryRegistrationToRetainAfterTopologyRead(
   previous: ReadonlyMap<string, CachedPlatformRegistration>,
   topologyRead: PrimaryEnvironmentTargetRead,
 ): CachedPlatformRegistration | undefined {
-  return topologyRead._tag === "Failure" ? previous.get(PRIMARY_LOCAL_ENVIRONMENT_ID) : undefined;
+  // T3-CUSTOM(expbkt3): BEGIN - the primary registration keeps its own cache slot, which
+  // is the upstream id everywhere except a managed BK build; see fork/managedEnvironment.
+  return topologyRead._tag === "Failure"
+    ? previous.get(bkPrimaryRegistrationCacheKey(PRIMARY_LOCAL_ENVIRONMENT_ID))
+    : undefined;
+  // T3-CUSTOM(expbkt3): END
 }
 
 export function canReuseCachedPlatformRegistration(
@@ -482,13 +524,18 @@ const platformConnectionSourceLayer = Layer.effect(
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
 
+      // T3-CUSTOM(expbkt3): BEGIN - `primaryCacheKey` is PRIMARY_LOCAL_ENVIRONMENT_ID in
+      // every build except a managed BK one, where the primary is the central server and
+      // the bundled local backend registers as a secondary under that same id. Block ends
+      // after the primary registration below.
+      const primaryCacheKey = bkPrimaryRegistrationCacheKey(PRIMARY_LOCAL_ENVIRONMENT_ID);
       const primaryTopologyRead = readPrimaryEnvironmentTargetResult();
       const retainedPrimary = primaryRegistrationToRetainAfterTopologyRead(
         previous,
         primaryTopologyRead,
       );
       if (retainedPrimary !== undefined) {
-        next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, retainedPrimary);
+        next.set(primaryCacheKey, retainedPrimary);
         registrations.push(retainedPrimary.registration);
       }
 
@@ -499,12 +546,12 @@ const platformConnectionSourceLayer = Layer.effect(
       } else if (primaryTopologyRead.target !== null) {
         const primaryTarget = primaryTopologyRead.target;
         const signature = `primary|${primaryTarget.target.httpBaseUrl}|${primaryTarget.target.wsBaseUrl}`;
-        const cached = previous.get(PRIMARY_LOCAL_ENVIRONMENT_ID);
+        const cached = previous.get(primaryCacheKey);
         if (
           cached !== undefined &&
           canReuseCachedPlatformRegistration(cached, signature, nowEpochMs)
         ) {
-          next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cached);
+          next.set(primaryCacheKey, cached);
           registrations.push(cached.registration);
         } else {
           const built = yield* loadPrimaryConnectionRegistration(primaryTarget).pipe(
@@ -515,11 +562,22 @@ const platformConnectionSourceLayer = Layer.effect(
           );
           if (Option.isSome(built)) {
             const cacheEntry = { signature, registration: built.value };
-            next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cacheEntry);
+            next.set(primaryCacheKey, cacheEntry);
             registrations.push(built.value);
+            writePersistedPrimaryRegistration(storedPlatformRegistration(signature, built.value));
+          } else {
+            // The host is unreachable. Install it from the last registration it
+            // resolved so its cached threads still render and the supervisor can
+            // retry in the background, instead of the environment disappearing.
+            const fallback = primaryRegistrationFallback(signature);
+            if (fallback !== null) {
+              next.set(primaryCacheKey, { signature, registration: fallback });
+              registrations.push(fallback);
+            }
           }
         }
       }
+      // T3-CUSTOM(expbkt3): END
 
       const topologyRead = readDesktopSecondaryBootstrapsResult();
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(

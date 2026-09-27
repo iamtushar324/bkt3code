@@ -20,6 +20,7 @@ import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type MessageId,
@@ -44,8 +45,14 @@ import {
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
+  // T3-CUSTOM(expbkt3): fork fallback when no project default exists.
+  DEFAULT_RUNTIME_MODE,
 } from "@t3tools/contracts";
-import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+// T3-CUSTOM(expbkt3): expose recovery status while sends queue durably.
+import {
+  connectionStatusTitle,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -54,6 +61,12 @@ import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  ANONYMOUS_OUTBOX_IDENTITY,
+  selectThreadOutboxReplay,
+  shouldRetryThreadOutboxDelivery,
+  threadOutboxRetryDelayMs,
+} from "@t3tools/client-runtime/outbox";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
@@ -155,6 +168,8 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
+// T3-CUSTOM(expbkt3): Visit timestamps include the latest completion after hydration.
+import { resolveThreadVisitTimestamp } from "../threadVisitTimestamp";
 import {
   latestWorkspaceMutationId,
   useWorkspaceMutationRefresh,
@@ -188,6 +203,15 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
+// T3-CUSTOM(expbkt3): native plan review surface.
+import { PlanReviewPanel, useOpenPlanReviewDocumentId } from "../fork/planReviewSurface";
+// T3-CUSTOM(expbkt3): a reviewable plan takes over the transcript.
+import { PlanReviewTakeover } from "../fork/planReviewTakeover";
+// T3-CUSTOM(expbkt3): dock the one live composer inside native plan review.
+import { PlanReviewComposerDock } from "../fork/planReviewComposerDock";
+import { usePlanReviewTakeoverStore } from "../planReviewTakeoverStore";
+// T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+import { AgentUiExpandedSurface } from "../fork/agentUiSurface";
 import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
@@ -235,6 +259,8 @@ import {
   AlarmClockIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
+  // T3-CUSTOM(expbkt3): icon for the native plan review pill.
+  ClipboardListIcon,
   DownloadIcon,
   GitBranchIcon,
   Minimize2Icon,
@@ -251,6 +277,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
+// T3-CUSTOM(expbkt3): a fresh command id is used by the fork's durable outbox sends.
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
@@ -269,6 +296,8 @@ import {
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+// T3-CUSTOM(expbkt3): background cache deepening for offline handoffs.
+import { useThreadHistorySync } from "../hooks/useThreadHistorySync";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -291,7 +320,12 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+// T3-CUSTOM(expbkt3): buildThreadRouteParams is used by the fork's promotion navigation.
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
+// T3-CUSTOM(expbkt3): durable right-panel layout preference.
+import { useRightPanelMaximizedPreference } from "../rightPanelLayoutPreference";
+// T3-CUSTOM(expbkt3): Keep delayed draft promotion from stealing navigation.
+import { useDraftPromotionNavigationGuard } from "../hooks/useDraftPromotionNavigationGuard";
 import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
@@ -299,6 +333,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  hydrateImagesFromPersisted,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   restoreFailedBackgroundDraftThread,
@@ -345,7 +380,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { durableThreadOutbox, threadEnvironment, useEnvironmentThread } from "../state/threads";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -353,6 +388,8 @@ import {
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
+// T3-CUSTOM(expbkt3): environment user attribution.
+import { useCurrentUserId } from "../state/identity";
 import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
@@ -425,6 +462,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveOutboxSendGate,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
   latestTurnStartFailureId,
@@ -451,6 +489,7 @@ import {
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
+  resolveSendWorkspaceContext,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -473,6 +512,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldPrepareWorktreeForFirstTurn,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -539,6 +579,9 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+// T3-CUSTOM(expbkt3): stable empty set for terminal turn ids.
+const EMPTY_TERMINAL_TURN_IDS: ReadonlySet<string> = new Set();
+
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -622,6 +665,7 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+// T3-CUSTOM(expbkt3): native plan review surface (lazy: Plate is ~200 kB gzip).
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1483,6 +1527,8 @@ export default function ChatView(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  // T3-CUSTOM(expbkt3): Read live route state after asynchronous thread creation settles.
+  const shouldNavigateAfterDraftPromotion = useDraftPromotionNavigationGuard(draftId);
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
@@ -1492,6 +1538,8 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  // T3-CUSTOM(expbkt3): deepen this thread's cached history for offline handoffs.
+  useThreadHistorySync(routeKind === "server" ? routeThreadRef : null);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
@@ -1531,6 +1579,10 @@ export default function ChatView(props: ChatViewProps) {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  // T3-CUSTOM(expbkt3): discard a durable outbox entry the user gave up on.
+  const discardDurableOutbox = useAtomCommand(threadEnvironment.discardOutbox, {
+    reportFailure: false,
+  });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
@@ -1564,6 +1616,16 @@ export default function ChatView(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
+  const sourceControlProfilesQuery = useEnvironmentQuery(
+    sourceControlEnvironment.profiles({ environmentId, input: {} }),
+  );
+  const currentUserId = useCurrentUserId();
+  // T3-CUSTOM(expbkt3): pending sends are isolated by environment/account.
+  const outboxIdentityKey = currentUserId ?? ANONYMOUS_OUTBOX_IDENTITY;
+  const durableOutboxItems = useAtomValue(
+    durableThreadOutbox.itemsValueAtom(environmentId, outboxIdentityKey),
+  );
+  const outboxEnvironmentConnectionPhase = environmentById.get(environmentId)?.connection.phase;
   const routeServerThreadShell = useThreadShell(routeKind === "server" ? routeThreadRef : null);
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
@@ -1623,6 +1685,13 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  // T3-CUSTOM(expbkt3): the draft's explicit per-provider model choice.
+  const composerExplicitModelSelection = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return draft?.activeProvider
+      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+      : null;
+  });
   const composerHasUnsentContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
@@ -1733,9 +1802,11 @@ export default function ChatView(props: ChatViewProps) {
   const isRevertingCheckpoint = useComposerDraftStore((store) =>
     store.rewindingThreadKeys.has(routeThreadKey),
   );
-  const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
-    null,
-  );
+  // T3-CUSTOM(expbkt3): upstream keeps "is the right panel maximized" as a
+  // per-thread key in component state, so the layout resets on every thread
+  // switch and reload. Persist the choice instead — see rightPanelLayoutPreference.
+  const [rightPanelMaximizedPreference, setRightPanelMaximizedPreference] =
+    useRightPanelMaximizedPreference();
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const userInputResponsesInFlight = useRef(new Set<string>());
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -1916,7 +1987,11 @@ export default function ChatView(props: ChatViewProps) {
               settings,
               fallbackDraftProject?.id ?? null,
               fallbackDraftProject ?? undefined,
-            ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
+            ).settings.defaultModelSelection ??
+              // T3-CUSTOM(expbkt3): the fork's global default thread model is the
+              // last fallback before "no provider".
+              settings.defaultThreadModelSelection ??
+              NO_PROVIDER_MODEL_SELECTION,
           )
         : undefined,
     [draftThread, fallbackDraftProject, settings, threadId],
@@ -1926,8 +2001,14 @@ export default function ChatView(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const failedOutboxItem = durableOutboxItems.find(
+    (item) => item.threadId === activeThread?.id && item.deliveryState === "failed",
+  );
   const threadError = isServerThread
-    ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
+    ? (localServerError ??
+      failedOutboxItem?.failureDetail ??
+      activeServerThread?.session?.lastError ??
+      null)
     : localDraftError;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
@@ -1949,10 +2030,40 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
-  // Implicit drafts follow their current project/environment, including retargets.
-  // Explicit composer choices and existing server threads retain their permissions.
-  const runtimeMode = composerRuntimeMode ?? activeServerThread?.runtimeMode ?? defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  // T3-CUSTOM(expbkt3): drafts start from the fork's global default thread runtime mode.
+  const runtimeMode =
+    composerRuntimeMode ??
+    (isLocalDraftThread
+      ? settings.defaultThreadRuntimeMode
+      : (activeThread?.runtimeMode ?? defaultRuntimeMode));
+  // T3-CUSTOM(expbkt3): plan mode is on by default in the fork, so this normally
+  // resolves the stored/project/global mode. The guard is kept for the rare
+  // opt-out: with plan mode off the effective mode is forced to "default" — even
+  // for threads with a stored plan mode — so nobody is trapped in plan mode
+  // while its toggle is hidden. The next send persists "default" back.
+  // T3-CUSTOM(expbkt3): draft threads start from the global default interaction mode.
+  const requestedInteractionMode = settings.planModeAvailable
+    ? (composerInteractionMode ??
+      (isLocalDraftThread
+        ? settings.defaultThreadInteractionMode
+        : (activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)))
+    : DEFAULT_INTERACTION_MODE;
+  const sourceControlProfiles = sourceControlProfilesQuery.data?.profiles ?? [];
+  const sourceControlIdentityMode = sourceControlProfilesQuery.data?.identityMode ?? "machine";
+  // T3-CUSTOM(expbkt3): draft identity follows its creator; persisted thread
+  // identity follows the durable owner projected by the server.
+  const sourceControlOwnerUserId = isServerThread
+    ? (activeThread?.ownerUserId ?? null)
+    : currentUserId;
+  const activeSourceControlProfileId =
+    sourceControlIdentityMode === "thread-profile" && sourceControlOwnerUserId !== null
+      ? (sourceControlProfiles.find(
+          (profile) =>
+            profile.ownerUserId !== null &&
+            String(profile.ownerUserId) === String(sourceControlOwnerUserId),
+        )?.id ?? null)
+      : null;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
@@ -1997,6 +2108,85 @@ export default function ChatView(props: ChatViewProps) {
         : null,
     [activeThreadEnvironmentId, activeThreadId],
   );
+  // T3-CUSTOM(expbkt3): deterministic rejections stay durable and editable;
+  // only an explicit Retry dispatches them again.
+  const onRetryFailedOutboxItem = useCallback(() => {
+    if (!failedOutboxItem) return;
+    void startThreadTurn({
+      environmentId: failedOutboxItem.environmentId,
+      input: {
+        // T3-CUSTOM(expbkt3): explicit retry starts a new command because the
+        // rejected command may already have an idempotent failure receipt.
+        commandId: CommandId.make(randomUUID()),
+        threadId: failedOutboxItem.threadId,
+        outboxIdentityKey,
+        message: {
+          messageId: failedOutboxItem.messageId,
+          role: "user",
+          text: failedOutboxItem.text,
+          // T3-CUSTOM(expbkt3): since upstream #8048 a queued attachment is either
+          // already uploaded (send its asset id) or still local (send its data url).
+          attachments: failedOutboxItem.attachments.map((attachment) =>
+            attachment.type !== "image" || attachment.dataUrl === undefined
+              ? {
+                  type: attachment.type,
+                  id: attachment.uploadedAttachmentId ?? attachment.id,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                }
+              : {
+                  type: "image" as const,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                  dataUrl: attachment.dataUrl,
+                },
+          ),
+        },
+        ...(failedOutboxItem.modelSelection === undefined
+          ? {}
+          : { modelSelection: failedOutboxItem.modelSelection }),
+        runtimeMode: failedOutboxItem.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        interactionMode: failedOutboxItem.interactionMode ?? DEFAULT_INTERACTION_MODE,
+        ...(failedOutboxItem.bootstrap === undefined
+          ? {}
+          : { bootstrap: failedOutboxItem.bootstrap }),
+        ...(failedOutboxItem.sourceProposedPlan === undefined
+          ? {}
+          : { sourceProposedPlan: failedOutboxItem.sourceProposedPlan }),
+        ...(failedOutboxItem.titleSeed === undefined
+          ? {}
+          : { titleSeed: failedOutboxItem.titleSeed }),
+        createdAt: failedOutboxItem.createdAt,
+      },
+    });
+  }, [failedOutboxItem, outboxIdentityKey, startThreadTurn]);
+  const onEditFailedOutboxItem = useCallback(() => {
+    if (!failedOutboxItem) return;
+    setComposerDraftPrompt(composerDraftTarget, failedOutboxItem.text);
+    addComposerDraftImages(
+      composerDraftTarget,
+      // T3-CUSTOM(expbkt3): only locally-held images can go back into the composer;
+      // an already-uploaded attachment has no data url to rehydrate from.
+      hydrateImagesFromPersisted(
+        failedOutboxItem.attachments.flatMap((attachment) =>
+          attachment.type !== "image" || attachment.dataUrl === undefined
+            ? []
+            : [{ ...attachment, type: "image" as const, dataUrl: attachment.dataUrl }],
+        ),
+      ),
+    );
+    void discardDurableOutbox(failedOutboxItem);
+    window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
+  }, [
+    addComposerDraftImages,
+    composerDraftTarget,
+    composerRef,
+    discardDurableOutbox,
+    failedOutboxItem,
+    setComposerDraftPrompt,
+  ]);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
@@ -2087,8 +2277,8 @@ export default function ChatView(props: ChatViewProps) {
     renderedRightPanelSurface,
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
-  const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  // T3-CUSTOM(expbkt3): every thread opens the panel in the last shape the user chose.
+  const rightPanelMaximized = canMaximizeRightPanel && rightPanelMaximizedPreference;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -2715,7 +2905,12 @@ export default function ChatView(props: ChatViewProps) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        // T3-CUSTOM(expbkt3): BEGIN expose recovery status while sends queue durably.
+        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(unavailableConnection)}`,
+        description:
+          unavailableConnection.error ??
+          "Messages you send will be queued and delivered when it reconnects.",
+        // T3-CUSTOM(expbkt3): END
         actions: (
           <>
             {!environmentReconnecting ? (
@@ -2872,10 +3067,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
-    planModeEnabled: settings.planModeEnabled,
+    planModeEnabled: settings.planModeAvailable,
     provider: activeProviderStatus,
-    interactionMode:
-      composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
+    interactionMode: requestedInteractionMode,
   });
   const conversationProviderStatus =
     providerStatuses.find(
@@ -2910,9 +3104,34 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  const terminalTurnIds = useMemo<ReadonlySet<string>>(() => {
+    if (!activeLatestTurn || activeLatestTurn.state === "running") {
+      return EMPTY_TERMINAL_TURN_IDS;
+    }
+    return new Set([activeLatestTurn.turnId]);
+  }, [activeLatestTurn]);
+  // T3-CUSTOM(expbkt3): a question asked by a turn that has already settled is
+  // dropped before upstream's shared reducer sees it, so a finished turn cannot
+  // leave a live question sitting in the composer. Questions that expect a
+  // message reply stay, because they are answerable after the turn ends.
+  const requestActivities = useMemo(
+    () =>
+      terminalTurnIds.size === 0
+        ? threadActivities
+        : threadActivities.filter((activity) => {
+            if (activity.kind !== "user-input.requested") return true;
+            if (activity.turnId === null || !terminalTurnIds.has(activity.turnId)) return true;
+            const payload =
+              typeof activity.payload === "object" && activity.payload !== null
+                ? (activity.payload as { responseMode?: unknown })
+                : null;
+            return payload?.responseMode === "message";
+          }),
+    [terminalTurnIds, threadActivities],
+  );
   const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(threadActivities),
-    [threadActivities],
+    () => derivePendingRequests(requestActivities),
+    [requestActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
@@ -3183,7 +3402,8 @@ export default function ChatView(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
     isPreparingWorktree: isLocallyPreparingWorktree,
-    isSendBusy,
+    // T3-CUSTOM(expbkt3): local send busy is combined with durable outbox state below.
+    isSendBusy: isLocalSendBusy,
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     activeThread,
@@ -3193,6 +3413,135 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
+  // T3-CUSTOM(expbkt3): IndexedDB survives reloads; memory state is only the
+  // synchronous pre-persist paint used to meet the sub-100ms feedback target.
+  const queuedOutboxItems = useMemo(
+    () =>
+      durableOutboxItems
+        .filter((item) => item.threadId === activeThread?.id && item.deliveryState !== "failed")
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    [durableOutboxItems, activeThread?.id],
+  );
+  const hasDurableOutboxItem = queuedOutboxItems.length > 0;
+  const isSendBusy = deriveOutboxSendGate({
+    isLocalSendBusy,
+    hasPendingOutboxItem: hasDurableOutboxItem,
+    environmentConnected: outboxEnvironmentConnectionPhase === "connected",
+  });
+  const composerQueuedMessages = useMemo(
+    () => queuedOutboxItems.map((item) => ({ messageId: item.messageId, text: item.text })),
+    [queuedOutboxItems],
+  );
+  const onDiscardQueuedOutboxItem = useCallback(
+    (messageId: string) => {
+      const item = queuedOutboxItems.find((queued) => queued.messageId === messageId);
+      if (item === undefined) return;
+      void discardDurableOutbox(item);
+      setOptimisticUserMessages((existing) => {
+        const removed = existing.filter((message) => message.id === messageId);
+        for (const message of removed) {
+          revokeUserMessagePreviewUrls(message);
+        }
+        const next = existing.filter((message) => message.id !== messageId);
+        return next.length === existing.length ? existing : next;
+      });
+    },
+    [discardDurableOutbox, queuedOutboxItems],
+  );
+  const outboxReplayInFlightRef = useRef(new Set<MessageId>());
+  const outboxReplayAttemptRef = useRef(new Map<MessageId, number>());
+  const outboxReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [outboxReplayTick, setOutboxReplayTick] = useState(0);
+  useEffect(
+    () => () => {
+      if (outboxReplayTimerRef.current !== null) clearTimeout(outboxReplayTimerRef.current);
+    },
+    [],
+  );
+  useEffect(() => {
+    if (isLocalSendBusy || outboxEnvironmentConnectionPhase !== "connected") {
+      return;
+    }
+    // T3-CUSTOM(expbkt3): the send gate above clears on the server's projection
+    // acknowledgement, which lands before the RPC reply removes the queue row.
+    // Replaying then puts a second copy of a turn that already started on the
+    // wire, and since upstream #8048 that copy fails outright — its uploaded
+    // attachment was released the moment the first copy was acknowledged.
+    const { stale, next: queued } = selectThreadOutboxReplay({
+      items: durableOutboxItems,
+      identityKey: outboxIdentityKey,
+      replayingMessageIds: outboxReplayInFlightRef.current,
+    });
+    for (const item of stale) {
+      void discardDurableOutbox(item);
+    }
+    if (queued === undefined) return;
+    outboxReplayInFlightRef.current.add(queued.messageId);
+    void startThreadTurn({
+      environmentId: queued.environmentId,
+      input: {
+        commandId: queued.commandId,
+        threadId: queued.threadId,
+        outboxIdentityKey,
+        message: {
+          messageId: queued.messageId,
+          role: "user",
+          text: queued.text,
+          // T3-CUSTOM(expbkt3): since upstream #8048 a queued attachment is either
+          // already uploaded (send its asset id) or still local (send its data url).
+          attachments: queued.attachments.map((attachment) =>
+            attachment.type !== "image" || attachment.dataUrl === undefined
+              ? {
+                  type: attachment.type,
+                  id: attachment.uploadedAttachmentId ?? attachment.id,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                }
+              : {
+                  type: "image" as const,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                  dataUrl: attachment.dataUrl,
+                },
+          ),
+        },
+        ...(queued.modelSelection === undefined ? {} : { modelSelection: queued.modelSelection }),
+        runtimeMode: queued.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        interactionMode: queued.interactionMode ?? DEFAULT_INTERACTION_MODE,
+        ...(queued.bootstrap === undefined ? {} : { bootstrap: queued.bootstrap }),
+        ...(queued.sourceProposedPlan === undefined
+          ? {}
+          : { sourceProposedPlan: queued.sourceProposedPlan }),
+        ...(queued.titleSeed === undefined ? {} : { titleSeed: queued.titleSeed }),
+        createdAt: queued.createdAt,
+      },
+    }).then((result) => {
+      outboxReplayInFlightRef.current.delete(queued.messageId);
+      if (result._tag === "Success") {
+        outboxReplayAttemptRef.current.delete(queued.messageId);
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
+      if (!shouldRetryThreadOutboxDelivery(error)) return;
+      const attempt = (outboxReplayAttemptRef.current.get(queued.messageId) ?? 0) + 1;
+      outboxReplayAttemptRef.current.set(queued.messageId, attempt);
+      if (outboxReplayTimerRef.current !== null) clearTimeout(outboxReplayTimerRef.current);
+      outboxReplayTimerRef.current = setTimeout(() => {
+        outboxReplayTimerRef.current = null;
+        setOutboxReplayTick((tick) => tick + 1);
+      }, threadOutboxRetryDelayMs(attempt));
+    });
+  }, [
+    discardDurableOutbox,
+    durableOutboxItems,
+    isLocalSendBusy,
+    outboxEnvironmentConnectionPhase,
+    outboxIdentityKey,
+    outboxReplayTick,
+    startThreadTurn,
+  ]);
   const optimisticCompactionMessage = optimisticUserMessages.at(-1);
   const pendingCompactionMessage =
     isSendBusy &&
@@ -3485,7 +3834,25 @@ export default function ChatView(props: ChatViewProps) {
             });
           });
 
-    const localMessages = optimisticUserMessages;
+    // T3-CUSTOM(expbkt3): Queued outbox items survive reloads (IndexedDB) while
+    // optimistic messages do not — merge them in so a queued message stays visible
+    // in the timeline after a refresh.
+    const queuedTimelineMessages: ChatMessage[] = queuedOutboxItems.map((item) => ({
+      id: item.messageId,
+      role: "user",
+      text: item.text,
+      turnId: null,
+      sentByUserId: null,
+      createdAt: item.createdAt,
+      updatedAt: item.createdAt,
+      streaming: false,
+    }));
+    const localIds = new Set(optimisticUserMessages.map((message) => message.id));
+    const localMessages = [
+      ...optimisticUserMessages,
+      // T3-CUSTOM(expbkt3): durable queue entries the optimistic list does not cover.
+      ...queuedTimelineMessages.filter((message) => !localIds.has(message.id)),
+    ];
     if (localMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
@@ -3499,6 +3866,7 @@ export default function ChatView(props: ChatViewProps) {
     attachmentPreviewHandoffByMessageId,
     displayServerMessages,
     optimisticUserMessages,
+    queuedOutboxItems,
     projectHandoffMessagePreviews,
   ]);
   const timelineProjectionRef = useRef<{
@@ -3634,7 +4002,10 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: gitStatusCwd },
+          input: {
+            cwd: gitStatusCwd,
+            ...(activeThread ? { threadId: activeThread.id } : {}),
+          },
         }),
   );
   useWorkspaceMutationRefresh({
@@ -4668,6 +5039,22 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeProject, activeThreadRef],
   );
+  // T3-CUSTOM(expbkt3): BEGIN — open native plans in the thread-scoped review surface.
+  // Every "open the plan" entry point — the pill above the composer and the
+  // Preview button on the plan card — brings back the transcript takeover, the
+  // surface the plan opened in. The takeover's own header is the one route to
+  // the side panel, so the two never mean the same word differently.
+  const openPlanReviewSurface = useCallback((documentId: string) => {
+    usePlanReviewTakeoverStore.getState().undismiss(documentId);
+  }, []);
+  const planReviewDocumentId = useOpenPlanReviewDocumentId(
+    activeThreadRef?.environmentId ?? null,
+    activeThreadRef?.threadId ?? null,
+    activeProposedPlan !== null && hasActionableProposedPlan(activeProposedPlan)
+      ? activeProposedPlan.id
+      : null,
+  );
+  // T3-CUSTOM(expbkt3): END
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;
   const hasLinkedPullRequestDetail = activeThreadMetadata?.linkedPullRequest != null;
@@ -4861,7 +5248,9 @@ export default function ChatView(props: ChatViewProps) {
           .getState()
           .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
       }
-      setMaximizedRightPanelThreadKey(null);
+      // T3-CUSTOM(expbkt3): upstream cleared the maximized flag here. The fork
+      // keeps it: closing a panel is not a decision about how the next one opens,
+      // and the choice is persisted (see rightPanelLayoutPreference).
       useRightPanelStore.getState().close(activeThreadRef);
     }
   }, [activeRightPanelSurface, activeThreadRef]);
@@ -5026,10 +5415,9 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+    // T3-CUSTOM(expbkt3): the toggle records a durable preference, not thread state.
+    setRightPanelMaximizedPreference((maximized) => !maximized);
+  }, [canMaximizeRightPanel, setRightPanelMaximizedPreference]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -5812,6 +6200,13 @@ export default function ChatView(props: ChatViewProps) {
       }
       return [];
     });
+    // Also clear the in-flight latch. It guards against double-sends within a
+    // single send, but it is component-scoped: a send that never settles (a
+    // dispatch lost on a dead socket, a server bootstrap that hung) used to
+    // leave it stuck true for the life of the tab, and every later send —
+    // including on a brand-new thread — then returned at the guard without
+    // ever issuing an RPC. Switching threads is always a fresh send context.
+    sendInFlightRef.current = false;
     resetLocalDispatch();
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
@@ -6052,6 +6447,31 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
+
+  useEffect(() => {
+    if (!serverThread?.id) return;
+    // T3-CUSTOM(expbkt3): A restarted client can hydrate completion after the shell timestamp.
+    const visitedAt = resolveThreadVisitTimestamp({
+      threadUpdatedAt: serverThread.updatedAt,
+      latestTurnCompletedAt: serverThread.latestTurn?.completedAt,
+    });
+    const threadUpdatedAt = Date.parse(visitedAt);
+    if (Number.isNaN(threadUpdatedAt)) return;
+    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
+    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
+
+    markThreadVisited(
+      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
+      visitedAt,
+    );
+  }, [
+    activeThreadLastVisitedAt,
+    markThreadVisited,
+    serverThread?.environmentId,
+    serverThread?.id,
+    serverThread?.latestTurn?.completedAt,
+    serverThread?.updatedAt,
+  ]);
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
     if (activeThreadShell?.settledOverride === "settled") return false;
@@ -7169,6 +7589,8 @@ export default function ChatView(props: ChatViewProps) {
         role: "user",
         text: "/compact",
         turnId: null,
+        // T3-CUSTOM(expbkt3): fork-required field.
+        sentByUserId: null,
         createdAt,
         updatedAt: createdAt,
         streaming: false,
@@ -7314,7 +7736,8 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
 
-  const onSend = async (
+  // T3-CUSTOM(expbkt3): the send body runs inside onSend's latch-release wrapper below.
+  const runSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
     directAnnotation?: {
@@ -7375,14 +7798,15 @@ export default function ChatView(props: ChatViewProps) {
       });
       return;
     }
-    if (activeEnvironmentUnavailable) {
+    // T3-CUSTOM(expbkt3): existing threads queue while offline; only drafts need a live host.
+    if (activeEnvironmentUnavailable && isLocalDraftThread) {
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
       toastManager.add({
         ...stackedThreadToast({
           type: "warning",
-          title: "Not connected: message not sent",
+          title: "Not connected: thread not started",
           description: "Reconnecting to the environment. Try again once it is connected.",
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
@@ -7701,19 +8125,32 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
-
+    // The environment selector and the send handler can run in adjacent browser
+    // tasks. Read the draft store at submission time so the command cannot use
+    // a stale render that still says "worktree" after the UI says "Current checkout".
+    const sendWorkspace = resolveSendWorkspaceContext({
+      isLocalDraftThread,
+      isGitRepo,
+      rendered: {
+        envMode,
+        branch: activeThreadBranch,
+        worktreePath: activeThread.worktreePath,
+      },
+      latestDraft:
+        isLocalDraftThread && draftId !== null ? (getDraftSession(draftId) ?? null) : null,
+    });
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    const shouldCreateWorktree = shouldPrepareWorktreeForFirstTurn({
+      isFirstMessage,
+      envMode: sendWorkspace.envMode,
+      worktreePath: sendWorkspace.worktreePath,
+    });
+    if (shouldCreateWorktree && !sendWorkspace.branch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
+    const baseBranchForWorktree = shouldCreateWorktree ? sendWorkspace.branch : null;
 
     const composerImagesSnapshot = [...composerImages];
     const composerFilesSnapshot = [...composerFiles];
@@ -7793,7 +8230,8 @@ export default function ChatView(props: ChatViewProps) {
         models: provider.models,
         modelOptions: selection.options,
         promptInjectionState: getComposerPromptInjectionState(messageTextForSend),
-        planModeEnabled: settings.planModeEnabled,
+        // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+        planModeAvailable: settings.planModeAvailable,
       });
       const text = formatOutgoingPrompt({
         provider: provider.driverKind,
@@ -7811,7 +8249,8 @@ export default function ChatView(props: ChatViewProps) {
         ),
         text,
         interactionMode: resolveComposerInteractionMode({
-          planModeEnabled: settings.planModeEnabled,
+          // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+          planModeEnabled: settings.planModeAvailable,
           provider: provider.snapshot,
           interactionMode: sendInteractionMode,
         }).interactionMode,
@@ -8011,6 +8450,8 @@ export default function ChatView(props: ChatViewProps) {
                       interactionMode: target.interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: null,
+                      // T3-CUSTOM(expbkt3): per-user source-control profile.
+                      sourceControlProfileId: activeSourceControlProfileId,
                       createdAt: messageCreatedAt,
                     },
                     prepareWorktree: {
@@ -8234,6 +8675,7 @@ export default function ChatView(props: ChatViewProps) {
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
         turnId: null,
+        sentByUserId: null,
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
         streaming: false,
@@ -8286,8 +8728,9 @@ export default function ChatView(props: ChatViewProps) {
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
       ctxSelectedModelSelection.options,
     );
-
     let failure: AtomCommandResult<unknown, unknown> | null = null;
+    // T3-CUSTOM(expbkt3): set once the draft's thread is known to exist on the server.
+    let draftThreadCreated = isServerThread;
     // Auto-title from first message
     if (isFirstMessage && isServerThread) {
       const titleResult = await updateThreadMetadata({
@@ -8333,6 +8776,15 @@ export default function ChatView(props: ChatViewProps) {
     let turnStartSucceeded = false;
     let backgroundDraftOpened = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      // T3-CUSTOM(expbkt3): a draft seeded from another session's context may
+      // carry a parent; promotion has to create the thread as that child.
+      const draftParentThread = isLocalDraftThread
+        ? (useComposerDraftStore.getState().getDraftThread(composerDraftTarget) ?? null)
+        : null;
+      const draftParentThreadId = draftParentThread?.parentThreadId ?? null;
+      // T3-CUSTOM(expbkt3): the parent may live on another machine, typically
+      // because this child was started somewhere its parent's host is not.
+      const draftParentEnvironmentId = draftParentThread?.parentEnvironmentId ?? null;
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -8346,6 +8798,13 @@ export default function ChatView(props: ChatViewProps) {
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      // T3-CUSTOM(expbkt3): BEGIN — child lineage and per-user source-control profile.
+                      ...(draftParentThreadId ? { parentThreadId: draftParentThreadId } : {}),
+                      ...(draftParentThreadId && draftParentEnvironmentId
+                        ? { parentEnvironmentId: draftParentEnvironmentId }
+                        : {}),
+                      sourceControlProfileId: activeSourceControlProfileId,
+                      // T3-CUSTOM(expbkt3): END
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -8374,6 +8833,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: threadIdForSend,
+          outboxIdentityKey,
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -8443,6 +8903,8 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // T3-CUSTOM(expbkt3): the acknowledged turn start proves the thread exists.
+        if (isLocalDraftThread) draftThreadCreated = true;
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -8479,7 +8941,16 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
-    if (failure !== null) {
+    // T3-CUSTOM(expbkt3): BEGIN
+    // A retryable transport failure means the message is safely queued in the
+    // durable outbox and will auto-send on reconnect — keep its optimistic
+    // timeline entry and skip the error toast.
+    const queuedForRedelivery =
+      failure !== null &&
+      !isAtomCommandInterrupted(failure) &&
+      shouldRetryThreadOutboxDelivery(squashAtomCommandFailure(failure));
+    if (failure !== null && !queuedForRedelivery) {
+      // T3-CUSTOM(expbkt3): END
       if (resolvedSubmissionIntent === "background" && draftId && draftThread) {
         restoreFailedBackgroundDraftThread(
           draftId,
@@ -8550,9 +9021,15 @@ export default function ChatView(props: ChatViewProps) {
             );
           }
         }
-        setThreadError(
-          threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send message.",
+        const errorMessage = error instanceof Error ? error.message : "Failed to send message.";
+        setThreadError(threadIdForSend, errorMessage);
+        // T3-CUSTOM(expbkt3): stacked per-thread toasts.
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: isLocalDraftThread ? "Could not start thread" : "Could not send message",
+            description: errorMessage,
+          }),
         );
         if (backgroundDraftOpened && draftId) {
           toastManager.add(
@@ -8571,6 +9048,28 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
     }
+
+    if (isLocalDraftThread && draftThreadCreated) {
+      const createdThreadRef = scopeThreadRef(environmentId, threadIdForSend);
+      // Command acknowledgement is authoritative proof that the durable thread
+      // exists. Do not leave promotion entirely dependent on observing the
+      // matching shell delta: a dropped delta used to strand the draft route on
+      // "Creating thread…" until a full page reload rebuilt the shell snapshot.
+      // The server now projection-fences shell events, so this promotion never
+      // needs to restart the healthy environment connection (which previously
+      // flashed a false "not connected" warning above the composer).
+      markPromotedDraftThreadByRef(createdThreadRef);
+      // T3-CUSTOM(expbkt3): The originating component can finish this async
+      // send after the user has selected another thread. Only canonicalize the
+      // route while that exact draft is still active.
+      if (shouldNavigateAfterDraftPromotion()) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(createdThreadRef),
+          replace: true,
+        });
+      }
+    }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
@@ -8579,6 +9078,34 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // T3-CUSTOM(expbkt3): BEGIN
+  // The latch must be released even if the send throws: leaking it disables
+  // every future send in this tab, with no error to explain why. Release it
+  // only when this send took it (runSend bumps the generation as it takes the
+  // latch) and no newer send has since: a multi-model send hands the latch
+  // back before its background starts settle, and an early return because
+  // another send is in flight never owned it.
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    submissionIntent: ComposerSubmissionIntent = "foreground",
+    // T3-CUSTOM(expbkt3): a preview annotation can be sent straight from the panel.
+    directAnnotation?: {
+      annotation: PreviewAnnotationPayload;
+      image: ComposerImageAttachment | null;
+    },
+  ) => {
+    const generationBeforeSend = composerSendGenerationRef.current;
+    try {
+      await runSend(e, submissionIntent, directAnnotation);
+    } catch (error) {
+      if (composerSendGenerationRef.current === generationBeforeSend + 1) {
+        sendInFlightRef.current = false;
+      }
+      throw error;
+    }
+  };
+  // T3-CUSTOM(expbkt3): END
 
   // Queued messages go out from QueuedMessageSender, which also covers
   // threads that are not on screen. Send now uses the same path but skips the
@@ -8935,6 +9462,7 @@ export default function ChatView(props: ChatViewProps) {
           text: outgoingMessageText,
           ...(context ? { context } : {}),
           turnId: null,
+          sentByUserId: null,
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
           streaming: false,
@@ -8966,6 +9494,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId,
           input: {
             threadId: threadIdForSend,
+            outboxIdentityKey,
             message: {
               messageId: messageIdForSend,
               role: "user",
@@ -9103,6 +9632,7 @@ export default function ChatView(props: ChatViewProps) {
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
+        sourceControlProfileId: activeSourceControlProfileId,
         createdAt,
       },
     });
@@ -9114,6 +9644,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: nextThreadId,
+          outboxIdentityKey,
           message: {
             messageId: newMessageId(),
             role: "user",
@@ -9570,7 +10101,22 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+    ) : /* T3-CUSTOM(expbkt3): BEGIN — native plan review panel. */
+    renderedRightPanelSurface?.kind === "planReview" ? (
+      <Suspense fallback={null}>
+        <PlanReviewPanel
+          key={renderedRightPanelSurface.documentId}
+          environmentId={activeThreadRef.environmentId}
+          documentId={renderedRightPanelSurface.documentId}
+          onClose={() =>
+            useRightPanelStore
+              .getState()
+              .closeSurface(activeThreadRef, renderedRightPanelSurface.id)
+          }
+        />
+      </Suspense>
+    ) : /* T3-CUSTOM(expbkt3): END */
+    renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
@@ -9764,6 +10310,8 @@ export default function ChatView(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            sourceControlProfiles={sourceControlProfiles}
+            sourceControlProfileId={activeSourceControlProfileId}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
@@ -9807,13 +10355,25 @@ export default function ChatView(props: ChatViewProps) {
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
               />
+              {/* T3-CUSTOM(expbkt3): failed-outbox errors expose explicit retry/edit
+            actions; the plain thread error adopts upstream's session-scoped dismissal mask. */}
               <ThreadErrorBanner
                 error={visibleThreadError}
-                onDismiss={() => {
-                  setThreadError(activeThread.id, null);
-                  dismissThreadErrorBannerForSession(threadErrorBannerKey);
-                  setThreadErrorBannerDismissTick((tick) => tick + 1);
-                }}
+                {...(failedOutboxItem
+                  ? {
+                      onRetry: onRetryFailedOutboxItem,
+                      onDismiss: onEditFailedOutboxItem,
+                      dismissLabel: "Edit",
+                    }
+                  : visibleThreadError
+                    ? {
+                        onDismiss: () => {
+                          setThreadError(activeThread.id, null);
+                          dismissThreadErrorBannerForSession(threadErrorBannerKey);
+                          setThreadErrorBannerDismissTick((tick) => tick + 1);
+                        },
+                      }
+                    : {})}
               />
             </div>
             {/* Messages Wrapper */}
@@ -9848,6 +10408,10 @@ export default function ChatView(props: ChatViewProps) {
                     ? EMPTY_HELD_TURN_DIFF_SUMMARIES
                     : activeThread.checkpoints
                 }
+                // T3-CUSTOM(expbkt3): BEGIN — plan review surfaces.
+                onOpenPlanReview={openPlanReviewSurface}
+                planReviewDocumentId={planReviewDocumentId}
+                // T3-CUSTOM(expbkt3): END
                 activeThreadEnvironmentId={
                   displayedThreadRef?.environmentId ?? activeThread.environmentId
                 }
@@ -9927,6 +10491,35 @@ export default function ChatView(props: ChatViewProps) {
                   </Button>
                 </div>
               )}
+              {/* T3-CUSTOM(expbkt3): BEGIN — floating entry point for a plan awaiting review. */}
+              {planReviewDocumentId !== null &&
+              !showScrollToBottom &&
+              activeRightPanelSurface?.kind !== "planReview" ? (
+                <div
+                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                  // T3-CUSTOM(expbkt3): the published overlay height is held in
+                  // composerTimelineInset; publishComposerOverlayHeight writes it.
+                  style={{ bottom: composerTimelineInset + 4 }}
+                >
+                  <button
+                    type="button"
+                    aria-label="Open the plan review"
+                    data-plan-review-pill
+                    onClick={() => openPlanReviewSurface(planReviewDocumentId)}
+                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:cursor-pointer hover:border-border hover:text-foreground"
+                  >
+                    <ClipboardListIcon className="size-3.5" />
+                    Open the plan
+                  </button>
+                </div>
+              ) : null}
+              {/* T3-CUSTOM(expbkt3): END */}
+              {/* T3-CUSTOM(expbkt3): a reviewable plan covers the transcript, not the composer.
+                  Mounted before the agent view so a surface the user expanded on
+                  purpose still wins over the automatic one. */}
+              <PlanReviewTakeover threadRef={activeThreadRef} documentId={planReviewDocumentId} />
+              {/* T3-CUSTOM(expbkt3): an expanded agent view covers the transcript, not the composer. */}
+              <AgentUiExpandedSurface threadRef={activeThreadRef} />
             </div>
 
             {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
@@ -9976,7 +10569,8 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <ComposerSurface.Shell contextStrip={showComposerContextStrip}>
+                    {/* T3-CUSTOM(expbkt3): move this one mounted composer into plan review. */}
+                    <PlanReviewComposerDock contextStrip={showComposerContextStrip}>
                       <ComposerSurface.Host>
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
@@ -10032,6 +10626,9 @@ export default function ChatView(props: ChatViewProps) {
                                 : undefined
                             }
                             environmentUnavailable={activeEnvironmentUnavailableState}
+                            queuedMessages={composerQueuedMessages}
+                            onDiscardQueuedMessage={onDiscardQueuedOutboxItem}
+                            queuedSendAllowed={!isLocalDraftThread}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
                             pendingUserInputs={pendingUserInputs}
@@ -10163,7 +10760,7 @@ export default function ChatView(props: ChatViewProps) {
                           )}
                         </div>
                       </div>
-                    </ComposerSurface.Shell>
+                    </PlanReviewComposerDock>
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"

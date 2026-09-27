@@ -74,6 +74,28 @@ export function hasCloudPublicConfig(): boolean {
   return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
 }
 
+/**
+ * Whether a Clerk publishable key is configured for this build. Team-mode
+ * sign-in (via `POST /api/auth/clerk-session`) needs only this key — not the
+ * relay JWT template / relay URL that `hasCloudPublicConfig()` additionally
+ * requires. Desktop/local builds without the key are unaffected.
+ */
+export function hasClerkPublicConfig(): boolean {
+  return Boolean(resolveCloudPublicConfig().clerkPublishableKey);
+}
+
+export function resolveClerkPublishableKey(): string | null {
+  return resolveCloudPublicConfig().clerkPublishableKey;
+}
+
+export type AppClerkMode = "disabled" | "identity" | "cloud";
+
+export function resolveAppClerkMode(): AppClerkMode {
+  const config = resolveCloudPublicConfig();
+  if (!config.clerkPublishableKey) return "disabled";
+  return config.clerkJwtTemplate && config.relayUrl ? "cloud" : "identity";
+}
+
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {

@@ -488,8 +488,11 @@ export function buildLocalDraftThread(
     settledAt: null,
     deletedAt: null,
     latestTurn: null,
+    ownerUserId: null,
+    memberUserIds: [],
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    sourceControlProfileId: null,
     checkpoints: [],
     pullRequests: [],
     activities: [],
@@ -819,6 +822,42 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — submission-time workspace resolution for the fork's send path.
+export function resolveSendWorkspaceContext(input: {
+  isLocalDraftThread: boolean;
+  isGitRepo: boolean;
+  rendered: {
+    envMode: DraftThreadEnvMode;
+    branch: string | null;
+    worktreePath: string | null;
+  };
+  latestDraft: Pick<DraftThreadState, "envMode" | "branch" | "worktreePath"> | null;
+}): {
+  envMode: DraftThreadEnvMode;
+  branch: string | null;
+  worktreePath: string | null;
+} {
+  const selected =
+    input.isLocalDraftThread && input.latestDraft ? input.latestDraft : input.rendered;
+  return {
+    envMode: resolveSendEnvMode({
+      requestedEnvMode: selected.envMode,
+      isGitRepo: input.isGitRepo,
+    }),
+    branch: selected.branch,
+    worktreePath: selected.worktreePath,
+  };
+}
+
+export function shouldPrepareWorktreeForFirstTurn(input: {
+  isFirstMessage: boolean;
+  envMode: DraftThreadEnvMode;
+  worktreePath: string | null;
+}): boolean {
+  return input.isFirstMessage && input.envMode === "worktree" && input.worktreePath === null;
+}
+// T3-CUSTOM(expbkt3): END
+
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
   branch: string | null;
@@ -851,6 +890,18 @@ export function cloneComposerImageForRetry(
   } catch {
     return image;
   }
+}
+
+export function deriveOutboxSendGate(options: {
+  isLocalSendBusy: boolean;
+  hasPendingOutboxItem: boolean;
+  environmentConnected: boolean;
+}): boolean {
+  // While the environment is disconnected the outbox is a queue, not an
+  // in-flight turn: further sends must stay possible so messages can line up
+  // behind it. Once connected, a pending item means a dispatch/drain is
+  // actively running and the composer stays latched as before.
+  return options.isLocalSendBusy || (options.hasPendingOutboxItem && options.environmentConnected);
 }
 
 export function deriveComposerSendState(options: {

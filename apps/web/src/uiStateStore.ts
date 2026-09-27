@@ -440,8 +440,15 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  // T3-CUSTOM(expbkt3): Visit acknowledgements must survive an immediate route change or reload.
   markThreadVisited: (threadId, visitedAt) =>
-    set((state) => markThreadVisited(state, threadId, visitedAt)),
+    set((state) => {
+      const nextState = markThreadVisited(state, threadId, visitedAt);
+      if (nextState !== state) {
+        persistState(nextState);
+      }
+      return nextState;
+    }),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>

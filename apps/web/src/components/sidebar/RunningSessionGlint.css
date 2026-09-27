@@ -1,0 +1,44 @@
+.phase-running-session-glint {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.phase-running-session-glint::after {
+  position: absolute;
+  inset-block: 0;
+  /* Seven evenly spaced bands across a 7/3-width layer keep at least three
+     inside the clipped row while three periods travel one row-width. */
+  left: -100%;
+  width: 233.333%;
+  content: "";
+  opacity: 0.9;
+  background: repeating-linear-gradient(
+    100deg,
+    transparent 0%,
+    transparent 4.8%,
+    color-mix(in oklab, var(--color-primary) 7%, transparent) 5.8%,
+    rgb(255 255 255 / 10%) 7.1%,
+    color-mix(in oklab, var(--color-primary) 5%, transparent) 8.4%,
+    transparent 9.4%,
+    transparent 14.2857%
+  );
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  animation: phase-running-session-glint-sweep 8.4s linear infinite;
+}
+
+@keyframes phase-running-session-glint-sweep {
+  to {
+    transform: translate3d(42.8571%, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase-running-session-glint::after {
+    animation: none;
+  }
+}

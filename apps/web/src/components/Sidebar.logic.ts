@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): shared with the mobile phase sidebar.
+import { hasUnseenCompletion } from "@t3tools/client-runtime/state/phase-sidebar";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
@@ -645,16 +647,10 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return false;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
+// T3-CUSTOM(expbkt3): moved to client-runtime so the mobile phase sidebar can
+// share buildPhaseSidebarRows. Re-exported here so existing imports still work,
+// and imported above because this module calls it too.
+export { hasUnseenCompletion };
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;

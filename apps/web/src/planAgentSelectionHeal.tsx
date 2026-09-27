@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import { useEffect } from "react";
 
 import {
@@ -15,7 +16,8 @@ import { resolvePlanAgentHealPatch } from "./modelSelection";
  * whenever the settings load.
  */
 export function PlanAgentSelectionHeal() {
-  const planModeEnabled = usePrimarySettings((settings) => settings.planModeEnabled);
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+  const planModeAvailable = usePrimarySettings((settings) => settings.planModeAvailable);
   const textGenerationModelSelection = usePrimarySettings(
     (settings) => settings.textGenerationModelSelection,
   );
@@ -26,14 +28,16 @@ export function PlanAgentSelectionHeal() {
   const updateSettings = useUpdatePrimarySettings();
 
   useEffect(() => {
-    // planModeEnabled reads as false until client settings hydrate, so never
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+    // planModeAvailable reads as false until client settings hydrate, so never
     // heal before then: we would strip a stored plan selection from a user
     // whose plan mode is actually on.
     if (!settingsHydrated) {
       return;
     }
     const patch = resolvePlanAgentHealPatch({
-      planModeEnabled,
+      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+      planModeAvailable,
       textGenerationModelSelection,
       sourceControlWriterModelSelection,
     });
@@ -41,7 +45,8 @@ export function PlanAgentSelectionHeal() {
       updateSettings(patch);
     }
   }, [
-    planModeEnabled,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+    planModeAvailable,
     settingsHydrated,
     textGenerationModelSelection,
     sourceControlWriterModelSelection,

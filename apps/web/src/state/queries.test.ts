@@ -1,7 +1,19 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { areProjectPathSearchTargetsEqual } from "./queries";
+import { areProjectPathSearchTargetsEqual, buildBranchesListInput } from "./queries";
+
+describe("buildBranchesListInput", () => {
+  it("forwards exact remote-ref discovery for worktree base selection", () => {
+    expect(
+      buildBranchesListInput({
+        environmentId: EnvironmentId.make("environment-a"),
+        cwd: "/repo",
+        includeMatchingRemoteRefs: true,
+      }),
+    ).toEqual({ cwd: "/repo", includeMatchingRemoteRefs: true, limit: 100 });
+  });
+});
 
 describe("areProjectPathSearchTargetsEqual", () => {
   const target = {

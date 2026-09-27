@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import {
   type ModelCapabilities,
   type ProviderDriverKind,
@@ -26,7 +27,8 @@ export type ComposerProviderStateInput = {
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
-  planModeEnabled: boolean;
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+  planModeAvailable: boolean;
 };
 
 export type ComposerPromptInjectionState = "none" | "ultrathink";
@@ -49,8 +51,9 @@ type TraitsRenderInput = {
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   onPromptChange: (prompt: string) => void;
-  planModeEnabled: boolean;
+  planModeAvailable: boolean;
   size?: ComposerControlSize;
   hidden?: boolean;
   triggerClassName?: string;
@@ -103,17 +106,20 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const {
     provider,
     model,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     models,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     modelOptions,
     promptInjectionState = "none",
-    planModeEnabled,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+    planModeAvailable,
   } = input;
   if (provider === "opencode") {
     const normalizedModel = normalizeModelSlug(model, provider);
     const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
     if (!modelIsInCatalog) {
       const preservedOptions = modelOptions?.filter(
-        (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+        (option) => planModeAvailable || option.id !== "agent" || option.value !== "plan",
       );
       return {
         provider,
@@ -128,7 +134,8 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     model,
     provider,
     modelOptions,
-    planModeEnabled,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+    planModeAvailable,
   );
   const descriptors = getProviderOptionDescriptors({ caps, selections });
   const primarySelectDescriptor = descriptors.find(
@@ -165,14 +172,17 @@ function renderTraitsControl(
   const {
     provider,
     instanceId,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     threadRef,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     draftId,
     model,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     models,
     modelOptions,
     prompt,
     onPromptChange,
-    planModeEnabled,
+    planModeAvailable,
     size,
     hidden,
     triggerClassName,
@@ -184,7 +194,8 @@ function renderTraitsControl(
     model,
     provider,
     modelOptions,
-    planModeEnabled,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+    planModeAvailable,
   );
   if (
     !hasTarget ||
@@ -194,7 +205,8 @@ function renderTraitsControl(
       model,
       modelOptions: resolvedModelOptions,
       prompt,
-      planModeEnabled,
+      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+      planModeAvailable,
     })
   ) {
     return null;
@@ -210,7 +222,7 @@ function renderTraitsControl(
       modelOptions={resolvedModelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
-      planModeEnabled={planModeEnabled}
+      planModeAvailable={planModeAvailable}
       {...(size !== undefined ? { size } : {})}
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}

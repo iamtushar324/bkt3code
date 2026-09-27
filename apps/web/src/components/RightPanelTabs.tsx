@@ -15,6 +15,8 @@ import type {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
+  // T3-CUSTOM(expbkt3): ClipboardList is used by the fork's plan review tab.
+  ClipboardList,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -624,6 +626,10 @@ function surfaceTitle(
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
+    // T3-CUSTOM(expbkt3): BEGIN — label the native plan review surface.
+    case "planReview":
+      return "Plan review";
+    // T3-CUSTOM(expbkt3): END
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
@@ -703,6 +709,10 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
+    // T3-CUSTOM(expbkt3): BEGIN — icon for the native plan review surface.
+    case "planReview":
+      return <ClipboardList className="size-3.5 shrink-0 text-info" />;
+    // T3-CUSTOM(expbkt3): END
     case "pull-request":
       return (
         <PullRequestSurfaceIcon

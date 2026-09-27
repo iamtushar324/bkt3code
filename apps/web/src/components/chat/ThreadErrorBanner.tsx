@@ -33,12 +33,20 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
   return bannerKey !== null && sessionDismissedThreadErrorBannerKeys.has(bannerKey);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — recovery and failed outbox actions.
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
+  onRetry,
   onDismiss,
+  retryLabel = "Retry",
+  dismissLabel = "Dismiss",
 }: {
   error: string | null;
+  // T3-CUSTOM(expbkt3): exhausted durable work exposes explicit retry/dismiss.
+  onRetry?: () => void;
   onDismiss?: () => void;
+  retryLabel?: string;
+  dismissLabel?: string;
 }) {
   if (!error) return null;
   return (
@@ -53,14 +61,28 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
-        {onDismiss && (
+        {(onRetry || onDismiss) && (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-              <XIcon className="text-destructive" />
-            </Button>
+            {onRetry ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={onRetry}>
+                  {retryLabel}
+                </Button>
+                {onDismiss && (
+                  <Button variant="ghost" size="sm" onClick={onDismiss}>
+                    {dismissLabel}
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+                <XIcon className="text-destructive" />
+              </Button>
+            )}
           </AlertAction>
         )}
       </Alert>
     </div>
   );
 });
+// T3-CUSTOM(expbkt3): END

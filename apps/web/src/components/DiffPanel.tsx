@@ -181,7 +181,7 @@ export default function DiffPanel({
     activeThread !== null && activeThread !== undefined && activeCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
-          input: { cwd: activeCwd },
+          input: { cwd: activeCwd, threadId: activeThread.id },
         })
       : null,
   );

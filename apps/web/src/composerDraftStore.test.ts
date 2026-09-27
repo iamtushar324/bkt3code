@@ -2938,6 +2938,54 @@ describe("createDeferredStorage", () => {
   });
 });
 
+// T3-CUSTOM(expbkt3): context-handoff drafts carry session lineage.
+describe("composerDraftStore parentThreadId", () => {
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-lineage"));
+  const parentId = ThreadId.make("thread-parent");
+  const draftId = DraftId.make("draft-lineage");
+
+  it("stores the parent on creation and clears it when reseeded without one", () => {
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+      threadId: ThreadId.make("thread-child"),
+      parentThreadId: parentId,
+    });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.parentThreadId).toBe(
+      parentId,
+    );
+
+    useComposerDraftStore.getState().setDraftThreadContext(draftId, { parentThreadId: null });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.parentThreadId).toBeNull();
+  });
+
+  it("keeps the parent when unrelated context changes, drops it on a project change", () => {
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+      threadId: ThreadId.make("thread-child"),
+      parentThreadId: parentId,
+    });
+    useComposerDraftStore.getState().setDraftThreadContext(draftId, { branch: "feature/x" });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.parentThreadId).toBe(
+      parentId,
+    );
+
+    const otherProjectRef = scopeProjectRef(
+      OTHER_TEST_ENVIRONMENT_ID,
+      ProjectId.make("project-elsewhere"),
+    );
+    useComposerDraftStore.getState().setDraftThreadContext(draftId, {
+      projectRef: otherProjectRef,
+    });
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.parentThreadId ?? null,
+    ).toBeNull();
+  });
+});
+
 describe("composerDraftStore inline context references", () => {
   const threadId = ThreadId.make("thread-inline-context");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

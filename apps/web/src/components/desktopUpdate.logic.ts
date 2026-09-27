@@ -1,9 +1,21 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): BEGIN - fork builds have their own release repository.
+import { isBkManagedPrimary } from "../fork/managedEnvironment";
+// T3-CUSTOM(expbkt3): END
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 const DESKTOP_RELEASE_HISTORY_URL = "https://github.com/pingdotgg/t3code/releases";
 const DESKTOP_RELEASE_TAG_URL = `${DESKTOP_RELEASE_HISTORY_URL}/tag`;
+
+// T3-CUSTOM(expbkt3): BEGIN - a fork build updates from the fork's releases, so
+// pointing "Read more" at upstream's tags 404s on every fork version.
+const BK_DESKTOP_RELEASE_TAG_URL = "https://github.com/beknown-work/bkt3code/releases/tag";
+
+function resolveDesktopReleaseTagBaseUrl(): string {
+  return isBkManagedPrimary() ? BK_DESKTOP_RELEASE_TAG_URL : DESKTOP_RELEASE_TAG_URL;
+}
+// T3-CUSTOM(expbkt3): END
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -18,7 +30,9 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
-  return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
+  // T3-CUSTOM(expbkt3): resolve the repository per build, so fork versions link
+  // to fork tags instead of 404ing on upstream's.
+  return `${resolveDesktopReleaseTagBaseUrl()}/v${encodeURIComponent(normalizedVersion)}`;
 }
 
 export function getDesktopUpdateReleaseHistoryUrl(): string {

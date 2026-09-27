@@ -5,7 +5,8 @@ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router"
 import "./index.css";
 
 import { isElectron } from "./env";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+// T3-CUSTOM(expbkt3): standalone identity mode also loads the lazy auth shell.
+import { resolveAppClerkMode, resolveClerkPublishableKey } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
@@ -24,7 +25,8 @@ if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
 }
 
-const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+const clerkPublishableKey = resolveClerkPublishableKey();
+const clerkMode = resolveAppClerkMode();
 
 // A failed split-chunk fetch usually means the hashed assets went stale under
 // a deploy; one guarded reload picks up the fresh index.html.
@@ -39,13 +41,13 @@ window.addEventListener("vite:preloadError", (event) => {
 });
 
 const app = <AppRoot router={router} />;
-
-// Managed auth is cloud-only, and the Electron Clerk provider bundles the full
+// T3-CUSTOM(expbkt3): managed or identity-only auth uses the selected lazy runtime.
+// The Electron Clerk provider bundles the full
 // clerk-js runtime. Loading only the selected runtime as a split chunk keeps
 // every Clerk byte out of the startup graph for local-mode users, and keeps
 // the bundled clerk-js out of the browser build entirely.
 const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
+  clerkPublishableKey && clerkMode !== "disabled"
     ? isElectron
       ? import("./components/clerk/ElectronManagedAuthShell")
       : import("./components/clerk/BrowserManagedAuthShell")

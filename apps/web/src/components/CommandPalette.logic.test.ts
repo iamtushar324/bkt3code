@@ -308,6 +308,9 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     environmentId: LOCAL_ENVIRONMENT_ID,
     title: "Project",
     workspaceRoot: "/workspace/project",
+    // T3-CUSTOM(expbkt3): fork-required fields.
+    ownerUserId: null,
+    memberUserIds: [],
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-03-01T00:00:00.000Z",
@@ -321,6 +324,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.make("thread-1"),
     environmentId: LOCAL_ENVIRONMENT_ID,
     projectId: PROJECT_ID,
+    // T3-CUSTOM(expbkt3): fork-required fields.
+    ownerUserId: null,
+    memberUserIds: [],
     title: "Thread",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
     runtimeMode: "full-access",
@@ -337,6 +343,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    // T3-CUSTOM(expbkt3): fork-required field.
+    sourceControlProfileId: null,
     checkpoints: [],
     pullRequests: [],
     activities: [],

@@ -131,6 +131,20 @@ function SidebarUpdateControl() {
     }
   }, [prefersReducedMotion, state?.status]);
 
+  // T3-CUSTOM(expbkt3): BEGIN - clicking the native update-ready notification
+  // surfaces the update here rather than installing. Installing quits the app,
+  // which would discard an in-flight agent turn or terminal session, so the
+  // restart stays behind the labelled button below (which confirms first).
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge?.onUpdateReveal) return;
+    return bridge.onUpdateReveal(() => {
+      if (!state) return;
+      showDesktopUpdateDownloadedToast(bridge, state);
+    });
+  }, [state]);
+  // T3-CUSTOM(expbkt3): END
+
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({

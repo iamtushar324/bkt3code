@@ -10,6 +10,9 @@ import {
   createThreadEnvironmentAtoms,
   isThreadSessionRunning,
 } from "@t3tools/client-runtime/state/threads";
+// T3-CUSTOM(expbkt3): BEGIN — reactive IndexedDB pending-send state.
+import { createEnvironmentOutboxAtoms } from "@t3tools/client-runtime/state/outbox";
+// T3-CUSTOM(expbkt3): END
 import type { EnvironmentId, OrchestrationThreadShell, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -22,6 +25,9 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   environmentSnapshotAtom,
 );
+// T3-CUSTOM(expbkt3): BEGIN — shared by ChatView and sidebar surfaces.
+export const durableThreadOutbox = createEnvironmentOutboxAtoms(connectionAtomRuntime);
+// T3-CUSTOM(expbkt3): END
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

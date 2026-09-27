@@ -16,6 +16,7 @@ import {
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
+  formatDuration,
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
@@ -1643,6 +1644,8 @@ describe("image asset requests", () => {
     createdAt: "2026-09-04T00:00:00.000Z",
     updatedAt: "2026-09-04T00:00:00.000Z",
     streaming: false,
+    // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+    sentByUserId: null,
     attachments: [image],
   };
 
@@ -1758,6 +1761,8 @@ describe("deriveTimelineEntries", () => {
     createdAt: "2026-02-23T00:00:03.000Z",
     updatedAt: "2026-02-23T00:00:03.000Z",
     streaming: true,
+    // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+    sentByUserId: null,
   };
 
   it("reuses preview objects while preserving URL and attachment metadata changes", () => {
@@ -1807,6 +1812,8 @@ describe("deriveTimelineEntries", () => {
       ...streamingMessage,
       role: "user" as const,
       streaming: false,
+      // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+      sentByUserId: null,
       attachments: [
         {
           type: "image" as const,
@@ -1927,6 +1934,7 @@ describe("deriveTimelineEntries", () => {
           turnId: null,
           updatedAt: "2026-02-23T00:00:01.000Z",
           streaming: false,
+          sentByUserId: null,
         },
       ],
       [
@@ -2121,6 +2129,21 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("formatDuration hours", () => {
+  // Regression: without an hours branch a 21h30m turn rendered as "1290m".
+  it("renders hours and minutes for multi-hour durations", () => {
+    expect(formatDuration(21 * 3_600_000 + 30 * 60_000)).toBe("21h 30m");
+  });
+
+  it("omits minutes on a whole hour", () => {
+    expect(formatDuration(3_600_000)).toBe("1h");
+  });
+
+  it("still renders minutes below an hour", () => {
+    expect(formatDuration(59 * 60_000)).toBe("59m");
   });
 });
 

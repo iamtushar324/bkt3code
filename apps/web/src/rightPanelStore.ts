@@ -20,6 +20,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 
 const RIGHT_PANEL_KINDS = [
+  // T3-CUSTOM(expbkt3): native plan review surface.
+  "planReview",
   "diff",
   "files",
   "file",
@@ -64,6 +66,12 @@ export type RightPanelSurface =
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
     }
+  // T3-CUSTOM(expbkt3): native plan review surface.
+  | {
+      id: `plan-review:${string}`;
+      kind: "planReview";
+      documentId: string;
+    }
   | {
       /**
        * A change request opened beside a thread or in the pull-request list's shared panel.
@@ -89,6 +97,8 @@ export type RightPanelSurface =
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
+// T3-CUSTOM(expbkt3): fork v10 validates persisted native plan-review surfaces
+// (the validation is shape-based, so upstream's different v10 meaning is safe).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
@@ -129,11 +139,14 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    // T3-CUSTOM(expbkt3): planReview is excluded alongside upstream's kinds.
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "planReview" | "pull-request">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
+  // T3-CUSTOM(expbkt3): native plan review.
+  openPlanReview: (ref: ScopedThreadRef, documentId: string) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
@@ -168,7 +181,8 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    // T3-CUSTOM(expbkt3): planReview is excluded alongside upstream's kinds.
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "planReview" | "pull-request">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -180,7 +194,8 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  // T3-CUSTOM(expbkt3): planReview carries a document id, so it is never a singleton.
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "planReview" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -195,6 +210,13 @@ const singletonSurface = (
       return { id: "device", kind };
   }
 };
+
+// T3-CUSTOM(expbkt3): native plan review surface descriptor.
+const planReviewSurface = (documentId: string): RightPanelSurface => ({
+  id: `plan-review:${documentId}`,
+  kind: "planReview",
+  documentId,
+});
 
 const browserSurface = (tabId: string | null): RightPanelSurface =>
   tabId
@@ -381,6 +403,21 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           : 0;
                       return [{ ...surface, revealLine, revealRequestId }];
                     }
+                    // T3-CUSTOM(expbkt3): a plan-review surface is only valid
+                    // when its id still matches its document (fork v10).
+                    if ((surface as { kind?: string }).kind === "planReview") {
+                      const documentId = (surface as { documentId?: unknown }).documentId;
+                      if (
+                        typeof documentId !== "string" ||
+                        documentId.length === 0 ||
+                        surface.id !== `plan-review:${documentId}`
+                      ) {
+                        return [];
+                      }
+                      return [surface];
+                    }
+                    // T3-CUSTOM(expbkt3): the Plannotator surface kind was removed.
+                    if ((surface as { kind?: string }).kind === "plannotator") return [];
                     if (surface.kind === "pull-request") {
                       if (
                         typeof surface.projectId !== "string" ||
@@ -560,6 +597,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
         ),
+      // T3-CUSTOM(expbkt3): BEGIN — one isolated store mutation for plan review.
+      openPlanReview: (ref, documentId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, planReviewSurface(documentId)),
+          ),
+        ),
+      // T3-CUSTOM(expbkt3): END
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

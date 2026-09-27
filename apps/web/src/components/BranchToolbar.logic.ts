@@ -6,6 +6,9 @@ import type {
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+// T3-CUSTOM(expbkt3): BEGIN — memorable worktree codenames.
+import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
+// T3-CUSTOM(expbkt3): END
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
@@ -104,15 +107,17 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — name the worktree instead of restating its kind.
 // A locked thread in worktree mode with no path is still creating its
 // worktree, so it reads as a new worktree rather than the project checkout.
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
 ): string {
-  if (activeWorktreePath) return "Worktree";
+  if (activeWorktreePath) return resolveWorktreeCodename(activeWorktreePath);
   return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
+// T3-CUSTOM(expbkt3): END
 
 export interface PreviousWorktreeSeed {
   branch: string | null;

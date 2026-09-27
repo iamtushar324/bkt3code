@@ -54,4 +54,4 @@ const connectionLayer = backgroundActivityReporterLayer.pipe(
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,
   Layer.Error<ConnectionLayerSource>
-> = Atom.runtime(connectionLayer);
+> = Atom.keepAlive(Atom.runtime(connectionLayer));

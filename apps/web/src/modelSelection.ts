@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -374,11 +375,13 @@ export function withoutPlanAgentSelection(
 // flips. Users who already have plan mode off and a stored "plan" selection
 // never trip the toggle handler, so resolve the heal once per settings load.
 export function resolvePlanAgentHealPatch(input: {
-  readonly planModeEnabled: boolean;
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+  readonly planModeAvailable: boolean;
   readonly textGenerationModelSelection: ModelSelection | null | undefined;
   readonly sourceControlWriterModelSelection: ModelSelection | null | undefined;
 }): ServerSettingsPatch | null {
-  if (input.planModeEnabled) {
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+  if (input.planModeAvailable) {
     return null;
   }
   const healedText = withoutPlanAgentSelection(input.textGenerationModelSelection);
@@ -431,9 +434,11 @@ export function resolveAppModelSelectionState(
     const { modelOptionsForDispatch } = getComposerProviderState({
       provider,
       model,
+      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
-      planModeEnabled: settings.planModeEnabled,
+      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+      planModeAvailable: settings.planModeAvailable,
     });
 
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);

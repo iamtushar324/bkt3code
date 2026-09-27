@@ -39,6 +39,7 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
+  // T3-CUSTOM(expbkt3): fork environment-machine presentation.
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
@@ -49,6 +50,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+// T3-CUSTOM(expbkt3): fork environment-machine presentation in the row header.
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -68,6 +71,9 @@ import {
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
+// T3-CUSTOM(expbkt3): member self-service device pairing.
+import { MemberDevicesSection } from "../../fork/MemberDevicesSection";
+import { isBkManagedPrimary } from "../../fork/managedEnvironment";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
   EnvironmentRow,
@@ -120,7 +126,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { AnimatedHeight } from "../AnimatedHeight";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
@@ -992,6 +997,9 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
       : null,
     clientSession.client.os ?? null,
     clientSession.client.browser ?? null,
+    // T3-CUSTOM(expbkt3): BEGIN - expose build identity for stale-client diagnosis.
+    clientSession.client.appVersion ? `T3 Code ${clientSession.client.appVersion}` : null,
+    // T3-CUSTOM(expbkt3): END
     clientSession.client.ipAddress ?? null,
   ].filter((value): value is string => value !== null);
   const primaryLabel =
@@ -1062,17 +1070,25 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     ...AuthStandardClientScopes,
   ]);
   const [isCreatingPairingLink, setIsCreatingPairingLink] = useState(false);
+  // T3-CUSTOM(expbkt3): device-bound pairing for the managed BK desktop.
+  const [requireProofOfPossession, setRequireProofOfPossession] = useState(false);
 
   const handleCreatePairingLink = useCallback(async () => {
     setIsCreatingPairingLink(true);
     try {
+      // T3-CUSTOM(expbkt3): BEGIN - `requireProofOfPossession` is opt-in and false by
+      // default, so an unchecked dialog sends exactly the payload it always sent.
       const created = await createServerPairingCredential({
         label: pairingLabel,
         scopes: pairingScopes,
+        requireProofOfPossession,
       });
+      // T3-CUSTOM(expbkt3): END
       onPairingLinkCreated(created);
       setPairingLabel("");
       setPairingScopes([...AuthStandardClientScopes]);
+      // T3-CUSTOM(expbkt3): reset the device-bound choice with the dialog.
+      setRequireProofOfPossession(false);
       setDialogOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
@@ -1086,7 +1102,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     } finally {
       setIsCreatingPairingLink(false);
     }
-  }, [onPairingLinkCreated, pairingLabel, pairingScopes]);
+  }, [onPairingLinkCreated, pairingLabel, pairingScopes, requireProofOfPossession]);
 
   const togglePairingScope = useCallback((scope: AuthEnvironmentScope, checked: boolean) => {
     setPairingScopes((current) =>
@@ -1113,6 +1129,8 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
           if (!open) {
             setPairingLabel("");
             setPairingScopes([...AuthStandardClientScopes]);
+            // T3-CUSTOM(expbkt3): reset the device-bound choice with the dialog.
+            setRequireProofOfPossession(false);
           }
         }}
       >
@@ -1201,6 +1219,30 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                 </p>
               ) : null}
             </section>
+            {/* T3-CUSTOM(expbkt3): BEGIN - device-bound pairing for the managed BK
+                desktop. Off by default, so an ordinary link is byte-for-byte the link
+                this dialog has always produced: five minutes, redeemable by anything
+                that can reach the server. */}
+            <section className="space-y-3">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-input bg-muted/25 px-3 py-2.5 transition-colors hover:bg-muted/40">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={requireProofOfPossession}
+                  disabled={isCreatingPairingLink}
+                  onCheckedChange={(checked) => setRequireProofOfPossession(checked === true)}
+                />
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium text-foreground">
+                    Pair a BK desktop app (device-bound)
+                  </span>
+                  <span className="block text-xs leading-snug text-muted-foreground">
+                    Valid for 2 hours instead of 5 minutes, and only the app that redeems it can use
+                    the session it creates. Other clients cannot redeem this link.
+                  </span>
+                </span>
+              </label>
+            </section>
+            {/* T3-CUSTOM(expbkt3): END */}
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
@@ -1535,6 +1577,12 @@ function SavedBackendListRow({
   );
   const subtitleText = [
     environmentTransportLabel(environment),
+    // T3-CUSTOM(expbkt3): name the machine this environment actually runs on.
+    // Without it two attached environments are told apart only by a label the
+    // operator may not have set yet. Skipped when the transport label is the URL.
+    environment.displayUrl !== environmentTransportLabel(environment)
+      ? environment.displayUrl
+      : null,
     resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
@@ -1824,6 +1872,12 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  // T3-CUSTOM(expbkt3): this flag really means "the primary environment is the
+  // desktop's own local backend", which grants the admin surfaces below. In a
+  // managed BK build the primary is the remote central server, so it stays
+  // false even though a bundled backend runs as a *secondary* local
+  // environment (surfaced through the environments list, not managed here).
+  const hasDesktopLocalBackend = desktopBridge !== undefined && !isBkManagedPrimary();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1837,12 +1891,14 @@ export function ConnectionsSettings() {
   });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
-  const currentSessionScopes = desktopBridge
+  const currentSessionScopes = hasDesktopLocalBackend
     ? AuthAdministrativeScopes
     : primarySessionState.data?.authenticated
       ? (primarySessionState.data.scopes ?? null)
       : null;
-  const currentAuthPolicy = desktopBridge ? null : (primarySessionState.data?.auth.policy ?? null);
+  const currentAuthPolicy = hasDesktopLocalBackend
+    ? null
+    : (primarySessionState.data?.auth.policy ?? null);
   // Catalog order is the order the machines were added; rows never jump when
   // one is switched off.
   const savedEnvironments = useMemo(
@@ -2021,6 +2077,8 @@ export function ConnectionsSettings() {
   const canManageLocalBackend =
     !isLocalEnvironmentDisabled() &&
     (currentSessionScopes?.includes(AuthAccessWriteScope) ?? false);
+  // T3-CUSTOM(expbkt3): the operator a self-service member view belongs to, if any.
+  const memberDevicesUserId = primarySessionState.data?.userId ?? null;
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
   const authAccessChanges = useEnvironmentQuery(
     canManageLocalBackend && primaryEnvironmentId !== null
@@ -2031,7 +2089,7 @@ export function ConnectionsSettings() {
       : null,
   );
   const desktopNetworkAccess = useEnvironmentQuery(
-    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageLocalBackend && hasDesktopLocalBackend ? desktopNetworkAccessStateAtom : null,
   );
   const isSshDiscoveryActive =
     desktopBridge !== undefined && addBackendDialogOpen && savedBackendMode === "ssh";
@@ -2045,7 +2103,7 @@ export function ConnectionsSettings() {
     if (isSshDiscoveryActive) refreshDesktopSshHosts();
   }, [isSshDiscoveryActive, refreshDesktopSshHosts]);
   const desktopWsl = useEnvironmentQuery(
-    canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    canManageLocalBackend && hasDesktopLocalBackend ? desktopWslStateAtom : null,
   );
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
@@ -2098,7 +2156,7 @@ export function ConnectionsSettings() {
       ),
     );
   }, [authAccessChanges.data]);
-  const isLocalBackendNetworkAccessible = desktopBridge
+  const isLocalBackendNetworkAccessible = hasDesktopLocalBackend
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
   const trimmedTailscaleServePortInput = tailscaleServePortInput.trim();
@@ -2520,7 +2578,9 @@ export function ConnectionsSettings() {
     async (environment: EnvironmentPresentation) => {
       // Fail closed: no mounted confirm host means no removal.
       const confirmed = await requestConfirmDialog(
-        `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
+        // T3-CUSTOM(expbkt3): environment storage also owns the durable message
+        // outbox, so say that unsent messages go with it.
+        `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, cached threads, and any unsent messages here. Switch it off instead to keep it saved.`,
         { variant: "destructive" },
       );
       if (confirmed !== true) {
@@ -3269,12 +3329,15 @@ export function ConnectionsSettings() {
 
   const primarySettings = (
     <>
-      {desktopBridge || canManageLocalBackend ? (
+      {/* T3-CUSTOM(expbkt3): a managed BK desktop's primary is remote, not "this machine". */}
+      {hasDesktopLocalBackend || canManageLocalBackend ? (
         <>
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
-              primaryEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
+              primaryEnvironment?.label ??
+              // T3-CUSTOM(expbkt3): managed primary is remote; see hasDesktopLocalBackend.
+              (hasDesktopLocalBackend ? "This machine" : "Primary environment")
             }
             icon={
               <EnvironmentMachineIcon
@@ -3356,7 +3419,8 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
+            {/* T3-CUSTOM(expbkt3): managed primary has no local-backend admin controls. */}
+            {canManageLocalBackend && hasDesktopLocalBackend ? (
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
@@ -3681,6 +3745,12 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer width="wide">
+      {/* T3-CUSTOM(expbkt3): BEGIN - members without `access:write` get a self-service
+          "Your devices" panel instead of the administrative one. Renders only for a
+          session that carries a Clerk identity, so upstream single-user and bootstrap
+          clients see exactly what they see today. */}
+      {!canManageLocalBackend && memberDevicesUserId !== null ? <MemberDevicesSection /> : null}
+      {/* T3-CUSTOM(expbkt3): END */}
       {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}

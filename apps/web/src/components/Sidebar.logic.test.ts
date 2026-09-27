@@ -350,6 +350,7 @@ function makeLatestTurn(overrides?: {
       overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",
     completedAt:
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
+    durationMs: null,
   };
 }
 
@@ -2075,6 +2076,8 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: ProjectId.make("project-1"),
     environmentId: localEnvironmentId,
+    ownerUserId: null,
+    memberUserIds: [],
     title: "Project",
     workspaceRoot: "/tmp/project",
     repositoryIdentity: null,
@@ -2095,6 +2098,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.make("thread-1"),
     environmentId: localEnvironmentId,
     projectId: ProjectId.make("project-1"),
+    ownerUserId: null,
+    memberUserIds: [],
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -2115,6 +2120,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    sourceControlProfileId: null,
     checkpoints: [],
     pullRequests: [],
     activities: [],
@@ -2207,6 +2213,7 @@ describe("sortProjectsForSidebar", () => {
             createdAt: "2026-03-09T10:01:00.000Z",
             updatedAt: "2026-03-09T10:01:00.000Z",
             streaming: false,
+            sentByUserId: null,
           },
         ],
       }),
@@ -2223,6 +2230,7 @@ describe("sortProjectsForSidebar", () => {
             createdAt: "2026-03-09T10:05:00.000Z",
             updatedAt: "2026-03-09T10:05:00.000Z",
             streaming: false,
+            sentByUserId: null,
           },
         ],
       }),

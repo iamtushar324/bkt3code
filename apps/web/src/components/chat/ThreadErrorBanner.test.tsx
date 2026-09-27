@@ -10,6 +10,20 @@ import {
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  // T3-CUSTOM(expbkt3): recovery and failed outbox actions expose explicit retry/dismiss.
+  it("renders Retry and Dismiss actions for exhausted recovery", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Automatic recovery was exhausted."
+        onRetry={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(">Retry<");
+    expect(markup).toContain(">Dismiss<");
+  });
+
   it("stays hidden after its current error is dismissed", () => {
     const bannerKey = getThreadErrorBannerKey("env:thread-a", "Aborted");
     dismissThreadErrorBannerForSession(bannerKey);
@@ -69,6 +83,7 @@ describe("ThreadErrorBanner", () => {
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
+
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner

@@ -16,13 +16,19 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationUser,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
+  // T3-CUSTOM(expbkt3): environment user attribution.
+  type UserId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useThreadShell } from "../../state/entities";
+import { useCurrentUserId } from "../../state/identity";
+import { useOrgMembers } from "../../state/orgMembers";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
@@ -131,6 +137,8 @@ import {
   XIcon,
   ZapIcon,
 } from "lucide-react";
+// T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+import { AgentUiSurfaceRow, resolveAgentUiSurface } from "../../fork/agentUiSurface";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -256,6 +264,8 @@ import {
   formatReviewCommentFence,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+// T3-CUSTOM(expbkt3): anchored plan feedback renders as a plan card, not a file card.
+import { isPlanReviewSectionId, planReviewCommentTitle } from "@t3tools/shared/planReview";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { ComputerUseAppIcon } from "~/components/Icons";
 
@@ -277,6 +287,11 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  /**
+   * First name to attribute a user message to, or null when it shouldn't be
+   * shown (single-collaborator thread, no author, or single-user mode).
+   */
+  resolveMessageSenderName: (message: { readonly sentByUserId: UserId | null }) => string | null;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
@@ -285,6 +300,10 @@ interface TimelineRowSharedState {
   onFileDownload: (attachment: ChatFileAttachment) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  // T3-CUSTOM(expbkt3): native plan review entry point. Optional so upstream
+  // fixtures that predate it keep compiling.
+  onOpenPlanReview?: ((documentId: string) => void) | undefined;
+  planReviewDocumentId?: string | null | undefined;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
@@ -316,6 +335,15 @@ interface TimelineRowActivityState {
    * list itself has already left the timeline.
    */
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+}
+
+/** First name to attribute a message to: given name, else email local-part. */
+function firstNameOfUser(user: OrchestrationUser): string {
+  const name = user.name?.trim();
+  if (name) return name.split(/\s+/u)[0]!;
+  const email = user.email?.trim();
+  if (email) return email.split("@")[0]!;
+  return "Member";
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -425,6 +453,10 @@ interface MessagesTimelineProps {
    */
   displayThreadKey?: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  // T3-CUSTOM(expbkt3): native plan review entry point. Optional so upstream
+  // fixtures that predate it keep compiling.
+  onOpenPlanReview?: ((documentId: string) => void) | undefined;
+  planReviewDocumentId?: string | null | undefined;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
@@ -485,7 +517,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isPreparingWorktree = false,
   isCompacting = false,
   activeTurnStartedAt,
-  agentPanelModel,
+  agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
@@ -495,6 +527,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   displayThreadKey,
   onOpenTurnDiff,
+  // T3-CUSTOM(expbkt3): BEGIN — native plan review surface.
+  onOpenPlanReview,
+  planReviewDocumentId = null,
+  // T3-CUSTOM(expbkt3): END
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
@@ -1138,6 +1174,34 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
+  const memoizedThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
+  const threadShellForSenders = useThreadShell(memoizedThreadRef);
+  const { resolveUser: resolveOrgUser } = useOrgMembers();
+  const viewerUserId = useCurrentUserId();
+  // Multiple collaborators = owner + at least one tagged member.
+  const collaboratorCount = useMemo(() => {
+    if (!threadShellForSenders) return 0;
+    return new Set(
+      [threadShellForSenders.ownerUserId, ...threadShellForSenders.memberUserIds].filter(
+        (id): id is UserId => id !== null,
+      ),
+    ).size;
+  }, [threadShellForSenders]);
+  const resolveMessageSenderName = useCallback(
+    (message: { readonly sentByUserId: UserId | null }): string | null => {
+      // Only label messages from someone else, and only in shared threads.
+      if (
+        collaboratorCount < 2 ||
+        message.sentByUserId === null ||
+        message.sentByUserId === viewerUserId
+      ) {
+        return null;
+      }
+      return firstNameOfUser(resolveOrgUser(message.sentByUserId));
+    },
+    [collaboratorCount, resolveOrgUser, viewerUserId],
+  );
+
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
@@ -1151,6 +1215,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      resolveMessageSenderName,
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -1159,6 +1224,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      onOpenPlanReview,
+      planReviewDocumentId,
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
@@ -1187,6 +1254,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      resolveMessageSenderName,
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -1195,6 +1263,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      onOpenPlanReview,
+      planReviewDocumentId,
       onToggleTurnFold,
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
@@ -1953,6 +2023,7 @@ function MessageAuthorHeading({ children }: { children: string }) {
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const senderName = ctx.resolveMessageSenderName(row.message);
   const { onImageExpand, onFileOpen } = ctx;
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
@@ -2109,6 +2180,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
+      {senderName ? (
+        <span className="px-1 text-xs font-medium text-muted-foreground">{senderName}</span>
+      ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
@@ -2523,6 +2597,9 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        onOpenPlanReview={ctx.onOpenPlanReview}
+        planReviewDocumentId={ctx.planReviewDocumentId}
+        reviewable={row.proposedPlan.implementedAt === null}
       />
     </div>
   );
@@ -3864,6 +3941,8 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
                   ? { fenceLanguage: record.fenceLanguage }
                   : {}),
                 ...(record.pullRequest !== undefined ? { pullRequest: record.pullRequest } : {}),
+                // T3-CUSTOM(expbkt3): plan comment byline.
+                ...(record.author !== undefined ? { author: record.author } : {}),
               }}
             />
           </UserMessageContextPopover>
@@ -4029,6 +4108,50 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   );
 });
 
+/**
+ * T3-CUSTOM(expbkt3): anchored plan feedback, rendered as a quotation.
+ *
+ * A plan comment shares the `<review_comment>` wire format with file review but
+ * nothing else: its `filePath` is a plan title, and its anchor is prose the
+ * reviewer selected. Routing that through the file card printed the title as a
+ * workspace-relative path and the quote as a monospace code block, because the
+ * fence branch below hands `markdown` to `ChatMarkdown`.
+ */
+function UserMessagePlanReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
+  const ctx = use(TimelineRowCtx);
+  const quotedText = comment.diff.trim();
+  // "quoted text" is the format's placeholder for an anchor it could not resolve
+  // to a line range; there is nothing to tell the reader in that case.
+  const hasLineRange = comment.startIndex !== null && comment.endIndex !== null;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
+      <div className="space-y-1">
+        <div className="text-message-foreground text-xs font-medium">
+          {planReviewCommentTitle(comment.filePath)}
+        </div>
+        <div className="text-secondary-label text-2xs">
+          {comment.sectionTitle}
+          {hasLineRange ? ` · ${comment.rangeLabel}` : null}
+        </div>
+      </div>
+      {quotedText.length > 0 && (
+        <blockquote className="border-primary/40 border-l-2 pl-2 text-secondary-label text-xs italic whitespace-pre-wrap wrap-break-word">
+          {quotedText}
+        </blockquote>
+      )}
+      {comment.text.length > 0 && (
+        <div className="whitespace-pre-wrap wrap-break-word text-sm">
+          <SkillInlineText text={comment.text} skills={ctx.skills} />
+        </div>
+      )}
+      {comment.author ? (
+        <div className="text-secondary-label text-2xs">— {comment.author}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
   const ctx = use(TimelineRowCtx);
   const fenceLanguage = comment.fenceLanguage ?? "diff";
@@ -4036,6 +4159,11 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     buildReviewCommentRenderablePatch(comment),
     `review-comment:${comment.id}`,
   );
+
+  // T3-CUSTOM(expbkt3): plan feedback quotes prose and names a plan, not a path.
+  if (isPlanReviewSectionId(comment.sectionId)) {
+    return <UserMessagePlanReviewCommentCard comment={comment} />;
+  }
 
   return (
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
@@ -4703,7 +4831,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  // Before any hooks: spawn rows render their own component.
+  // T3-CUSTOM(expbkt3): agent UI needs its thread before early-return rows.
+  const { threadRef } = use(TimelineRowCtx);
+  // Before any further hooks: spawn rows render their own component.
   if (workEntry.agentSpawn) {
     return (
       <AgentSpawnRow
@@ -4713,7 +4843,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       />
     );
   }
-  return (
+  const plainRow = (
     <PlainWorkEntryRow
       workEntry={workEntry}
       workspaceRoot={workspaceRoot}
@@ -4722,6 +4852,17 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       onToggleEntry={props.onToggleEntry}
     />
   );
+  // T3-CUSTOM(expbkt3): a `t3_show_ui` call keeps its ordinary row and mounts
+  // its sandboxed box underneath it.
+  const agentUiSurface = resolveAgentUiSurface(workEntry);
+  if (agentUiSurface) {
+    return (
+      <AgentUiSurfaceRow threadRef={threadRef} surface={agentUiSurface}>
+        {plainRow}
+      </AgentUiSurfaceRow>
+    );
+  }
+  return plainRow;
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {

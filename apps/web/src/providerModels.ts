@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -56,12 +57,13 @@ export function getProviderModelCapabilities(
   models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
   provider: ProviderDriverKind,
-  planModeEnabled = true,
+  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+  planModeAvailable = true,
 ): ModelCapabilities {
   const slug = resolveSelectableModel(provider, model, models);
   const selectedModel = models.find((candidate) => candidate.slug === slug);
   const caps = selectedModel?.capabilities ?? EMPTY_CAPABILITIES;
-  if (planModeEnabled) {
+  if (planModeAvailable) {
     return caps;
   }
   return withoutPlanAgentOption(caps);

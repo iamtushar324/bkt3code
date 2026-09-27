@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   EnvironmentId,
   MessageId,
+  OrchestrationProposedPlanId,
   TurnId,
   type ComposerContextRecord,
 } from "@t3tools/contracts";
@@ -242,6 +243,7 @@ function buildUserTimelineEntry(text: string) {
       createdAt: MESSAGE_CREATED_AT,
       updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
+      sentByUserId: null,
     },
   };
 }
@@ -285,6 +287,57 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  // T3-CUSTOM(expbkt3): BEGIN — native plan review affordances.
+  it("shows Preview for actionable native plans while the review document is captured", () => {
+    const proposedPlan = {
+      id: OrchestrationProposedPlanId.make("plan-review"),
+      turnId: null,
+      planMarkdown: "# Review me\n\nInspect this plan.",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+    };
+    // T3-CUSTOM(expbkt3): native plan preview stays visible during async capture.
+    const nativePreviewPending = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onOpenPlanReview={() => {}}
+        timelineEntries={[
+          {
+            id: "entry-plan-native-pending",
+            kind: "proposed-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            proposedPlan,
+          },
+        ]}
+      />,
+    );
+    const nativePreviewReady = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onOpenPlanReview={() => {}}
+        planReviewDocumentId="plan-doc:ready"
+        timelineEntries={[
+          {
+            id: "entry-plan-native-ready",
+            kind: "proposed-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            proposedPlan,
+          },
+        ]}
+      />,
+    );
+
+    expect(nativePreviewPending).toContain("data-plan-review-pending");
+    expect(nativePreviewPending).toContain('aria-label="Preparing plan preview"');
+    expect(nativePreviewReady).toContain("data-plan-review-trigger");
+    // T3-CUSTOM(expbkt3): the button reopens the transcript takeover now, so it
+    // no longer promises a panel.
+    expect(nativePreviewReady).toContain('aria-label="Open the plan review"');
+  });
+  // T3-CUSTOM(expbkt3): END
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");
@@ -481,6 +534,8 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         latestTurn={{
+          // T3-CUSTOM(expbkt3): fork-required turn duration.
+          durationMs: null,
           turnId,
           state: "completed",
           startedAt: "2026-03-17T19:12:20.000Z",
@@ -519,6 +574,7 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         latestTurn={{
           turnId,
+          durationMs: null,
           state: "completed",
           startedAt: MESSAGE_CREATED_AT,
           completedAt: MESSAGE_CREATED_AT,
@@ -536,6 +592,7 @@ describe("MessagesTimeline", () => {
               createdAt: MESSAGE_CREATED_AT,
               updatedAt: MESSAGE_CREATED_AT,
               streaming: false,
+              sentByUserId: null,
             },
           },
         ]}
@@ -1025,6 +1082,8 @@ describe("MessagesTimeline", () => {
         isWorking
         activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
+          // T3-CUSTOM(expbkt3): fork-required turn duration.
+          durationMs: null,
           turnId,
           state: "running",
           startedAt: MESSAGE_CREATED_AT,
@@ -1482,6 +1541,7 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         latestTurn={{
           turnId,
+          durationMs: null,
           state: "error",
           startedAt: "2026-03-17T19:12:20.000Z",
           completedAt: "2026-03-17T19:12:30.000Z",
@@ -1499,6 +1559,8 @@ describe("MessagesTimeline", () => {
               createdAt: MESSAGE_CREATED_AT,
               updatedAt: "2026-03-17T19:12:29.000Z",
               streaming: false,
+              // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+              sentByUserId: null,
             },
           },
           {
@@ -1588,6 +1650,8 @@ describe("MessagesTimeline", () => {
         isWorking
         activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
+          // T3-CUSTOM(expbkt3): fork-required turn duration.
+          durationMs: null,
           turnId,
           state: "running",
           startedAt: MESSAGE_CREATED_AT,
@@ -1627,6 +1691,8 @@ describe("MessagesTimeline", () => {
         isWorking
         activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
+          // T3-CUSTOM(expbkt3): fork-required turn duration.
+          durationMs: null,
           turnId,
           state: "running",
           startedAt: MESSAGE_CREATED_AT,
@@ -1775,6 +1841,7 @@ describe("MessagesTimeline", () => {
         activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
+          durationMs: null,
           state: "running",
           startedAt: MESSAGE_CREATED_AT,
           completedAt: null,
@@ -1797,6 +1864,8 @@ describe("MessagesTimeline", () => {
         isWorking
         activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
+          // T3-CUSTOM(expbkt3): fork-required turn duration.
+          durationMs: null,
           turnId,
           state: "running",
           startedAt: MESSAGE_CREATED_AT,
@@ -1857,6 +1926,7 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
+              sentByUserId: null,
             },
           },
         ]}
@@ -1868,6 +1938,57 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain(">Review comment<");
     expect(markup).not.toContain("&lt;review_comment");
     expect(markup).not.toContain("&lt;/review_comment&gt;");
+  });
+
+  // T3-CUSTOM(expbkt3): the reported regression. An anchored plan comment whose
+  // quote could not be located carries no line range, which the parser used to
+  // reject — the transcript then printed the raw XML and the quote as a code block.
+  it("renders an anchored plan comment without a line range as a quotation card", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-plan-comment"),
+              role: "user",
+              text: [
+                "Plan approved. Implement the plan you proposed above, exactly as written.",
+                "",
+                '<review_comment sectionId="plan:plan-doc:ad144073" sectionTitle="Plan review" filePath="TEC-951 standup plan.md" rangeLabel="quoted text" author="Tushar Bhardwaj">',
+                "no ignore this",
+                "```markdown",
+                "1. Outbound email context",
+                "```",
+                "</review_comment>",
+              ].join("\n"),
+              turnId: null,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+              sentByUserId: null,
+            },
+          },
+        ]}
+      />,
+    );
+
+    // No raw wire format reaches the reader.
+    expect(markup).not.toContain("&lt;review_comment");
+    expect(markup).not.toContain("&lt;/review_comment&gt;");
+    expect(markup).not.toContain("sectionId=");
+    expect(markup).not.toContain("```markdown");
+    // The chip is labelled by the plan title, not a workspace-relative path,
+    // and a placeholder range label is not shown as if it were a line range.
+    // (The card body — blockquote and byline — lives in the chip's popover,
+    // which static markup does not render; the parse is covered in
+    // packages/shared/src/composerContextLegacy.expbkt3.test.ts.)
+    expect(markup).toContain("TEC-951 standup plan");
+    expect(markup).not.toContain("TEC-951 standup plan.md");
+    expect(markup).not.toContain("quoted text");
   });
 
   it("renders file review comments as source code instead of diffs", () => {
@@ -1895,6 +2016,7 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
+              sentByUserId: null,
             },
           },
         ]}
@@ -1916,6 +2038,8 @@ describe("MessagesTimeline", () => {
             kind: "message",
             createdAt: "2026-03-17T19:12:28.000Z",
             message: {
+              // T3-CUSTOM(expbkt3): fork-required field.
+              sentByUserId: null,
               id: MessageId.make("message-attachments"),
               role: "user",
               text: "See ![shot.png](t3-context://v1/image/img-1) and [notes.txt](t3-context://v1/file/file-1).",
@@ -2071,6 +2195,8 @@ describe("MessagesTimeline", () => {
             kind: "message",
             createdAt: "2026-03-17T19:12:28.000Z",
             message: {
+              // T3-CUSTOM(expbkt3): fork-required field.
+              sentByUserId: null,
               id: MessageId.make("message-structured"),
               role: "user",
               text: "Compare [Terminal 1 line 4](t3-context://v1/terminal/ctx-t) with [gone](t3-context://v1/future/ctx-x).",

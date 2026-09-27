@@ -13,6 +13,8 @@ function rows(
     text,
     streaming: false,
     turnId: null,
+    // T3-CUSTOM(expbkt3): fork-required field.
+    sentByUserId: null,
     createdAt: new Date(index * 1000).toISOString(),
     updatedAt: new Date(index * 1000).toISOString(),
   }));

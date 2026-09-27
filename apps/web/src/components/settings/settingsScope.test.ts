@@ -16,6 +16,9 @@ const environments = [
 
 function member(id: string, environmentId: EnvironmentId): SidebarProjectGroupMember {
   return {
+    // T3-CUSTOM(expbkt3): fork-required field.
+    ownerUserId: null,
+    memberUserIds: [],
     id: ProjectId.make(id),
     environmentId,
     title: "T3 Code",

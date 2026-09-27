@@ -1,4 +1,6 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): worktree codenames.
+import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
@@ -531,10 +533,14 @@ describe("resolveLockedWorkspaceLabel", () => {
     expect(resolveLockedWorkspaceLabel(null, "local")).toBe("Local checkout");
   });
 
-  it("uses a shorter label for an attached worktree", () => {
-    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a", "worktree")).toBe(
-      "Worktree",
+  // T3-CUSTOM(expbkt3): the label names the worktree rather than restating its kind
+  // (replaces upstream's "uses a shorter label for an attached worktree" case).
+  it("names an attached worktree by its codename", () => {
+    const worktreePath = "/repo/.t3/worktrees/t3code-2d633e64";
+    expect(resolveLockedWorkspaceLabel(worktreePath, "worktree")).toBe(
+      resolveWorktreeCodename(worktreePath),
     );
+    expect(resolveLockedWorkspaceLabel(worktreePath, "worktree")).not.toBe("Worktree");
   });
 
   it("describes a worktree that is still being created as a new worktree", () => {

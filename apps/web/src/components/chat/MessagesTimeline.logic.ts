@@ -44,6 +44,16 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
+// T3-CUSTOM(expbkt3): rows that must never collapse into a "+N tool calls"
+// toggle, and never fold away with their turn.
+//
+// A spawn CTA hides a still-running fleet when folded; an agent view is worse,
+// because the view *is* the answer the agent produced, not a record that work
+// happened. Behind a toggle it may as well not have been drawn.
+export function workEntryStaysVisible(entry: WorkLogEntry): boolean {
+  return entry.agentSpawn !== undefined || entry.agentUi !== undefined;
+}
+
 function singleToolCallLabel(entry: WorkLogEntry): string {
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
@@ -330,7 +340,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
-  "turnId" | "state" | "startedAt" | "completedAt"
+  "turnId" | "state" | "startedAt" | "completedAt" | "durationMs"
 >;
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
@@ -755,10 +765,13 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
-      // User input and subagent batches stay visible after their turn settles.
+      // User input batches stay visible after their turn settles, and
+      // agent-spawn CTA rows never fold: workflows outlive their launching
+      // turn (dynamic spawns, background execution), and folding the CTA
+      // when the turn settles makes a still-running fleet invisible.
       if (
         entry.kind === "work" &&
-        (entry.entry.questionAnswer !== undefined || entry.entry.agentSpawn !== undefined)
+        (entry.entry.questionAnswer !== undefined || workEntryStaysVisible(entry.entry))
       ) {
         continue;
       }
@@ -794,16 +807,21 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    // Prefer the server-stored duration for the settled turn — it is computed
+    // from server-side timestamps, so it never depends on the browser clock.
+    // Older cached rows have no durationMs, so keep deriving as a fallback.
     const elapsedMs =
-      input.latestTurn?.turnId === turnId &&
-      input.latestTurn.startedAt &&
-      input.latestTurn.completedAt
-        ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
-              lastEntryEnd,
-          );
+      input.latestTurn?.turnId === turnId && input.latestTurn.durationMs !== null
+        ? input.latestTurn.durationMs
+        : input.latestTurn?.turnId === turnId &&
+            input.latestTurn.startedAt &&
+            input.latestTurn.completedAt
+          ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
+          : computeElapsedMs(
+              group.startBoundary ?? firstEntry.createdAt,
+              maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
+                lastEntryEnd,
+            );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
@@ -1040,6 +1058,8 @@ export function deriveMessagesTimelineRows(input: {
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
       entry.entry.questionAnswer !== undefined ||
+      // T3-CUSTOM(expbkt3): agent-UI rows are persistent surfaces, not tool calls.
+      entry.entry.agentUi !== undefined ||
       entry.entry.sourceActivityKind === "context-compaction" ||
       entry.entry.tone === "error"
     ) {
@@ -1219,8 +1239,8 @@ export function deriveMessagesTimelineRows(input: {
 
     if (timelineEntry.kind === "work") {
       if (
-        timelineEntry.entry.agentSpawn !== undefined ||
         timelineEntry.entry.questionAnswer !== undefined ||
+        workEntryStaysVisible(timelineEntry.entry) ||
         timelineEntry.entry.tone === "error"
       ) {
         const spawn = timelineEntry.entry.agentSpawn;
@@ -1245,8 +1265,8 @@ export function deriveMessagesTimelineRows(input: {
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
-          nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.questionAnswer !== undefined ||
+          workEntryStaysVisible(nextEntry.entry) ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||

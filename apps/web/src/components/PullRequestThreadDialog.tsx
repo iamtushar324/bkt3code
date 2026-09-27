@@ -59,7 +59,7 @@ export function PullRequestThreadDialog({
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd },
+          input: { cwd, threadId },
         }),
   );
   const sourceControlPresentation = useMemo(
@@ -86,8 +86,9 @@ export function PullRequestThreadDialog({
     () => ({
       environmentId,
       cwd,
+      threadId,
     }),
-    [cwd, environmentId],
+    [cwd, environmentId, threadId],
   );
   const pullRequestResolution = usePullRequestResolution({
     ...sourceControlScope,

@@ -3,7 +3,14 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+// T3-CUSTOM(expbkt3): managed desktop builds surface the bundled backend as an
+// ordinary secondary bootstrap; only the primary id stays filtered.
+import {
+  __resetBkManagedEnvironmentForTests,
+  __setBkManagedEnvironmentForTests,
+} from "../fork/managedEnvironment";
 
 import {
   createDesktopSecondaryBootstrapsReader,
@@ -51,6 +58,10 @@ describe("desktop local connection identity", () => {
 });
 
 describe("desktop local topology reads", () => {
+  afterEach(() => {
+    __resetBkManagedEnvironmentForTests();
+  });
+
   it("distinguishes a successful empty topology from a read failure", () => {
     let readBootstraps = () => [];
     const reader = createDesktopSecondaryBootstrapsReader(() => ({
@@ -86,6 +97,37 @@ describe("desktop local topology reads", () => {
     }));
 
     expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [secondary] });
+  });
+
+  // T3-CUSTOM(expbkt3): a managed build carries the bundled backend as the
+  // "bk-local" secondary; only the pool-primary id (a client-only legacy
+  // leftover) stays filtered.
+  it("surfaces the bundled backend in a managed build while filtering the primary id", () => {
+    __setBkManagedEnvironmentForTests({
+      channel: "staging",
+      httpBaseUrl: "https://expbkt3.dev.beknown.live",
+      wsBaseUrl: "wss://expbkt3.dev.beknown.live",
+    });
+    const bundled = {
+      id: "bk-local",
+      label: "Local environment",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      wsBaseUrl: "ws://127.0.0.1:3773",
+      bootstrapToken: "token",
+    };
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+          label: "Legacy local backend",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+        },
+        bundled,
+      ],
+    }));
+
+    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [bundled] });
   });
 
   it("retains the last successful snapshot only until another read succeeds", () => {

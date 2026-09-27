@@ -3,6 +3,8 @@ import {
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type GitHubSourceControlProfile,
+  type SourceControlProfileId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -34,7 +36,14 @@ import ProjectScriptsControl, {
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  // T3-CUSTOM(expbkt3): environment identity in the header.
+  useHasMultipleEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
+// T3-CUSTOM(expbkt3): environment identity badge.
+import { EnvironmentBadge } from "../environment/EnvironmentBadge";
+import { ThreadMembersControl } from "../members/ThreadMembersControl";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
@@ -49,6 +58,10 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+// T3-CUSTOM(expbkt3): isolated context-handoff header action.
+import { ThreadContextActionsControl } from "./ThreadContextActionsControl";
+// T3-CUSTOM(expbkt3): per-thread API-level cost.
+import { ThreadCostControl } from "./ThreadCostControl";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -68,6 +81,9 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
+  sourceControlProfiles: ReadonlyArray<GitHubSourceControlProfile>;
+  sourceControlProfileId: SourceControlProfileId | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
@@ -137,6 +153,9 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
+  sourceControlProfiles,
+  sourceControlProfileId,
   onOpenPullRequest,
   onNewThreadInProject,
   onOpenProjectSettings,
@@ -208,6 +227,11 @@ export const ChatHeader = memo(function ChatHeader({
     primaryEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
   });
+  // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
+  const selectedSourceControlProfile =
+    sourceControlProfiles.find((profile) => profile.id === sourceControlProfileId) ?? null;
+  // T3-CUSTOM(expbkt3): only worth the header space once there is a second machine.
+  const showEnvironmentBadge = useHasMultipleEnvironments();
   const activeThreadRef = useMemo(
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
@@ -390,6 +414,9 @@ export const ChatHeader = memo(function ChatHeader({
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             onOpenPullRequest={onOpenPullRequest}
             {...(draftId ? { draftId } : {})}
+            // T3-CUSTOM(expbkt3): act as the thread's selected source-control profile.
+            actingProfileLogin={selectedSourceControlProfile?.login ?? null}
+            sourceControlProfileId={sourceControlProfileId}
           />
         </>
       )}
@@ -400,6 +427,18 @@ export const ChatHeader = memo(function ChatHeader({
       className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
       onContextMenu={handleHeaderContextMenu}
     >
+      {/* T3-CUSTOM(expbkt3): BEGIN — which machine this session runs on. Leads the
+          header because with two environments attached the project name alone no
+          longer identifies the session; suppressed on a single-environment client
+          so the ordinary header is unchanged. */}
+      {showEnvironmentBadge ? (
+        <EnvironmentBadge
+          environmentId={activeThreadEnvironmentId}
+          variant="full"
+          className="shrink-0"
+        />
+      ) : null}
+      {/* T3-CUSTOM(expbkt3): END */}
       <WorkspaceBreadcrumb
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
@@ -498,6 +537,25 @@ export const ChatHeader = memo(function ChatHeader({
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
+        {/* T3-CUSTOM(expbkt3): BEGIN — fork header controls stay inline; upstream's
+            scripts / open-in / git actions collapse into the menu below. */}
+        {/* T3-CUSTOM(expbkt3): context handoff — hidden for drafts, which have
+            no server-side history to export yet. */}
+        {!draftId ? (
+          <ThreadContextActionsControl
+            activeThreadEnvironmentId={activeThreadEnvironmentId}
+            activeThreadId={activeThreadId}
+          />
+        ) : null}
+        {/* T3-CUSTOM(expbkt3): the member avatars represent thread ownership;
+            GitHub identity stays implicit and follows the durable owner. */}
+        <ThreadMembersControl environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+        {/* T3-CUSTOM(expbkt3): what this session costs at API prices; hidden
+            for drafts and on servers without threadUsage.get. */}
+        {!draftId ? (
+          <ThreadCostControl environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+        ) : null}
+        {/* T3-CUSTOM(expbkt3): END */}
         <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
           <MenuTrigger
             className={

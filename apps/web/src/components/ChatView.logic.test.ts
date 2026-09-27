@@ -42,6 +42,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
+  deriveOutboxSendGate,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
@@ -64,6 +65,7 @@ import {
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  resolveSendWorkspaceContext, // T3-CUSTOM(expbkt3)
   threadShellHasStarted,
   resolveDraftHeroState,
   isPaintOnlyThreadTimeline,
@@ -75,6 +77,7 @@ import {
   threadKeysShareEnvironment,
   timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
+  shouldPrepareWorktreeForFirstTurn, // T3-CUSTOM(expbkt3)
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
@@ -645,6 +648,8 @@ describe("resolveThreadSwitchTimeline", () => {
         {
           kind: "message",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required field.
+            sentByUserId: null,
             id: MessageId.make("preview-message"),
             role: "user",
             text: "Preview",
@@ -671,6 +676,8 @@ describe("resolveThreadSwitchTimeline", () => {
         {
           kind: "message",
           message: {
+            // T3-CUSTOM(expbkt3): fork-required field.
+            sentByUserId: null,
             id: MessageId.make("preview-message"),
             role: "user",
             text: "Preview",
@@ -844,6 +851,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: threadId,
     environmentId,
     projectId,
+    ownerUserId: null,
+    memberUserIds: [],
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -866,6 +875,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    sourceControlProfileId: null,
     ...overrides,
   };
 }
@@ -877,6 +887,7 @@ const completedTurn = {
   startedAt: "2026-03-29T00:00:01.000Z",
   completedAt: "2026-03-29T00:00:10.000Z",
   assistantMessageId: null,
+  durationMs: null,
 };
 
 const readySession = {
@@ -922,6 +933,8 @@ describe("draft promotion during worktree setup", () => {
           createdAt: now,
           updatedAt: now,
           streaming: false,
+          // T3-CUSTOM(expbkt3): upstream fixtures have no attributed environment user.
+          sentByUserId: null,
         },
       ],
       session: null,
@@ -980,6 +993,7 @@ describe("buildLoadingThreadFromShell", () => {
       interactionMode: "default",
       branch: "main",
       worktreePath: null,
+      sourceControlProfileId: null,
       latestTurn: null,
       createdAt: now,
       updatedAt: now,
@@ -994,6 +1008,9 @@ describe("buildLoadingThreadFromShell", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      // T3-CUSTOM(expbkt3): multi-user ownership fields on ThreadShell.
+      ownerUserId: null,
+      memberUserIds: [],
     } satisfies ThreadShell;
 
     expect(buildLoadingThreadFromShell(shell)).toMatchObject({
@@ -1077,6 +1094,48 @@ describe("buildThreadTurnInterruptInput", () => {
   });
 });
 
+describe("deriveOutboxSendGate", () => {
+  it("keeps the composer free while disconnected so messages can queue up", () => {
+    expect(
+      deriveOutboxSendGate({
+        isLocalSendBusy: false,
+        hasPendingOutboxItem: true,
+        environmentConnected: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("latches while connected with a pending item (dispatch/drain in flight)", () => {
+    expect(
+      deriveOutboxSendGate({
+        isLocalSendBusy: false,
+        hasPendingOutboxItem: true,
+        environmentConnected: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("always latches during the synchronous local dispatch window", () => {
+    expect(
+      deriveOutboxSendGate({
+        isLocalSendBusy: true,
+        hasPendingOutboxItem: false,
+        environmentConnected: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("stays open with nothing pending", () => {
+    expect(
+      deriveOutboxSendGate({
+        isLocalSendBusy: false,
+        hasPendingOutboxItem: false,
+        environmentConnected: true,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("resolveComposerProviderSelection", () => {
   const catalogModels: ServerProvider["models"] = [
     { slug: "gemini-pro", name: "Gemini Pro", isCustom: false, capabilities: null },
@@ -1106,6 +1165,8 @@ describe("resolveComposerProviderSelection", () => {
       modelSelection: { instanceId, model: "default" },
       messages: [
         {
+          // T3-CUSTOM(expbkt3): fork-required field.
+          sentByUserId: null,
           id: MessageId.make(`import:${instanceId}:session:000000`),
           role: "user",
           text: "Continue the imported conversation",
@@ -1630,6 +1691,56 @@ describe("resolveSendEnvMode", () => {
   });
 });
 
+// T3-CUSTOM(expbkt3): BEGIN
+describe("resolveSendWorkspaceContext", () => {
+  it("uses the latest local draft selection instead of a stale rendered worktree mode", () => {
+    expect(
+      resolveSendWorkspaceContext({
+        isLocalDraftThread: true,
+        isGitRepo: true,
+        rendered: {
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        },
+        latestDraft: {
+          envMode: "local",
+          branch: "main",
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      envMode: "local",
+      branch: "main",
+      worktreePath: null,
+    });
+  });
+
+  it("does not let an unrelated draft override a server thread context", () => {
+    expect(
+      resolveSendWorkspaceContext({
+        isLocalDraftThread: false,
+        isGitRepo: true,
+        rendered: {
+          envMode: "local",
+          branch: "release",
+          worktreePath: null,
+        },
+        latestDraft: {
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      envMode: "local",
+      branch: "release",
+      worktreePath: null,
+    });
+  });
+});
+// T3-CUSTOM(expbkt3): END
+
 describe("resolveBackgroundDraftWorkspaceOptions", () => {
   it("keeps New worktree selected without reusing the launched worktree", () => {
     expect(
@@ -1646,6 +1757,37 @@ describe("resolveBackgroundDraftWorkspaceOptions", () => {
     });
   });
 });
+
+// T3-CUSTOM(expbkt3): BEGIN
+describe("shouldPrepareWorktreeForFirstTurn", () => {
+  it("never prepares a worktree for Current checkout", () => {
+    expect(
+      shouldPrepareWorktreeForFirstTurn({
+        isFirstMessage: true,
+        envMode: "local",
+        worktreePath: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("prepares one only for an unattached first turn in New worktree mode", () => {
+    expect(
+      shouldPrepareWorktreeForFirstTurn({
+        isFirstMessage: true,
+        envMode: "worktree",
+        worktreePath: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldPrepareWorktreeForFirstTurn({
+        isFirstMessage: false,
+        envMode: "worktree",
+        worktreePath: null,
+      }),
+    ).toBe(false);
+  });
+});
+// T3-CUSTOM(expbkt3): END
 
 describe("branchMismatchKey", () => {
   it("builds a key from thread id and both branches", () => {
@@ -1889,6 +2031,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       requestedAt: "2026-03-29T00:01:00.000Z",
       startedAt: "2026-03-29T00:01:01.000Z",
       completedAt: null,
+      durationMs: null,
     };
 
     expect(
@@ -1949,6 +2092,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
             createdAt: runningTurn.requestedAt,
             updatedAt: runningTurn.requestedAt,
             streaming: false,
+            sentByUserId: null,
           },
         ],
       }),
@@ -2134,6 +2278,8 @@ describe("rewind draft recovery", () => {
     role: "user" as const,
     text: "edit this question",
     turnId: TurnId.make("rewound-turn"),
+    // T3-CUSTOM(expbkt3): fork-required field.
+    sentByUserId: null,
     createdAt: now,
     updatedAt: now,
     streaming: false,

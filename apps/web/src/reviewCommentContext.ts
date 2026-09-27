@@ -10,18 +10,26 @@ const ReviewCommentSelectionSchema = Schema.Struct({
 });
 type ReviewCommentSelection = typeof ReviewCommentSelectionSchema.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN
+// `startIndex`/`endIndex` are nullable, and `author` is new.
+//
+// A plan-review anchor is quoted text, not a line number, and the quote cannot
+// always be located in the source. Requiring the range made the parser reject
+// those blocks, and the transcript then rendered the raw `<review_comment>` XML
+// at the reader. A comment without a range is still a comment worth showing.
 export const ReviewCommentContextSchema = Schema.Struct({
   id: Schema.String,
   sectionId: Schema.String,
   sectionTitle: Schema.String,
   filePath: Schema.String,
-  startIndex: Schema.Number,
-  endIndex: Schema.Number,
+  startIndex: Schema.NullOr(Schema.Number),
+  endIndex: Schema.NullOr(Schema.Number),
   rangeLabel: Schema.String,
   text: Schema.String,
   diff: Schema.String,
   fenceLanguage: Schema.optional(Schema.String),
   selection: Schema.optional(ReviewCommentSelectionSchema),
+  author: Schema.optional(Schema.String),
   pullRequest: Schema.optional(PullRequestContextMetadata),
 });
 
@@ -30,15 +38,19 @@ export interface ReviewCommentContext {
   readonly sectionId: string;
   readonly sectionTitle: string;
   readonly filePath: string;
-  readonly startIndex: number;
-  readonly endIndex: number;
+  /** Null when the anchor could not be resolved to a line range. */
+  readonly startIndex: number | null;
+  readonly endIndex: number | null;
   readonly rangeLabel: string;
   readonly text: string;
   readonly diff: string;
   readonly fenceLanguage?: string | undefined;
   readonly selection?: ReviewCommentSelection | undefined;
+  /** Byline for an anchored plan comment. */
+  readonly author?: string | undefined;
   readonly pullRequest?: PullRequestContextMetadata | undefined;
 }
+// T3-CUSTOM(expbkt3): END
 
 interface DiffReviewLine {
   readonly change: "context" | "add" | "delete";
@@ -222,6 +234,8 @@ export function restoreDiffReviewCommentRange(
   comment: ReviewCommentContext,
 ): SelectedLineRange | null {
   if (comment.selection) return comment.selection;
+  // T3-CUSTOM(expbkt3): a rangeless comment cannot be placed on a diff line.
+  if (comment.startIndex === null || comment.endIndex === null) return null;
 
   const includeExpandedContext = !fileDiff.isPartial;
   const startLine = buildDiffReviewLines(fileDiff, includeExpandedContext, {

@@ -20,8 +20,14 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
+  // T3-CUSTOM(expbkt3): fork-only Users section.
+  | "/settings/users"
   | "/settings/storage"
   | "/settings/connections"
+  // T3-CUSTOM(expbkt3): fork-only settings sections. "/settings/projects" is
+  // upstream's now, and the route picks the fork panel behind the flag.
+  | "/settings/project-access"
+  | "/settings/experiments"
   | "/settings/archived";
 
 /**
@@ -91,8 +97,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
+  // T3-CUSTOM(expbkt3): fork-only Users section.
+  "/settings/users": "Users",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  // T3-CUSTOM(expbkt3): fork-only settings sections.
+  "/settings/project-access": "Project Access",
+  "/settings/experiments": "Experiments",
   "/settings/archived": "Archive",
 };
 
@@ -474,8 +485,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    // T3-CUSTOM(expbkt3): plan mode is a supported feature in the fork, not legacy.
     id: "legacy-plan-mode",
-    title: "Plan mode (legacy)",
+    title: "Plan mode",
     to: "/settings/general",
     searchTerms: ["build plan composer old"],
   },
@@ -800,10 +812,48 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "users",
+    title: "Users",
+    to: "/settings/users",
+  },
+  {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+  },
+  // T3-CUSTOM(expbkt3): native plan review.
+  {
+    id: "native-plan-review",
+    title: "Native plan review",
+    to: "/settings/experiments",
+  },
+  // T3-CUSTOM(expbkt3): plan review takeover.
+  {
+    id: "plan-review-takeover",
+    title: "Open a ready plan automatically",
+    to: "/settings/experiments",
+    searchTerms: ["plan review takeover auto open proposed decision gate approve full screen"],
+  },
+  // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
+  {
+    id: "agent-ui-surfaces",
+    title: "Agent views in chat",
+    to: "/settings/experiments",
+  },
+  // T3-CUSTOM(expbkt3): upstream's pull request view.
+  {
+    id: "native-pull-request-view",
+    title: "Native pull request view",
+    to: "/settings/experiments",
+    searchTerms: ["pr pull request link github integrated browser panel open"],
+  },
+  // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
+  {
+    id: "open-links-in-integrated-browser",
+    title: "Open links in the integrated browser",
+    to: "/settings/experiments",
+    searchTerms: ["link url linear external system browser in-app preview tab click"],
   },
   {
     id: "load-balancing",
@@ -845,6 +895,11 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/archived": "project-defaults",
+  // T3-CUSTOM(expbkt3): BEGIN — fork-only sections render at any selection.
+  "/settings/users": null,
+  "/settings/project-access": null,
+  "/settings/experiments": null,
+  // T3-CUSTOM(expbkt3): END
 };
 
 /** Search keeps the selected target. A missing row can explain its owning scope instead. */

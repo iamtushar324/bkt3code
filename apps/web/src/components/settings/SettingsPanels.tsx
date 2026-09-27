@@ -1,5 +1,7 @@
+// T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
+// T3-CUSTOM(expbkt3): fork-only notification settings section.
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -86,6 +88,8 @@ import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
+  // T3-CUSTOM(expbkt3): clears the plan agent when plan mode is disabled.
+  withoutPlanAgentSelection,
 } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -170,6 +174,9 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+// T3-CUSTOM(expbkt3): BEGIN — archived-session worktree reclaim.
+import { SessionArchiveReclaimSection } from "./SessionArchiveReclaimSection";
+// T3-CUSTOM(expbkt3): END
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -617,6 +624,21 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      // T3-CUSTOM(expbkt3): BEGIN — restore reports app-level thread defaults.
+      ...(!Equal.equals(
+        settings.defaultThreadModelSelection,
+        DEFAULT_UNIFIED_SETTINGS.defaultThreadModelSelection,
+      )
+        ? ["Default agent model"]
+        : []),
+      ...(settings.defaultThreadRuntimeMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadRuntimeMode
+        ? ["Default access mode"]
+        : []),
+      ...(settings.defaultThreadInteractionMode !==
+      DEFAULT_UNIFIED_SETTINGS.defaultThreadInteractionMode
+        ? ["Default starting mode"]
+        : []),
+      // T3-CUSTOM(expbkt3): END
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -661,6 +683,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.followUpBehavior,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      // T3-CUSTOM(expbkt3): BEGIN — restore observes app-level thread defaults.
+      settings.defaultThreadInteractionMode,
+      settings.defaultThreadModelSelection,
+      settings.defaultThreadRuntimeMode,
+      // T3-CUSTOM(expbkt3): END
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
       settings.diffIgnoreWhitespace,
@@ -792,6 +819,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      // T3-CUSTOM(expbkt3): BEGIN — restore app-level thread defaults atomically.
+      defaultThreadModelSelection: DEFAULT_UNIFIED_SETTINGS.defaultThreadModelSelection,
+      defaultThreadRuntimeMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadRuntimeMode,
+      defaultThreadInteractionMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadInteractionMode,
+      // T3-CUSTOM(expbkt3): END
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2095,19 +2127,43 @@ function LegacyFeaturesSection() {
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <SettingsGroup>
+            {/* T3-CUSTOM(expbkt3): BEGIN — default-on plan mode uses the fork key and clears incompatible model agents when disabled. */}
             <SettingsRow
               {...searchableSetting("legacy-plan-mode")}
-              description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
+              description="Build/Plan, /plan, /default, and Shift+Tab are on by default. Off uses build mode."
               control={
                 <Switch
-                  checked={settings.planModeEnabled}
+                  checked={settings.planModeAvailable}
                   onCheckedChange={(checked) => {
-                    updateSettings({ planModeEnabled: Boolean(checked) });
+                    const planModeAvailable = Boolean(checked);
+                    const textGenerationModelSelection = withoutPlanAgentSelection(
+                      settings.textGenerationModelSelection,
+                    );
+                    const sourceControlWriterModelSelection = withoutPlanAgentSelection(
+                      settings.sourceControlWriterModelSelection,
+                    );
+                    updateSettings({
+                      planModeAvailable,
+                      ...(planModeAvailable
+                        ? {}
+                        : {
+                            ...(textGenerationModelSelection &&
+                            textGenerationModelSelection !== settings.textGenerationModelSelection
+                              ? { textGenerationModelSelection }
+                              : {}),
+                            ...(sourceControlWriterModelSelection &&
+                            sourceControlWriterModelSelection !==
+                              settings.sourceControlWriterModelSelection
+                              ? { sourceControlWriterModelSelection }
+                              : {}),
+                          }),
+                    });
                   }}
-                  aria-label="Plan mode (legacy)"
+                  aria-label="Plan mode"
                 />
               }
             />
+            {/* T3-CUSTOM(expbkt3): END */}
             <SettingsRow
               {...searchableSetting("legacy-context-window-indicator")}
               description="Shows context window usage as a circular indicator in the composer."
@@ -2204,6 +2260,21 @@ export function GeneralSettingsPanel() {
     textGenInstanceId,
     textGenModel,
   );
+  // T3-CUSTOM(expbkt3): BEGIN — app-level agent defaults are distinct from the small
+  // text-generation model used for titles and summaries.
+  const defaultThreadModelSelection = settings.defaultThreadModelSelection;
+  const defaultThreadInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === defaultThreadModelSelection.instanceId,
+  );
+  const defaultThreadProvider: ProviderDriverKind =
+    defaultThreadInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const defaultThreadModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    serverProviders,
+    defaultThreadModelSelection.instanceId,
+    defaultThreadModelSelection.model,
+  );
+  // T3-CUSTOM(expbkt3): END
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
@@ -2935,6 +3006,148 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">
+        {/* T3-CUSTOM(expbkt3): BEGIN — configurable model, access, and starting defaults. */}
+
+        <SettingsRow
+          title="Default agent model"
+          description="Provider, model, and model options used when a new thread does not override them."
+          resetAction={
+            !Equal.equals(
+              settings.defaultThreadModelSelection,
+              DEFAULT_UNIFIED_SETTINGS.defaultThreadModelSelection,
+            ) ? (
+              <SettingResetButton
+                label="default agent model"
+                onClick={() =>
+                  updateSettings({
+                    defaultThreadModelSelection:
+                      DEFAULT_UNIFIED_SETTINGS.defaultThreadModelSelection,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <ProviderModelPicker
+                activeInstanceId={defaultThreadModelSelection.instanceId}
+                model={defaultThreadModelSelection.model}
+                lockedProvider={null}
+                instanceEntries={textGenerationModelInstanceEntries}
+                modelOptionsByInstance={defaultThreadModelOptionsByInstance}
+                onInstanceModelChange={(instanceId, model) =>
+                  updateSettings({
+                    defaultThreadModelSelection: createModelSelection(instanceId, model),
+                  })
+                }
+              />
+              <TraitsPicker
+                provider={defaultThreadProvider}
+                models={defaultThreadInstanceEntry?.models ?? []}
+                model={defaultThreadModelSelection.model}
+                // T3-CUSTOM(expbkt3): the fork gates plan traits on planModeAvailable.
+                planModeAvailable={settings.planModeAvailable}
+                prompt=""
+                onPromptChange={() => {}}
+                modelOptions={defaultThreadModelSelection.options}
+                allowPromptInjectedEffort={false}
+                onModelOptionsChange={(options) =>
+                  updateSettings({
+                    defaultThreadModelSelection: createModelSelection(
+                      defaultThreadModelSelection.instanceId,
+                      defaultThreadModelSelection.model,
+                      options,
+                    ),
+                  })
+                }
+              />
+            </div>
+          }
+        />
+
+        <SettingsRow
+          title="Default access mode"
+          description="Execution access used when a new thread does not provide an override."
+          resetAction={
+            settings.defaultThreadRuntimeMode !==
+            DEFAULT_UNIFIED_SETTINGS.defaultThreadRuntimeMode ? (
+              <SettingResetButton
+                label="default access mode"
+                onClick={() =>
+                  updateSettings({
+                    defaultThreadRuntimeMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadRuntimeMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.defaultThreadRuntimeMode}
+              onValueChange={(value) => {
+                if (
+                  value === "approval-required" ||
+                  value === "auto-accept-edits" ||
+                  value === "auto" ||
+                  value === "full-access"
+                ) {
+                  updateSettings({ defaultThreadRuntimeMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="Default access mode">
+                <SelectValue>{settings.defaultThreadRuntimeMode}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="approval-required">Ask for approval</SelectItem>
+                <SelectItem value="auto-accept-edits">Auto-accept edits</SelectItem>
+                <SelectItem value="auto">Provider default</SelectItem>
+                <SelectItem value="full-access">Full access</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Default starting mode"
+          description="Start new threads in Build or Plan mode unless explicitly overridden."
+          resetAction={
+            settings.defaultThreadInteractionMode !==
+            DEFAULT_UNIFIED_SETTINGS.defaultThreadInteractionMode ? (
+              <SettingResetButton
+                label="default starting mode"
+                onClick={() =>
+                  updateSettings({
+                    defaultThreadInteractionMode:
+                      DEFAULT_UNIFIED_SETTINGS.defaultThreadInteractionMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.defaultThreadInteractionMode}
+              onValueChange={(value) => {
+                if (value === "default" || value === "plan") {
+                  updateSettings({ defaultThreadInteractionMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Default starting mode">
+                <SelectValue>
+                  {settings.defaultThreadInteractionMode === "plan" ? "Plan" : "Build"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="default">Build</SelectItem>
+                <SelectItem value="plan">Plan</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        {/* T3-CUSTOM(expbkt3): END */}
+
         <SettingsRow
           serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
@@ -3204,7 +3417,8 @@ export function GeneralSettingsPanel() {
                     onPromptChange={() => {}}
                     modelOptions={textGenModelOptions}
                     allowPromptInjectedEffort={false}
-                    planModeEnabled={settings.planModeEnabled}
+                    // T3-CUSTOM(expbkt3): text-generation traits follow the fork's default-on plan setting.
+                    planModeAvailable={settings.planModeAvailable}
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({
@@ -3389,7 +3603,14 @@ export function ArchivedThreadsPanel() {
   );
 
   return (
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     <SettingsPageContainer>
+      {/* T3-CUSTOM(expbkt3): BEGIN — reclaim disk from archived sessions' worktrees. */}
+      <SessionArchiveReclaimSection
+        environmentIds={scope.environmentIds}
+        onReclaimed={refreshArchivedThreads}
+      />
+      {/* T3-CUSTOM(expbkt3): END */}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}

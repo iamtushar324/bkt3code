@@ -2119,6 +2119,19 @@ code {
   }
 }
 
+/* T3-CUSTOM(expbkt3): BEGIN — touch long-press stands in for right-click on
+   rows (see mobile/useLongPressContextMenu.ts). iOS would otherwise answer the
+   same gesture with its own callout and a text selection, both of which fight
+   the menu. Scoped to touch input so nothing changes for mouse or trackpad. */
+@media (pointer: coarse) {
+  [data-long-press-menu] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+/* T3-CUSTOM(expbkt3): END */
+
 /* Let the sortable rows open label clearance before painting the dividers.
    This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */
 .sidebar-drag-boundary-label {

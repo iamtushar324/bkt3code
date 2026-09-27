@@ -1,6 +1,9 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ArrowRightIcon } from "lucide-react";
 
+// T3-CUSTOM(expbkt3): BEGIN
+import { isBkManagedPrimary } from "../fork/managedEnvironment";
+// T3-CUSTOM(expbkt3): END
 import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
@@ -56,7 +59,13 @@ export function showDesktopUpdateDownloadedToast(
     title: "Update downloaded",
     description: (
       <>
-        Restart the app from the update button to install it.
+        {/* T3-CUSTOM(expbkt3): fork builds download in the background and raise a
+            native notification, but installing quits the app, so the restart
+            stays an explicit choice here rather than one stray notification
+            click. */}
+        {isBkManagedPrimary()
+          ? "Restart from the update button when you are at a good stopping point."
+          : "Restart the app from the update button to install it."}
         {releaseUrl ? <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} /> : null}
       </>
     ),

@@ -11,9 +11,14 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  // T3-CUSTOM(expbkt3): BEGIN — fork-only settings sections.
+  UsersIcon,
+  // T3-CUSTOM(expbkt3): END
   BlocksIcon,
   BotIcon,
   createLucideIcon,
+  // T3-CUSTOM(expbkt3): fork-only Experiments settings section.
+  FlaskConicalIcon,
   GitBranchIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
@@ -38,6 +43,9 @@ import {
   useSidebar,
   SidebarInput,
 } from "../ui/sidebar";
+// T3-CUSTOM(expbkt3): Keep account logout available while the settings sidebar replaces chrome.
+import { WebLogoutControl } from "../clerk/WebLogoutControl";
+import { useIsTeamAdmin } from "../../state/orgMembers";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
@@ -49,6 +57,8 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+// T3-CUSTOM(expbkt3): experimental control-centre seam.
+import { EXPERIMENTAL_CONTROL_CENTER_ENABLED } from "../../experimentalFeatures";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -84,8 +94,13 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
+  // T3-CUSTOM(expbkt3): fork-only Users section.
+  "/settings/users": UsersIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
+  // T3-CUSTOM(expbkt3): fork-only settings sections.
+  "/settings/project-access": UsersIcon,
+  "/settings/experiments": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -110,9 +125,20 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const navItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
+    (item) =>
+      item.to !== "/settings/projects" ||
+      // T3-CUSTOM(expbkt3): the experimental control centre puts its own projects
+      // list on this route, which is reachable without a project selection.
+      EXPERIMENTAL_CONTROL_CENTER_ENABLED ||
+      isSettingsOverviewVisible(scopeSearch),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
+  // T3-CUSTOM(expbkt3): Project Access is an admin-only section; upstream
+  // derives the nav from the section registry, so filter it here.
+  const isTeamAdmin = useIsTeamAdmin();
+  const visibleNavItems = navItems.filter(
+    (item) => item.to !== "/settings/project-access" || isTeamAdmin,
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -321,7 +347,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenu>
             ) : (
               <SidebarMenu>
-                {navItems.map((item) => {
+                {/* T3-CUSTOM(expbkt3): admin-only sections are filtered out. */}
+                {visibleNavItems.map((item) => {
                   const Icon = item.icon;
                   const isGeneralDetailPage =
                     item.to === "/settings/general" &&
@@ -351,6 +378,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
+        {/* T3-CUSTOM(expbkt3): retain logout in Settings. */}
+        <WebLogoutControl />
         <div className="flex items-center gap-1">
           <div className="min-w-0 flex-1">
             <SidebarUtilityMenu />

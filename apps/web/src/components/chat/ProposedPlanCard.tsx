@@ -13,7 +13,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
-import { EllipsisIcon } from "lucide-react";
+import { ArrowRightIcon, EllipsisIcon, LoaderCircleIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -39,12 +39,18 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  onOpenPlanReview,
+  planReviewDocumentId,
+  reviewable = false,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  onOpenPlanReview?: ((documentId: string) => void) | undefined;
+  planReviewDocumentId?: string | null | undefined;
+  reviewable?: boolean | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -194,16 +200,45 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {canCollapse ? (
-          <div className="mt-4 flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Collapse plan" : "Expand plan"}
-            </Button>
+        {canCollapse || (reviewable && onOpenPlanReview) ? (
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {canCollapse ? (
+              <Button
+                size="sm"
+                variant="outline"
+                data-scroll-anchor-ignore
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? "Collapse plan" : "Expand plan"}
+              </Button>
+            ) : null}
+            {/* T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point. */}
+            {reviewable && onOpenPlanReview ? (
+              planReviewDocumentId ? (
+                <Button
+                  size="sm"
+                  data-scroll-anchor-ignore
+                  data-plan-review-trigger
+                  aria-label="Open the plan review"
+                  onClick={() => onOpenPlanReview(planReviewDocumentId)}
+                >
+                  Preview
+                  <ArrowRightIcon className="size-4" />
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  disabled
+                  data-scroll-anchor-ignore
+                  data-plan-review-pending
+                  aria-label="Preparing plan preview"
+                >
+                  Preview
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                </Button>
+              )
+            ) : null}
+            {/* T3-CUSTOM(expbkt3): END */}
           </div>
         ) : null}
       </div>

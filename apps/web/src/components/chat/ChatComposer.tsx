@@ -96,7 +96,6 @@ import {
   composerFloatingLayerProps,
   useComposerMenuProps,
   isInsideCollapsedComposerControls,
-  isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -141,6 +140,14 @@ import {
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
+// T3-CUSTOM(expbkt3): a composer docked into plan review rests while unfocused,
+// and collapses on the plan document instead of the hidden timeline.
+import {
+  shouldShowPlanFollowUpDrawer,
+  usePlanReviewComposerDocked,
+  usePlanReviewComposerScrollSurface,
+  usePlanReviewDockedRest,
+} from "../../fork/planReviewComposerDock";
 import {
   ComposerBannerStack,
   type ComposerBannerStackContent,
@@ -251,6 +258,7 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
+import { ComposerQueuedMessages, type ComposerQueuedMessage } from "./ComposerQueuedMessages";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import {
@@ -1204,6 +1212,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   sendDisabledReason: string | null;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
+  sendQueuesWhileUnavailable?: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
@@ -1236,6 +1245,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         sendDisabledReason={props.sendDisabledReason}
         isConnecting={props.isConnecting}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+        sendQueuesWhileUnavailable={props.sendQueuesWhileUnavailable ?? false}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
@@ -1360,6 +1370,14 @@ export interface ChatComposerProps {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
+  /**
+   * Messages persisted in the durable outbox for the active thread, shown in
+   * a panel above the input and auto-sent once the environment reconnects.
+   */
+  queuedMessages?: ReadonlyArray<ComposerQueuedMessage>;
+  onDiscardQueuedMessage?: (messageId: string) => void;
+  /** Sends queue durably while disconnected (false for draft threads). */
+  queuedSendAllowed?: boolean;
 
   // Pending approvals / inputs
   activePendingApproval: PendingApproval | null;
@@ -1392,6 +1410,7 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  // T3-CUSTOM(expbkt3): only fresh drafts expose the inherited-defaults reset.
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -1511,6 +1530,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
+    queuedMessages,
+    onDiscardQueuedMessage,
+    queuedSendAllowed,
     activePendingApproval,
     pendingApprovals,
     pendingUserInputs,
@@ -1543,9 +1565,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     restingControlsHost,
     restingControlsHaveLeadingContext,
     onRestingControlsVisibilityChange,
-    getTimelineScrollableNode,
-    isTimelineAtLogicalEnd,
-    timelineOverflows,
+    // T3-CUSTOM(expbkt3): aliased so a docked composer can answer these from the plan.
+    getTimelineScrollableNode: getChatTimelineScrollableNode,
+    isTimelineAtLogicalEnd: isChatTimelineAtLogicalEnd,
+    timelineOverflows: chatTimelineOverflows,
     onComposerOverlayHeightChange,
     onRestingChange,
     promptRef,
@@ -1902,6 +1925,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
+  // T3-CUSTOM(expbkt3): a lost connection alone must not block the send button: the message is
+  // queued durably and auto-sent on reconnect. Missing providers or project
+  // selection still block, and draft threads still need a live connection.
+  const sendQueuesWhileEnvironmentUnavailable =
+    (queuedSendAllowed ?? false) &&
+    environmentUnavailable !== null &&
+    !noProviderAvailable &&
+    !projectSelectionRequired;
   // Before the catalog arrives, every thread resolves to "no provider". Send
   // stays blocked either way; only the chrome waits, keeping the picker with
   // the thread's own selection instead of swapping in the setup button and
@@ -2025,7 +2056,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         models: selectedProviderModels,
         promptInjectionState: composerPromptInjectionState,
         modelOptions: composerModelOptions?.[selectedInstanceId],
-        planModeEnabled: settings.planModeEnabled,
+        // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
+        planModeAvailable: settings.planModeAvailable,
       }),
     [
       composerModelOptions,
@@ -2034,14 +2066,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModel,
       selectedProvider,
       selectedProviderModels,
-      settings.planModeEnabled,
+      settings.planModeAvailable,
     ],
   );
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
-    planModeEnabled: settings.planModeEnabled,
+    planModeEnabled: settings.planModeAvailable,
     provider: selectedProviderStatus,
     interactionMode: requestedInteractionMode,
   });
@@ -2114,6 +2146,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
+  // T3-CUSTOM(expbkt3): nested drag enter/leave events would otherwise flicker the
+  // drop highlight, so the composer counts depth instead of trusting one event.
+  const dragDepthRef = useRef(0);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -2125,6 +2160,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
     restoreAfterTimelineReachedEnd,
   } = useComposerFocusState();
+  // T3-CUSTOM(expbkt3): docked under a plan, the document the reviewer scrolls
+  // is the surface upstream's collapse gesture watches. Everything downstream —
+  // the wheel handler, the resting layout, the PageUp/Home keys — is unchanged.
+  // T3-CUSTOM(expbkt3): the plan review dock changes what counts as chrome.
+  const isDockedInPlanReview = usePlanReviewComposerDocked();
+  const { getTimelineScrollableNode, isTimelineAtLogicalEnd, timelineOverflows } =
+    usePlanReviewComposerScrollSurface({
+      getTimelineScrollableNode: getChatTimelineScrollableNode,
+      isTimelineAtLogicalEnd: isChatTimelineAtLogicalEnd,
+      timelineOverflows: chatTimelineOverflows,
+    });
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
@@ -2535,7 +2581,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showComposerTopDrawer =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
-    (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
+    // T3-CUSTOM(expbkt3): inside plan review the plan is the surface, so this
+    // banner is noise — and as chrome it would hold the docked bar open forever.
+    shouldShowPlanFollowUpDrawer({
+      isDockedInPlanReview,
+      showPlanFollowUpPrompt,
+      hasActiveProposedPlan: activeProposedPlan !== null,
+      isCollapsedMobile: isComposerCollapsedMobile,
+    }) ||
+    // T3-CUSTOM(expbkt3): queued messages open the drawer on their own.
+    (queuedMessages !== undefined && queuedMessages.length > 0);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction =
@@ -2641,7 +2696,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-    planModeEnabled: settings.planModeEnabled,
+    planModeAvailable: settings.planModeAvailable,
   });
   const providerTraitsPickerInput = {
     provider: selectedProvider,
@@ -2653,7 +2708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
-    planModeEnabled: settings.planModeEnabled,
+    planModeAvailable: settings.planModeAvailable,
     isComposerOwned: true,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
@@ -2695,7 +2750,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting ||
     noProviderAvailable ||
     projectSelectionRequired ||
-    environmentUnavailable !== null ||
+    (environmentUnavailable !== null && !sendQueuesWhileEnvironmentUnavailable) ||
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
@@ -3180,6 +3235,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     resetComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    // T3-CUSTOM(expbkt3): a pending drag never carries over to another thread.
+    dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
   }, [draftId, activeThreadId, promptRef, resetComposerTrigger, setIsComposerScrollCollapsed]);
@@ -4740,6 +4797,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const expandedComposerImages = isComposerResting
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
     : standaloneComposerImages;
+  // T3-CUSTOM(expbkt3): while docked under a plan, losing focus rests the
+  // composer too — every pixel it holds there is a line of the plan.
+  usePlanReviewDockedRest({
+    isComposerScrollCollapsed,
+    setIsComposerScrollCollapsed,
+    hasMultilinePrompt,
+    hasExpandedChrome: composerHasExpandedChrome || isComposerModelPickerOpen,
+  });
   // The relocated controls live in the context strip whenever the composer is
   // collapsed for any reason, the desktop resting layout or the phone
   // collapse. Both leave the footer unrendered, so the strip is the only place
@@ -4985,6 +5050,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           hidden={composerControlsHidden || restingHiddenBlockCount > 0}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
+          // T3-CUSTOM(expbkt3): fresh draft can return to inherited defaults.
         />
       ),
     },
@@ -6321,6 +6387,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </ComposerBanner.Body>
                     ) : null}
                   </div>
+                ) : queuedMessages !== undefined && queuedMessages.length > 0 ? (
+                  // T3-CUSTOM(expbkt3): durable offline sends stay visible in the composer drawer.
+                  <ComposerQueuedMessages
+                    messages={queuedMessages}
+                    environmentConnected={environmentUnavailable === null}
+                    onDiscard={onDiscardQueuedMessage ?? (() => undefined)}
+                  />
                 ) : null}
               </ComposerBanner.Root>
             </ComposerBanner.Attachment>
@@ -7033,6 +7106,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
+                    // T3-CUSTOM(expbkt3): a queued durable send keeps the button live.
+                    sendQueuesWhileUnavailable={sendQueuesWhileEnvironmentUnavailable}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}

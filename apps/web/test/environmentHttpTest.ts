@@ -8,7 +8,10 @@ import {
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
+  type AuthIdentityBindingRequest,
+  type AuthIdentityBindingResult,
   type AuthPairingCredentialResult,
+  type AuthSessionLogoutResult,
   type AuthSessionState,
   type ExecutionEnvironmentDescriptor,
   type EnvironmentAuthInvalidError,
@@ -31,7 +34,12 @@ type BrowserSessionHandler = (
 interface EnvironmentHttpTestScenario {
   readonly descriptor?: () => Effect.Effect<ExecutionEnvironmentDescriptor>;
   readonly session?: () => Effect.Effect<AuthSessionState>;
+  readonly logout?: () => Effect.Effect<AuthSessionLogoutResult>;
   readonly browserSession?: BrowserSessionHandler;
+  readonly bindIdentity?: (
+    payload: AuthIdentityBindingRequest,
+    // T3-CUSTOM(expbkt3): Allow auth rejection scenarios in browser bootstrap tests.
+  ) => Effect.Effect<AuthIdentityBindingResult, EnvironmentAuthInvalidError>;
   readonly pairingCredential?: (
     payload: AuthCreatePairingCredentialInput,
   ) => Effect.Effect<AuthPairingCredentialResult>;
@@ -40,7 +48,9 @@ interface EnvironmentHttpTestScenario {
 export interface EnvironmentHttpTestCalls {
   descriptor: number;
   session: number;
+  logout: number;
   browserSession: Array<AuthBrowserSessionRequest>;
+  bindIdentity: Array<AuthIdentityBindingRequest>;
   pairingCredential: Array<AuthCreatePairingCredentialInput>;
 }
 
@@ -53,6 +63,7 @@ const authenticatedAuth: Context.Service.Shape<typeof EnvironmentAuthenticatedAu
   httpEffect.pipe(
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("test-session"),
+      userId: null,
       subject: "test-client",
       method: "browser-session-cookie",
       scopes: new Set<AuthEnvironmentScope>(),
@@ -64,7 +75,9 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
   const calls: EnvironmentHttpTestCalls = {
     descriptor: 0,
     session: 0,
+    logout: 0,
     browserSession: [],
+    bindIdentity: [],
     pairingCredential: [],
   };
 
@@ -91,11 +104,28 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
               }),
             )
             .handle(
+              "logout",
+              Effect.fn("test.environment.auth.logout")(function* () {
+                calls.logout += 1;
+                return yield* scenario.logout?.() ?? unexpectedEndpoint("auth.logout");
+              }),
+            )
+            .handle(
               "browserSession",
               Effect.fn("test.environment.auth.browserSession")(function* ({ payload }) {
                 calls.browserSession.push(payload);
                 return yield* (
                   scenario.browserSession?.(payload) ?? unexpectedEndpoint("auth.browserSession")
+                );
+              }),
+            )
+            .handle("clerkSession", () => unexpectedEndpoint("auth.clerkSession"))
+            .handle(
+              "bindIdentity",
+              Effect.fn("test.environment.auth.bindIdentity")(function* ({ payload }) {
+                calls.bindIdentity.push(payload);
+                return yield* (
+                  scenario.bindIdentity?.(payload) ?? unexpectedEndpoint("auth.bindIdentity")
                 );
               }),
             )

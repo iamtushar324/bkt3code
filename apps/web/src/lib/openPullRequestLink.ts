@@ -11,6 +11,8 @@ import {
 } from "@t3tools/shared/sourceControl";
 
 import { useOpenLink } from "../browser/useOpenLink";
+// T3-CUSTOM(expbkt3): pull request links open in the integrated browser.
+import { useOpenPullRequestInBrowserInstead } from "../fork/pullRequestBrowserLinks";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -220,9 +222,14 @@ export function useOpenChangeRequestLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // T3-CUSTOM(expbkt3): pull request links open in the integrated browser.
+  const openInBrowserInstead = useOpenPullRequestInBrowserInstead(threadRef);
   return useCallback(
     (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
       if (shouldOpenPullRequestExternally(event)) return false;
+      // T3-CUSTOM(expbkt3): pull request links open in the integrated browser.
+      const forked = openInBrowserInstead(event, targetUrl, targetThreadRef);
+      if (forked !== undefined) return forked;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -318,7 +325,16 @@ export function useOpenChangeRequestLink(
       });
       return true;
     },
-    [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
+    // T3-CUSTOM(expbkt3): openInBrowserInstead.
+    [
+      allProjects,
+      navigate,
+      openInBrowserInstead,
+      panelRef,
+      primaryEnvironmentId,
+      serverConfigs,
+      threadRef,
+    ],
   );
 }
 

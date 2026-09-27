@@ -9,18 +9,29 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+// T3-CUSTOM(expbkt3): per-environment icon and colour, derived from the environment id.
+import {
+  resolveEnvironmentAppearance,
+  type ResolvedEnvironmentAppearance,
+} from "./environmentAppearance";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
+// T3-CUSTOM(expbkt3): retained for useEnvironmentConnectionState below.
+import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
 import { usePreparedConnection } from "./session";
 
+// T3-CUSTOM(expbkt3): BEGIN — resolved appearance travels with every environment view.
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly appearance: ResolvedEnvironmentAppearance;
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
 }
+// T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — resolve environment identity into presentations.
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
@@ -29,10 +40,15 @@ function projectEnvironmentPresentation(
     ...presentation,
     environmentId,
     label: presentation.entry.target.label,
+    appearance: resolveEnvironmentAppearance({
+      environmentId,
+      label: presentation.entry.target.label,
+    }),
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
   };
 }
+// T3-CUSTOM(expbkt3): END
 
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -84,3 +100,60 @@ export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): 
 export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscoveryState {
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
+
+// T3-CUSTOM(expbkt3): upstream removed this as unused (#10225); the fork's
+// thread context actions control still reads per-environment connection state.
+export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
+  return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
+}
+// T3-CUSTOM(expbkt3): BEGIN — per-environment identity for multi-environment clients.
+
+/**
+ * The icon and colour for one environment, derived from the environment id so
+ * every environment is distinguishable without any configuration.
+ */
+export function useEnvironmentAppearance(
+  environmentId: EnvironmentId | null,
+): ResolvedEnvironmentAppearance | null {
+  const environment = useEnvironment(environmentId);
+  return environment?.appearance ?? null;
+}
+
+/**
+ * Appearance for every known environment, keyed by id. For lists that render rows
+ * from several environments and would otherwise call the single hook in a loop.
+ */
+export function useEnvironmentAppearances(): ReadonlyMap<string, ResolvedEnvironmentAppearance> {
+  const { environments } = useEnvironments();
+  return useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.appearance]),
+      ),
+    [environments],
+  );
+}
+
+/**
+ * Whether this client knows about more than one environment at all.
+ *
+ * Surfaces that always show everything (settings lists) use this. Surfaces that
+ * show a filtered set — the sidebar above all — must instead ask whether *the rows
+ * they are about to render* span more than one environment, because a second
+ * environment with nothing in view is not a reason to add a column of badges to
+ * every row. See `hasMultipleEnvironments` for that case.
+ */
+export function useHasMultipleEnvironments(): boolean {
+  const { environments } = useEnvironments();
+  return environments.length > 1;
+}
+
+/** True when the supplied rows come from more than one environment. */
+export function hasMultipleEnvironments(
+  rows: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+): boolean {
+  if (rows.length < 2) return false;
+  const first = rows[0]?.environmentId;
+  return rows.some((row) => row.environmentId !== first);
+}
+// T3-CUSTOM(expbkt3): END

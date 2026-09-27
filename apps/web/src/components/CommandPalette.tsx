@@ -1996,6 +1996,19 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    // T3-CUSTOM(expbkt3): BEGIN — GitHub identity/profile management entry.
+    value: "action:source-control-settings",
+    searchTerms: ["github", "source control", "identity", "profile", "token", "settings"],
+    title: "Manage GitHub profiles",
+    icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openSourceControlSettings();
+    },
+  });
+  // T3-CUSTOM(expbkt3): END
+
+  actionItems.push({
+    kind: "action",
     value: "action:theme-editor",
     searchTerms: ["theme", "appearance", "colors", "palette", "customize"],
     title: "Toggle theme editor",

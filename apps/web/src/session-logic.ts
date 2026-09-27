@@ -92,6 +92,11 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  /**
+   * T3-CUSTOM(expbkt3): render handle left by a `t3_show_ui` call. The document
+   * itself is fetched on demand; this is only the key to it.
+   */
+  agentUi?: unknown;
 }
 
 const workLogCollapseKey = Symbol();
@@ -637,6 +642,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
     if (toolData !== undefined) {
       entry.toolData = toolData;
+    }
+    // T3-CUSTOM(expbkt3): agent-rendered UI surfaces. Read straight off `data`,
+    // which every adapter populates, rather than the Codex-only `data.item`.
+    if (data?.t3Ui !== undefined) {
+      entry.agentUi = data.t3Ui;
     }
   }
   if (itemType) {

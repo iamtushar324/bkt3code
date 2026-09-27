@@ -18,6 +18,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+// T3-CUSTOM(expbkt3): plan-review comments are labelled by plan title, not path+range.
+import { isPlanReviewSectionId, planReviewCommentTitle } from "@t3tools/shared/planReview";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
@@ -65,6 +67,8 @@ function basename(filePath: string): string {
 }
 
 export function reviewCommentContextLabel(comment: ReviewCommentPresentation): string {
+  // T3-CUSTOM(expbkt3): a plan comment has no path or line range worth showing.
+  if (isPlanReviewSectionId(comment.sectionId)) return planReviewCommentTitle(comment.filePath);
   const pullRequestNumber = pullRequestContextNumber(comment);
   if (isPullRequestSummaryContext(comment) && pullRequestNumber !== null) {
     return `#${pullRequestNumber}`;
@@ -187,6 +191,8 @@ export function reviewCommentContextRecord(
     diff: clampContextText(comment.diff, COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS),
     ...(comment.fenceLanguage !== undefined ? { fenceLanguage: comment.fenceLanguage } : {}),
     ...(comment.pullRequest !== undefined ? { pullRequest: comment.pullRequest } : {}),
+    // T3-CUSTOM(expbkt3): plan comment byline.
+    ...(comment.author !== undefined ? { author: comment.author } : {}),
   };
 }
 
@@ -423,6 +429,8 @@ export function reviewCommentFromRecord(record: ReviewCommentContextRecord): Rev
     diff: record.diff,
     ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
     ...(record.pullRequest !== undefined ? { pullRequest: record.pullRequest } : {}),
+    // T3-CUSTOM(expbkt3): plan comment byline.
+    ...(record.author !== undefined ? { author: record.author } : {}),
   };
 }
 

@@ -15,10 +15,14 @@ import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
+// T3-CUSTOM(expbkt3): BEGIN — expose per-environment shell readiness.
 import {
-  allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
+  allEnvironmentProjectSnapshotsReadyAtom,
+  environmentShellReadinessAtom,
+  type EnvironmentShellReadiness,
 } from "./shell";
+// T3-CUSTOM(expbkt3): END
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -82,6 +86,12 @@ export function useAllEnvironmentShellsBootstrapped(): boolean {
   return useAtomValue(allEnvironmentShellsBootstrappedAtom);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — which environments this client can currently see rows for.
+export function useEnvironmentShellReadiness(): EnvironmentShellReadiness {
+  return useAtomValue(environmentShellReadinessAtom);
+}
+
+// T3-CUSTOM(expbkt3): END
 export function useAllEnvironmentProjectSnapshotsReady(): boolean {
   return useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
 }

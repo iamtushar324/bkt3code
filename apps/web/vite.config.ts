@@ -12,6 +12,9 @@ import pkg from "./package.json" with { type: "json" };
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+// T3-CUSTOM(expbkt3): BEGIN - managed BK builds bake in the central server they run on.
+import { resolveBkManagedEnvironment } from "../../scripts/lib/bk-managed-environment";
+// T3-CUSTOM(expbkt3): END
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 
@@ -40,6 +43,11 @@ const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || 
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
+// T3-CUSTOM(expbkt3): match the production shell's anti-framing boundary in dev.
+const T3_HTML_FRAME_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+} as const;
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
@@ -216,6 +224,13 @@ export default defineConfig(() => {
       "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
       "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      // T3-CUSTOM(expbkt3): BEGIN - the central server a managed BK build orchestrates,
+      // or null for every other build. Baked in, not read from the environment, for
+      // the same reason as __T3CODE_BUILD_BRAND__: nothing sets it on a user's machine.
+      __T3CODE_BK_MANAGED_ENVIRONMENT__: JSON.stringify(
+        resolveBkManagedEnvironment(process.env) ?? null,
+      ),
+      // T3-CUSTOM(expbkt3): END
     },
     resolve: {
       tsconfigPaths: true,
@@ -229,6 +244,8 @@ export default defineConfig(() => {
       port,
       strictPort: true,
       allowedHosts,
+      // T3-CUSTOM(expbkt3): prevent an agent frame redirecting into the dev shell.
+      headers: T3_HTML_FRAME_HEADERS,
       // Transform the whole module graph at server start instead of on the
       // first request. Without this, a cold worktree discovers and transforms
       // modules one import-level at a time while the browser waits — which
