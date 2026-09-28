@@ -396,7 +396,7 @@ const runBuild = Effect.fn("runBuild")(function* (options: {
 const command = Command.make(
   "build-bk-desktop-dmg",
   {
-    buildVersion: Flag.string("build-version").pipe(
+    buildVersion: Flag.String("build-version").pipe(
       Flag.withDescription(
         "Version to stamp, for example 0.0.32-staging-nightly.20260810.1. Must match --channel.",
       ),
@@ -406,17 +406,17 @@ const command = Command.make(
     // backend: staging builds are "BK T3 Code (Staging)" with their own bundle
     // id, user-data directory and updater channel. Leaving it implicit is how
     // you accidentally publish a local build onto the team's channel.
-    channel: Flag.string("channel").pipe(
+    channel: Flag.String("channel").pipe(
       Flag.withDescription(
         "Which fork app to build: staging (expbkt3, from expbkmain) or production " +
           "(bkt3, from bkmain).",
       ),
     ),
-    arch: Flag.string("arch").pipe(
+    arch: Flag.String("arch").pipe(
       Flag.withDescription("Target architecture (arm64 or x64)."),
       Flag.withDefault("arm64"),
     ),
-    verbose: Flag.boolean("verbose").pipe(
+    verbose: Flag.Boolean("verbose").pipe(
       Flag.withDescription("Stream electron-builder output."),
       Flag.withDefault(true),
     ),

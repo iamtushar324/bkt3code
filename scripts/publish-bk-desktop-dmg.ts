@@ -710,12 +710,12 @@ const assertDraftAssetsComplete = Effect.fn("assertDraftAssetsComplete")(functio
 const command = Command.make(
   "publish-bk-desktop-dmg",
   {
-    buildVersion: Flag.string("build-version").pipe(
+    buildVersion: Flag.String("build-version").pipe(
       Flag.withDescription(
         "Version that was built, for example 0.0.32-staging-nightly.20260810.1.",
       ),
     ),
-    channel: Flag.string("channel").pipe(
+    channel: Flag.String("channel").pipe(
       Flag.withDescription(
         "Which fork app is being published: staging or production. Must match the version.",
       ),
@@ -723,16 +723,16 @@ const command = Command.make(
     // Required. Without --target, `gh release create` tags the repository's
     // DEFAULT branch, so the tag would point at `main` while the assets contain
     // expbkmain code — a release that lies about what is inside it.
-    sourceSha: Flag.string("source-sha").pipe(
+    sourceSha: Flag.String("source-sha").pipe(
       Flag.withDescription(
         "Full commit SHA the artifacts were built from. In Actions, ${{ github.sha }}.",
       ),
     ),
-    releaseDir: Flag.string("release-dir").pipe(
+    releaseDir: Flag.String("release-dir").pipe(
       Flag.withDescription("Directory holding the built artifacts."),
       Flag.withDefault("release"),
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Run every check and print the gh command without publishing."),
       Flag.withDefault(false),
     ),

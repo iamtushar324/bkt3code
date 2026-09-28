@@ -130,7 +130,7 @@ const checkIcons = Effect.fn("checkIcons")(function* (icons: ReadonlyArray<Gener
 const command = Command.make(
   "generate-bk-brand-icons",
   {
-    check: Flag.boolean("check").pipe(
+    check: Flag.Boolean("check").pipe(
       Flag.withDescription("Verify the committed icons match this generator instead of writing."),
       Flag.withDefault(false),
     ),

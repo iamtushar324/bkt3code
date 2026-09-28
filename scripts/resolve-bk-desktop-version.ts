@@ -26,7 +26,7 @@ import { isBkManagedChannel } from "./lib/bk-managed-environment.ts";
 const command = Command.make(
   "resolve-bk-desktop-version",
   {
-    channel: Flag.string("channel").pipe(
+    channel: Flag.String("channel").pipe(
       Flag.withDescription("Which fork app to stamp a version for: staging or production."),
     ),
   },

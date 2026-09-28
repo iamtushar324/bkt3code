@@ -126,7 +126,7 @@ export class TurnStartBootstrap extends Context.Service<
       OrchestrationDispatchCommandError
     >;
   }
->()("t3/orchestration/TurnStartBootstrap") {}
+>()("t3/orchestration/turnStartBootstrap.expbkt3/TurnStartBootstrap") {}
 
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -412,10 +412,10 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
-  const withThreadCleanup = <A>(
+  const withThreadCleanup = <A, E>(
     threadId: ThreadId,
     createdThread: () => boolean,
-    program: Effect.Effect<A, unknown>,
+    program: Effect.Effect<A, E>,
   ): Effect.Effect<A, OrchestrationDispatchCommandError> =>
     program.pipe(
       Effect.catchCause((cause) => {
