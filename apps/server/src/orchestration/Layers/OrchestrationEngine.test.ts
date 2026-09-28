@@ -1484,7 +1484,6 @@ describe("OrchestrationEngine", () => {
         status: "ready",
         files: [],
         assistantMessageId: null,
-        durationMs: null,
         completedAt: createdAt,
       },
     ]);
