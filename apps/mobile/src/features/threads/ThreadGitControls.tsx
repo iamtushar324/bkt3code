@@ -17,6 +17,8 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+// T3-CUSTOM(expbkt3): smart git action asks the agent (features/smartgit).
+import { useSmartGitAction } from "../smartgit/useSmartGitAction";
 import {
   basename,
   getTerminalStatusLabel,
@@ -183,6 +185,8 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const quickActionHint = quickAction.disabled
     ? (quickAction.hint ?? "This action is unavailable.")
     : null;
+  // T3-CUSTOM(expbkt3): smart git action (commit / push / create PR) asks the agent.
+  const smartGit = useSmartGitAction(props);
 
   const quickActionIcon: QuickActionIcon = (() => {
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
@@ -288,10 +292,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     openFiles,
     openGitInspector,
     openReview,
-    quickAction,
-    quickActionHint,
-    quickActionIcon,
-    runQuickAction,
+    // T3-CUSTOM(expbkt3): BEGIN — the smart git action stands in for the quick action.
+    quickAction: smartGit.visible
+      ? { ...quickAction, label: smartGit.intent.label, disabled: false }
+      : quickAction,
+    quickActionHint: smartGit.visible ? (smartGit.intent.hint ?? null) : quickActionHint,
+    quickActionIcon: smartGit.visible ? smartGit.icon : quickActionIcon,
+    runQuickAction: smartGit.visible ? smartGit.run : runQuickAction,
+    smartGitHighlighted: smartGit.highlighted,
+    // T3-CUSTOM(expbkt3): END
   };
 }
 
@@ -393,7 +402,8 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         },
         sharesBackground: true,
         type: "menu",
-        variant: "plain",
+        // T3-CUSTOM(expbkt3): prominent (tinted) while the smart git action has pending work.
+        variant: model.smartGitHighlighted ? "prominent" : "plain",
       },
     };
   }, [
@@ -407,6 +417,8 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     model.quickActionHint,
     model.quickActionIcon,
     model.runQuickAction,
+    // T3-CUSTOM(expbkt3): smart git highlight.
+    model.smartGitHighlighted,
     props.canOpenFiles,
     props.canOpenTerminal,
     props.gitStatus,

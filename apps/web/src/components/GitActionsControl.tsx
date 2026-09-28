@@ -128,6 +128,8 @@ interface GitActionsControlProps {
   // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
   actingProfileLogin?: string | null;
   sourceControlProfileId?: SourceControlProfileId | null;
+  // T3-CUSTOM(expbkt3): the smart git button (fork/smartGit) stands in for the quick action.
+  hideQuickAction?: boolean;
   /**
    * Opens the thread's own change request beside it. Absent when the thread has no project to
    * place it against, in which case it still opens in the browser.
@@ -972,6 +974,8 @@ export default function GitActionsControl({
   // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
   actingProfileLogin = null,
   sourceControlProfileId = null,
+  // T3-CUSTOM(expbkt3): the smart git button stands in for the quick action.
+  hideQuickAction = false,
   onOpenPullRequest,
 }: GitActionsControlProps) {
   const updateThreadMetadata = useAtomCommand(
@@ -1861,24 +1865,31 @@ export default function GitActionsControl({
           </MenuItem>
         ) : (
           <>
-            <MenuItem
-              density={presentation === "menu" ? "touch" : "default"}
-
-              disabled={isGitActionRunning || quickAction.disabled || !!quickActionDisabledReason}
-              onClick={runQuickAction}
-            >
-              <GitQuickActionIcon
-                className="size-4"
-                quickAction={quickAction}
-                SourceControlIcon={SourceControlIcon}
-              />
-              <MenuItemLabel>{quickAction.label}</MenuItemLabel>
-            </MenuItem>
-            {quickActionDisabledReason && (
-              <p className="max-w-64 px-2 py-1.5 text-xs text-warning">
-                {quickActionDisabledReason}
-              </p>
+            {/* T3-CUSTOM(expbkt3): BEGIN — the smart git button stands in for the quick action. */}
+            {hideQuickAction ? null : (
+              <>
+                <MenuItem
+                  density={presentation === "menu" ? "touch" : "default"}
+                  disabled={
+                    isGitActionRunning || quickAction.disabled || !!quickActionDisabledReason
+                  }
+                  onClick={runQuickAction}
+                >
+                  <GitQuickActionIcon
+                    className="size-4"
+                    quickAction={quickAction}
+                    SourceControlIcon={SourceControlIcon}
+                  />
+                  <MenuItemLabel>{quickAction.label}</MenuItemLabel>
+                </MenuItem>
+                {quickActionDisabledReason && (
+                  <p className="max-w-64 px-2 py-1.5 text-xs text-warning">
+                    {quickActionDisabledReason}
+                  </p>
+                )}
+              </>
             )}
+            {/* T3-CUSTOM(expbkt3): END */}
             <MenuSub
               onOpenChange={(open) => {
                 // T3-CUSTOM(expbkt3): refresh with the thread so its source-control profile is used.
@@ -1908,7 +1919,8 @@ export default function GitActionsControl({
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
-          {quickActionDisabledReason ? (
+          {/* T3-CUSTOM(expbkt3): the smart git button stands in for the quick action. */}
+          {hideQuickAction ? null : quickActionDisabledReason ? (
             <Popover>
               <PopoverTrigger
                 openOnHover
@@ -1939,7 +1951,8 @@ export default function GitActionsControl({
               </span>
             </Button>
           )}
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          {/* T3-CUSTOM(expbkt3): no separator without the quick action. */}
+          {hideQuickAction ? null : <GroupSeparator className="hidden @3xl/header-actions:block" />}
           <Menu
             onOpenChange={(open) => {
               if (open) {

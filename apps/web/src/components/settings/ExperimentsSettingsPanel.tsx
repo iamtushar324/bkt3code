@@ -28,6 +28,8 @@ export function ExperimentsSettingsPanel() {
   );
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
   const agentUiSurfacesEnabled = useClientSettings((settings) => settings.agentUiSurfacesEnabled);
+  // T3-CUSTOM(expbkt3): smart git button asks the agent.
+  const smartGitPromptsEnabled = useClientSettings((settings) => settings.smartGitPromptsEnabled);
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   const nativePullRequestViewEnabled = useClientSettings(
     (settings) => settings.nativePullRequestViewEnabled,
@@ -82,6 +84,21 @@ export function ExperimentsSettingsPanel() {
                 updateSettings({ agentUiSurfacesEnabled: Boolean(checked) })
               }
               aria-label="Agent views in chat"
+            />
+          }
+        />
+        {/* T3-CUSTOM(expbkt3): END */}
+        {/* T3-CUSTOM(expbkt3): BEGIN — smart git button asks the agent. */}
+        <SettingsRow
+          {...searchableSetting("smart-git-prompts")}
+          description="The git button in a thread's header asks the agent instead of running git: it lights up as Commit while the worktree has uncommitted changes, then as Create PR (or Push, when a pull request is already open) once everything is committed. A click sends the request into the chat, or queues it while the agent is busy. Pull, sync and every direct git action stay in the button's dropdown. While off, the header shows the standard git button."
+          control={
+            <Switch
+              checked={smartGitPromptsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ smartGitPromptsEnabled: Boolean(checked) })
+              }
+              aria-label="Smart git button"
             />
           }
         />

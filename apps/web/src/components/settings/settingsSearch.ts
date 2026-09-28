@@ -841,6 +841,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Agent views in chat",
     to: "/settings/experiments",
   },
+  // T3-CUSTOM(expbkt3): smart git button asks the agent.
+  {
+    id: "smart-git-prompts",
+    title: "Smart git button",
+    to: "/settings/experiments",
+    searchTerms: ["commit push create pr pull request agent prompt header highlight conductor"],
+  },
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   {
     id: "native-pull-request-view",

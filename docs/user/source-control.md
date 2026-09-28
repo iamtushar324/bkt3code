@@ -131,6 +131,15 @@ messages, review titles, and descriptions from your changes.
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
+<!-- T3-CUSTOM(expbkt3): smart git button. -->
+
+The thread header's git button follows the worktree. With uncommitted changes it shows a
+highlighted **Commit**; once everything is committed it highlights **Create PR** (or **Push** when a
+pull request is already open). Clicking it asks the agent in the chat to do the step, so the agent
+writes the commit message or pull request itself; while a turn is running the request waits in the
+queue. The chevron beside it keeps the direct git actions. Turn this off in **Settings → Experiments →
+Smart git button** to get the classic button back.
+
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,

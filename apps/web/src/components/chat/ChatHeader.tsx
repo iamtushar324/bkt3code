@@ -65,6 +65,10 @@ import { cn } from "~/lib/utils";
 import { ThreadContextActionsControl } from "./ThreadContextActionsControl";
 // T3-CUSTOM(expbkt3): per-thread API-level cost.
 import { ThreadCostControl } from "./ThreadCostControl";
+// T3-CUSTOM(expbkt3): BEGIN — smart git button asks the agent to commit / push / open a PR.
+import { SmartGitButton } from "~/fork/smartGit/SmartGitButton";
+import { useSmartGitAction } from "~/fork/smartGit/useSmartGitAction";
+// T3-CUSTOM(expbkt3): END
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -242,6 +246,16 @@ export const ChatHeader = memo(function ChatHeader({
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  // T3-CUSTOM(expbkt3): BEGIN — smart git button; drafts have no thread to prompt.
+  const smartGit = useSmartGitAction({
+    threadRef: isServerThread && activeProjectName ? activeThreadRef : null,
+    gitCwd,
+    sourceControlProfileId,
+  });
+  const smartGitControl = smartGit.visible ? (
+    <SmartGitButton action={smartGit} presentation={actionsCollapsed ? "menu" : "toolbar"} />
+  ) : null;
+  // T3-CUSTOM(expbkt3): END
   // Inline rename, keyed by thread: navigating away drops an in-progress
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
@@ -380,6 +394,14 @@ export const ChatHeader = memo(function ChatHeader({
   );
   const headerActions = (
     <>
+      {/* T3-CUSTOM(expbkt3): BEGIN — collapsed, the smart git action leads the menu. */}
+      {actionsCollapsed && smartGitControl ? (
+        <>
+          {smartGitControl}
+          {activeProjectScripts || showOpenInPicker ? <MenuSeparator /> : null}
+        </>
+      ) : null}
+      {/* T3-CUSTOM(expbkt3): END */}
       {activeProjectScripts && (
         <>
           <ProjectScriptsControl
@@ -411,6 +433,8 @@ export const ChatHeader = memo(function ChatHeader({
       {activeProjectName && gitCwd && (
         <>
           {actionsCollapsed && (activeProjectScripts || showOpenInPicker) && <MenuSeparator />}
+          {/* T3-CUSTOM(expbkt3): inline, the smart git button sits before the git dropdown. */}
+          {actionsCollapsed ? null : smartGitControl}
           <GitActionsControl
             presentation={actionsCollapsed ? "menu" : "toolbar"}
             gitCwd={gitCwd}
@@ -420,6 +444,8 @@ export const ChatHeader = memo(function ChatHeader({
             // T3-CUSTOM(expbkt3): act as the thread's selected source-control profile.
             actingProfileLogin={selectedSourceControlProfile?.login ?? null}
             sourceControlProfileId={sourceControlProfileId}
+            // T3-CUSTOM(expbkt3): the smart git button stands in for the quick action.
+            hideQuickAction={smartGit.visible}
           />
         </>
       )}

@@ -82,6 +82,8 @@ import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 // T3-CUSTOM(expbkt3): compact headers keep Git utilities; the cost pill leads them.
 import { useThreadGitCenterHeaderItems, useThreadGitCompactHeaderItems } from "./ThreadGitControls";
+// T3-CUSTOM(expbkt3): smart git action asks the agent (features/smartgit).
+import { useSmartGitAction } from "../smartgit/useSmartGitAction";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
@@ -121,6 +123,8 @@ function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  // T3-CUSTOM(expbkt3): smart git — Android's header button, and a header refresh key on iOS.
+  const smartGit = useSmartGitAction(props.gitControls);
   // T3-CUSTOM(expbkt3): BEGIN — the cost pill sits ahead of the git controls,
   // and compact headers keep title and environment readable while the Git menu
   // retains the secondary utility access routes.
@@ -155,6 +159,16 @@ function ThreadHeader(
   // T3-CUSTOM(expbkt3): END
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
+    // T3-CUSTOM(expbkt3): BEGIN — the smart git action leads, so it stays a direct button.
+    if (smartGit.visible) {
+      actions.push({
+        accessibilityLabel: `${smartGit.intent.label}: ask the agent`,
+        icon: smartGit.icon,
+        selected: smartGit.intent.highlighted,
+        onPress: smartGit.run,
+      });
+    }
+    // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): per-thread API-level cost.
     if (props.threadCostHeader) {
       actions.push({
@@ -193,6 +207,12 @@ function ThreadHeader(
     });
     return actions;
   }, [
+    // T3-CUSTOM(expbkt3): smart git action.
+    smartGit.visible,
+    smartGit.intent.label,
+    smartGit.intent.highlighted,
+    smartGit.icon,
+    smartGit.run,
     // T3-CUSTOM(expbkt3): per-thread cost pill.
     props.threadCostHeader,
     props.inspectorMode,
@@ -215,7 +235,12 @@ function ThreadHeader(
         // T3-CUSTOM(expbkt3): fork right-side header items (cost pill, compact Git menu).
         options={nativeOptions}
         // T3-CUSTOM(expbkt3): re-apply header items when the cost label changes.
-        optionsVersion={[props.gitControls.projectScripts, props.threadCostHeader?.label]}
+        // T3-CUSTOM(expbkt3): and when the smart git action changes.
+        optionsVersion={[
+          props.gitControls.projectScripts,
+          props.threadCostHeader?.label,
+          smartGit.headerVersion,
+        ]}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton

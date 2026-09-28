@@ -311,6 +311,10 @@
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
     },
+    "./state/smart-git-intent": {
+      "types": "./src/state/smartGitIntent.ts",
+      "default": "./src/state/smartGitIntent.ts"
+    },
     "./work-log/user-input": {
       "types": "./src/work-log/userInput.ts",
       "default": "./src/work-log/userInput.ts"
