@@ -211,6 +211,14 @@ export function PhaseSidebarPane(props: {
     (environmentId: string) => environmentAppearances.get(environmentId) ?? null,
     [environmentAppearances],
   );
+  const openEnvironmentAppearance = useCallback(
+    (environmentId: EnvironmentId) => {
+      // The sheet is a Modal; a formSheet pushed underneath it would be hidden.
+      setSheet(null);
+      navigation.navigate("EnvironmentAppearance", { environmentId });
+    },
+    [navigation],
+  );
 
   const handleSelect = useCallback(
     (row: PhaseSidebarRow) => {
@@ -464,6 +472,7 @@ export function PhaseSidebarPane(props: {
           />
         ) : sheet?.kind === "group" ? (
           <PhaseSidebarGroupBySheet
+            environments={environmentAppearances}
             grouping={grouping}
             groups={customGroups}
             intent={sheet.intent}
@@ -472,6 +481,7 @@ export function PhaseSidebarPane(props: {
             onCreateGroup={createCustomGroup}
             onDeleteGroup={deleteCustomGroup}
             onMoveGroup={moveCustomGroup}
+            onOpenEnvironment={openEnvironmentAppearance}
             onRenameGroup={renameCustomGroup}
           />
         ) : null}

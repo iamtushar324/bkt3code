@@ -6,6 +6,9 @@ import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+// T3-CUSTOM(expbkt3): the host's shared appearance replaces the glyph once picked.
+import { EnvironmentAppearanceIcon } from "../environment/EnvironmentBadge";
+import type { ResolvedEnvironmentAppearance } from "~/state/environmentAppearance";
 
 export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
   const authority = target.username ? `${target.username}@${target.hostname}` : target.hostname;
@@ -44,6 +47,8 @@ export function EnvironmentRow({
   dimmed = false,
   className,
   children,
+  // T3-CUSTOM(expbkt3): the host's shared appearance, when the caller has one.
+  appearance,
 }: {
   readonly kind: EnvironmentMachineKind;
   readonly label: string;
@@ -53,6 +58,8 @@ export function EnvironmentRow({
   readonly dimmed?: boolean;
   readonly className?: string;
   readonly children?: ReactNode;
+  // T3-CUSTOM(expbkt3): the host's shared appearance, when the caller has one.
+  readonly appearance?: ResolvedEnvironmentAppearance | null | undefined;
 }) {
   return (
     <div
@@ -62,7 +69,11 @@ export function EnvironmentRow({
         className,
       )}
     >
-      <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
+      {/* T3-CUSTOM(expbkt3): BEGIN — host badge instead of the glyph once an icon or colour is picked. */}
+      <EnvironmentAppearanceIcon appearance={appearance}>
+        <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
+      </EnvironmentAppearanceIcon>
+      {/* T3-CUSTOM(expbkt3): END */}
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-foreground">{label}</p>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>

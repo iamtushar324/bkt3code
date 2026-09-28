@@ -48,6 +48,8 @@ import { PlanReviewCommentSheet } from "./features/planreview/PlanReviewCommentS
 import { ThreadMembersSheet } from "./features/members/ThreadMembersSheet";
 // T3-CUSTOM(expbkt3): per-thread API-level cost.
 import { ThreadUsageSheet } from "./features/threadusage/ThreadUsageSheet";
+// T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+import { EnvironmentAppearanceSheet } from "./features/environments/EnvironmentAppearanceSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
@@ -502,6 +504,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   // T3-CUSTOM(expbkt3): fork sheets that float over the workspace.
   "ThreadPlanReviewComment",
   "ThreadUsage",
+  "EnvironmentAppearance",
 ]);
 
 /**
@@ -720,6 +723,19 @@ const RootStackConfig = createNativeStackNavigator({
           ? { presentation: "fullScreenModal" as const }
           : FORM_SHEET_PRESENTATION_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.6, 0.95],
+        sheetGrabberVisible: Platform.OS !== "android",
+        headerShown: false,
+      },
+    }),
+    // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+    EnvironmentAppearance: createNativeStackScreen({
+      screen: EnvironmentAppearanceSheet,
+      linking: "environment-appearance",
+      options: {
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.7, 0.95],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,
       },

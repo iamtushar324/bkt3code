@@ -9,8 +9,9 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-// T3-CUSTOM(expbkt3): per-environment icon and colour, derived from the environment id.
+// T3-CUSTOM(expbkt3): per-environment nickname, icon and colour, from the host's settings.
 import {
+  environmentAppearanceFromSettings,
   resolveEnvironmentAppearance,
   type ResolvedEnvironmentAppearance,
 } from "./environmentAppearance";
@@ -24,7 +25,10 @@ import { usePreparedConnection } from "./session";
 // T3-CUSTOM(expbkt3): BEGIN — resolved appearance travels with every environment view.
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
+  /** The host's shared nickname when it has one, else the connection label. */
   readonly label: string;
+  /** The connection's own label, as saved on this device. */
+  readonly connectionLabel: string;
   readonly appearance: ResolvedEnvironmentAppearance;
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
@@ -36,14 +40,17 @@ function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
 ): EnvironmentPresentation {
+  const appearance = resolveEnvironmentAppearance({
+    environmentId,
+    label: presentation.entry.target.label,
+    appearance: environmentAppearanceFromSettings(presentation.serverConfig?.settings),
+  });
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
-    appearance: resolveEnvironmentAppearance({
-      environmentId,
-      label: presentation.entry.target.label,
-    }),
+    label: appearance.name,
+    connectionLabel: presentation.entry.target.label,
+    appearance,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
   };
@@ -109,8 +116,9 @@ export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
 // T3-CUSTOM(expbkt3): BEGIN — per-environment identity for multi-environment clients.
 
 /**
- * The icon and colour for one environment, derived from the environment id so
- * every environment is distinguishable without any configuration.
+ * The nickname, icon and colour for one environment: the host's shared
+ * override, else derived from the environment id so every environment is
+ * distinguishable without any configuration.
  */
 export function useEnvironmentAppearance(
   environmentId: EnvironmentId | null,

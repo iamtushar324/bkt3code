@@ -9,10 +9,11 @@
  *
  * Two decisions worth keeping:
  *
- * - **Appearance is client-local.** A known environment is already a browser-local
- *   record (see `connection/catalog.ts`); the server has no concept of "what this
- *   machine is called to me". Storing a nickname server-side would also make it
- *   shared, when the whole point is that each operator labels their own fleet.
+ * - **Appearance belongs to the host.** An override lives in that host's server
+ *   settings (`environmentAppearance`), so everyone connected to it sees the same
+ *   name, icon and colour. `state/environments.ts` reads it from each
+ *   environment's `serverConfig.settings`; the editor writes it back through
+ *   `useUpdateEnvironmentSettings`.
  * - **Every environment gets a distinct look before anyone configures one.** The
  *   fallback is derived from the environment id, so the second machine you attach
  *   is immediately distinguishable without a settings trip. Customising only
@@ -48,6 +49,8 @@ import {
   defaultEnvironmentIconId,
   ENVIRONMENT_COLOR_OPTIONS,
   ENVIRONMENT_ICON_DESCRIPTORS,
+  environmentAppearanceFromSettings,
+  environmentAppearanceSettingValue,
   resolveEnvironmentIdentity,
   sanitizeEnvironmentAppearance,
   type EnvironmentAppearance,
@@ -62,6 +65,8 @@ export {
   defaultEnvironmentColorId,
   defaultEnvironmentIconId,
   ENVIRONMENT_COLOR_OPTIONS,
+  environmentAppearanceFromSettings,
+  environmentAppearanceSettingValue,
   sanitizeEnvironmentAppearance,
   type EnvironmentAppearance,
   type EnvironmentColorOption,
@@ -109,7 +114,7 @@ export interface ResolvedEnvironmentAppearance extends ResolvedEnvironmentIdenti
 export function resolveEnvironmentAppearance(input: {
   readonly environmentId: string;
   readonly label: string;
-  readonly appearance?: EnvironmentAppearance | undefined;
+  readonly appearance?: EnvironmentAppearance | null | undefined;
 }): ResolvedEnvironmentAppearance {
   const identity = resolveEnvironmentIdentity(input);
   return { ...identity, Icon: LUCIDE_ICON_BY_ID[identity.iconId] ?? ServerIcon };

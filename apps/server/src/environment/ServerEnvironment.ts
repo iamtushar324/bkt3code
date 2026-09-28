@@ -253,6 +253,8 @@ export const make = Effect.gen(function* () {
       // T3-CUSTOM(expbkt3): native plan-review documents and discussions.
       planReview: true,
       environmentIcon: true,
+      // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+      environmentAppearance: true,
       projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

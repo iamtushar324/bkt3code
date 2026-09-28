@@ -7,6 +7,8 @@ export * from "./auth.ts";
 // T3-CUSTOM(expbkt3): team mode — user directory schemas.
 export * from "./users.ts";
 export * from "./environment.ts";
+// T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+export * from "./environmentAppearance.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";

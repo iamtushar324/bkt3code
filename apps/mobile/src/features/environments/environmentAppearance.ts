@@ -5,6 +5,7 @@
 // This module only maps each icon id to an SF Symbol.
 import {
   resolveEnvironmentIdentity,
+  type EnvironmentAppearance,
   type ResolvedEnvironmentIdentity,
 } from "@t3tools/client-runtime/state/environment-appearance";
 
@@ -42,6 +43,8 @@ export function environmentIconSymbol(iconId: string): EnvironmentSymbol {
 export function resolveMobileEnvironmentAppearance(input: {
   readonly environmentId: string;
   readonly label: string;
+  /** The host's shared override from its server settings. */
+  readonly appearance?: EnvironmentAppearance | null | undefined;
 }): MobileEnvironmentAppearance {
   const identity = resolveEnvironmentIdentity(input);
   return { ...identity, symbol: environmentIconSymbol(identity.iconId) };

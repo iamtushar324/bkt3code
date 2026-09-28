@@ -8,6 +8,7 @@
  * @module components/environment/EnvironmentBadge
  */
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -122,4 +123,20 @@ export function EnvironmentBadge({
       className={className}
     />
   );
+}
+
+/**
+ * The host's badge in place of the machine glyph once an icon or colour has been
+ * picked; otherwise the glyph passed as children, so an unconfigured host looks
+ * exactly as it does upstream.
+ */
+export function EnvironmentAppearanceIcon({
+  appearance,
+  children,
+}: {
+  readonly appearance: ResolvedEnvironmentAppearance | null | undefined;
+  readonly children: ReactNode;
+}) {
+  if (!appearance?.glyphCustomized) return children;
+  return <EnvironmentBadgeView appearance={appearance} variant="icon" />;
 }

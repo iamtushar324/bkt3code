@@ -11,10 +11,10 @@
  *
  * Two decisions worth keeping:
  *
- * - **Appearance is client-local.** A known environment is already a
- *   device-local record; the server has no concept of "what this machine is
- *   called to me". Storing a nickname server-side would also make it shared,
- *   when the whole point is that each operator labels their own fleet.
+ * - **Appearance belongs to the host.** An override lives in that host's server
+ *   settings (`environmentAppearance`), so everyone connected to it sees the
+ *   same name, icon and colour, on every device. Clients read it from the
+ *   environment's `serverConfig.settings` and never store their own copy.
  * - **Every environment gets a distinct look before anyone configures one.**
  *   The fallback is derived from the environment id with FNV-1a, so the second
  *   machine you attach is immediately distinguishable, and the same machine
@@ -22,6 +22,10 @@
  *
  * @module state/environmentAppearance
  */
+import {
+  ENVIRONMENT_NICKNAME_MAX_LENGTH,
+  type EnvironmentAppearanceSetting,
+} from "@t3tools/contracts";
 
 export interface EnvironmentAppearance {
   readonly nickname?: string;
@@ -86,6 +90,8 @@ export interface ResolvedEnvironmentIdentity {
   readonly color: string;
   /** True when the operator picked this, rather than it being derived from the id. */
   readonly customized: boolean;
+  /** True when an icon or colour was picked, not only a nickname. */
+  readonly glyphCustomized: boolean;
 }
 
 /** FNV-1a: stable across reloads and machines, which a string hash must be here. */
@@ -129,16 +135,29 @@ export function findEnvironmentColorOption(colorId: string): EnvironmentColorOpt
 }
 
 /**
- * Combine the stored overrides with the environment's own label and a derived
+ * The override a host publishes in its server settings, or undefined when it
+ * has none (or the client has not received its settings yet).
+ */
+export function environmentAppearanceFromSettings(
+  settings:
+    | { readonly environmentAppearance?: EnvironmentAppearanceSetting | null | undefined }
+    | null
+    | undefined,
+): EnvironmentAppearance | undefined {
+  return settings?.environmentAppearance ?? undefined;
+}
+
+/**
+ * Combine the host's override with the environment's own label and a derived
  * fallback. `label` is the connection's label, which the user may already have
  * edited in Connections; the nickname takes precedence over it.
  */
 export function resolveEnvironmentIdentity(input: {
   readonly environmentId: string;
   readonly label: string;
-  readonly appearance?: EnvironmentAppearance | undefined;
+  readonly appearance?: EnvironmentAppearance | null | undefined;
 }): ResolvedEnvironmentIdentity {
-  const stored = input.appearance;
+  const stored = input.appearance ?? undefined;
   const nickname = stored?.nickname?.trim();
   const icon = findEnvironmentIconDescriptor(
     stored?.iconId ?? defaultEnvironmentIconId(input.environmentId),
@@ -157,6 +176,8 @@ export function resolveEnvironmentIdentity(input: {
       ((nickname !== undefined && nickname.length > 0) ||
         stored.iconId !== undefined ||
         stored.colorId !== undefined),
+    glyphCustomized:
+      stored !== undefined && (stored.iconId !== undefined || stored.colorId !== undefined),
   };
 }
 
@@ -193,4 +214,23 @@ export function sanitizeEnvironmentAppearanceMap(
     if (sanitized !== null) result[environmentId] = sanitized;
   }
   return result;
+}
+
+/**
+ * The value an editor writes to the host's `environmentAppearance` setting.
+ * Unknown ids and a blank nickname are dropped, and an appearance with nothing
+ * left is null, which resets the host to its derived look.
+ */
+export function environmentAppearanceSettingValue(
+  next: EnvironmentAppearance,
+): EnvironmentAppearanceSetting | null {
+  const sanitized = sanitizeEnvironmentAppearance(next);
+  if (sanitized === null) return null;
+  const nickname = sanitized.nickname?.slice(0, ENVIRONMENT_NICKNAME_MAX_LENGTH).trim();
+  if (!nickname && !sanitized.iconId && !sanitized.colorId) return null;
+  return {
+    ...(nickname ? { nickname } : {}),
+    ...(sanitized.iconId ? { iconId: sanitized.iconId } : {}),
+    ...(sanitized.colorId ? { colorId: sanitized.colorId } : {}),
+  };
 }

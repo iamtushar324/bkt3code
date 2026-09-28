@@ -18,6 +18,7 @@ import {
   type PhaseSidebarGroupingPreferences,
   type PhaseSidebarGroupOrder,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, TextInput, View } from "react-native";
 
@@ -25,6 +26,8 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { EnvironmentBadge } from "../environments/EnvironmentBadge";
+import type { MobileEnvironmentAppearance } from "../environments/environmentAppearance";
 
 function Chip(props: {
   readonly label: string;
@@ -64,6 +67,8 @@ export type PhaseSidebarGroupBySheetIntent =
   | { readonly kind: "rename"; readonly groupId: string; readonly label: string };
 
 export function PhaseSidebarGroupBySheet(props: {
+  /** Every known environment with its resolved identity, for the picker below. */
+  readonly environments: ReadonlyMap<string, MobileEnvironmentAppearance>;
   readonly grouping: PhaseSidebarGroupingPreferences;
   /** Every custom group in view, in manual order (see listPhaseSidebarCustomGroups). */
   readonly groups: ReadonlyArray<PhaseSidebarCustomGroupOption>;
@@ -81,6 +86,8 @@ export function PhaseSidebarGroupBySheet(props: {
     direction: "up" | "down",
   ) => void;
   readonly onClose: () => void;
+  /** Opens the host appearance sheet for one environment. */
+  readonly onOpenEnvironment: (environmentId: EnvironmentId) => void;
 }) {
   const { grouping, groups, intent, onChange } = props;
   const iconColor = String(useUniwindTheme()["--color-icon"]);
@@ -265,6 +272,29 @@ export function PhaseSidebarGroupBySheet(props: {
               </Pressable>
             </View>
           )}
+        </Section>
+      ) : null}
+
+      {props.environments.size > 0 ? (
+        <Section title="Environments">
+          <Text className="text-xs text-foreground-muted">
+            Give each host a nickname, icon and colour so its sessions stand out. Shared with
+            everyone connected to that host.
+          </Text>
+          {[...props.environments.entries()].map(([environmentId, appearance]) => (
+            <Pressable
+              accessibilityRole="button"
+              className="flex-row items-center gap-3 py-1.5"
+              key={environmentId}
+              onPress={() => props.onOpenEnvironment(environmentId as EnvironmentId)}
+            >
+              <EnvironmentBadge appearance={appearance} variant="icon" size={12} />
+              <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
+                {appearance.name}
+              </Text>
+              <SymbolView name="chevron.right" size={11} tintColor={iconColor} type="monochrome" />
+            </Pressable>
+          ))}
         </Section>
       ) : null}
     </ScrollView>

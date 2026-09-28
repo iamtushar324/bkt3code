@@ -20,6 +20,8 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { serverEnvironment } from "../../state/server";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+// T3-CUSTOM(expbkt3): shared host appearance entry point.
+import { EnvironmentAppearanceButton } from "../environments/EnvironmentAppearanceButton";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -181,6 +183,8 @@ export function ConnectionEnvironmentRow(props: {
             </>
           )}
 
+          {/* T3-CUSTOM(expbkt3): nickname, icon and colour for this host. */}
+          <EnvironmentAppearanceButton environmentId={props.environment.environmentId} />
           {Platform.OS === "android" ? (
             <View className="flex-row items-center justify-end gap-2">
               {props.environment.isRelayManaged ? null : (

@@ -13,6 +13,8 @@ import {
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+// T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+import { EnvironmentAppearanceSetting } from "./environmentAppearance.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   // T3-CUSTOM(expbkt3): default agent-session model (below).
@@ -492,6 +494,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in the chat transcript. While
   // off, a `t3_show_ui` call stays an ordinary collapsed tool row.
   agentUiSurfacesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): the chat header's git button asks the agent (commit / push /
+  // create PR) instead of running git itself. Off restores upstream's button.
+  smartGitPromptsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // T3-CUSTOM(expbkt3): upstream's pull request view. Off by default, so a pull request
   // link opens the host's page in the integrated browser instead.
   nativePullRequestViewEnabled: Schema.Boolean.pipe(
@@ -1324,6 +1329,12 @@ export const ServerSettings = Schema.Struct({
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // T3-CUSTOM(expbkt3): the host's nickname, icon and colour, shared with everyone
+  // connected to it. Null means clients derive a look from the environment id; a
+  // malformed value decodes as null rather than failing the settings snapshot.
+  environmentAppearance: ForwardCompatibleNullable(EnvironmentAppearanceSetting).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /**
    * Null means inherit: the repository's t3.json, then "local". The old
    * default "local" was never persisted (defaults are stripped on write), so
@@ -1666,6 +1677,8 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  // T3-CUSTOM(expbkt3): replaces the whole appearance; null resets to the derived look.
+  environmentAppearance: Schema.optionalKey(Schema.NullOr(EnvironmentAppearanceSetting)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): default agent-session model/runtime/interaction mode patch fields.
@@ -1825,6 +1838,8 @@ export const ClientSettingsPatch = Schema.Struct({
   planReviewAutoOpenEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
   agentUiSurfacesEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): smart git button sends prompts to the agent.
+  smartGitPromptsEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   nativePullRequestViewEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): every link opens in the integrated browser.

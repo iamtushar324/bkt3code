@@ -75,6 +75,12 @@ import { searchableSetting } from "./settingsSearch";
 import { MemberDevicesSection } from "../../fork/MemberDevicesSection";
 import { isBkManagedPrimary } from "../../fork/managedEnvironment";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+// T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
+import {
+  EnvironmentAppearanceDialogHost,
+  EnvironmentAppearanceMenuItem,
+} from "../environment/EnvironmentAppearanceDialog";
+import { EnvironmentAppearanceIcon } from "../environment/EnvironmentBadge";
 import {
   EnvironmentRow,
   environmentTransportLabel,
@@ -1613,6 +1619,8 @@ function SavedBackendListRow({
     <EnvironmentRow
       kind={machineKind}
       label={environment.label}
+      // T3-CUSTOM(expbkt3): shared host appearance.
+      appearance={environment.appearance}
       dimmed={!enabled}
       subtitle={
         <Tooltip>
@@ -1691,6 +1699,8 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {/* T3-CUSTOM(expbkt3): shared host nickname, icon and colour. */}
+          <EnvironmentAppearanceMenuItem environmentId={environmentId} />
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -3341,15 +3351,18 @@ export function ConnectionsSettings() {
               (hasDesktopLocalBackend ? "This machine" : "Primary environment")
             }
             icon={
-              <EnvironmentMachineIcon
-                aria-hidden
-                kind={
-                  primaryServerConfig
-                    ? resolveEnvironmentMachineKind(primaryServerConfig)
-                    : "desktop"
-                }
-                className="size-4"
-              />
+              // T3-CUSTOM(expbkt3): host badge instead of the glyph once an icon or colour is picked.
+              <EnvironmentAppearanceIcon appearance={primaryEnvironment?.appearance}>
+                <EnvironmentMachineIcon
+                  aria-hidden
+                  kind={
+                    primaryServerConfig
+                      ? resolveEnvironmentMachineKind(primaryServerConfig)
+                      : "desktop"
+                  }
+                  className="size-4"
+                />
+              </EnvironmentAppearanceIcon>
             }
             headerAction={
               primaryEnvironmentId !== null ? (
@@ -3371,6 +3384,8 @@ export function ConnectionsSettings() {
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
                     />
+                    {/* T3-CUSTOM(expbkt3): shared host nickname, icon and colour. */}
+                    <EnvironmentAppearanceMenuItem environmentId={primaryEnvironmentId} />
                   </MenuPopup>
                 </Menu>
               ) : null
@@ -3835,6 +3850,8 @@ export function ConnectionsSettings() {
       </SettingsSection>
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
+      {/* T3-CUSTOM(expbkt3): dialog behind each "Appearance…" menu item. */}
+      <EnvironmentAppearanceDialogHost />
     </SettingsPageContainer>
   );
 }

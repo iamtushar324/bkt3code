@@ -143,6 +143,15 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Name and colour a host
+
+<!-- T3-CUSTOM(expbkt3): shared host appearance. -->
+
+Give any connected host a name, icon and colour from **Settings → Connections → … → Appearance…**
+(on mobile, **Connections → Appearance**). The choice is saved on that host, so everyone connected to
+it sees the same name and badge in the sidebar, pickers and headers. **Reset to default** returns to
+the automatic look. Changing it needs permission to change that host's settings.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create

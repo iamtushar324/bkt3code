@@ -375,6 +375,11 @@ export function applyServerSettingsPatch(
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
+    // T3-CUSTOM(expbkt3): the host appearance is replaced whole; deepMerge would
+    // keep a nickname the client cleared.
+    ...(patch.environmentAppearance !== undefined
+      ? { environmentAppearance: patch.environmentAppearance }
+      : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
           usageLimitSources: mergeSettingsEntries(
