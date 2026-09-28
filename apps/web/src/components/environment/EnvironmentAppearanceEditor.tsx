@@ -16,7 +16,7 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { RotateCcwIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -48,6 +48,19 @@ export function EnvironmentAppearanceEditor({
   const lock = resolveEnvironmentAppearanceLock({ serverConfig, operateAccess });
   const disabled = lock !== null;
   const [nicknameDraft, setNicknameDraft] = useState<string | null>(null);
+  // The host echoes a write back only after a round trip, and each write replaces
+  // the whole value. Build every write on the last value we sent, not the last one
+  // the host confirmed, or a quick second click undoes the first.
+  const [pending, setPending] = useState<EnvironmentAppearance | null | undefined>(undefined);
+  const storedKey = JSON.stringify(environmentAppearanceSettingValue(stored));
+  useEffect(() => {
+    if (pending === undefined) return;
+    const pendingKey = JSON.stringify(
+      pending === null ? null : environmentAppearanceSettingValue(pending),
+    );
+    if (pendingKey === storedKey) setPending(undefined);
+  }, [pending, storedKey]);
+  const current: EnvironmentAppearance = pending === undefined ? stored : (pending ?? {});
 
   if (environment === null) {
     return <p className="text-sm text-muted-foreground">This environment is no longer known.</p>;
@@ -56,6 +69,7 @@ export function EnvironmentAppearanceEditor({
 
   const write = (next: EnvironmentAppearance | null) => {
     if (disabled) return;
+    setPending(next);
     updateSettings({
       environmentAppearance: next === null ? null : environmentAppearanceSettingValue(next),
     });
@@ -63,8 +77,8 @@ export function EnvironmentAppearanceEditor({
   const commitNickname = () => {
     if (nicknameDraft === null) return;
     setNicknameDraft(null);
-    if (nicknameDraft.trim() === (stored.nickname ?? "")) return;
-    write({ ...stored, nickname: nicknameDraft });
+    if (nicknameDraft.trim() === (current.nickname ?? "")) return;
+    write({ ...current, nickname: nicknameDraft });
   };
 
   return (
@@ -87,7 +101,7 @@ export function EnvironmentAppearanceEditor({
         </label>
         <Input
           id={`environment-nickname-${environmentId}`}
-          value={nicknameDraft ?? stored.nickname ?? ""}
+          value={nicknameDraft ?? current.nickname ?? ""}
           placeholder={environment.connectionLabel}
           maxLength={40}
           disabled={disabled}
@@ -111,12 +125,14 @@ export function EnvironmentAppearanceEditor({
               key={option.id}
               type="button"
               aria-label={option.label}
-              aria-pressed={appearance.colorId === option.id}
+              aria-pressed={(current.colorId ?? appearance.colorId) === option.id}
               disabled={disabled}
-              onClick={() => write({ ...stored, colorId: option.id })}
+              onClick={() => write({ ...current, colorId: option.id })}
               className={cn(
                 "size-6 rounded-full border-2 disabled:opacity-50",
-                appearance.colorId === option.id ? "border-foreground" : "border-transparent",
+                (current.colorId ?? appearance.colorId) === option.id
+                  ? "border-foreground"
+                  : "border-transparent",
               )}
               style={{ backgroundColor: option.value }}
             />
@@ -128,7 +144,7 @@ export function EnvironmentAppearanceEditor({
         <span className="text-xs font-medium text-muted-foreground">Icon</span>
         <div className="flex flex-wrap gap-1.5">
           {ENVIRONMENT_ICON_OPTIONS.map((option) => {
-            const selected = appearance.iconId === option.id;
+            const selected = (current.iconId ?? appearance.iconId) === option.id;
             const Icon = option.Icon;
             return (
               <button
@@ -137,7 +153,7 @@ export function EnvironmentAppearanceEditor({
                 aria-label={option.label}
                 aria-pressed={selected}
                 disabled={disabled}
-                onClick={() => write({ ...stored, iconId: option.id })}
+                onClick={() => write({ ...current, iconId: option.id })}
                 className={cn(
                   "inline-flex size-7 items-center justify-center rounded-md border disabled:opacity-50",
                   selected ? "" : "border-border text-muted-foreground hover:text-foreground",

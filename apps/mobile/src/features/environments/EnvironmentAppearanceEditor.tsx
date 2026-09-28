@@ -8,9 +8,10 @@ import {
   ENVIRONMENT_COLOR_OPTIONS,
   ENVIRONMENT_ICON_DESCRIPTORS,
   type EnvironmentAppearance,
+  environmentAppearanceSettingValue,
 } from "@t3tools/client-runtime/state/environment-appearance";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
@@ -46,15 +47,29 @@ export function EnvironmentAppearanceEditor(props: {
   const disabled = lock !== null;
   const checkColor = String(useUniwindTheme()["--color-primary-foreground"]);
   const [nicknameDraft, setNicknameDraft] = useState<string | null>(null);
+  // Each write replaces the whole value and the host echoes it back only after a
+  // round trip: build writes on the last value sent, so a quick second tap does not
+  // undo the first.
+  const [pending, setPending] = useState<EnvironmentAppearance | undefined>(undefined);
+  const storedKey = JSON.stringify(environmentAppearanceSettingValue(stored ?? {}));
+  useEffect(() => {
+    if (pending === undefined) return;
+    if (JSON.stringify(environmentAppearanceSettingValue(pending)) === storedKey) {
+      setPending(undefined);
+    }
+  }, [pending, storedKey]);
+  const current: EnvironmentAppearance = pending ?? stored ?? {};
 
   const patch = (changes: EnvironmentAppearance) => {
     if (disabled) return;
-    update(environmentId, { ...stored, ...changes });
+    const next = { ...current, ...changes };
+    setPending(next);
+    update(environmentId, next);
   };
   const commitNickname = () => {
     if (nicknameDraft === null) return;
     setNicknameDraft(null);
-    if (nicknameDraft.trim() === (stored?.nickname ?? "")) return;
+    if (nicknameDraft.trim() === (current.nickname ?? "")) return;
     patch({ nickname: nicknameDraft });
   };
 
@@ -99,7 +114,7 @@ export function EnvironmentAppearanceEditor(props: {
           onSubmitEditing={commitNickname}
           placeholder={props.fallbackName}
           returnKeyType="done"
-          value={nicknameDraft ?? stored?.nickname ?? ""}
+          value={nicknameDraft ?? current.nickname ?? ""}
         />
         <Text className="text-xs text-foreground-tertiary">
           Shown to everyone connected to this host. Leave empty to use the connection label.
@@ -110,7 +125,7 @@ export function EnvironmentAppearanceEditor(props: {
         <FieldLabel>Icon</FieldLabel>
         <View className="flex-row flex-wrap gap-2">
           {ENVIRONMENT_ICON_DESCRIPTORS.map((descriptor) => {
-            const active = appearance.iconId === descriptor.id;
+            const active = (current.iconId ?? appearance.iconId) === descriptor.id;
             return (
               <Pressable
                 accessibilityLabel={descriptor.label}
@@ -146,7 +161,7 @@ export function EnvironmentAppearanceEditor(props: {
         <FieldLabel>Colour</FieldLabel>
         <View className="flex-row flex-wrap gap-2.5">
           {ENVIRONMENT_COLOR_OPTIONS.map((option) => {
-            const active = appearance.colorId === option.id;
+            const active = (current.colorId ?? appearance.colorId) === option.id;
             return (
               <Pressable
                 accessibilityLabel={option.label}
