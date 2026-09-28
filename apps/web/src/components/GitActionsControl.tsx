@@ -1956,6 +1956,7 @@ export default function GitActionsControl({
           <Menu
             onOpenChange={(open) => {
               if (open) {
+                // T3-CUSTOM(expbkt3): thread-scoped status refresh (per-thread source-control identity).
                 requestVcsStatusRefresh(
                   refreshVcsStatus,
                   activeEnvironmentId,
