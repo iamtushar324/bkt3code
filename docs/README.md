@@ -19,12 +19,9 @@
 
 <!-- T3-CUSTOM(expbkt3): fork user guides. -->
 
-- [Opening a worktree in another app](./user/open-in-app.md)
 - [User management](./user/user-management.md)
-- [Worktree setup and new-thread defaults](./user/worktree-setup.md)
 - [T3 Code MCP control center](./user/t3-mcp-control.md)
 - [Agent views in chat](./user/agent-views.md)
-- [Provider usage limits](./user/provider-limits.md)
 - [Remote access](./user/remote-access.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
@@ -45,9 +42,6 @@ source alone does not explain. Most code changes do not need an internal documen
 
 <!-- T3-CUSTOM(expbkt3): fork architecture and operation references. -->
 
-- [Durable thread bootstrap](./internals/thread-bootstrap.md)
-- [Execution reliability](./internals/execution-reliability.md)
-- [Provider rate limits](./internals/provider-rate-limits.md)
 - [Thread-owned source-control identity](./internals/source-control-identity.md)
 - [expbkt3 customization boundaries](./operations/expbkt3-customizations.md)
 - [Personal MCP identity architecture](./internals/t3-personal-mcp-architecture.md)

@@ -8,13 +8,16 @@ When an agent proposes a plan, you can open it in a side panel, comment on exact
 lines, edit it, and send the result back — without the agent re-reading the whole
 plan every round.
 
-Turn it on or off in **Settings → Beta features → Native plan review**. It is on
-by default. While it is off, plan review goes through Plannotator only.
+Turn it on or off in **Settings → Experiments → Native plan review**. It is on
+by default. While it is off, a plan stays an ordinary plan card in the
+conversation.
 
 ## Opening a plan
 
-Two ways in, both of which appear once an agent has proposed a plan that has not
-been implemented yet:
+By default a plan opens for review as soon as it is ready. Turn that off with
+**Settings → Experiments → Open a ready plan automatically**; the plan then waits
+behind the entry points below, which appear once an agent has proposed a plan
+that has not been implemented yet:
 
 - **Preview** on the plan card in the conversation.
 - A floating **Open the plan in preview** button above the composer.

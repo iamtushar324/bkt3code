@@ -46,17 +46,13 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Checkpoint baseline | The workspace state captured before the work being compared.                                                 |
 | Turn diff           | The workspace changes attributed to one turn.                                                                |
 
-## Fork execution and collaboration
+## Fork collaboration
 
-<!-- T3-CUSTOM(expbkt3): definitions for durable execution and shared environments. -->
+<!-- T3-CUSTOM(expbkt3): definitions for shared (team) environments. -->
 
 | Term                   | Meaning                                                                                                                                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Thread bootstrap       | Durable workspace preparation and setup before the initial agent turn. See [thread bootstrap](./thread-bootstrap.md).                                                                       |
-| Execution intent       | Durable accepted work, including its delivery payload, desired state, lifecycle, and recovery state. See [execution reliability](./execution-reliability.md).                               |
-| Desired state          | Whether accepted work should be running or stopped, surviving server restarts.                                                                                                              |
-| Observed state         | Provider evidence, such as session state and provider turn ID, used to reconcile desired work.                                                                                              |
-| Generation fence       | A monotonically increasing claim generation that prevents cancelled or superseded work from continuing side effects.                                                                        |
+| Custom group           | A shared label on a thread that groups it in the sidebar's Custom view and the Group filter; agents can set it through `t3_update_session`.                                                 |
 | Session lineage        | Parent and child threads forming a session tree. A root has no parent. Cross-environment children also identify their parent's environment.                                                 |
 | Environment user       | A durable human identity keyed by a verified Clerk subject, with an environment-local role, profile, and blocked state. Device sessions are separate records.                               |
 | Presence               | Online status derived from the user's live, non-revoked WebSocket sessions.                                                                                                                 |

@@ -1,8 +1,8 @@
 # Beknown deployments
 
-Three T3 Code environments run on the shared dev server `dev-server-1`
+Four T3 Code environments run on the shared dev server `dev-server-1`
 (`ip-10-31-39-131`, 16 vCPU / 30G RAM). This document is the operational
-reference for all three: what they are, how code reaches them, and how to change
+reference for all four: what they are, how code reaches them, and how to change
 them safely.
 
 ## Environments
@@ -12,21 +12,23 @@ them safely.
 | t3 (upstream-style)    | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`                           | 18082 | `t3-beknown.service` | `/home/ubuntu/.t3/beknown-dev` |
 | bkt3 (fork production) | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`                         | 18083 | `t3-bkmain.service`  | `/home/ubuntu/.t3/bkt3-dev`    |
 | expbkt3 (fork staging) | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live` (apex `expbkt3.dev`) | 18085 | `t3-expbkt3.service` | `/home/ubuntu/.t3/expbkt3-dev` |
+| stage (fresh-cut fork) | `stage`     | `/home/ubuntu/repos/t3code-stage`   | `stagebkt3.dev.beknown.live`                    | 18086 | `t3-stage.service`   | `/home/ubuntu/.t3/stage-dev`   |
 
 Per-environment detail lives next to the scripts: [`deploy/t3/README.md`](../../deploy/t3/README.md),
 [`deploy/bkt3/README.md`](../../deploy/bkt3/README.md),
-[`deploy/expbkt3/README.md`](../../deploy/expbkt3/README.md).
+[`deploy/expbkt3/README.md`](../../deploy/expbkt3/README.md),
+[`deploy/stage/README.md`](../../deploy/stage/README.md).
 
-### One repository, three worktrees
+### One clone per environment
 
-`/home/ubuntu/repos/t3code` holds the only real `.git` directory. The other two
-checkouts are linked git worktrees sharing its object store, so a commit fetched
-in one is immediately visible in the others. Because a branch can only be
-checked out in one worktree at a time, each environment owns its branch
-exclusively.
+Each checkout in the table is its own clone of `origin`, with only its
+environment's branch checked out and `rerere` enabled. A commit fetched in one
+is not visible in the others until they fetch it too.
 
-Remotes: `origin` = `git@github.com:beknown-work/bkt3code.git` (the fork; the old
-`beknown-work/t3code` name 404s), `upstream` = `git@github.com:pingdotgg/t3code.git`.
+Remotes: `origin` = `https://github.com/iamtushar324/bkt3code.git` (the fork,
+public; the old `beknown-work/bkt3code` name redirects there, and the older deploy
+scripts still use it). Upstream is `pingdotgg/t3code`; only
+`/home/ubuntu/repos/t3code` carries it as a named remote (`upstream`).
 
 ### Branch semantics
 
@@ -48,19 +50,24 @@ Remotes: `origin` = `git@github.com:beknown-work/bkt3code.git` (the fork; the ol
   upstream merges. Deploys `expbkt3.dev`. Reset from `bkmain` between
   experiments, so it never disappears from `origin` (a deleted trigger branch
   used to make the deployment timer fail every minute).
+- **`stage`** — a fresh cut of upstream `main` (`de251fc29`, 2026-09-27) that
+  carries only the fork features still in use. Deploys `stagebkt3.dev`. It is
+  meant to replace `bkmain` once verified; until then it is independent of the
+  `bkmain`/`expbkmain` lineage and takes upstream merges directly.
 
 ## How code reaches a server
 
 Deployment is **pull-based**. No workflow holds SSH or Tailscale credentials for
 this box, and no GitHub-hosted runner reaches it.
 
-1. A push lands on `t3main`, `bkmain`, or `expbkmain`.
+1. A push lands on `t3main`, `bkmain`, `expbkmain`, or `stage`.
 2. That branch's workflow runs on GitHub-hosted `ubuntu-latest`: install, lint,
    typecheck, test, build web + server, then upload a SHA-addressed artifact
-   (`t3-<sha>`, `bkt3-<sha>`, `expbkt3-<sha>`) containing `apps/web/dist`,
+   (`t3-<sha>`, `bkt3-<sha>`, `expbkt3-<sha>`, `stage-<sha>`) containing `apps/web/dist`,
    `apps/server/dist`, and a `SHA` file.
 3. On the box, a systemd timer (`t3-beknown-deploy.timer`,
-   `t3-bkmain-deploy.timer`, `t3-expbkt3-deploy.timer`) fires once a minute and
+   `t3-bkmain-deploy.timer`, `t3-expbkt3-deploy.timer`, `t3-stage-deploy.timer`)
+   fires once a minute and
    runs that environment's `auto-deploy.sh`. It fetches the branch head and asks
    the GitHub Actions API whether a run exists for that **exact** commit.
    Unfinished or unreachable → defer and retry next tick. Failed → refuse.
@@ -86,7 +93,7 @@ code.
 forbids repo-wide installs, builds, and test suites here; they have OOM-crashed
 the box. CI builds the artifact, the host only installs it.
 
-For `t3main` and `expbkmain`, CI also resolves the upstream nightly tag that
+For `t3main`, `expbkmain`, and `stage`, CI also resolves the upstream nightly tag that
 points at the integrated upstream tip and temporarily aligns the web, server,
 desktop, and contracts package versions before validation and build. This keeps
 the byte-pure `main` mirror unchanged while the deployed UI and server report
@@ -106,6 +113,7 @@ worktree (check with `cat /proc/$$/cgroup`):
 
 - worktree under `/home/ubuntu/.t3/bkt3-dev/worktrees/` → child of `t3-bkmain.service`
 - worktree under `/home/ubuntu/.t3/beknown-dev/` → child of `t3-beknown.service`
+- worktree under `/home/ubuntu/.t3/stage-dev/worktrees/` → child of `t3-stage.service`
 
 So a bkt3 deploy interrupts every in-flight turn on bkt3, including the session
 that triggered it. Trigger a manual deploy from the _other_ instance or from a
@@ -146,10 +154,31 @@ These exist on the box and are not in the repository:
 - **`gh` authentication** — `deploy.sh` downloads artifacts as the `ubuntu` user
   via `gh run download`; verify with `gh auth status`.
 - **Traefik / Docker Swarm routing** — each domain is served by an
-  `alpine/socat` swarm service (`t3-proxy`, `bkt3-proxy`, `expbkt3-proxy`) on the
+  `alpine/socat` swarm service (`t3-proxy`, `bkt3-proxy`, `expbkt3-proxy`,
+  `stage-proxy`) on the
   `bk-dev` network carrying the Traefik router labels, fronted by
   `beknown-dev_traefik`. There is no nginx or caddy on this host. Each
   environment's `proxy.sh` recreates its service idempotently.
+
+## Stage runs on a copy of bkt3's data
+
+`stage` was started on a `VACUUM INTO` copy of bkt3's `state.sqlite`, plus its
+`secrets/` and `settings.json` (needed to decrypt GitHub and MCP profiles). Four
+rules keep the two instances from stepping on each other:
+
+- **Distinct environment.** bkt3's `environment-id` was not copied, and
+  `experimental.externalMcp.publicUrl` points at
+  `https://stagebkt3.dev.beknown.live/mcp`.
+- **Copied threads are read-only history.** Their worktrees are bkt3's, under
+  `/home/ubuntu/.t3/bkt3-dev/worktrees/`. Start new sessions on stage; their
+  worktrees land under `stage-dev`.
+- **Session-archive automatic sweep stays off.** The copied threads point at the
+  same worktree paths bkt3 still uses, so a sweep on stage would reclaim bkt3's
+  live checkouts.
+- **`continueThreadsAfterServerUpdate` stays false** (upstream's default), so
+  stage never resumes turns bkt3 was running when the copy was taken.
+
+Retake the copy right before switching production over if much time has passed.
 
 ## Common operations
 
@@ -161,6 +190,10 @@ journalctl -u t3-bkmain-deploy.service -n 20 --no-pager
 cat /home/ubuntu/.t3/bkt3-dev/deployed-sha
 git ls-remote origin bkmain
 ```
+
+For stage, the same checks use `t3-stage-deploy.timer`,
+`t3-stage-deploy.service`, `/home/ubuntu/.t3/stage-dev/deployed-sha`, and
+`git ls-remote origin stage`.
 
 Ship a fork change: **stage it on `expbkmain` first**, verify it running at
 `https://expbkt3.dev.beknown.live`, then open a PR against `bkmain`, let CI
@@ -190,6 +223,8 @@ CI failures that recur every time — is the
 [`merge-upstream`](../../.agents/skills/merge-upstream/SKILL.md) skill. Note that
 `t3main` being current does **not** mean the `main` mirror is: the two steps are
 routinely half-done, and fork branches merge from `origin/main`, never `t3main`.
+`stage` merges upstream the same way and is verified at
+`https://stagebkt3.dev.beknown.live`.
 
 ## Fork customization boundaries
 

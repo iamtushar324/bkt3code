@@ -1,6 +1,6 @@
 ---
 name: merge-upstream
-description: Merge a fresh upstream T3 Code nightly into the Beknown fork — sync the pure mirror, measure the conflict surface, resolve conflicts (optionally fanned out across subagents), fix the predictable post-merge CI failures, and keep the PR current. Use whenever pulling upstream changes into expbkmain/bkmain, when asked how conflicted an upstream merge would be, or when an upstream merge PR goes red or falls behind its base.
+description: Merge a fresh upstream T3 Code nightly into the Beknown fork — sync the pure mirror, measure the conflict surface, resolve conflicts (optionally fanned out across subagents), fix the predictable post-merge CI failures, and keep the PR current. Use whenever pulling upstream changes into expbkmain/bkmain or stage, when asked how conflicted an upstream merge would be, or when an upstream merge PR goes red or falls behind its base.
 ---
 
 # Merge upstream into the fork
@@ -26,10 +26,20 @@ surrounding drift and upstream gets time to delete files the fork has edited.
 | `t3main`    | `main` + fork-owned deploy files. Deploys t3.dev. | Merge `origin/main` in                      |
 | `bkmain`    | Production fork. Deploys bkt3.                    | Only via `expbkmain` promotion              |
 | `expbkmain` | Staging fork. Deploys expbkt3.                    | Yes — every upstream merge lands here first |
+| `stage`     | Fresh-cut fork. Deploys stagebkt3.                | Yes — directly; verify at stagebkt3         |
 
 **Fork branches merge from `origin/main`, never from `t3main`.** `t3main` carries
 fork-owned deploy files (`.github/workflows/deploy-t3.yml`, a `.gitmodules`
 gitlink) that must never enter `bkmain` lineage.
+
+**`stage` merges upstream the same way.** It is a fresh cut of upstream `main`
+(`de251fc29`, 2026-09-27) carrying only the kept fork features, and it is not in
+`bkmain` lineage yet. Merge `origin/main` into it — or `pingdotgg/t3code` `main`
+itself when the mirror lags, as it did at the cut — through a PR into `stage`,
+then verify at `https://stagebkt3.dev.beknown.live`. For Step 2, measure on a
+throwaway branch off `origin/stage` instead of `origin/expbkmain`. The marker
+check compares against `FORK_UPSTREAM_REF` (upstream `main` in CI), so a lagging
+mirror does not break it.
 
 **Never rebase** these long-lived branches. Merging preserves how each conflict was
 resolved; rebasing re-inflicts every conflict and rewrites published history.
@@ -172,11 +182,12 @@ port each still-meaningful behavior there with markers, then `git rm` the file a
 `Sidebar.tsx`/`AppSidebarLayout.tsx`. Editing a fast-churning upstream beta surface
 inline is what creates this — prefer a wrapper next time.
 
-**Migrations** (`apps/server/src/persistence/Migrations.ts`). Fork migrations live at
-1000+; upstream keeps low numbers; **33–42 is a frozen legacy block that must never be
-renumbered** (applied migrations are keyed `${id}_${name}`, so renumbering re-runs them
-on live data). Register upstream's genuinely new migrations at the next free 1000-lane
-ids, keeping upstream's file names. Drop upstream registry entries for files the fork
+**Migrations** (`apps/server/src/persistence/Migrations.ts`). **Ids 1–45 and
+1000–1035 are frozen and must never be renumbered** (applied migrations are keyed
+`${id}_${name}`, so renumbering re-runs them on live data). Upstream's 052–054 sit
+at 1036–1038 and the fork's custom-group column at 1039; **the next free id is
+1040**. Register upstream's genuinely new migrations at the next free 1000-lane
+ids, keeping upstream's file names; the allocation rule sits above the registry. Drop upstream registry entries for files the fork
 already remapped — otherwise they register twice. Then fix the tests: **upstream's
 merge-added migration tests hardcode upstream ids** (`toMigrationInclusive: 39`) and
 must be remapped to the fork's lane, with a marker.
@@ -216,8 +227,8 @@ ones upstream deleted.
 ## Step 5 — CI is the validation gate
 
 Do **not** run repo-wide suites, builds, or typechecks on the dev server; they have
-OOM-crashed it. Push the branch, open a **draft PR into `expbkmain`**, and let cloud
-CI (Blacksmith) run everything. Scoped single-file runs are fine and often worth it:
+OOM-crashed it. Push the branch, open a **draft PR into `expbkmain`** (or `stage`), and let
+CI on GitHub-hosted runners run everything. Scoped single-file runs are fine and often worth it:
 
 ```bash
 cd apps/server && nice -n 10 npx vitest run <one-test-file> --maxWorkers=2
@@ -274,6 +285,9 @@ for `MERGEABLE` rather than re-resolving.
 bkt3 hosts the team's live sessions; the failure modes that matter (migrations meeting
 an existing database, startup ordering, provider processes) only appear on a real
 deploy. Reset `expbkmain` from `bkmain` after the promotion merges.
+
+`stage` → verify at stagebkt3.dev.beknown.live. Its deploy restarts only
+`t3-stage.service`.
 
 ## Reducing next merge's cost
 

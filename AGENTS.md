@@ -8,13 +8,14 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## Beknown fork and deployments
 
-This repository is the Beknown fork of T3 Code (`origin` = `beknown-work/bkt3code`, `upstream` = `pingdotgg/t3code`). Three environments run on the shared dev server from one git repository and three linked worktrees:
+This repository is the Beknown fork of T3 Code (`origin` = `iamtushar324/bkt3code`, which the old `beknown-work/bkt3code` name redirects to; `upstream` = `pingdotgg/t3code`). Four environments run on the shared dev server, each from its own clone:
 
-| Environment            | Branch      | Worktree                            | Domain                     | Port  | Service              |
-| ---------------------- | ----------- | ----------------------------------- | -------------------------- | ----- | -------------------- |
-| t3 (upstream-style)    | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`      | 18082 | `t3-beknown.service` |
-| bkt3 (fork production) | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`    | 18083 | `t3-bkmain.service`  |
-| expbkt3 (fork staging) | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live` | 18085 | `t3-expbkt3.service` |
+| Environment            | Branch      | Worktree                            | Domain                       | Port  | Service              |
+| ---------------------- | ----------- | ----------------------------------- | ---------------------------- | ----- | -------------------- |
+| t3 (upstream-style)    | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`        | 18082 | `t3-beknown.service` |
+| bkt3 (fork production) | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`      | 18083 | `t3-bkmain.service`  |
+| expbkt3 (fork staging) | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live`   | 18085 | `t3-expbkt3.service` |
+| stage (fresh-cut fork) | `stage`     | `/home/ubuntu/repos/t3code-stage`   | `stagebkt3.dev.beknown.live` | 18086 | `t3-stage.service`   |
 
 Branch semantics:
 
@@ -22,6 +23,7 @@ Branch semantics:
 - `t3main` — `main` plus two fork-owned files: `.github/workflows/deploy-t3.yml` and a `.gitmodules` entry declaring the vendored alchemy gitlink so `actions/checkout` can clean credentials. Deploys t3.dev. Updated by merging `main` in; never force-pushed.
 - `bkmain` — the fork's production line. Deploys bkt3. All fork work merges here through pull requests.
 - `expbkmain` — long-lived staging branch for drastic changes, above all upstream merges. Deploys expbkt3, and is reset from `bkmain` between experiments.
+- `stage` — a fresh cut of upstream `main` (`de251fc29`, 2026-09-27) carrying only the fork features still in use, each behind the smallest seam. It runs on a copy of bkt3's database and is meant to replace `bkmain` once verified. It deploys like the others, through `.github/workflows/deploy-stage.yml` and the systemd timer; what it kept and dropped is in [expbkt3 customization boundaries](./docs/operations/expbkt3-customizations.md#stage-cut-2026-09-27).
 
 Coding sessions always run on the bkt3 instance, in worktrees under `/home/ubuntu/.t3/bkt3-dev/worktrees/`. Do not start work in a deployment worktree; those are checkouts the deploy scripts fast-forward.
 
@@ -49,7 +51,7 @@ We track a fast-moving upstream. Every line this fork changes inside an upstream
 
 Ranked from cheapest to most expensive to maintain:
 
-1. **New files in fork-owned directories.** A feature living in its own module or package costs nothing at merge time — git has no competing change to reconcile. Prefer a new `apps/server/src/plannotator/` over threading logic through `server.ts`.
+1. **New files in fork-owned directories.** A feature living in its own module or package costs nothing at merge time — git has no competing change to reconcile. Prefer a new `apps/server/src/workspace-groups/` over threading logic through `server.ts`.
 2. **One call site in an upstream file, delegating to fork code.** If upstream code must invoke ours, aim for a single import plus a single line, not logic scattered through the file. One-line conflicts resolve in seconds; interleaved ones need real thought.
 3. **Composition over modification.** Wrap an upstream component rather than editing it. Render `<ForkFeature><UpstreamThing /></ForkFeature>` instead of adding branches inside `UpstreamThing`.
 4. **Configuration and feature flags over branching.** Fork behavior gated by a flag (`VITE_T3_EXPERIMENTAL_CONTROL_CENTER`, a server setting) keeps upstream's code path intact and lets us disable our feature to isolate a regression after a merge.
@@ -65,7 +67,7 @@ Rules that apply regardless of approach:
 - **Upstream anything generally useful.** A fix accepted upstream is a fix we stop re-merging forever; it converts a permanent tax into a one-time contribution. Bug fixes and small primitives are usually welcome upstream — check before building the fork-only version.
 - **Merge upstream often, in small batches.** Conflict pain grows faster than linearly with the size of the delta: two 15-commit merges are far cheaper than one 30-commit merge, because each conflict is reasoned about with less surrounding drift. Treat a monthly cadence as the ceiling, not the target. The end-to-end procedure — mirror sync, measuring the conflict surface, resolution rules, and the post-merge CI failures that recur every time — is the [`merge-upstream`](./.agents/skills/merge-upstream/SKILL.md) skill. Follow it rather than re-deriving the steps.
 - **A fork edit that _relocates_ upstream code is the most dangerous kind.** When the fork moves a block into its own module, a later upstream fix to that block arrives as a conflict-free change to a region the fork no longer has — git keeps the "deletion" and the fix silently never lands. Nothing catches this: it typechecks, and upstream's regression test for it usually lives in the file the fork stopped using. A 2026-08 merge lost upstream's "no origin remote" bootstrap fallback exactly this way. Prefer wrapping over relocating, and when reviewing a merge, diff the upstream side of any relocated block by hand.
-- **Never rebase the fork branches onto upstream.** `bkmain` and `expbkmain` are long-lived and shared; merging preserves the record of how each conflict was resolved, and rebasing re-inflicts every conflict and rewrites published history.
+- **Never rebase the fork branches onto upstream.** `bkmain`, `expbkmain`, and `stage` are long-lived and shared; merging preserves the record of how each conflict was resolved, and rebasing re-inflicts every conflict and rewrites published history.
 - **`git rerere` is enabled in this repo** (`rerere.enabled=true`), so a conflict resolved once is replayed automatically the next time the same hunk collides. Never resolve a conflict by discarding one side wholesale just to make it go away — a bad resolution gets replayed too. Verify what rerere auto-resolved before committing a merge.
 - **Test upstream merges on `expbkmain` first**, never directly on `bkmain`. Reset `expbkmain` from `bkmain` so its conflicts are exactly the ones `bkmain` will see, verify at expbkt3.dev, then promote.
 

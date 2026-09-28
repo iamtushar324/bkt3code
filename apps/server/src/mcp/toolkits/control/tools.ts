@@ -271,7 +271,7 @@ export const T3UpdateSessionTool = mutatingTool(
 export const T3SessionActionTool = mutatingTool(
   Tool.make("t3_session_action", {
     description:
-      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, delete, request a fresh catch-up summary, or request a fresh work summary and progress estimate.",
+      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       action: described(
@@ -384,7 +384,7 @@ export const T3CreateProjectTool = mutatingTool(
 export const T3UpdateProjectTool = mutatingTool(
   Tool.make("t3_update_project", {
     description:
-      "Update an existing T3 project, including its default agent model, new-thread creation defaults, and project actions. External operators only; omitted fields remain unchanged.",
+      "Update an existing T3 project, including its default agent model and project actions. External operators only; omitted fields remain unchanged.",
     parameters: Schema.Struct({
       projectId: described(Schema.String, "Target project ID obtained from t3_list_projects."),
       title: Schema.optional(described(Schema.String, "Optional replacement project title.")),
