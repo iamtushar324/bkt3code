@@ -64,9 +64,9 @@ export function buildPhaseSidebarRowActions(input: {
   /** Snooze presets to offer as a submenu; a bare Snooze item when absent. */
   readonly snoozePresets?: ReadonlyArray<SnoozePreset>;
   /**
-   * The user's custom groups. "Move to group" appears whenever any exist,
-   * whichever grouping mode is showing — placing a session is cheap, and the
-   * group is waiting when they switch to Custom.
+   * The custom groups in view. "Move to group" appears whenever this is
+   * passed (the list passes it for every root row, even with no groups yet, so
+   * "New group…" can make the first one), whichever grouping mode is showing.
    */
   readonly customGroups?: ReadonlyArray<{ readonly id: string; readonly label: string }>;
   readonly customGroupId?: string | null;

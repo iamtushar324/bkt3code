@@ -969,7 +969,7 @@ interface PhaseThreadRowProps {
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): BEGIN — custom groups. One stable actions object plus
   // the row's own group id, for the same memo reason as the tree props above.
-  // `groupActions` absent = no custom groups exist, so the menu shows nothing.
+  // `groupActions` absent = the host cannot store custom groups.
   readonly groupActions?: PhaseThreadRowGroupActions;
   readonly customGroupId?: string | null;
   /** The group's display label, shown as a chip outside Custom mode only. */
@@ -1396,9 +1396,9 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
             : []),
         ]
       : [];
-    // T3-CUSTOM(expbkt3): custom groups. Offered whenever the user has made
-    // any, whichever mode is showing — placing a session is cheap, and the
-    // group is waiting when they switch to Custom.
+    // T3-CUSTOM(expbkt3): custom groups. Always offered, whichever mode is
+    // showing — placing a session is cheap, and the group is waiting when the
+    // user switches to Custom.
     // A nested row is placed with its parent, so offering to move it alone
     // would show a tick for a group it never appears in.
     const groupItems =
@@ -2693,20 +2693,19 @@ export function PhaseGroupedSidebar() {
     },
     [forgetCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
   );
-  const groupActions = useMemo<PhaseThreadRowGroupActions | undefined>(
-    () =>
-      customGroupOptions.length === 0 && grouping.groupBy !== "custom"
-        ? undefined
-        : {
-            groups: customGroupOptions.map((group) => ({ id: group.id, label: group.label })),
-            onAssign: (row, groupId) =>
-              void setThreadCustomGroup(
-                row,
-                groupId === null ? null : (customGroupLabels.get(groupId) ?? groupId),
-              ),
-            onCreateGroupWith: (row) => setGroupNameDialogRow(row),
-          },
-    [customGroupLabels, customGroupOptions, grouping.groupBy, setThreadCustomGroup],
+  // Always offered, even before any group exists: "New group…" from a row is
+  // how the first group gets made, whichever grouping mode is showing.
+  const groupActions = useMemo<PhaseThreadRowGroupActions>(
+    () => ({
+      groups: customGroupOptions.map((group) => ({ id: group.id, label: group.label })),
+      onAssign: (row, groupId) =>
+        void setThreadCustomGroup(
+          row,
+          groupId === null ? null : (customGroupLabels.get(groupId) ?? groupId),
+        ),
+      onCreateGroupWith: (row) => setGroupNameDialogRow(row),
+    }),
+    [customGroupLabels, customGroupOptions, setThreadCustomGroup],
   );
   /** The lifecycle groups, kept for the callers that reason about phases. */
   const groups = sections;

@@ -287,12 +287,13 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
           now: nowIso,
           snoozePresets,
           // A nested row is placed with its parent, so only roots can be moved.
-          ...((customGroups.length > 0 || grouping.groupBy === "custom") && depth === 0
+          // Offered even before any group exists: "New group…" makes the first one.
+          ...(depth === 0
             ? { customGroups, customGroupId: phaseSidebarCustomGroupIdForRow(row) }
             : {}),
         }),
       ) as MenuAction[],
-    [customGroups, grouping.groupBy, nowIso, snoozePresets],
+    [customGroups, nowIso, snoozePresets],
   );
 
   const noopReparent = useCallback(() => {}, []);
