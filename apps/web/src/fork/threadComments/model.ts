@@ -53,21 +53,47 @@ export const THREAD_COMMENT_STATE_LABEL: Record<ThreadCommentDisplayState, strin
   resolved: "Resolved",
 };
 
-export type ThreadCommentsFilter = "open" | "resolved" | "all";
+/**
+ * - `open`: everything unresolved (status open or addressed) — the default.
+ * - `unaddressed`: status open only.
+ * - `addressed`: status addressed only.
+ */
+export type ThreadCommentsFilter = "open" | "unaddressed" | "addressed" | "resolved" | "all";
 
-/** `open` shows everything still waiting on someone, including addressed comments. */
+export const THREAD_COMMENT_FILTERS: ReadonlyArray<{
+  readonly id: ThreadCommentsFilter;
+  readonly label: string;
+}> = [
+  { id: "open", label: "Open" },
+  { id: "unaddressed", label: "Unaddressed" },
+  { id: "addressed", label: "Addressed" },
+  { id: "resolved", label: "Resolved" },
+  { id: "all", label: "All" },
+];
+
+export function matchesCommentsFilter(
+  comment: Pick<ThreadComment, "status">,
+  filter: ThreadCommentsFilter,
+): boolean {
+  switch (filter) {
+    case "open":
+      return comment.status !== "resolved";
+    case "unaddressed":
+      return comment.status === "open";
+    case "addressed":
+      return comment.status === "addressed";
+    case "resolved":
+      return comment.status === "resolved";
+    case "all":
+      return true;
+  }
+}
+
 export function filterComments<C extends Pick<ThreadComment, "status">>(
   comments: ReadonlyArray<C>,
   filter: ThreadCommentsFilter,
 ): C[] {
-  switch (filter) {
-    case "open":
-      return comments.filter((comment) => comment.status !== "resolved");
-    case "resolved":
-      return comments.filter((comment) => comment.status === "resolved");
-    case "all":
-      return [...comments];
-  }
+  return comments.filter((comment) => matchesCommentsFilter(comment, filter));
 }
 
 export interface ThreadCommentCounts {
@@ -90,6 +116,22 @@ export function countComments(
     else resolved += 1;
   }
   return { open, addressed, resolved, deliverable: open };
+}
+
+/** Badge number for a filter tab; the caller hides zero. */
+export function filterCount(counts: ThreadCommentCounts, filter: ThreadCommentsFilter): number {
+  switch (filter) {
+    case "open":
+      return counts.open + counts.addressed;
+    case "unaddressed":
+      return counts.open;
+    case "addressed":
+      return counts.addressed;
+    case "resolved":
+      return counts.resolved;
+    case "all":
+      return counts.open + counts.addressed + counts.resolved;
+  }
 }
 
 export function formatCommentsHeader(counts: ThreadCommentCounts): string {
@@ -205,6 +247,36 @@ export const THREAD_COMMENT_HIGHLIGHT_NAMES: ReadonlyArray<string> = [
   `${THREAD_COMMENT_HIGHLIGHT_PREFIX}resolved`,
   THREAD_COMMENT_ACTIVE_HIGHLIGHT,
 ];
+
+/**
+ * What a message's gutter marker shows: how many comments still need someone,
+ * coloured by the most urgent of them (an open comment outranks an addressed
+ * one). Null when every comment on the message is resolved.
+ */
+export function messageMarkerState(
+  comments: ReadonlyArray<Pick<ThreadComment, "status">>,
+): { readonly urgency: "open" | "addressed"; readonly count: number } | null {
+  let open = 0;
+  let addressed = 0;
+  for (const comment of comments) {
+    if (comment.status === "open") open += 1;
+    else if (comment.status === "addressed") addressed += 1;
+  }
+  if (open + addressed === 0) return null;
+  return { urgency: open > 0 ? "open" : "addressed", count: open + addressed };
+}
+
+/** The comment a message-level marker opens: the oldest open one, else the oldest addressed. */
+export function mostUrgentComment<C extends Pick<ThreadComment, "status" | "number">>(
+  comments: ReadonlyArray<C>,
+): C | null {
+  const byNumber = [...comments].sort((left, right) => left.number - right.number);
+  return (
+    byNumber.find((comment) => comment.status === "open") ??
+    byNumber.find((comment) => comment.status === "addressed") ??
+    null
+  );
+}
 
 /** Comments whose quote lives in one message, oldest first. */
 export function commentsForMessage(

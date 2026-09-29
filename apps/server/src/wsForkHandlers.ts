@@ -658,7 +658,7 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.threadCommentsResolveAll,
         guardCommentsThread("resolveAll", input.threadId).pipe(
-          Effect.andThen(threadComments.resolveAll(input.threadId)),
+          Effect.andThen(threadComments.resolveAll(input)),
         ),
         { "rpc.aggregate": "thread-comments" },
       ),

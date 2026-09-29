@@ -72,10 +72,14 @@ export class ThreadCommentsRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly commentId: ThreadCommentId;
     }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
-    /** Marks every open or addressed comment on the thread resolved. */
+    /**
+     * Marks every open or addressed comment on the thread resolved, or with
+     * `only: "addressed"` just the ones the agent has marked done.
+     */
     readonly resolveAll: (input: {
       readonly threadId: ThreadId;
       readonly resolvedAt: string;
+      readonly only?: "addressed" | undefined;
     }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
     readonly getSettings: (
       threadId: ThreadId,
@@ -174,13 +178,18 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveAllRows = SqlSchema.void({
-    Request: Schema.Struct({ threadId: ThreadId, resolvedAt: Schema.String }),
-    execute: ({ threadId, resolvedAt }) => sql`
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      resolvedAt: Schema.String,
+      addressedOnly: Schema.Boolean,
+    }),
+    execute: ({ threadId, resolvedAt, addressedOnly }) => sql`
       UPDATE thread_comments SET
         status = 'resolved',
         updated_at = ${resolvedAt},
         resolved_at = ${resolvedAt}
-      WHERE thread_id = ${threadId} AND status IN ('open', 'addressed')
+      WHERE thread_id = ${threadId}
+        AND ${sql.in("status", addressedOnly ? ["addressed"] : ["open", "addressed"])}
     `,
   });
 
@@ -235,8 +244,10 @@ export const make = Effect.gen(function* () {
     deleteComment: (input) =>
       deleteRow(input).pipe(Effect.mapError(mapError("ThreadComments.deleteComment"))),
 
-    resolveAll: (input) =>
-      resolveAllRows(input).pipe(Effect.mapError(mapError("ThreadComments.resolveAll"))),
+    resolveAll: ({ threadId, resolvedAt, only }) =>
+      resolveAllRows({ threadId, resolvedAt, addressedOnly: only === "addressed" }).pipe(
+        Effect.mapError(mapError("ThreadComments.resolveAll")),
+      ),
 
     getSettings: (threadId) =>
       getSettingsRow({ threadId }).pipe(

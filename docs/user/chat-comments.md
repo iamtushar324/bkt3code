@@ -26,8 +26,16 @@ offers four actions:
 
 Each comment highlights the words it points at (amber for a comment, green for
 good, grey for okay, red with a strike-through for remove) and adds a small
-numbered pin at the end of the quote. Clicking a pin opens the comment's card in
-the panel.
+numbered pin at the end of the quote. While a comment is unresolved, a bar in the
+message's left edge marks its lines and a bubble at the message's top-right
+counts what still needs handling — amber while something is open, blue once the
+agent has addressed everything. Clicking any of them opens the comment's card in
+the panel; resolved comments fade to a faint highlight with no markers.
+
+Comments and replies are Markdown, rendered like chat messages: bold, italics,
+code, lists and links work, and links open the way chat links do. In the comment
+box and the reply box, `⌘/Ctrl+B` bolds the selection, `⌘/Ctrl+I` italicises it,
+`⌘/Ctrl+E` makes it inline code and `⌘/Ctrl+K` turns it into a link.
 
 ## The Comments panel
 
@@ -39,8 +47,10 @@ scrolls the conversation to the quote.
 A comment is **Open** until someone acts on it. When the agent answers, the card
 reads **Agent replied**, and when the agent says it has dealt with it the card
 reads **Addressed** — nothing is closed until you say so. **Resolve** closes a
-comment (and **Reopen** brings it back); **Resolve all** closes every open one at
-once. Deleting a comment from its ⋯ menu removes it entirely. **Reply** adds to
+comment (and **Reopen** brings it back); **Resolve addressed** closes every
+comment the agent has marked addressed, and **Resolve all** closes every
+unresolved one. The filter row shows **Open** (everything unresolved),
+**Unaddressed**, **Addressed**, **Resolved** and **All**, each with its count. Deleting a comment from its ⋯ menu removes it entirely. **Reply** adds to
 the thread under a comment, and the agent sees the replies too.
 
 ## What the agent does with open comments

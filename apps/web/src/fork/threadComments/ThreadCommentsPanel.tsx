@@ -19,7 +19,16 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+
+import ChatMarkdown from "../../components/ChatMarkdown";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -39,13 +48,17 @@ import {
   useThreadCommentsEnabled,
   useThreadCommentsSnapshot,
 } from "./hooks";
+import { applyMarkdownShortcutToTextarea, markdownShortcutForKey } from "./markdownShortcuts";
 import {
   countComments,
   deriveCommentDisplayState,
   filterComments,
+  filterCount,
   formatCommentsHeader,
   groupCommentsByMessage,
+  matchesCommentsFilter,
   quotePreview,
+  THREAD_COMMENT_FILTERS,
   THREAD_COMMENT_KIND_LABEL,
   THREAD_COMMENT_KIND_NOTE,
   THREAD_COMMENT_STATE_LABEL,
@@ -75,11 +88,42 @@ const STATE_BADGE_VARIANT: Record<ThreadCommentDisplayState, "warning" | "info" 
   resolved: "success",
 };
 
-const FILTERS: ReadonlyArray<{ id: ThreadCommentsFilter; label: string }> = [
-  { id: "open", label: "Open" },
-  { id: "resolved", label: "Resolved" },
-  { id: "all", label: "All" },
-];
+/** Comment bodies render like chat messages, in a tighter rhythm for a card. */
+function CommentMarkdown({ text, threadRef }: { text: string; threadRef: ScopedThreadRef }) {
+  return (
+    // A link inside a comment opens like a chat link; it must not also count as
+    // a click on the card, which would scroll the transcript.
+    <div
+      onClick={(event) => {
+        if ((event.target as Element).closest("a")) event.stopPropagation();
+      }}
+    >
+      <ChatMarkdown
+        text={text}
+        cwd={undefined}
+        threadRef={threadRef}
+        lineBreaks
+        className="text-sm leading-snug [&_blockquote]:my-1 [&_ol]:my-1 [&_p]:my-1 [&_pre]:my-1 [&_ul]:my-1"
+      />
+    </div>
+  );
+}
+
+/** Cmd/Ctrl+B / I / E / K wrap the textarea selection; returns true when handled. */
+function handleMarkdownShortcut(
+  event: ReactKeyboardEvent,
+  textarea: HTMLTextAreaElement | null,
+  onChange: (value: string) => void,
+): boolean {
+  const action = markdownShortcutForKey(event);
+  // The ui Textarea does not reliably forward its ref, so fall back to the element
+  // the key went to.
+  const target = textarea ?? (event.target instanceof HTMLTextAreaElement ? event.target : null);
+  if (action === null || target === null) return false;
+  event.preventDefault();
+  onChange(applyMarkdownShortcutToTextarea(target, action));
+  return true;
+}
 
 const FOCUS_RING_MS = 1_600;
 
@@ -120,13 +164,7 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
     let scrollFrame: number | null = null;
     const frame = requestAnimationFrame(() => {
       setFilter((current) =>
-        focusTargetStatus === "resolved"
-          ? current === "open"
-            ? "all"
-            : current
-          : current === "resolved"
-            ? "all"
-            : current,
+        matchesCommentsFilter({ status: focusTargetStatus }, current) ? current : "all",
       );
       scrollFrame = requestAnimationFrame(() => {
         listRef.current
@@ -168,6 +206,21 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
         <span className="min-w-0 flex-1 truncate font-medium text-sm">
           {formatCommentsHeader(counts)}
         </span>
+        {counts.addressed > 0 ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy}
+            onClick={() =>
+              void run(() =>
+                commands.resolveAll({ environmentId, input: { threadId, only: "addressed" } }),
+              )
+            }
+          >
+            <CheckIcon aria-hidden />
+            Resolve addressed
+          </Button>
+        ) : null}
         <Button
           size="xs"
           variant="outline"
@@ -202,27 +255,30 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
         </div>
       ) : null}
       <div
-        className="flex shrink-0 items-center gap-1 px-3 py-2"
+        className="flex shrink-0 flex-wrap items-center gap-1 px-3 py-2"
         role="tablist"
         aria-label="Filter comments"
       >
-        {FILTERS.map((entry) => (
-          <Button
-            key={entry.id}
-            role="tab"
-            aria-selected={filter === entry.id}
-            size="xs"
-            variant={filter === entry.id ? "secondary" : "ghost-muted"}
-            onClick={() => setFilter(entry.id)}
-          >
-            {entry.label}
-            {entry.id === "open" && counts.open + counts.addressed > 0 ? (
-              <Badge size="sm" variant="warning">
-                {counts.open + counts.addressed}
-              </Badge>
-            ) : null}
-          </Button>
-        ))}
+        {THREAD_COMMENT_FILTERS.map((entry) => {
+          const count = filterCount(counts, entry.id);
+          return (
+            <Button
+              key={entry.id}
+              role="tab"
+              aria-selected={filter === entry.id}
+              size="xs"
+              variant={filter === entry.id ? "secondary" : "ghost-muted"}
+              onClick={() => setFilter(entry.id)}
+            >
+              {entry.label}
+              {count > 0 ? (
+                <Badge size="sm" variant={entry.id === "resolved" ? "success" : "warning"}>
+                  {count}
+                </Badge>
+              ) : null}
+            </Button>
+          );
+        })}
       </div>
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {comments.length === 0 ? (
@@ -238,7 +294,11 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
           </Empty>
         ) : groups.length === 0 ? (
           <p className="px-1 py-6 text-center text-muted-foreground text-sm">
-            {filter === "resolved" ? "Nothing resolved yet." : "Nothing open."}
+            {filter === "resolved"
+              ? "Nothing resolved yet."
+              : filter === "addressed"
+                ? "Nothing addressed yet."
+                : "Nothing open."}
           </p>
         ) : (
           groups.map((group) => (
@@ -311,6 +371,7 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
   const viewerUserId = useCurrentUserId();
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const state = deriveCommentDisplayState(comment);
   const resolved = state === "resolved";
   const authorLabel =
@@ -419,7 +480,9 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
       >
         {quotePreview(comment.anchor.text)}
       </blockquote>
-      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm">{body}</p>
+      <div className="mt-1.5">
+        <CommentMarkdown text={body} threadRef={threadRef} />
+      </div>
       {comment.replies.length > 0 ? (
         <ul className="mt-2 flex flex-col gap-1.5">
           {comment.replies.map((entry) => (
@@ -430,7 +493,7 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
                 entry.author === "agent" ? "border border-border bg-muted/40" : "bg-accent/30",
               )}
             >
-              <span className="font-medium">
+              <span className="font-medium text-xs">
                 {entry.author === "agent"
                   ? (entry.authorLabel ?? "Agent")
                   : entry.authorUserId !== null && entry.authorUserId === viewerUserId
@@ -439,9 +502,8 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
                       (entry.authorUserId === null
                         ? "You"
                         : userDisplayName(resolveUser(entry.authorUserId))))}
-                :
-              </span>{" "}
-              <span className="whitespace-pre-wrap break-words">{entry.body}</span>
+              </span>
+              <CommentMarkdown text={entry.body} threadRef={threadRef} />
             </li>
           ))}
         </ul>
@@ -449,10 +511,13 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
       {replying ? (
         <div
           className="mt-2"
+          // Upstream's sidebar Mod+B toggle yields to this marker; see the editor.
+          data-composer-rich-text="true"
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.nativeEvent.isComposing) return;
+            if (handleMarkdownShortcut(event, replyRef.current, setReply)) return;
             if (event.key === "Escape") {
               event.preventDefault();
               setReplying(false);
@@ -464,6 +529,7 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
           }}
         >
           <Textarea
+            ref={replyRef}
             autoFocus
             size="sm"
             value={reply}
@@ -474,7 +540,8 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
           />
           <div className="mt-1.5 flex items-center gap-1">
             <span className="text-3xs text-muted-foreground">
-              <Kbd>↵</Kbd> newline · <Kbd>⌘/Ctrl ↵</Kbd> send
+              Markdown supported · <Kbd>⌘/Ctrl B</Kbd> <Kbd>I</Kbd> <Kbd>E</Kbd> <Kbd>K</Kbd> ·{" "}
+              <Kbd>⌘/Ctrl ↵</Kbd> send
             </span>
             <span className="ms-auto flex gap-1">
               <Button size="xs" variant="ghost" disabled={busy} onClick={() => setReplying(false)}>

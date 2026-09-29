@@ -44,6 +44,7 @@ import {
   ThreadCommentsSetDeliveryPausedInput,
   ThreadCommentsSetStatusInput,
   ThreadCommentsSnapshot,
+  ThreadCommentsResolveAllInput,
   ThreadCommentsThreadInput,
 } from "./threadComments.ts";
 import { UsageReadError } from "./usage.ts";
@@ -410,7 +411,7 @@ export const WsThreadCommentsSetStatusRpc = Rpc.make(WS_FORK_METHODS.threadComme
 });
 
 export const WsThreadCommentsResolveAllRpc = Rpc.make(WS_FORK_METHODS.threadCommentsResolveAll, {
-  payload: ThreadCommentsThreadInput,
+  payload: ThreadCommentsResolveAllInput,
   success: ThreadCommentsSnapshot,
   error: threadCommentsError,
 });

@@ -1,15 +1,15 @@
 /* T3-CUSTOM(expbkt3): review-comment quote highlights (CSS Custom Highlight API). */
 ::highlight(t3-thread-comment-comment) {
-  background-color: color-mix(in oklab, var(--warning) 30%, transparent);
+  background-color: color-mix(in oklab, var(--warning) 48%, transparent);
 }
 ::highlight(t3-thread-comment-good) {
-  background-color: color-mix(in oklab, var(--success) 28%, transparent);
+  background-color: color-mix(in oklab, var(--success) 42%, transparent);
 }
 ::highlight(t3-thread-comment-okay) {
-  background-color: color-mix(in oklab, var(--muted-foreground) 24%, transparent);
+  background-color: color-mix(in oklab, var(--muted-foreground) 36%, transparent);
 }
 ::highlight(t3-thread-comment-remove) {
-  background-color: color-mix(in oklab, var(--destructive) 22%, transparent);
+  background-color: color-mix(in oklab, var(--destructive) 36%, transparent);
   text-decoration: line-through;
   text-decoration-color: color-mix(in oklab, var(--destructive) 80%, transparent);
 }
@@ -17,5 +17,5 @@
   background-color: color-mix(in oklab, var(--muted-foreground) 9%, transparent);
 }
 ::highlight(t3-thread-comment-active) {
-  background-color: color-mix(in oklab, var(--primary) 40%, transparent);
+  background-color: color-mix(in oklab, var(--primary) 55%, transparent);
 }

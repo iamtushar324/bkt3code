@@ -18,6 +18,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { toastManager } from "../../components/ui/toast";
 import { cn } from "../../lib/utils";
 import { useThreadCommentsCommands, useThreadCommentsEnabled } from "./hooks";
+import { applyMarkdownShortcutToTextarea, markdownShortcutForKey } from "./markdownShortcuts";
 import { buildCommentAnchor, quotePreview, THREAD_COMMENT_KIND_LABEL } from "./model";
 import type { AssistantSelectionToolbarExtrasProps } from "./selectionToolbarExtras";
 
@@ -137,6 +138,9 @@ export function ThreadCommentsSelectionActions({
       {editing ? (
         <div
           data-thread-comment-editor
+          // Upstream's sidebar Mod+B toggle yields to elements marked this way, so
+          // Ctrl/Cmd+B makes text bold here instead of hiding the sidebar.
+          data-composer-rich-text="true"
           // `contain: inline-size` keeps the editor out of the toolbar's max-content
           // width, so it wraps below the buttons at exactly their width instead of
           // stretching the (w-max) group to buttons + editor side by side.
@@ -144,6 +148,16 @@ export function ThreadCommentsSelectionActions({
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.nativeEvent.isComposing) return;
+            const shortcut = markdownShortcutForKey(event);
+            // The ui Textarea does not reliably forward its ref; use the key's target.
+            const field =
+              textareaRef.current ??
+              (event.target instanceof HTMLTextAreaElement ? event.target : null);
+            if (shortcut !== null && field) {
+              event.preventDefault();
+              setBody(applyMarkdownShortcutToTextarea(field, shortcut));
+              return;
+            }
             if (event.key === "Escape") {
               event.preventDefault();
               setEditing(false);
@@ -168,7 +182,9 @@ export function ThreadCommentsSelectionActions({
             onChange={(event) => setBody(event.target.value)}
           />
           <div className="mt-1.5 flex items-center gap-2">
-            <span className="flex items-center gap-1 text-3xs text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-1 text-3xs text-muted-foreground">
+              Markdown supported
+              <span aria-hidden>·</span>
               <Kbd>{isApplePlatform ? "⌘" : "Ctrl"}↵</Kbd> add
               <span aria-hidden>·</span>
               <Kbd>Esc</Kbd> cancel
