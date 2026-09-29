@@ -8,6 +8,7 @@ import {
   ENVIRONMENT_ICON_DESCRIPTORS,
   environmentAppearanceFromSettings,
   environmentAppearanceSettingValue,
+  LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
   resolveEnvironmentIdentity,
   sanitizeEnvironmentAppearance,
   sanitizeEnvironmentAppearanceMap,
@@ -61,6 +62,35 @@ describe("resolveEnvironmentIdentity", () => {
     });
     expect(ENVIRONMENT_ICON_DESCRIPTORS.some((o) => o.id === resolved.iconId)).toBe(true);
     expect(ENVIRONMENT_COLOR_OPTIONS.some((o) => o.id === resolved.colorId)).toBe(true);
+  });
+
+  it("uses a preset default in place of the derived look, and each stored field beats it", () => {
+    const preset = resolveEnvironmentIdentity({
+      environmentId: ENV_A,
+      label: "Tushar's MacBook",
+      defaults: LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
+    });
+    expect(preset).toMatchObject({
+      name: "local",
+      defaultName: "local",
+      iconId: "laptop",
+      colorId: "blue",
+      presetDefault: true,
+      customized: false,
+    });
+
+    const edited = resolveEnvironmentIdentity({
+      environmentId: ENV_A,
+      label: "Tushar's MacBook",
+      defaults: LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
+      appearance: { nickname: "Studio", colorId: "red" },
+    });
+    expect(edited).toMatchObject({
+      name: "Studio",
+      iconId: "laptop",
+      colorId: "red",
+      customized: true,
+    });
   });
 });
 

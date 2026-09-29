@@ -15,6 +15,8 @@ import {
   resolveEnvironmentAppearance,
   type ResolvedEnvironmentAppearance,
 } from "./environmentAppearance";
+// T3-CUSTOM(expbkt3): this computer's backend starts as "local".
+import { localEnvironmentAppearanceDefaults } from "../fork/localEnvironmentAppearance";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 // T3-CUSTOM(expbkt3): retained for useEnvironmentConnectionState below.
@@ -44,6 +46,7 @@ function projectEnvironmentPresentation(
     environmentId,
     label: presentation.entry.target.label,
     appearance: environmentAppearanceFromSettings(presentation.serverConfig?.settings),
+    defaults: localEnvironmentAppearanceDefaults(presentation.entry.target),
   });
   return {
     ...presentation,

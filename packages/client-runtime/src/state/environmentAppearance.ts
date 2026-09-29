@@ -92,7 +92,28 @@ export interface ResolvedEnvironmentIdentity {
   readonly customized: boolean;
   /** True when an icon or colour was picked, not only a nickname. */
   readonly glyphCustomized: boolean;
+  /** The name shown when no nickname is set. */
+  readonly defaultName: string;
+  /** True when the uncustomised look is a preset (see `defaults`), not derived from the id. */
+  readonly presetDefault: boolean;
 }
+
+/** What an environment looks like before anyone customises it. */
+export interface EnvironmentAppearanceDefaults {
+  readonly name: string;
+  readonly iconId: string;
+  readonly colorId: string;
+}
+
+/**
+ * The computer the client runs on: a plain "local" in blue with a laptop, so it
+ * reads as "here" next to remote hosts, whose looks are derived from their ids.
+ */
+export const LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS: EnvironmentAppearanceDefaults = {
+  name: "local",
+  iconId: "laptop",
+  colorId: "blue",
+};
 
 /** FNV-1a: stable across reloads and machines, which a string hash must be here. */
 function hashString(value: string): number {
@@ -156,18 +177,24 @@ export function resolveEnvironmentIdentity(input: {
   readonly environmentId: string;
   readonly label: string;
   readonly appearance?: EnvironmentAppearance | null | undefined;
+  /** Replaces the id-derived look; each stored field still wins over it. */
+  readonly defaults?: EnvironmentAppearanceDefaults | undefined;
 }): ResolvedEnvironmentIdentity {
   const stored = input.appearance ?? undefined;
   const nickname = stored?.nickname?.trim();
+  const defaults = input.defaults;
   const icon = findEnvironmentIconDescriptor(
-    stored?.iconId ?? defaultEnvironmentIconId(input.environmentId),
+    stored?.iconId ?? defaults?.iconId ?? defaultEnvironmentIconId(input.environmentId),
   );
   const color = findEnvironmentColorOption(
-    stored?.colorId ?? defaultEnvironmentColorId(input.environmentId),
+    stored?.colorId ?? defaults?.colorId ?? defaultEnvironmentColorId(input.environmentId),
   );
+  const defaultName = defaults?.name ?? input.label;
 
   return {
-    name: nickname && nickname.length > 0 ? nickname : input.label,
+    defaultName,
+    presetDefault: defaults !== undefined,
+    name: nickname && nickname.length > 0 ? nickname : defaultName,
     iconId: icon.id,
     colorId: color.id,
     color: color.value,

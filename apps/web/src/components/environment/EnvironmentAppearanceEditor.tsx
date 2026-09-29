@@ -86,7 +86,11 @@ export function EnvironmentAppearanceEditor({
       <div className="flex items-center gap-2">
         <EnvironmentBadgeView appearance={appearance} />
         {appearance.customized ? null : (
-          <span className="text-xs text-muted-foreground">Derived from the environment id</span>
+          <span className="text-xs text-muted-foreground">
+            {appearance.presetDefault
+              ? "Default for this computer"
+              : "Derived from the environment id"}
+          </span>
         )}
       </div>
 
@@ -102,7 +106,7 @@ export function EnvironmentAppearanceEditor({
         <Input
           id={`environment-nickname-${environmentId}`}
           value={nicknameDraft ?? current.nickname ?? ""}
-          placeholder={environment.connectionLabel}
+          placeholder={appearance.defaultName}
           maxLength={40}
           disabled={disabled}
           onChange={(event) => setNicknameDraft(event.target.value)}
@@ -112,8 +116,7 @@ export function EnvironmentAppearanceEditor({
           }}
         />
         <p className="text-xs text-muted-foreground">
-          Shared with everyone connected to this environment. Leave empty to use the connection
-          label.
+          Shared with everyone connected to this environment. Leave empty to use the default name.
         </p>
       </div>
 

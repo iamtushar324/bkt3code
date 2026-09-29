@@ -17,7 +17,8 @@
  * - **Every environment gets a distinct look before anyone configures one.** The
  *   fallback is derived from the environment id, so the second machine you attach
  *   is immediately distinguishable without a settings trip. Customising only
- *   overrides the derived value.
+ *   overrides the derived value. The computer the client runs on is the one
+ *   exception: it starts as "local" (see `fork/localEnvironmentAppearance.ts`).
  *
  * Colours are applied as inline values rather than Tailwind classes on purpose:
  * the palette is chosen at runtime by the user, and class names assembled at
@@ -51,9 +52,11 @@ import {
   ENVIRONMENT_ICON_DESCRIPTORS,
   environmentAppearanceFromSettings,
   environmentAppearanceSettingValue,
+  LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
   resolveEnvironmentIdentity,
   sanitizeEnvironmentAppearance,
   type EnvironmentAppearance,
+  type EnvironmentAppearanceDefaults,
   type EnvironmentColorOption,
   type ResolvedEnvironmentIdentity,
 } from "@t3tools/client-runtime/state/environment-appearance";
@@ -67,8 +70,10 @@ export {
   ENVIRONMENT_COLOR_OPTIONS,
   environmentAppearanceFromSettings,
   environmentAppearanceSettingValue,
+  LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
   sanitizeEnvironmentAppearance,
   type EnvironmentAppearance,
+  type EnvironmentAppearanceDefaults,
   type EnvironmentColorOption,
 };
 
@@ -115,6 +120,7 @@ export function resolveEnvironmentAppearance(input: {
   readonly environmentId: string;
   readonly label: string;
   readonly appearance?: EnvironmentAppearance | null | undefined;
+  readonly defaults?: EnvironmentAppearanceDefaults | undefined;
 }): ResolvedEnvironmentAppearance {
   const identity = resolveEnvironmentIdentity(input);
   return { ...identity, Icon: LUCIDE_ICON_BY_ID[identity.iconId] ?? ServerIcon };
