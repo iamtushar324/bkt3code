@@ -137,8 +137,10 @@ export function ThreadCommentsSelectionActions({
       {editing ? (
         <div
           data-thread-comment-editor
-          className="basis-full rounded-lg border border-border bg-popover p-2 shadow-md"
-          style={{ width: "min(28rem, calc(100vw - 1rem))" }}
+          // `contain: inline-size` keeps the editor out of the toolbar's max-content
+          // width, so it wraps below the buttons at exactly their width instead of
+          // stretching the (w-max) group to buttons + editor side by side.
+          className="basis-full rounded-lg border border-border bg-popover p-2 shadow-md [contain:inline-size]"
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.nativeEvent.isComposing) return;
