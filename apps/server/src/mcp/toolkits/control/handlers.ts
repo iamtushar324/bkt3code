@@ -40,6 +40,9 @@ import { ProjectionSnapshotQuery } from "../../../orchestration/Services/Project
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
+// T3-CUSTOM(expbkt3): user presence for agents deciding how to reach the human.
+import { resolvePresenceTarget } from "../../../presence/presenceTarget.ts";
+import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
@@ -1409,6 +1412,26 @@ const handlers = {
   }),
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): BEGIN — user presence. Targets the caller's own session
+  // unless a user-wide credential names one it can see.
+  t3_user_presence: Effect.fn("T3ControlToolkit.userPresence")(function* (input) {
+    const operation = "user-presence";
+    // Own session by default, even for a user-bound credential that could
+    // also name others: "is the human here?" is about the session I am in.
+    const sessionId = yield* resolvePresenceTarget(input.sessionId).pipe(
+      Effect.mapError((error) => new T3ControlToolError({ operation, message: error.message })),
+    );
+    const presence = yield* UserPresenceService;
+    return yield* presence
+      .report({
+        threadId: sessionId,
+        ...(input.userId === undefined ? {} : { userId: input.userId }),
+        ...(input.email === undefined ? {} : { email: input.email }),
+      })
+      .pipe(mapControlError(operation));
+  }),
+  // T3-CUSTOM(expbkt3): END
+
   t3_dispatch_command: Effect.fn("T3ControlToolkit.dispatchCommand")(function* (input) {
     const operation = "dispatch-command";
     yield* requireExternalOperator(operation);
@@ -1440,4 +1463,6 @@ export const __testing = {
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
   listComments: handlers.t3_list_comments,
   replyComment: handlers.t3_reply_comment,
+  // T3-CUSTOM(expbkt3): user presence.
+  userPresence: handlers.t3_user_presence,
 };

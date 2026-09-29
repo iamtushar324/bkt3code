@@ -48,6 +48,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { presenceEnvironmentFor } from "../../presence/presenceEnvironment.expbkt3.ts"; // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL.
 // T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 
@@ -2314,12 +2315,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                     mcpSession,
                   ),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...presenceEnvironmentFor(mcpSession), // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL beside the bearer.
                 },
                 appServerArgs: [
                   "-c",
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  // T3-CUSTOM(expbkt3): BEGIN proxied upstream MCP servers share the bearer.
                   ...mcpSession.upstreamServers.flatMap((server) => {
                     const name = McpProviderSession.upstreamMcpServerName(server);
                     return [
@@ -2329,6 +2332,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                       `mcp_servers.${name}.bearer_token_env_var="T3_MCP_BEARER_TOKEN"`,
                     ];
                   }),
+                  // T3-CUSTOM(expbkt3): END
                 ],
                 mcpCapabilities: mcpSession.capabilities,
               }

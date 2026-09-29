@@ -45,6 +45,8 @@ import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-cr
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
 // T3-CUSTOM(expbkt3): phase sidebar read state.
 import { useMarkPhaseSidebarThreadVisited } from "../phasesidebar/phaseSidebarVisitStore";
+// T3-CUSTOM(expbkt3): report the open thread for user presence.
+import { useThreadPresenceScope } from "../presence/useThreadPresenceScope";
 // T3-CUSTOM(expbkt3): per-thread API-level cost.
 import { useThreadUsage } from "../threadusage/useThreadUsage";
 import { useEnvironmentQuery } from "../../state/query";
@@ -470,6 +472,8 @@ function ThreadRouteContent(
     // preference write and must not re-stamp the visit.
   }, [routeThreadIdentity]);
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): report the open thread so agents can tell who is viewing it.
+  useThreadPresenceScope(environmentId, threadId);
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );

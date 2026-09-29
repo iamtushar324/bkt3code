@@ -31,6 +31,8 @@ import { ProjectionSnapshotQuery } from "../../../orchestration/Services/Project
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
+// T3-CUSTOM(expbkt3): user presence for agents deciding how to reach the human.
+import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
@@ -53,6 +55,7 @@ const dependencies = [
 ];
 const agentUiDependencies = [...dependencies, AgentUiService];
 const threadCommentsDependencies = [...dependencies, ThreadCommentsService];
+const userPresenceDependencies = [...dependencies, UserPresenceService];
 const configurationDependencies = [...dependencies, ProviderRegistry, ServerSettingsService];
 const ownershipDependencies = [ClerkDirectory, ServerConfig];
 const projectDependencies = [
@@ -727,6 +730,34 @@ export const T3ReplyCommentTool = mutatingTool(
 );
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — user presence. Named without "create", "file",
+// "agent" or "command" for the same classifier reason as t3_show_ui.
+export const T3UserPresenceTool = readonlyTool(
+  Tool.make("t3_user_presence", {
+    description:
+      "Find out whether the human is at the keyboard before you stop or ask them something. Call it (1) before ending a turn that needs a human answer, approval or merge, (2) before choosing between asking in chat and sending a Mattermost message, and (3) when a question has gone unanswered and you are deciding whether to wait or escalate. It reports, for every person linked to the session (owner, tagged members, the last sender, anyone viewing it), one `state`: `viewing-this-session` (this session is open in a focused client — ask in chat), `active-elsewhere` (working in another session — ask in chat and send a one-line Mattermost pointer), `idle` (T3 open, no input for a while), `background` (connected, app hidden or backgrounded), `away` (no live client; see `lastSeenAt` and `lastMessageInSessionAt`), `unknown` (never observed). Use `recommendation.action` directly: `ask-in-chat`, `ask-in-chat-and-notify`, `notify-mattermost` (DM them and keep waiting) or `wait-for-reply` (they were here moments ago or the server just restarted; re-check after `suggestedFollowUpSeconds`). `attended` is true when someone relevant is live now. Read `caveats` before trusting an `away`: presence is tracked in memory since `trackingSince`, clients report every 25 s, and a mobile app stops reporting when backgrounded. Omit sessionId for your own session.",
+    parameters: Schema.Struct({
+      ...optionalSessionId,
+      userId: Schema.optional(
+        described(
+          Schema.String,
+          "Only report this environment user id (from BK_* variables or t3_get_session).",
+        ),
+      ),
+      email: Schema.optional(
+        described(
+          Schema.String,
+          "Only report the person with this email, matched case-insensitively.",
+        ),
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlToolError,
+    dependencies: userPresenceDependencies,
+  }).annotate(Tool.Title, "Is the human here?"),
+);
+// T3-CUSTOM(expbkt3): END
+
 export const T3ControlToolkit = Toolkit.make(
   T3ListSessionsTool,
   T3GetSessionTool,
@@ -751,4 +782,6 @@ export const T3ControlToolkit = Toolkit.make(
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
   T3ListCommentsTool,
   T3ReplyCommentTool,
+  // T3-CUSTOM(expbkt3): user presence.
+  T3UserPresenceTool,
 );

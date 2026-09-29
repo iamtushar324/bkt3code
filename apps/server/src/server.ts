@@ -90,6 +90,12 @@ import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
 import { eventFeedRouteLayer } from "./orchestration/eventFeedHttp.expbkt3.ts";
 // T3-CUSTOM(expbkt3): pull-request state pushed by the Linear bridge.
 import { pullRequestStateRouteLayer } from "./orchestration/pullRequestStateHttp.expbkt3.ts";
+// T3-CUSTOM(expbkt3): BEGIN — user presence for agents (t3_user_presence, GET /api/presence).
+import * as EnvironmentUsers from "./persistence/EnvironmentUsers.ts";
+import { presenceRouteLayer } from "./presence/presenceHttp.expbkt3.ts";
+import * as PresenceMessageQuery from "./presence/presenceMessages.ts";
+import * as UserPresenceService from "./presence/UserPresenceService.ts";
+// T3-CUSTOM(expbkt3): END
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -731,10 +737,22 @@ const McpRoutesLive = Layer.mergeAll(
   McpHttpServer.layer,
   eventFeedRouteLayer,
   pullRequestStateRouteLayer,
+  presenceRouteLayer,
 ).pipe(
   // One registry instance authenticates both the native and upstream MCP
   // routes; separate instances would not recognize each other's run tokens.
   Layer.provideMerge(PersonalMcpRouteServicesLive),
+  // The presence tracker serves both the `t3_user_presence` tool and `/api/presence`.
+  // Its user directory is composed here so route tests never inherit the repository.
+  Layer.provideMerge(
+    UserPresenceService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(EnvironmentUsers.layer, PresenceMessageQuery.layer).pipe(
+          Layer.provide(PersistenceLayerLive),
+        ),
+      ),
+    ),
+  ),
   Layer.provide(ClerkDirectoryLive),
   Layer.provide(OrchestrationAccessControlLive),
 );

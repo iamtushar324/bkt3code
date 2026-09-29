@@ -306,6 +306,8 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 // T3-CUSTOM(expbkt3): background cache deepening for offline handoffs.
 import { useThreadHistorySync } from "../hooks/useThreadHistorySync";
+// T3-CUSTOM(expbkt3): report the open thread for user presence.
+import { useThreadPresenceScope } from "../hooks/useThreadPresenceScope";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1548,6 +1550,8 @@ export default function ChatView(props: ChatViewProps) {
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   // T3-CUSTOM(expbkt3): deepen this thread's cached history for offline handoffs.
   useThreadHistorySync(routeKind === "server" ? routeThreadRef : null);
+  // T3-CUSTOM(expbkt3): report the open thread so agents can tell who is viewing it.
+  useThreadPresenceScope(routeKind === "server" ? routeThreadRef : null);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
