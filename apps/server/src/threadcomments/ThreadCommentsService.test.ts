@@ -15,6 +15,7 @@ import {
   type ThreadCommentAnchor,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ThreadComments from "../persistence/ThreadComments.ts";
+import { ThreadCommentsRepository } from "../persistence/ThreadComments.ts";
 import * as ThreadCommentsServiceModule from "./ThreadCommentsService.ts";
 import { ThreadCommentsService } from "./ThreadCommentsService.ts";
 
@@ -377,5 +379,113 @@ describe("ThreadCommentsService", () => {
         expect(snapshots.map((snapshot) => snapshot.deliveryPaused)).toEqual([false, false, true]);
       }),
     ),
+  );
+
+  it.effect("a user reply on a resolved comment reopens it", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const added = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "x",
+          ...actor,
+        });
+        const commentId = added.comments[0]!.commentId;
+        yield* service.setStatus({ threadId, commentId, status: "resolved" });
+        const reopened = yield* service.reply({
+          threadId,
+          commentId,
+          body: "actually, not done",
+          ...actor,
+        });
+        expect(reopened.comments[0]?.status).toBe("open");
+        expect(reopened.comments[0]?.resolvedAt).toBeNull();
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("an agent reply racing a user resolve keeps both the reply and the resolve", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const added = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "x",
+          ...actor,
+        });
+        const commentId = added.comments[0]!.commentId;
+        yield* Effect.all(
+          [
+            service.agentReply({ threadId, commentId, body: "done", addressed: true }),
+            service.setStatus({ threadId, commentId, status: "resolved" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const snapshot = yield* service.snapshot(threadId);
+        expect(snapshot.comments[0]?.status).toBe("resolved");
+        expect(snapshot.comments[0]?.replies.map((reply) => reply.body)).toEqual(["done"]);
+      }),
+    ),
+  );
+
+  // A write that lands between a watcher subscribing and its first read must
+  // still reach it: the initial snapshot may or may not carry it, but the
+  // change notification must. The gate holds the very first list read open
+  // so the write provably lands in that window.
+  it.effect("watch observes a write that races its initial read", () =>
+    Effect.gen(function* () {
+      const firstReadStarted = yield* Deferred.make<void>();
+      const releaseFirstRead = yield* Deferred.make<void>();
+      const gatedRepository = Layer.effect(
+        ThreadCommentsRepository,
+        Effect.gen(function* () {
+          const real = yield* ThreadCommentsRepository;
+          let reads = 0;
+          return ThreadCommentsRepository.of({
+            ...real,
+            listForThread: (id) =>
+              Effect.gen(function* () {
+                reads += 1;
+                if (reads === 1) {
+                  yield* Deferred.succeed(firstReadStarted, undefined);
+                  yield* Deferred.await(releaseFirstRead);
+                }
+                return yield* real.listForThread(id);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(ThreadComments.layer));
+      const gatedLayer = ThreadCommentsServiceModule.layer.pipe(
+        Layer.provide(gatedRepository),
+        Layer.provide(MigrationsLive),
+        Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadCommentsService;
+        const collector = yield* Effect.forkChild(
+          service.watch(threadId).pipe(Stream.take(2), Stream.runCollect),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(firstReadStarted);
+        // The watcher is parked inside its first read; this write publishes
+        // its change now, before that read returns.
+        yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "raced",
+          ...actor,
+        });
+        yield* Deferred.succeed(releaseFirstRead, undefined);
+        const snapshots = yield* Fiber.join(collector);
+        expect(snapshots).toHaveLength(2);
+        expect(snapshots[1]!.comments.map((comment) => comment.body)).toEqual(["raced"]);
+      }).pipe(Effect.provide(gatedLayer));
+    }),
   );
 });

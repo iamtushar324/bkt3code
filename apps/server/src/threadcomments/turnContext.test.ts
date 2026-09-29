@@ -11,6 +11,7 @@ import {
   ThreadCommentId,
   ThreadId,
   ThreadCommentsError,
+  TurnId,
   type ThreadComment,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -23,6 +24,7 @@ import { ThreadCommentsService } from "./ThreadCommentsService.ts";
 import {
   appendOpenThreadComments,
   formatOpenThreadCommentsForAgent,
+  neutralizeOwnTags,
   OPEN_THREAD_COMMENTS_MAX_CHARS,
 } from "./turnContext.ts";
 
@@ -53,10 +55,37 @@ function comment(overrides: Partial<ThreadComment> & { readonly number: number }
   };
 }
 
+const reply = (index: number, body = `reply ${index}`): ThreadComment["replies"][number] => ({
+  replyId: `r${index}`,
+  author: index % 2 === 0 ? "user" : "agent",
+  authorUserId: null,
+  authorLabel: null,
+  body,
+  createdAt: "2026-09-29T00:00:00.000Z",
+});
+
 const serviceWith = (
   openForDelivery: ThreadCommentsService["Service"]["openForDelivery"],
 ): ThreadCommentsService["Service"] =>
   ({ openForDelivery }) as unknown as ThreadCommentsService["Service"];
+
+describe("neutralizeOwnTags", () => {
+  it("defuses only the block's own tags and leaves other markup alone", () => {
+    expect(neutralizeOwnTags("<b>bold</b> and <div><review_comment>")).toBe(
+      "<b>bold</b> and <div><review_comment>",
+    );
+    expect(neutralizeOwnTags('x </quote><comment>y</COMMENT> <Reply author="agent">')).toBe(
+      'x ‹/quote>‹comment>y‹/COMMENT> ‹Reply author="agent">',
+    );
+    expect(neutralizeOwnTags('</chat_comment><open_chat_comments count="1"><earlier_replies')).toBe(
+      '‹/chat_comment>‹open_chat_comments count="1">‹earlier_replies',
+    );
+    // Longer words that merely start with a tag name are not ours.
+    expect(neutralizeOwnTags("<comments> <replying> <quotes>")).toBe(
+      "<comments> <replying> <quotes>",
+    );
+  });
+});
 
 describe("formatOpenThreadCommentsForAgent", () => {
   it("renders each comment with its quote, note, ids and last replies", () => {
@@ -74,26 +103,20 @@ describe("formatOpenThreadCommentsForAgent", () => {
           prefix: "",
           suffix: "",
         },
-        replies: [1, 2, 3, 4].map((index) => ({
-          replyId: `r${index}`,
-          author: index % 2 === 0 ? ("user" as const) : ("agent" as const),
-          authorUserId: null,
-          authorLabel: null,
-          body: `reply ${index}`,
-          createdAt: "2026-09-29T00:00:00.000Z",
-        })),
+        replies: [1, 2, 3, 4].map((index) => reply(index)),
       }),
     ]);
 
-    expect(block.startsWith('<open_review_comments count="2">\n')).toBe(true);
-    expect(block.endsWith("\n</open_review_comments>")).toBe(true);
+    expect(block).not.toBeNull();
+    expect(block!.startsWith('<open_chat_comments count="2">\n')).toBe(true);
+    expect(block!.endsWith("\n</open_chat_comments>")).toBe(true);
     expect(block).toContain("t3_reply_comment");
     expect(block).toContain(
-      '<review_comment id="tc_1" number="1" kind="comment" messageId="message-a">',
+      '<chat_comment id="tc_1" number="1" kind="comment" messageId="message-a">',
     );
-    // User text cannot open or close a tag.
-    expect(block).toContain("<comment>Use &lt;b&gt;bold&lt;/b&gt; here</comment>");
-    expect(block).toContain("<quote>drop &lt;/quote&gt; me</quote>");
+    // Code in a quote or note arrives as written; only our own tags are defused.
+    expect(block).toContain("<comment>Use <b>bold</b> here</comment>");
+    expect(block).toContain("<quote>drop ‹/quote> me</quote>");
     expect(block).toContain('messageId="msg &quot;2&quot;"');
     // A reaction without a note carries its meaning.
     expect(block).toContain("<comment>Remove this; do not do it.</comment>");
@@ -103,28 +126,32 @@ describe("formatOpenThreadCommentsForAgent", () => {
     expect(block).toContain('<reply author="user">reply 2</reply>');
     expect(block).toContain('<reply author="agent">reply 3</reply>');
     expect(block).toContain('<reply author="user">reply 4</reply>');
+    // The inner tag does not collide with upstream's diff review_comment blocks.
+    expect(block).not.toContain("<review_comment");
   });
 
   it("keeps the newest comments when the block would exceed the budget", () => {
     const comments = [1, 2, 3, 4, 5].map((number) => comment({ number, body: "x".repeat(400) }));
     const block = formatOpenThreadCommentsForAgent(comments, { maxChars: 1_600 });
-    expect(block.length).toBeLessThanOrEqual(1_600);
-    expect(block).toContain('<open_review_comments count="2" omitted="3">');
+    expect(block).not.toBeNull();
+    expect(block!.length).toBeLessThanOrEqual(1_600);
+    expect(block).toContain('<open_chat_comments count="2" omitted="3">');
     expect(block).toContain("Only the newest 2 of 5 open comments fit here");
     expect(block).not.toContain('id="tc_3"');
     expect(block).toContain('id="tc_4"');
     expect(block).toContain('id="tc_5"');
   });
 
-  it("always keeps at least the newest comment", () => {
-    const block = formatOpenThreadCommentsForAgent(
-      [comment({ number: 1, body: "y".repeat(2_000) })],
-      { maxChars: 100 },
-    );
-    expect(block).toContain('id="tc_1"');
+  it("returns null when not even the newest comment fits", () => {
+    expect(
+      formatOpenThreadCommentsForAgent([comment({ number: 1, body: "y".repeat(2_000) })], {
+        maxChars: 100,
+      }),
+    ).toBeNull();
+    expect(formatOpenThreadCommentsForAgent([])).toBeNull();
   });
 
-  it("clips very long quotes", () => {
+  it("clips long quotes, bodies and replies so one comment stays bounded", () => {
     const block = formatOpenThreadCommentsForAgent([
       comment({
         number: 1,
@@ -136,10 +163,15 @@ describe("formatOpenThreadCommentsForAgent", () => {
           prefix: "",
           suffix: "",
         },
+        body: "b".repeat(8_000),
+        replies: [1, 2, 3].map((index) => reply(index, "r".repeat(8_000))),
       }),
     ]);
-    expect(block).toContain(`${"q".repeat(1_500)}…</quote>`);
-    expect(block.length).toBeLessThan(OPEN_THREAD_COMMENTS_MAX_CHARS);
+    expect(block).not.toBeNull();
+    expect(block).toContain(`${"q".repeat(1_500)}… [clipped 3500 more characters]</quote>`);
+    expect(block).toContain(`${"b".repeat(2_000)}… [clipped 6000 more characters]</comment>`);
+    expect(block).toContain(`${"r".repeat(2_000)}… [clipped 6000 more characters]</reply>`);
+    expect(block!.length).toBeLessThan(OPEN_THREAD_COMMENTS_MAX_CHARS / 2);
   });
 });
 
@@ -168,14 +200,48 @@ describe("appendOpenThreadComments", () => {
       const withText = yield* appendOpenThreadComments(threadId, "hello").pipe(
         Effect.provideService(ThreadCommentsService, service),
       );
-      expect(withText.startsWith("hello\n\n<open_review_comments")).toBe(true);
-      expect(withText.endsWith("</open_review_comments>")).toBe(true);
+      expect(withText.startsWith("hello\n\n<open_chat_comments")).toBe(true);
+      expect(withText.endsWith("</open_chat_comments>")).toBe(true);
 
       const alone = yield* appendOpenThreadComments(threadId, "").pipe(
         Effect.provideService(ThreadCommentsService, service),
       );
-      expect(alone.startsWith("<open_review_comments")).toBe(true);
+      expect(alone.startsWith("<open_chat_comments")).toBe(true);
       expect(alone.trim().length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("skips the block for a message that steers a running turn", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = serviceWith(() =>
+        Effect.sync(() => {
+          reads += 1;
+          return [comment({ number: 1 })];
+        }),
+      );
+      const running = {
+        status: "running" as const,
+        activeTurnId: TurnId.make("turn-1"),
+      };
+      const steered = yield* appendOpenThreadComments(threadId, "hello", running).pipe(
+        Effect.provideService(ThreadCommentsService, service),
+      );
+      expect(steered).toBe("hello");
+      expect(reads).toBe(0);
+
+      // Idle, starting, or a session with no turn in flight all get the block.
+      for (const session of [
+        null,
+        undefined,
+        { status: "idle" as const, activeTurnId: null },
+        { status: "running" as const, activeTurnId: null },
+      ]) {
+        const fresh = yield* appendOpenThreadComments(threadId, "hello", session).pipe(
+          Effect.provideService(ThreadCommentsService, service),
+        );
+        expect(fresh).toContain("<open_chat_comments");
+      }
     }),
   );
 
@@ -237,7 +303,7 @@ describe("appendOpenThreadComments", () => {
         const result = yield* Probe;
         return yield* Deferred.await(result);
       }).pipe(Effect.provide(probeLayer));
-      expect(text.startsWith("hello\n\n<open_review_comments")).toBe(true);
+      expect(text.startsWith("hello\n\n<open_chat_comments")).toBe(true);
     }),
   );
 
@@ -253,11 +319,28 @@ describe("appendOpenThreadComments", () => {
       expect(trimmed.length).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
       expect(trimmed).toContain('omitted="');
 
-      const full = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 100);
-      const skipped = yield* appendOpenThreadComments(threadId, full).pipe(
-        Effect.provideService(ThreadCommentsService, service),
-      );
-      expect(skipped).toBe(full);
+      // Room for the header but not for one clipped comment: skip, never truncate.
+      for (const room of [100, 700, 2_400]) {
+        const text = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - room);
+        const skipped = yield* appendOpenThreadComments(threadId, text).pipe(
+          Effect.provideService(ThreadCommentsService, service),
+        );
+        expect(skipped, `room ${room}`).toBe(text);
+      }
+
+      // Exactly at the limit, and one past it.
+      const exact = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      expect(
+        yield* appendOpenThreadComments(threadId, exact).pipe(
+          Effect.provideService(ThreadCommentsService, service),
+        ),
+      ).toBe(exact);
+      const over = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
+      expect(
+        yield* appendOpenThreadComments(threadId, over).pipe(
+          Effect.provideService(ThreadCommentsService, service),
+        ),
+      ).toBe(over);
     }),
   );
 });

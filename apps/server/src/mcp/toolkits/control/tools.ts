@@ -13,6 +13,8 @@ import {
   ThreadId,
   ThreadPriority,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  THREAD_COMMENT_MAX_BODY_LENGTH,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Path from "effect/Path";
@@ -681,7 +683,7 @@ export const T3ShowUiTool = readonlyTool(
 export const T3ListCommentsTool = readonlyTool(
   Tool.make("t3_list_comments", {
     description:
-      "List the review comments the user left on your earlier messages in this session. A comment quotes a passage of one of your messages and carries either free text or a reaction: good (keep this as it is), okay (acceptable, no change needed) or remove (drop this / do not do this). Status `open` means the comment is an active instruction for you and is re-sent with every turn until you mark it addressed with t3_reply_comment; `addressed` means you reported it done and the user has not closed it yet; `resolved` means the user closed it. Defaults to open comments only.",
+      "List the review comments the user left on your earlier messages in this session. A comment quotes a passage of one of your messages and carries either free text or a reaction: good (keep this as it is), okay (acceptable, no change needed) or remove (drop this / do not do this). Status `open` means the comment is an active instruction for you and is re-sent with every new turn until you mark it addressed with t3_reply_comment; `addressed` means you reported it done and the user has not closed it yet; `resolved` means the user closed it. Defaults to open comments only.",
     parameters: Schema.Struct({
       status: Schema.optional(
         described(
@@ -703,12 +705,12 @@ export const T3ReplyCommentTool = mutatingTool(
     parameters: Schema.Struct({
       commentId: described(
         Schema.String,
-        "The comment's id, as shown in the `id` attribute of the review_comment block in your input or by t3_list_comments.",
+        "The comment's id, as shown in the `id` attribute of the chat_comment block in your input or by t3_list_comments.",
       ),
       body: Schema.optional(
         described(
-          Schema.String,
-          "Your reply, shown to the user under the comment. Keep it to a sentence or two.",
+          Schema.String.check(Schema.isMaxLength(THREAD_COMMENT_MAX_BODY_LENGTH)),
+          `Your reply, shown to the user under the comment. Keep it to a sentence or two (at most ${THREAD_COMMENT_MAX_BODY_LENGTH} characters).`,
         ),
       ),
       addressed: Schema.optional(

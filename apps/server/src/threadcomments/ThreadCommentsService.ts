@@ -30,6 +30,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ThreadCommentsRepository } from "../persistence/ThreadComments.ts";
@@ -126,6 +127,11 @@ export const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<ThreadId>();
   const announce = (threadId: ThreadId) => PubSub.publish(changes, threadId).pipe(Effect.ignore);
 
+  // Every mutation is a read-modify-write of one row. Writes are rare and
+  // small, so one lock across the service is enough to keep an agent reply
+  // from racing a user's resolve (and dropping either change).
+  const writes = yield* Semaphore.make(1);
+
   const snapshot: ThreadCommentsServiceShape["snapshot"] = (threadId) =>
     Effect.gen(function* () {
       const [comments, settings] = yield* Effect.all([
@@ -159,13 +165,15 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
     body: Effect.Effect<void, ThreadCommentsError>,
   ) =>
-    body.pipe(
-      Effect.andThen(announce(threadId)),
-      Effect.andThen(snapshot(threadId)),
-      Effect.mapError((cause) =>
-        cause._tag === "ThreadCommentsError" ? cause : internal(operation)(cause),
-      ),
-    );
+    writes
+      .withPermits(1)(body)
+      .pipe(
+        Effect.andThen(announce(threadId)),
+        Effect.andThen(snapshot(threadId)),
+        Effect.mapError((cause) =>
+          cause._tag === "ThreadCommentsError" ? cause : internal(operation)(cause),
+        ),
+      );
 
   const appendReply = (
     comment: ThreadComment,
@@ -221,13 +229,13 @@ export const make = Effect.gen(function* () {
         const comment = yield* requireComment("reply", input.threadId, input.commentId);
         const createdAt = yield* nowIso;
         const replyId = yield* shortId("tcr");
-        // The user talking back on an addressed comment means it is not done:
-        // it goes back to the agent with the next turn.
-        const status = comment.status === "addressed" ? "open" : comment.status;
+        // The user talking back on an addressed or resolved comment means it
+        // is not done: it goes back to the agent with the next turn.
         yield* repository
           .updateComment({
             ...comment,
-            status,
+            status: "open",
+            resolvedAt: null,
             replies: appendReply(comment, {
               replyId,
               author: "user",
@@ -302,25 +310,30 @@ export const make = Effect.gen(function* () {
           "Pass a reply `body`, `addressed: true`, or both; there is nothing to record otherwise.",
         );
       }
-      const comment = yield* requireComment("agentReply", input.threadId, input.commentId);
-      const createdAt = yield* nowIso;
-      const replies =
-        body.length === 0
-          ? comment.replies
-          : appendReply(comment, {
-              replyId: yield* shortId("tcr"),
-              author: "agent",
-              authorUserId: null,
-              authorLabel: null,
-              body,
-              createdAt,
-            });
-      // A resolved comment stays resolved: the user closed it, and the agent
-      // only ever moves a comment to addressed.
-      const status =
-        addressed && comment.status === "open" ? ("addressed" as const) : comment.status;
-      const updated: ThreadComment = { ...comment, status, replies, updatedAt: createdAt };
-      yield* repository.updateComment(updated).pipe(Effect.mapError(internal("agentReply")));
+      const updated = yield* writes.withPermits(1)(
+        Effect.gen(function* () {
+          const comment = yield* requireComment("agentReply", input.threadId, input.commentId);
+          const createdAt = yield* nowIso;
+          const replies =
+            body.length === 0
+              ? comment.replies
+              : appendReply(comment, {
+                  replyId: yield* shortId("tcr"),
+                  author: "agent",
+                  authorUserId: null,
+                  authorLabel: null,
+                  body,
+                  createdAt,
+                });
+          // A resolved comment stays resolved: the user closed it, and the
+          // agent only ever moves an open comment to addressed.
+          const status =
+            addressed && comment.status === "open" ? ("addressed" as const) : comment.status;
+          const next: ThreadComment = { ...comment, status, replies, updatedAt: createdAt };
+          yield* repository.updateComment(next).pipe(Effect.mapError(internal("agentReply")));
+          return next;
+        }),
+      );
       yield* announce(input.threadId);
       return updated;
     });
@@ -333,13 +346,21 @@ export const make = Effect.gen(function* () {
       return comments.filter(isThreadCommentDeliverable);
     }).pipe(Effect.mapError(internal("openForDelivery")));
 
+  // Subscribe before the first read: a write that lands between the two is
+  // then seen as a change and re-read, rather than lost until the next one.
   const watch: ThreadCommentsServiceShape["watch"] = (threadId) =>
-    Stream.concat(
-      Stream.fromEffect(snapshot(threadId)),
-      Stream.fromPubSub(changes).pipe(
-        Stream.filter((changed) => changed === threadId),
-        Stream.mapEffect(() => snapshot(threadId)),
-      ),
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(changes);
+        const initial = yield* snapshot(threadId);
+        return Stream.concat(
+          Stream.make(initial),
+          Stream.fromSubscription(subscription).pipe(
+            Stream.filter((changed) => changed === threadId),
+            Stream.mapEffect(() => snapshot(threadId)),
+          ),
+        );
+      }),
     );
 
   return ThreadCommentsService.of({

@@ -1766,13 +1766,15 @@ const make = Effect.gen(function* () {
     }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      // T3-CUSTOM(expbkt3): BEGIN open review comments ride along with every turn.
+      // T3-CUSTOM(expbkt3): BEGIN open review comments ride along with every new
+      // turn; a send that steers the running turn (session state) skips them.
       messageText: yield* appendOpenThreadComments(
         event.payload.threadId,
         projectComposerContextForProvider({
           text: message.text,
           records: message.context?.records ?? [],
         }),
+        thread.session,
       ),
       // T3-CUSTOM(expbkt3): END
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
