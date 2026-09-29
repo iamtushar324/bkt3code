@@ -30,7 +30,6 @@ interface Pin {
   readonly commentId: string;
   readonly number: number;
   readonly kind: ThreadComment["kind"];
-  readonly resolved: boolean;
   readonly top: number;
   readonly left: number;
 }
@@ -50,7 +49,6 @@ function samePins(left: ReadonlyArray<Pin>, right: ReadonlyArray<Pin>): boolean 
       pin.commentId === other.commentId &&
       pin.number === other.number &&
       pin.kind === other.kind &&
-      pin.resolved === other.resolved &&
       Math.abs(pin.top - other.top) < 0.5 &&
       Math.abs(pin.left - other.left) < 0.5
     );
@@ -114,6 +112,8 @@ const ThreadCommentPins = memo(function ThreadCommentPins({
         if (activeId === comment.commentId) {
           highlightFor(THREAD_COMMENT_ACTIVE_HIGHLIGHT)?.add(range);
         }
+        // Resolved comments keep a faint highlight but no pin: a pin is a call to act.
+        if (comment.status === "resolved") continue;
         const rects = range.getClientRects();
         const last = rects.item(rects.length - 1);
         if (!last) continue;
@@ -121,9 +121,10 @@ const ThreadCommentPins = memo(function ThreadCommentPins({
           commentId: comment.commentId,
           number: comment.number,
           kind: comment.kind,
-          resolved: comment.status === "resolved",
-          top: last.top - origin.top + last.height / 2,
-          left: last.right - origin.left,
+          // Superscript position: centred on the line's top edge, just past the
+          // quote, so it sits above the following word instead of covering it.
+          top: last.top - origin.top + 1,
+          left: last.right - origin.left - 3,
         });
       }
       rangesRef.current = ranges;
@@ -172,8 +173,8 @@ const ThreadCommentPins = memo(function ThreadCommentPins({
           data-thread-comment-pin={pin.commentId}
           aria-label={`${THREAD_COMMENT_KIND_LABEL[pin.kind]} #${pin.number}: open in the Comments panel`}
           className={cn(
-            "pointer-events-auto absolute flex size-3.5 -translate-y-1/2 translate-x-0.5 cursor-pointer items-center justify-center rounded-full text-[9px] font-semibold leading-none tabular-nums shadow-sm ring-1 ring-background transition-transform hover:scale-125",
-            pin.resolved ? "bg-muted text-muted-foreground opacity-60" : PIN_KIND_CLASS[pin.kind],
+            "pointer-events-auto absolute flex size-3.5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-[9px] font-semibold leading-none tabular-nums shadow-sm ring-1 ring-background transition-transform hover:scale-125",
+            PIN_KIND_CLASS[pin.kind],
           )}
           style={{ top: pin.top, left: pin.left }}
           onPointerDown={(event) => event.preventDefault()}

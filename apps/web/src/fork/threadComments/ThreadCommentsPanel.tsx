@@ -91,7 +91,6 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
   const [filter, setFilter] = useState<ThreadCommentsFilter>("open");
   const [busy, setBusy] = useState(false);
   const focusRequest = useThreadCommentsUiStore((state) => state.focusRequest);
-  const [dismissedFocusNonce, setDismissedFocusNonce] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   const comments = snapshot?.comments ?? [];
@@ -103,21 +102,21 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
   );
 
   // A pin click names a card; make sure the filter shows it, scroll it into
-  // view and ring it briefly. Both state writes happen from callbacks, not
-  // synchronously in the effect.
+  // view and ring it briefly. The request is consumed once: cleared when the
+  // ring ends, or on unmount if it is still ours, so a remount cannot replay it.
   const focusTargetStatus =
     focusRequest === null
       ? null
       : (comments.find((entry) => entry.commentId === focusRequest.commentId)?.status ?? null);
   const focusedCommentId =
-    focusRequest !== null &&
-    focusTargetStatus !== null &&
-    focusRequest.nonce !== dismissedFocusNonce
-      ? focusRequest.commentId
-      : null;
+    focusRequest !== null && focusTargetStatus !== null ? focusRequest.commentId : null;
   useEffect(() => {
     if (focusRequest === null || focusTargetStatus === null) return;
     const { commentId, nonce } = focusRequest;
+    const clearIfOurs = () => {
+      const store = useThreadCommentsUiStore.getState();
+      if (store.focusRequest?.nonce === nonce) store.clearFocus();
+    };
     let scrollFrame: number | null = null;
     const frame = requestAnimationFrame(() => {
       setFilter((current) =>
@@ -135,19 +134,21 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
           ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       });
     });
-    const timer = setTimeout(() => setDismissedFocusNonce(nonce), FOCUS_RING_MS);
+    const timer = setTimeout(clearIfOurs, FOCUS_RING_MS);
     return () => {
       cancelAnimationFrame(frame);
       if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
       clearTimeout(timer);
+      clearIfOurs();
     };
   }, [focusRequest, focusTargetStatus]);
 
-  const run = async (operation: () => Promise<unknown>) => {
-    if (busy) return;
+  /** Runs one command at a time; resolves true only when the server accepted it. */
+  const run = async (operation: () => Promise<{ readonly _tag: string }>): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
-      await operation();
+      return (await operation())._tag === "Success";
     } finally {
       setBusy(false);
     }
@@ -155,6 +156,10 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
 
   const environmentId = threadRef.environmentId;
   const threadId = threadRef.threadId;
+
+  // Off (setting or capability): the surface is being closed by ChatView's hook;
+  // render nothing rather than a panel of dead controls.
+  if (!enabled) return null;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-thread-comments-panel>
@@ -220,16 +225,7 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
         ))}
       </div>
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        {!enabled ? (
-          <Empty size="compact">
-            <EmptyHeader>
-              <EmptyTitle>Comments are off</EmptyTitle>
-              <EmptyDescription>
-                Turn on Chat comments in Settings → Experiments, or update this server.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : comments.length === 0 ? (
+        {comments.length === 0 ? (
           <Empty size="compact">
             <MessageSquareIcon className="size-5 text-muted-foreground" aria-hidden />
             <EmptyHeader>
@@ -306,9 +302,9 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
   comment: ThreadComment;
   busy: boolean;
   focused: boolean;
-  onReply: (body: string) => Promise<void>;
-  onSetStatus: (status: "open" | "resolved") => Promise<void>;
-  onRemove: () => Promise<void>;
+  onReply: (body: string) => Promise<boolean>;
+  onSetStatus: (status: "open" | "resolved") => Promise<boolean>;
+  onRemove: () => Promise<boolean>;
 }) {
   const navigate = useNavigate();
   const { resolveUser } = useOrgMembers();
@@ -346,7 +342,8 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
   const submitReply = async () => {
     const text = reply.trim();
     if (text.length === 0) return;
-    await onReply(text);
+    // A failed or skipped send keeps the draft where the user can retry it.
+    if (!(await onReply(text))) return;
     setReply("");
     setReplying(false);
   };

@@ -10,7 +10,7 @@ import type { EnvironmentId, ScopedThreadRef, ThreadCommentsSnapshot } from "@t3
 import { useEffect, useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { useServerConfigs } from "../../state/entities";
+import { useServerConfigs, useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadCommentsEnvironment } from "../../state/threadComments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -29,8 +29,12 @@ export function useThreadCommentsSnapshot(
   threadRef: ScopedThreadRef | null,
   enabled: boolean,
 ): ThreadCommentsSnapshot | null {
+  // A local draft has no server thread yet: its subscription would fail
+  // "not-found" and never retry. The shell appears once the draft is promoted,
+  // which is when the atoms first mount.
+  const shell = useThreadShell(threadRef);
   const target =
-    enabled && threadRef !== null
+    enabled && threadRef !== null && shell !== null
       ? { environmentId: threadRef.environmentId, input: { threadId: threadRef.threadId } }
       : null;
   const initial = useEnvironmentQuery(
@@ -63,6 +67,7 @@ export function useThreadCommentsActiveSummary(
   threadRef: ScopedThreadRef | null,
   enabled: boolean,
   snapshot: ThreadCommentsSnapshot | null,
+  running: boolean,
 ): void {
   const setActive = useThreadCommentsUiStore((state) => state.setActive);
   const openCount = snapshot === null ? 0 : countComments(snapshot.comments).open;
@@ -73,8 +78,8 @@ export function useThreadCommentsActiveSummary(
       setActive(null);
       return;
     }
-    setActive({ threadKey, openCount, deliveryPaused, enabled });
-  }, [deliveryPaused, enabled, openCount, setActive, threadKey]);
+    setActive({ threadKey, openCount, deliveryPaused, enabled, running });
+  }, [deliveryPaused, enabled, openCount, running, setActive, threadKey]);
   useEffect(() => () => setActive(null), [setActive]);
 }
 
@@ -87,6 +92,7 @@ export function useThreadCommentsEmptySendAllowed(): boolean {
           enabled: state.active.enabled,
           openCount: state.active.openCount,
           deliveryPaused: state.active.deliveryPaused,
+          running: state.active.running,
         }),
   );
 }

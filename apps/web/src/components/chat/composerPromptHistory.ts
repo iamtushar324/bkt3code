@@ -1,5 +1,7 @@
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
+// T3-CUSTOM(expbkt3): a comments-only send is app-composed text, not history.
+import { THREAD_COMMENTS_EMPTY_SEND_TEXT } from "../../fork/threadComments/model";
 
 /**
  * Terminal-style prompt recall for the composer. ArrowUp on an empty
@@ -155,6 +157,7 @@ export function recallableComposerPrompt(messageText: string): string {
   const trimmed = prompt.trim();
   if (
     trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
+    trimmed === THREAD_COMMENTS_EMPTY_SEND_TEXT || // T3-CUSTOM(expbkt3): comments-only send.
     trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
   ) {
     return "";

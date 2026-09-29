@@ -46,9 +46,17 @@ export function AssistantSelectionToolbar({
   useLayoutEffect(() => {
     const toolbar = groupRef.current; // T3-CUSTOM(expbkt3): position the group, not the button.
     if (!toolbar || !selection) return;
-    const rect = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    // T3-CUSTOM(expbkt3): BEGIN re-clamp when the fork's comment editor grows the group.
+    const place = () => {
+      const rect = toolbar.getBoundingClientRect();
+      toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
+      toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+    // T3-CUSTOM(expbkt3): END
   }, [selection]);
 
   useEffect(() => {
@@ -138,7 +146,7 @@ export function AssistantSelectionToolbar({
     // T3-CUSTOM(expbkt3): BEGIN — the group carries the position and hosts the fork actions.
     <div
       ref={groupRef}
-      className="fixed z-50 flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1"
+      className="fixed z-50 flex w-max max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
     >
       <Button

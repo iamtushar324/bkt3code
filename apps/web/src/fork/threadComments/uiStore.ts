@@ -16,6 +16,8 @@ export interface ThreadCommentsActiveSummary {
   readonly deliveryPaused: boolean;
   /** Setting on and the server advertises the capability. */
   readonly enabled: boolean;
+  /** A turn is in flight; an empty send must not steer or queue. */
+  readonly running: boolean;
 }
 
 interface ThreadCommentsUiState {
@@ -38,7 +40,8 @@ export const useThreadCommentsUiStore = create<ThreadCommentsUiState>((set) => (
       state.active?.threadKey === active?.threadKey &&
       state.active?.openCount === active?.openCount &&
       state.active?.deliveryPaused === active?.deliveryPaused &&
-      state.active?.enabled === active?.enabled
+      state.active?.enabled === active?.enabled &&
+      state.active?.running === active?.running
         ? state
         : { active },
     ),

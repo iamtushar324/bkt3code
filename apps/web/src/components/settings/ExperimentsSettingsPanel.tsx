@@ -108,7 +108,7 @@ export function ExperimentsSettingsPanel() {
         {/* T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages. */}
         <SettingsRow
           {...searchableSetting("chat-comments")}
-          description="Select text in an agent message and leave a comment, or mark it Good, Okay or Remove. Open comments are highlighted in the message, listed in the Comments panel beside the chat, and sent to the agent with every message until you resolve them; the agent can reply and mark one addressed. While off, the selection actions, highlights, panel entry and composer strip are hidden on this device — comments that are already open still reach the agent until they are resolved."
+          description="Select text in an agent message and leave a comment, or mark it Good, Okay or Remove. Open comments are highlighted in the message, listed in the Comments panel beside the chat, and sent to the agent with every message until you resolve them; the agent can reply and mark one addressed. Turning this off only hides the comment controls on this device (selection actions, highlights, the Comments panel and the composer strip). It does not stop delivery: comments that are already open on a thread still go to the agent with every message until they are resolved, so resolve them or choose Don't send first."
           control={
             <Switch
               checked={chatCommentsEnabled}

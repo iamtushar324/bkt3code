@@ -171,11 +171,14 @@ describe("composer strip and empty send", () => {
     );
   });
 
-  it("allows an empty send only when open comments will actually travel", () => {
-    expect(allowsEmptySend({ enabled: true, openCount: 1, deliveryPaused: false })).toBe(true);
-    expect(allowsEmptySend({ enabled: true, openCount: 0, deliveryPaused: false })).toBe(false);
-    expect(allowsEmptySend({ enabled: true, openCount: 2, deliveryPaused: true })).toBe(false);
-    expect(allowsEmptySend({ enabled: false, openCount: 2, deliveryPaused: false })).toBe(false);
+  it("allows an empty send only when open comments will actually travel on an idle thread", () => {
+    const idle = { enabled: true, openCount: 1, deliveryPaused: false, running: false };
+    expect(allowsEmptySend(idle)).toBe(true);
+    expect(allowsEmptySend({ ...idle, openCount: 0 })).toBe(false);
+    expect(allowsEmptySend({ ...idle, deliveryPaused: true })).toBe(false);
+    expect(allowsEmptySend({ ...idle, enabled: false })).toBe(false);
+    // While a turn runs an empty Enter keeps upstream's meaning: nothing is queued.
+    expect(allowsEmptySend({ ...idle, running: true })).toBe(false);
   });
 });
 

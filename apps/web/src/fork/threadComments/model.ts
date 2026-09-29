@@ -164,13 +164,18 @@ export function composerStripText(input: {
     : `${input.openCount} open ${noun} will be sent with your next message`;
 }
 
-/** An empty message is a valid send when open comments will travel with it. */
+/**
+ * An empty message is a valid send when open comments will travel with it and
+ * the thread is idle. While a turn runs, an empty Enter keeps upstream's
+ * meaning (nothing happens) rather than queueing a comments-only steer.
+ */
 export function allowsEmptySend(input: {
   readonly enabled: boolean;
   readonly openCount: number;
   readonly deliveryPaused: boolean;
+  readonly running: boolean;
 }): boolean {
-  return input.enabled && input.openCount > 0 && !input.deliveryPaused;
+  return input.enabled && input.openCount > 0 && !input.deliveryPaused && !input.running;
 }
 
 /** What goes out as the message when the user sends nothing but open comments. */

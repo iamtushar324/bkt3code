@@ -6,9 +6,10 @@
  * capability advertised, counts, strip copy, empty-send rule) is made in fork
  * code so the next upstream merge stays cheap.
  */
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { MessageSquareTextIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import type { ComposerBannerStackItem } from "../../components/chat/ComposerBannerStack";
 import { Button } from "../../components/ui/button";
@@ -46,9 +47,12 @@ export interface ThreadCommentsTabProps {
 export function useThreadCommentsChatView({
   threadRef,
   bannerItems,
+  running,
 }: {
   readonly threadRef: ScopedThreadRef | null;
   readonly bannerItems: ReadonlyArray<ComposerBannerStackItem>;
+  /** A turn is in flight on the thread. */
+  readonly running: boolean;
 }): {
   readonly tabProps: ThreadCommentsTabProps;
   readonly bannerItems: ReadonlyArray<ComposerBannerStackItem>;
@@ -56,8 +60,23 @@ export function useThreadCommentsChatView({
 } {
   const enabled = useThreadCommentsEnabled(threadRef?.environmentId);
   const snapshot = useThreadCommentsSnapshot(threadRef, enabled);
-  useThreadCommentsActiveSummary(threadRef, enabled, snapshot);
+  useThreadCommentsActiveSummary(threadRef, enabled, snapshot, running);
   const commands = useThreadCommentsCommands();
+
+  // A Comments tab restored from the persisted panel state must not outlive
+  // the feature: with the setting off or the capability gone, close it.
+  const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
+  const commentsSurfaceOpen = useRightPanelStore((state) =>
+    threadKey === null
+      ? false
+      : (state.byThreadKey[threadKey]?.surfaces.some(
+          (surface) => surface.kind === THREAD_COMMENTS_SURFACE_KIND,
+        ) ?? false),
+  );
+  useEffect(() => {
+    if (enabled || !commentsSurfaceOpen || threadRef === null) return;
+    useRightPanelStore.getState().closeSurface(threadRef, THREAD_COMMENTS_SURFACE_KIND);
+  }, [commentsSurfaceOpen, enabled, threadRef]);
   const openCount = snapshot === null ? 0 : countComments(snapshot.comments).open;
   const deliveryPaused = snapshot?.deliveryPaused ?? false;
 
@@ -151,7 +170,7 @@ export function ThreadCommentsSurfaceIcon() {
       {openCount > 0 ? (
         <span
           aria-label={`${openCount} open`}
-          className="absolute -top-1.5 -right-2 flex h-3 min-w-3 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-semibold tabular-nums text-black/80"
+          className="absolute -top-1.5 -left-1.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-semibold tabular-nums text-black/80"
         >
           {openCount}
         </span>

@@ -7030,6 +7030,7 @@ export default function ChatView(props: ChatViewProps) {
   const threadCommentsView = useThreadCommentsChatView({
     threadRef: activeThreadRef,
     bannerItems: composerBannerItems,
+    running: phase === "running",
   });
   // T3-CUSTOM(expbkt3): END
   useEffect(() => {
@@ -8123,9 +8124,9 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       useQueuedMessageStore.getState().enqueue(activeThreadKey, {
-        // T3-CUSTOM(expbkt3): a comments-only send queues with the text it will carry.
+        // T3-CUSTOM(expbkt3): a comments-only send (no text, no attachments) queues with the text it will carry.
         prompt:
-          promptForSend.trim() === "" && threadCommentsEmptySendAllowed()
+          !hasSendableContent && threadCommentsEmptySendAllowed()
             ? THREAD_COMMENTS_EMPTY_SEND_TEXT
             : promptForSend,
         images: [...composerImages],
@@ -8215,10 +8216,10 @@ export default function ChatView(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      // T3-CUSTOM(expbkt3): a comments-only send asks the agent to work through them.
+      // T3-CUSTOM(expbkt3): a comments-only send (no text, no attachments) asks the agent to work through them.
       text:
         messageTextForSend ||
-        (threadCommentsEmptySendAllowed()
+        (!hasSendableContent && threadCommentsEmptySendAllowed()
           ? THREAD_COMMENTS_EMPTY_SEND_TEXT
           : ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     });
