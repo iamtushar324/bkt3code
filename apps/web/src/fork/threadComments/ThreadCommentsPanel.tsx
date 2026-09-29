@@ -116,9 +116,12 @@ function handleMarkdownShortcut(
   onChange: (value: string) => void,
 ): boolean {
   const action = markdownShortcutForKey(event);
-  if (action === null || textarea === null) return false;
+  // The ui Textarea does not reliably forward its ref, so fall back to the element
+  // the key went to.
+  const target = textarea ?? (event.target instanceof HTMLTextAreaElement ? event.target : null);
+  if (action === null || target === null) return false;
   event.preventDefault();
-  onChange(applyMarkdownShortcutToTextarea(textarea, action));
+  onChange(applyMarkdownShortcutToTextarea(target, action));
   return true;
 }
 
@@ -508,6 +511,8 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
       {replying ? (
         <div
           className="mt-2"
+          // Upstream's sidebar Mod+B toggle yields to this marker; see the editor.
+          data-composer-rich-text="true"
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             event.stopPropagation();

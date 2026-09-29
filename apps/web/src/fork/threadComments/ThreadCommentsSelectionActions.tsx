@@ -138,6 +138,9 @@ export function ThreadCommentsSelectionActions({
       {editing ? (
         <div
           data-thread-comment-editor
+          // Upstream's sidebar Mod+B toggle yields to elements marked this way, so
+          // Ctrl/Cmd+B makes text bold here instead of hiding the sidebar.
+          data-composer-rich-text="true"
           // `contain: inline-size` keeps the editor out of the toolbar's max-content
           // width, so it wraps below the buttons at exactly their width instead of
           // stretching the (w-max) group to buttons + editor side by side.
@@ -146,9 +149,13 @@ export function ThreadCommentsSelectionActions({
             event.stopPropagation();
             if (event.nativeEvent.isComposing) return;
             const shortcut = markdownShortcutForKey(event);
-            if (shortcut !== null && textareaRef.current) {
+            // The ui Textarea does not reliably forward its ref; use the key's target.
+            const field =
+              textareaRef.current ??
+              (event.target instanceof HTMLTextAreaElement ? event.target : null);
+            if (shortcut !== null && field) {
               event.preventDefault();
-              setBody(applyMarkdownShortcutToTextarea(textareaRef.current, shortcut));
+              setBody(applyMarkdownShortcutToTextarea(field, shortcut));
               return;
             }
             if (event.key === "Escape") {
