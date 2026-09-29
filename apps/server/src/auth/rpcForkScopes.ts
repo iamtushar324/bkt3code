@@ -53,4 +53,15 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.agentUiGetRender]: AuthOrchestrationReadScope,
   // T3-CUSTOM(expbkt3): per-thread cost is a read of that thread's usage.
   [WS_FORK_METHODS.threadUsageGet]: AuthOrchestrationReadScope,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages. Listing and
+  // subscribing read thread content; every mutation needs operate, and the
+  // handlers additionally gate on per-thread access.
+  [WS_FORK_METHODS.threadCommentsList]: AuthOrchestrationReadScope,
+  [WS_FORK_METHODS.subscribeThreadComments]: AuthOrchestrationReadScope,
+  [WS_FORK_METHODS.threadCommentsAdd]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsReply]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsSetStatus]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsResolveAll]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsRemove]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsSetDeliveryPaused]: AuthOrchestrationOperateScope,
 } as const;

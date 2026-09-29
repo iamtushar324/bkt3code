@@ -59,9 +59,10 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
-  // T3-CUSTOM(expbkt3): BEGIN — native plan review snapshots.
+  // T3-CUSTOM(expbkt3): BEGIN — native plan review and review-comment snapshots.
   | typeof WS_METHODS.terminalAttach
-  | typeof WS_METHODS.subscribePlanReview;
+  | typeof WS_METHODS.subscribePlanReview
+  | typeof WS_METHODS.subscribeThreadComments;
 // T3-CUSTOM(expbkt3): END
 
 export type EnvironmentStreamCommandRpcTag =

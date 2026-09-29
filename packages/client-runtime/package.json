@@ -243,6 +243,10 @@
       "types": "./src/state/planReviewMarkdown.ts",
       "default": "./src/state/planReviewMarkdown.ts"
     },
+    "./state/threadComments": {
+      "types": "./src/state/threadComments.ts",
+      "default": "./src/state/threadComments.ts"
+    },
     "./state/agentUi": {
       "types": "./src/state/agentUi.ts",
       "default": "./src/state/agentUi.ts"

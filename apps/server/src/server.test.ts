@@ -171,6 +171,9 @@ import * as PlanReviewServiceLayer from "./planreview/PlanReviewService.ts";
 import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
 import * as ThreadWorkspaceGroups from "./persistence/ThreadWorkspaceGroups.ts";
 import * as AgentUiServiceLayer from "./agentui/AgentUiService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import * as ThreadComments from "./persistence/ThreadComments.ts";
+import * as ThreadCommentsServiceLayer from "./threadcomments/ThreadCommentsService.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -837,6 +840,12 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         AgentUiServiceLayer.layer.pipe(
           Layer.provide(AgentUiRenders.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): review comments service for the fork RPC handlers.
+      Layer.provide(
+        ThreadCommentsServiceLayer.layer.pipe(
+          Layer.provide(ThreadComments.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
         ),
       ),
       Layer.provide(

@@ -252,6 +252,8 @@ export const make = Effect.gen(function* () {
       threadMattermostLink: true,
       // T3-CUSTOM(expbkt3): native plan-review documents and discussions.
       planReview: true,
+      // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+      threadComments: true,
       environmentIcon: true,
       // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
       environmentAppearance: true,

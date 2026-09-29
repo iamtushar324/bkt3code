@@ -154,6 +154,8 @@ import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import { PlanReviewService } from "./planreview/PlanReviewService.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiService } from "./agentui/AgentUiService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import { ThreadCommentsService } from "./threadcomments/ThreadCommentsService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -721,6 +723,8 @@ const makeWsRpcLayer = (
       const planReview = yield* PlanReviewService;
       // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
       const agentUi = yield* AgentUiService;
+      // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+      const threadComments = yield* ThreadCommentsService;
       // Resolved once per connection: it only labels this actor's own comments.
       const actorLabel =
         actorUserId === null
@@ -2295,6 +2299,7 @@ const makeWsRpcLayer = (
         environmentUsers,
         planReview,
         agentUi,
+        threadComments,
         actorLabel,
         usage,
         projectionSnapshotQuery,

@@ -22,6 +22,8 @@ import { resolveStorage } from "./lib/storage";
 const RIGHT_PANEL_KINDS = [
   // T3-CUSTOM(expbkt3): native plan review surface.
   "planReview",
+  // T3-CUSTOM(expbkt3): review comments on agent messages (singleton per thread).
+  "comments",
   "diff",
   "files",
   "file",
@@ -54,6 +56,8 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  | { id: "comments"; kind: "comments" }
   | { id: "files"; kind: "files" }
   | {
       id: `file:${string}` | `attachment:${string}`;
@@ -200,6 +204,9 @@ const singletonSurface = (
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
+    // T3-CUSTOM(expbkt3): review comments on agent messages.
+    case "comments":
+      return { id: "comments", kind };
     case "files":
       return { id: "files", kind };
     case "pull-requests":

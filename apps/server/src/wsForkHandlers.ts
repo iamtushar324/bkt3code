@@ -23,6 +23,8 @@ import {
   PlanReviewError,
   SessionArchiveError,
   SourceControlProfileError,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  ThreadCommentsError,
   // T3-CUSTOM(expbkt3): per-thread API-level cost.
   UsageReadError,
   type AuthSessionId,
@@ -42,6 +44,8 @@ import type * as OrchestrationEngine from "./orchestration/Services/Orchestratio
 import type * as PlanReviewService from "./planreview/PlanReviewService.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import type * as AgentUiService from "./agentui/AgentUiService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import type * as ThreadCommentsService from "./threadcomments/ThreadCommentsService.ts";
 import type * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): per-thread API-level cost.
 import type * as UsageService from "./usage/UsageService.ts";
@@ -73,6 +77,8 @@ export interface ForkWsHandlerDeps {
   readonly planReview: PlanReviewService.PlanReviewService["Service"];
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
   readonly agentUi: AgentUiService.AgentUiServiceShape;
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  readonly threadComments: ThreadCommentsService.ThreadCommentsServiceShape;
   /** Display name for the acting user, stamped onto their review comments. */
   readonly actorLabel: string | null;
   // T3-CUSTOM(expbkt3): per-thread API-level cost.
@@ -123,6 +129,7 @@ export const makeForkWsHandlers = ({
   environmentUsers,
   planReview,
   agentUi,
+  threadComments,
   actorLabel,
   usage,
   projectionSnapshotQuery,
@@ -136,6 +143,15 @@ export const makeForkWsHandlers = ({
   requireThreadAccess,
   visibleAggregateIdsForActor,
 }: ForkWsHandlerDeps) => {
+  // T3-CUSTOM(expbkt3): review comments. Access denial reads as "not found" so
+  // a caller cannot tell a hidden thread from a missing one.
+  const guardCommentsThread = (operation: string, threadId: ThreadId) =>
+    requireThreadAccess(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadCommentsError({ operation, reason: "not-found", detail: cause.message }),
+      ),
+    );
   // T3-CUSTOM(expbkt3): BEGIN native plan review helpers.
   const planReviewAccessError = (cause: OrchestrationGetSnapshotError) =>
     new PlanReviewError({ operation: "access", reason: "not-found", detail: cause.message });
@@ -603,5 +619,73 @@ export const makeForkWsHandlers = ({
         { "rpc.aggregate": "plan-review" },
       ),
     // T3-CUSTOM(expbkt3): END native plan review.
+    // T3-CUSTOM(expbkt3): BEGIN review comments on assistant messages. Every
+    // method is thread-scoped: a caller who cannot read the thread gets the
+    // same "not found" a missing thread would produce.
+    [WS_METHODS.threadCommentsList]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsList,
+        guardCommentsThread("list", input.threadId).pipe(
+          Effect.andThen(threadComments.snapshot(input.threadId)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsAdd]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsAdd,
+        guardCommentsThread("add", input.threadId).pipe(
+          Effect.andThen(threadComments.add({ ...input, actorUserId, actorLabel })),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsReply]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsReply,
+        guardCommentsThread("reply", input.threadId).pipe(
+          Effect.andThen(threadComments.reply({ ...input, actorUserId, actorLabel })),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsSetStatus]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsSetStatus,
+        guardCommentsThread("setStatus", input.threadId).pipe(
+          Effect.andThen(threadComments.setStatus(input)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsResolveAll]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsResolveAll,
+        guardCommentsThread("resolveAll", input.threadId).pipe(
+          Effect.andThen(threadComments.resolveAll(input.threadId)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsRemove]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsRemove,
+        guardCommentsThread("remove", input.threadId).pipe(
+          Effect.andThen(threadComments.remove(input)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.threadCommentsSetDeliveryPaused]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsSetDeliveryPaused,
+        guardCommentsThread("setDeliveryPaused", input.threadId).pipe(
+          Effect.andThen(threadComments.setDeliveryPaused(input)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    [WS_METHODS.subscribeThreadComments]: (input) =>
+      observeRpcStream(
+        WS_METHODS.subscribeThreadComments,
+        Stream.fromEffect(guardCommentsThread("watch", input.threadId)).pipe(
+          Stream.flatMap(() => threadComments.watch(input.threadId)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
+    // T3-CUSTOM(expbkt3): END review comments.
   } satisfies ForkWsHandlers;
 };

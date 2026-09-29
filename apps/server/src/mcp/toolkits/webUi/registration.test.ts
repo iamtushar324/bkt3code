@@ -70,9 +70,9 @@ it.effect("registers four compact tools while listing the complete virtual surfa
       expect(listed.structuredContent).toMatchObject({
         ok: true,
         // T3-CUSTOM(expbkt3): registration exposes the current authenticated RPC group.
-        rpcCount: 177,
-        streamCount: 24,
-        matchedCount: 177,
+        rpcCount: 185,
+        streamCount: 25,
+        matchedCount: 185,
       });
 
       const schema = yield* withInvocation(

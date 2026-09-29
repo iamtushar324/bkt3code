@@ -138,6 +138,9 @@ import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import * as ThreadCommentsServiceLayer from "./threadcomments/ThreadCommentsService.ts";
+import * as ThreadComments from "./persistence/ThreadComments.ts";
 import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -436,6 +439,13 @@ const SourceControlProfileServiceLayerLive = SourceControlProfileService.layer.p
   Layer.provide(ServerSecretStore.layer),
 );
 
+// T3-CUSTOM(expbkt3): review comments on assistant messages. Sits below the
+// reactor group so turn start can append open comments to the agent's input;
+// the websocket handlers and MCP tools see it through the same merge.
+const ThreadCommentsServiceLayerLive = ThreadCommentsServiceLayer.layer.pipe(
+  Layer.provide(ThreadComments.layer),
+);
+
 const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
   Layer.provide(SourceControlRepositoryServiceLayerLive),
 );
@@ -618,6 +628,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       // T3-CUSTOM(expbkt3): per-user source-control profiles and per-thread action lock.
       SourceControlProfileServiceLayerLive,
       ThreadSourceControlActionLock.layer,
+      // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+      ThreadCommentsServiceLayerLive,
     ),
   ),
   Layer.provideMerge(GitLayerLive),

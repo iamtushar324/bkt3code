@@ -497,6 +497,11 @@ export const ClientSettingsSchema = Schema.Struct({
   // T3-CUSTOM(expbkt3): the chat header's git button asks the agent (commit / push /
   // create PR) instead of running git itself. Off restores upstream's button.
   smartGitPromptsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): review comments on agent messages: the Comment / Good / Okay /
+  // Remove selection actions, quote highlights, the Comments panel and the composer
+  // strip. Off hides them on this client; comments already open still reach the agent
+  // until they are resolved.
+  chatCommentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // T3-CUSTOM(expbkt3): upstream's pull request view. Off by default, so a pull request
   // link opens the host's page in the integrated browser instead.
   nativePullRequestViewEnabled: Schema.Boolean.pipe(
@@ -1840,6 +1845,8 @@ export const ClientSettingsPatch = Schema.Struct({
   agentUiSurfacesEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): smart git button sends prompts to the agent.
   smartGitPromptsEnabled: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  chatCommentsEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   nativePullRequestViewEnabled: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): every link opens in the integrated browser.

@@ -12,6 +12,9 @@ import {
   EnvironmentId,
   ThreadId,
   UserId,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  ThreadCommentId,
+  type ThreadComment,
   normalizeThreadCustomGroup,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
   type OrchestrationCommand,
@@ -35,6 +38,8 @@ import { OrchestrationAccessControl } from "../../../orchestration/Services/Acce
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
@@ -44,6 +49,8 @@ import { T3ControlToolkit, T3ControlToolError } from "./tools.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommandSchema);
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+const decodeThreadCommentId = Schema.decodeEffect(ThreadCommentId);
 
 function boundedLimit(value: number | undefined, fallback: number, maximum: number): number {
   if (value === undefined || !Number.isSafeInteger(value)) return fallback;
@@ -61,6 +68,27 @@ function errorMessage(cause: unknown): string {
     return cause.message;
   }
   return "T3 Code could not complete the requested operation.";
+}
+
+// T3-CUSTOM(expbkt3): the agent-facing shape of a review comment: the quote
+// and what the user wants, without anchor offsets or author ids.
+function describeComment(comment: ThreadComment) {
+  return {
+    id: comment.commentId,
+    number: comment.number,
+    kind: comment.kind,
+    status: comment.status,
+    messageId: comment.anchor.messageId,
+    quote: comment.anchor.text,
+    body: comment.body,
+    author: comment.authorLabel,
+    createdAt: comment.createdAt,
+    replies: comment.replies.map((reply) => ({
+      author: reply.author,
+      body: reply.body,
+      createdAt: reply.createdAt,
+    })),
+  };
 }
 
 const mapControlError =
@@ -1339,6 +1367,48 @@ const handlers = {
   }),
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): BEGIN — review comments on assistant messages in chat.
+  //
+  // Both tools act on the caller's own session: comments are instructions for
+  // this agent, so there is no cross-session target to authorize.
+  t3_list_comments: Effect.fn("T3ControlToolkit.listComments")(function* (input) {
+    const operation = "list-comments";
+    const scope = yield* requireCapability(operation, "t3.read");
+    const threadComments = yield* ThreadCommentsService;
+    const snapshot = yield* threadComments
+      .snapshot(scope.threadId)
+      .pipe(mapControlError(operation));
+    const status = input.status ?? "open";
+    const comments = snapshot.comments.filter(
+      (comment) => status === "all" || comment.status === status,
+    );
+    return {
+      status,
+      deliveryPaused: snapshot.deliveryPaused,
+      count: comments.length,
+      comments: comments.map(describeComment),
+    };
+  }),
+
+  t3_reply_comment: Effect.fn("T3ControlToolkit.replyComment")(function* (input) {
+    const operation = "reply-comment";
+    const scope = yield* requireCapability(operation, "t3.read");
+    const threadComments = yield* ThreadCommentsService;
+    const commentId = yield* decodeThreadCommentId(input.commentId).pipe(
+      mapControlError(operation),
+    );
+    const comment = yield* threadComments
+      .agentReply({
+        threadId: scope.threadId,
+        commentId,
+        body: input.body,
+        addressed: input.addressed,
+      })
+      .pipe(mapControlError(operation));
+    return { recorded: true, comment: describeComment(comment) };
+  }),
+  // T3-CUSTOM(expbkt3): END
+
   t3_dispatch_command: Effect.fn("T3ControlToolkit.dispatchCommand")(function* (input) {
     const operation = "dispatch-command";
     yield* requireExternalOperator(operation);
@@ -1367,4 +1437,7 @@ export const __testing = {
   // T3-CUSTOM(expbkt3): inherited tagging for created sessions.
   resolveCreatedSessionTags,
   resolveTagUserIds,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  listComments: handlers.t3_list_comments,
+  replyComment: handlers.t3_reply_comment,
 };

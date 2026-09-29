@@ -80,6 +80,12 @@ import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+// T3-CUSTOM(expbkt3): review comments on agent messages.
+import {
+  ThreadCommentsSurfaceIcon,
+  useThreadCommentsSurfaceActions,
+  type ThreadCommentsTabProps,
+} from "~/fork/threadComments/threadCommentsSurface";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -137,6 +143,10 @@ interface RightPanelTabsProps {
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
   children: ReactNode;
+  // T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages.
+  onAddComments?: ThreadCommentsTabProps["onAddComments"];
+  commentsAvailable?: ThreadCommentsTabProps["commentsAvailable"];
+  // T3-CUSTOM(expbkt3): END
 }
 
 export interface PullRequestTabStatus {
@@ -337,9 +347,15 @@ function RightPanelEmptyState(props: {
   agentsAvailable: boolean;
   deviceAvailable: boolean;
   liveAgentCount: number;
+  // T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages.
+  onAddComments?: ThreadCommentsTabProps["onAddComments"];
+  commentsAvailable?: ThreadCommentsTabProps["commentsAvailable"];
+  // T3-CUSTOM(expbkt3): END
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  const threadCommentsActions = useThreadCommentsSurfaceActions(props);
 
   const actions = [
     {
@@ -415,6 +431,8 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDevice,
       badgeCount: 0,
     },
+    // T3-CUSTOM(expbkt3): review comments on agent messages.
+    ...threadCommentsActions,
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -630,6 +648,10 @@ function surfaceTitle(
     case "planReview":
       return "Plan review";
     // T3-CUSTOM(expbkt3): END
+    // T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages.
+    case "comments":
+      return "Comments";
+    // T3-CUSTOM(expbkt3): END
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
@@ -712,6 +734,10 @@ function SurfaceIcon({
     // T3-CUSTOM(expbkt3): BEGIN — icon for the native plan review surface.
     case "planReview":
       return <ClipboardList className="size-3.5 shrink-0 text-info" />;
+    // T3-CUSTOM(expbkt3): END
+    // T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages.
+    case "comments":
+      return <ThreadCommentsSurfaceIcon />;
     // T3-CUSTOM(expbkt3): END
     case "pull-request":
       return (
@@ -878,6 +904,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  const threadCommentsActions = useThreadCommentsSurfaceActions(props);
   const addSurfaceActions = [
     {
       label: "Browser",
@@ -943,6 +971,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    // T3-CUSTOM(expbkt3): review comments on agent messages.
+    ...threadCommentsActions,
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1435,6 +1465,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
             liveAgentCount={props.liveAgentCount}
+            // T3-CUSTOM(expbkt3): review comments on agent messages.
+            onAddComments={props.onAddComments}
+            commentsAvailable={props.commentsAvailable}
           />
         ) : (
           props.children

@@ -88,6 +88,12 @@ import {
   resolveComposerProviderSelection,
   threadShellHasStarted,
 } from "../ChatView.logic";
+// T3-CUSTOM(expbkt3): review comments on agent messages.
+import {
+  THREAD_COMMENT_PLACEHOLDER,
+  useThreadCommentsEmptySendAllowed,
+  withThreadCommentsSendable,
+} from "~/fork/threadComments/threadCommentsSurface";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -2279,14 +2285,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Derived: composer send state
   // ------------------------------------------------------------------
+  // T3-CUSTOM(expbkt3): open review comments make an empty send meaningful.
+  const threadCommentsEmptySend = useThreadCommentsEmptySendAllowed();
   const composerSendState = useMemo(
     () =>
-      deriveComposerSendState({
-        prompt,
-        imageCount: composerImages.length + composerFiles.length,
-        terminalContexts: composerTerminalContexts,
-        elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
-      }),
+      withThreadCommentsSendable(
+        // T3-CUSTOM(expbkt3): review comments.
+        deriveComposerSendState({
+          prompt,
+          imageCount: composerImages.length + composerFiles.length,
+          terminalContexts: composerTerminalContexts,
+          elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+        }),
+        threadCommentsEmptySend,
+      ), // T3-CUSTOM(expbkt3): review comments.
     [
       composerFiles.length,
       composerImages.length,
@@ -2294,6 +2306,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerReviewComments.length,
       composerTerminalContexts,
       prompt,
+      threadCommentsEmptySend, // T3-CUSTOM(expbkt3): review comments.
     ],
   );
   // ------------------------------------------------------------------
@@ -6969,7 +6982,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : threadCommentsEmptySend // T3-CUSTOM(expbkt3): open comments can be sent alone.
+                                    ? THREAD_COMMENT_PLACEHOLDER
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
                       isConnecting ||

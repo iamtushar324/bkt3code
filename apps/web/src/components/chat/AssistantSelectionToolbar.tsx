@@ -17,15 +17,21 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+// T3-CUSTOM(expbkt3): fork actions (review comments) share the selection toolbar.
+import type { AssistantSelectionToolbarExtras } from "~/fork/threadComments/selectionToolbarExtras";
 
 export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  // T3-CUSTOM(expbkt3): fork actions rendered beside Cite, inside the same action element.
+  extraActions: ExtraActions,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  // T3-CUSTOM(expbkt3): fork actions rendered beside Cite, inside the same action element.
+  extraActions?: AssistantSelectionToolbarExtras;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
@@ -33,14 +39,24 @@ export function AssistantSelectionToolbar({
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
+  // T3-CUSTOM(expbkt3): the group wraps Cite and the fork actions; it is what gets positioned.
+  const groupRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
 
   useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
+    const toolbar = groupRef.current; // T3-CUSTOM(expbkt3): position the group, not the button.
     if (!toolbar || !selection) return;
-    const rect = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    // T3-CUSTOM(expbkt3): BEGIN re-clamp when the fork's comment editor grows the group.
+    const place = () => {
+      const rect = toolbar.getBoundingClientRect();
+      toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
+      toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+    // T3-CUSTOM(expbkt3): END
   }, [selection]);
 
   useEffect(() => {
@@ -79,7 +95,7 @@ export function AssistantSelectionToolbar({
     };
     const actions = observeSelectionActions({
       element: viewport,
-      getActionElement: () => toolbarRef.current,
+      getActionElement: () => groupRef.current, // T3-CUSTOM(expbkt3): the group is the action element.
       onSelection: update,
       onDismiss: clear,
     });
@@ -95,7 +111,7 @@ export function AssistantSelectionToolbar({
         event.isComposing ||
         event.defaultPrevented ||
         !toolbar ||
-        toolbar.contains(event.target as Node)
+        (groupRef.current ?? toolbar).contains(event.target as Node) // T3-CUSTOM(expbkt3): fork actions count as inside.
       ) {
         return;
       }
@@ -127,28 +143,42 @@ export function AssistantSelectionToolbar({
     return true;
   };
   return createPortal(
-    <Button
-      ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+    // T3-CUSTOM(expbkt3): BEGIN — the group carries the position and hosts the fork actions.
+    <div
+      ref={groupRef}
+      className="fixed z-50 flex w-max max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      <Button
+        ref={toolbarRef}
+        type="button"
+        size="xs"
+        variant="glass"
+        disabled={tooLong}
+        aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={cite}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            dismiss();
+          }
+        }}
+      >
+        <QuoteIcon aria-hidden="true" className="size-3.5" />
+        {tooLong ? "Shorten selection" : "Cite"}
+      </Button>
+      {ExtraActions ? (
+        <ExtraActions
+          citation={selection.citation}
+          sourceAnchor={selection.sourceAnchor}
+          threadRef={threadRef}
+          dismiss={dismiss}
+        />
+      ) : null}
+    </div>,
+    // T3-CUSTOM(expbkt3): END
     document.body,
   );
 }
