@@ -721,7 +721,7 @@ const command = Command.make(
     ),
     // Required. Without --target, `gh release create` tags the repository's
     // DEFAULT branch, so the tag would point at `main` while the assets contain
-    // expbkmain code — a release that lies about what is inside it.
+    // stage code — a release that lies about what is inside it.
     sourceSha: Flag.String("source-sha").pipe(
       Flag.withDescription(
         "Full commit SHA the artifacts were built from. In Actions, ${{ github.sha }}.",
@@ -850,7 +850,7 @@ const command = Command.make(
       yield* assertManifestMatchesPayload(resolvedReleaseDir, manifest);
 
       const signature = yield* describeSignature(signedAppPath);
-      const sourceBranch = variant === "staging" ? "expbkmain" : "bkmain";
+      const sourceBranch = variant === "staging" ? "stage" : "bkmain";
       const changelog = yield* collectChangelog(previousTag, targetSha);
       const notes = [
         `Beknown fork desktop build — **${brand.productName}**.`,
