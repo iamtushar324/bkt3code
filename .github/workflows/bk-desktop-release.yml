@@ -23,12 +23,12 @@ name: BK desktop release
 
 on:
   push:
-    branches: [expbkmain, bkmain]
+    branches: [stage, bkmain]
   # NOTE: this will not appear in the Actions UI. GitHub only offers
   # workflow_dispatch for workflows present on the DEFAULT branch, and this
   # fork's default branch is `main` — the pure upstream mirror, which by design
   # never carries fork-owned workflows. It is declared anyway so the trigger
-  # works if that ever changes; until then, push to expbkmain/bkmain to build.
+  # works if that ever changes; until then, push to stage/bkmain to build.
   workflow_dispatch:
     inputs:
       channel:
@@ -77,7 +77,7 @@ jobs:
           channel="${{ inputs.channel }}"
           if [[ -z "$channel" ]]; then
             case "${{ github.ref_name }}" in
-              expbkmain) channel=staging ;;
+              stage) channel=staging ;;
               bkmain)    channel=production ;;
               *)
                 echo "::error::No channel mapping for branch ${{ github.ref_name }}." >&2
@@ -98,10 +98,12 @@ jobs:
         # tag we do not have yet. The API returns target_commitish on every
         # release in one call.
         run: |
+          release_channel="${{ steps.channel.outputs.channel }}"
+          if [[ "$release_channel" == staging ]]; then release_channel=stage; fi
           found=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
-                    --jq '[.[] | select(.target_commitish == "${{ github.sha }}")
-                          | select(.tag_name | contains("-${{ steps.channel.outputs.channel }}-nightly."))]
-                          | first // empty | .tag_name')
+                    --jq "[.[] | select(.target_commitish == \"${{ github.sha }}\")
+                          | select(.tag_name | contains(\"-${release_channel}-nightly.\"))]
+                          | first // empty | .tag_name")
           if [[ -n "$found" ]]; then
             echo "::notice::${{ github.sha }} is already published as $found. Nothing to do."
             echo "found=true" >> "$GITHUB_OUTPUT"
@@ -257,7 +259,7 @@ jobs:
       # holds no signing key.
       contents: write
     # Both channels publish automatically: a merge to bkmain ships the production
-    # app without waiting for anyone, the same way expbkmain already shipped
+    # app without waiting for anyone, the same way stage ships
     # staging. The required-reviewer rule that used to gate `bk-desktop-production`
     # was removed from the environment's settings, not from here — protection
     # rules live in repository settings and no workflow file can express their

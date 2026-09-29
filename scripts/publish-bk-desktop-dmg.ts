@@ -5,7 +5,7 @@
  * download, and that the in-app updater can then read.
  *
  *   node scripts/publish-bk-desktop-dmg.ts --channel staging \
- *     --build-version 0.0.32-staging-nightly.20260810.1
+ *     --build-version 0.0.32-stage-nightly.20260810.1
  *   node scripts/publish-bk-desktop-dmg.ts --channel production ... --dry-run
  *
  * Both fork apps publish into the same repository, separated only by the
@@ -52,6 +52,7 @@ import {
   parseNightlyVersion,
   resolveNewestNightlyVersion,
   tagFromVersion,
+  updateChannelForVariant,
   updateManifestFileName,
 } from "./lib/bk-desktop-release.ts";
 
@@ -389,10 +390,8 @@ export function summarizeCommitSubjects(
 /**
  * The newest published tag belonging to one channel.
  *
- * Keyed on the channel — `staging` / `production` — and not on the brand's
- * `updateChannel`, which is already `staging-nightly`; matching on that produced
- * `-staging-nightly-nightly.`, found nothing, and silently shipped a release with
- * no change list. Same predicate the workflow's already-published check uses.
+ * Match the branded update channel so historical expbkmain staging releases
+ * cannot enter the stage branch's change list.
  *
  * `gh release list` returns newest first, so the first hit is the previous build.
  */
@@ -400,7 +399,9 @@ export function findPreviousChannelTag(
   publishedTags: ReadonlyArray<string>,
   variant: BkManagedChannel,
 ): string | undefined {
-  return publishedTags.find((candidate) => candidate.includes(`-${variant}-nightly.`));
+  return publishedTags.find((candidate) =>
+    candidate.includes(`-${updateChannelForVariant(variant)}.`),
+  );
 }
 
 const GhCompare = Schema.Struct({
@@ -711,9 +712,7 @@ const command = Command.make(
   "publish-bk-desktop-dmg",
   {
     buildVersion: Flag.String("build-version").pipe(
-      Flag.withDescription(
-        "Version that was built, for example 0.0.32-staging-nightly.20260810.1.",
-      ),
+      Flag.withDescription("Version that was built, for example 0.0.32-stage-nightly.20260810.1."),
     ),
     channel: Flag.String("channel").pipe(
       Flag.withDescription(

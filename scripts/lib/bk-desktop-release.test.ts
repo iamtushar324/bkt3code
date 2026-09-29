@@ -27,7 +27,7 @@ describe("bk-desktop-release versioning", () => {
 
   it("composes and parses nightly versions symmetrically", () => {
     const version = composeNightlyVersion("0.0.32", "staging", "20260810", 3);
-    expect(version).toBe("0.0.32-staging-nightly.20260810.3");
+    expect(version).toBe("0.0.32-stage-nightly.20260810.3");
     expect(parseNightlyVersion(version)).toEqual({
       baseVersion: "0.0.32",
       variant: "staging",
@@ -42,7 +42,7 @@ describe("bk-desktop-release versioning", () => {
     // apps would resolve to the same releases.
     const staging = composeNightlyVersion("0.0.32", "staging", "20260810", 1);
     const production = composeNightlyVersion("0.0.32", "production", "20260810", 1);
-    expect(staging.split("-")[1]).toBe("staging");
+    expect(staging.split("-")[1]).toBe("stage");
     expect(production.split("-")[1]).toBe("production");
     expect(staging).not.toBe(production);
   });
@@ -65,7 +65,8 @@ describe("bk-desktop-release versioning", () => {
   it("does not parse non-nightly or channel-less versions", () => {
     expect(parseNightlyVersion("0.0.32")).toBeUndefined();
     expect(parseNightlyVersion("0.0.32-alpha.1")).toBeUndefined();
-    expect(parseNightlyVersion("0.0.32-staging-nightly.20260810")).toBeUndefined();
+    expect(parseNightlyVersion("0.0.32-stage-nightly.20260810")).toBeUndefined();
+    expect(parseNightlyVersion("0.0.32-staging-nightly.20260810.1")).toBeUndefined();
     // The old channel-less shape must not parse: it would be ambiguous between
     // the two apps.
     expect(parseNightlyVersion("0.0.32-nightly.20260810.1")).toBeUndefined();
@@ -73,21 +74,21 @@ describe("bk-desktop-release versioning", () => {
   });
 
   it("round-trips tags and versions", () => {
-    expect(tagFromVersion("0.0.32-staging-nightly.20260810.1")).toBe(
-      "v0.0.32-staging-nightly.20260810.1",
+    expect(tagFromVersion("0.0.32-stage-nightly.20260810.1")).toBe(
+      "v0.0.32-stage-nightly.20260810.1",
     );
-    expect(versionFromTag("v0.0.32-staging-nightly.20260810.1")).toBe(
-      "0.0.32-staging-nightly.20260810.1",
+    expect(versionFromTag("v0.0.32-stage-nightly.20260810.1")).toBe(
+      "0.0.32-stage-nightly.20260810.1",
     );
-    expect(versionFromTag("0.0.32-staging-nightly.20260810.1")).toBe(
-      "0.0.32-staging-nightly.20260810.1",
+    expect(versionFromTag("0.0.32-stage-nightly.20260810.1")).toBe(
+      "0.0.32-stage-nightly.20260810.1",
     );
   });
 
   it("names one updater channel and manifest per app", () => {
-    expect(updateChannelForVariant("staging")).toBe("staging-nightly");
+    expect(updateChannelForVariant("staging")).toBe("stage-nightly");
     expect(updateChannelForVariant("production")).toBe("production-nightly");
-    expect(updateManifestFileName("staging")).toBe("staging-nightly-mac.yml");
+    expect(updateManifestFileName("staging")).toBe("stage-nightly-mac.yml");
     expect(updateManifestFileName("production")).toBe("production-nightly-mac.yml");
   });
 });
@@ -96,7 +97,7 @@ describe("release.yml trigger safety", () => {
   it("accepts nightly-form tags for both channels, which release.yml excludes", () => {
     // release.yml triggers on v*.*.* with !v*-nightly.* excluded. Both of these
     // contain "-nightly." and so fall inside the exclusion.
-    expect(isReleaseWorkflowSafeTag("v0.0.32-staging-nightly.20260810.1")).toBe(true);
+    expect(isReleaseWorkflowSafeTag("v0.0.32-stage-nightly.20260810.1")).toBe(true);
     expect(isReleaseWorkflowSafeTag("v0.0.32-production-nightly.20260810.1")).toBe(true);
   });
 
@@ -107,7 +108,9 @@ describe("release.yml trigger safety", () => {
     expect(isReleaseWorkflowSafeTag("v0.0.0-test.1")).toBe(false);
     expect(isReleaseWorkflowSafeTag("v0.0.32-nightly")).toBe(false);
     expect(isReleaseWorkflowSafeTag("bk-desktop-20260810")).toBe(false);
-    expect(isReleaseWorkflowSafeTag("0.0.32-staging-nightly.20260810.1")).toBe(false);
+    expect(isReleaseWorkflowSafeTag("0.0.32-stage-nightly.20260810.1")).toBe(false);
+    // Historical expbkmain releases cannot enter the new stage channel.
+    expect(isReleaseWorkflowSafeTag("v0.0.32-staging-nightly.20260810.1")).toBe(false);
     // An unknown channel is not a channel we publish, so it is not safe either.
     expect(isReleaseWorkflowSafeTag("v0.0.32-beta-nightly.20260810.1")).toBe(false);
   });
@@ -123,27 +126,27 @@ describe("nightly ordering and counters", () => {
   it("orders by base version, then date, then counter", () => {
     expect(
       compareNightlyVersions(
-        parse("0.0.32-staging-nightly.20260810.1"),
-        parse("0.0.32-staging-nightly.20260810.2"),
+        parse("0.0.32-stage-nightly.20260810.1"),
+        parse("0.0.32-stage-nightly.20260810.2"),
       ),
     ).toBeLessThan(0);
     expect(
       compareNightlyVersions(
-        parse("0.0.32-staging-nightly.20260811.1"),
-        parse("0.0.32-staging-nightly.20260810.9"),
+        parse("0.0.32-stage-nightly.20260811.1"),
+        parse("0.0.32-stage-nightly.20260810.9"),
       ),
     ).toBeGreaterThan(0);
     expect(
       compareNightlyVersions(
-        parse("0.0.33-staging-nightly.20260101.1"),
-        parse("0.0.32-staging-nightly.20261231.9"),
+        parse("0.0.33-stage-nightly.20260101.1"),
+        parse("0.0.32-stage-nightly.20261231.9"),
       ),
     ).toBeGreaterThan(0);
     // Base version compares numerically, not as strings: 10 > 9.
     expect(
       compareNightlyVersions(
-        parse("0.0.10-staging-nightly.20260810.1"),
-        parse("0.0.9-staging-nightly.20260810.1"),
+        parse("0.0.10-stage-nightly.20260810.1"),
+        parse("0.0.9-stage-nightly.20260810.1"),
       ),
     ).toBeGreaterThan(0);
   });
@@ -152,7 +155,7 @@ describe("nightly ordering and counters", () => {
     expect(resolveNextCounter([], "staging", "0.0.32", "20260810")).toBe(1);
     expect(
       resolveNextCounter(
-        ["v0.0.32-staging-nightly.20260810.1", "v0.0.32-staging-nightly.20260810.2"],
+        ["v0.0.32-stage-nightly.20260810.1", "v0.0.32-stage-nightly.20260810.2"],
         "staging",
         "0.0.32",
         "20260810",
@@ -165,16 +168,19 @@ describe("nightly ordering and counters", () => {
     // not consume production's counter, or the two release lines interleave and
     // each app's version history stops being contiguous.
     const published = [
-      "v0.0.32-staging-nightly.20260810.1",
-      "v0.0.32-staging-nightly.20260810.2",
-      "v0.0.32-staging-nightly.20260810.3",
+      "v0.0.32-stage-nightly.20260810.1",
+      "v0.0.32-stage-nightly.20260810.2",
+      "v0.0.32-stage-nightly.20260810.3",
     ];
     expect(resolveNextCounter(published, "staging", "0.0.32", "20260810")).toBe(4);
     expect(resolveNextCounter(published, "production", "0.0.32", "20260810")).toBe(1);
+    expect(
+      resolveNextCounter(["v0.0.32-staging-nightly.20260810.9"], "staging", "0.0.32", "20260810"),
+    ).toBe(1);
   });
 
   it("restarts the counter on a new date or base version", () => {
-    const published = ["v0.0.32-staging-nightly.20260810.7"];
+    const published = ["v0.0.32-stage-nightly.20260810.7"];
     expect(resolveNextCounter(published, "staging", "0.0.32", "20260811")).toBe(1);
     expect(resolveNextCounter(published, "staging", "0.0.33", "20260810")).toBe(1);
   });
@@ -186,7 +192,7 @@ describe("nightly ordering and counters", () => {
           "v0.0.32",
           "some-other-tag",
           "v0.0.32-nightly.20260810.9",
-          "v0.0.32-staging-nightly.20260810.4",
+          "v0.0.32-stage-nightly.20260810.4",
         ],
         "staging",
         "0.0.32",
@@ -197,9 +203,9 @@ describe("nightly ordering and counters", () => {
 
   it("finds the newest published version for one app only", () => {
     const published = [
-      "v0.0.32-staging-nightly.20260810.1",
-      "v0.0.33-staging-nightly.20260101.9",
-      "v0.0.32-staging-nightly.20260811.4",
+      "v0.0.32-stage-nightly.20260810.1",
+      "v0.0.33-stage-nightly.20260101.9",
+      "v0.0.32-stage-nightly.20260811.4",
       "v0.0.99-production-nightly.20261231.9",
     ];
     // The much newer production release must not be mistaken for staging's, or
@@ -223,22 +229,22 @@ describe("nightly ordering and counters", () => {
 describe("release asset selection", () => {
   it("includes the installer and everything auto-update needs", () => {
     expect(
-      isNightlyReleaseAsset("BK-T3-Code-0.0.32-staging-nightly.20260810.1-arm64.dmg", "staging"),
+      isNightlyReleaseAsset("BK-T3-Code-0.0.32-stage-nightly.20260810.1-arm64.dmg", "staging"),
     ).toBe(true);
     // Squirrel.Mac update payload.
     expect(
-      isNightlyReleaseAsset("BK-T3-Code-0.0.32-staging-nightly.20260810.1-arm64.zip", "staging"),
+      isNightlyReleaseAsset("BK-T3-Code-0.0.32-stage-nightly.20260810.1-arm64.zip", "staging"),
     ).toBe(true);
     // Differential download map and the manifest electron-updater reads.
     expect(isNightlyReleaseAsset("BK-T3-Code-0.0.32-arm64.dmg.blockmap", "staging")).toBe(true);
-    expect(isNightlyReleaseAsset("staging-nightly-mac.yml", "staging")).toBe(true);
+    expect(isNightlyReleaseAsset("stage-nightly-mac.yml", "staging")).toBe(true);
   });
 
   it("excludes the other app's manifest", () => {
     // Both apps build into release/. Attaching production's manifest to a
     // staging release would point production users at staging artifacts.
     expect(isNightlyReleaseAsset("production-nightly-mac.yml", "staging")).toBe(false);
-    expect(isNightlyReleaseAsset("staging-nightly-mac.yml", "production")).toBe(false);
+    expect(isNightlyReleaseAsset("stage-nightly-mac.yml", "production")).toBe(false);
   });
 
   it("excludes the stable manifest and build leftovers", () => {

@@ -64,9 +64,7 @@ describe("desktop brand overrides in build-desktop-artifact", () => {
     // productName derives the .app bundle name and Electron's default data
     // directory, so renaming it later strands a duplicate app and its state.
     withBkBrand("staging");
-    expect(resolveDesktopProductName("0.0.17-staging-nightly.20260413.42")).toBe(
-      "Stage BK T3 Code",
-    );
+    expect(resolveDesktopProductName("0.0.17-stage-nightly.20260413.42")).toBe("Stage BK T3 Code");
   });
 
   it("leaves upstream icon selection untouched", () => {
@@ -139,11 +137,11 @@ describe("updater channel in the publish config", () => {
       // so these strings are the entire isolation mechanism — and they must
       // equal the version's first prerelease identifier.
       withBkBrand("staging");
-      expect(yield* publishConfig("0.0.17-staging-nightly.20260413.42")).toMatchObject({
+      expect(yield* publishConfig("0.0.17-stage-nightly.20260413.42")).toMatchObject({
         owner: "beknown-work",
         repo: "bkt3code",
         releaseType: "prerelease",
-        channel: "staging-nightly",
+        channel: "stage-nightly",
       });
 
       withBkBrand("production");

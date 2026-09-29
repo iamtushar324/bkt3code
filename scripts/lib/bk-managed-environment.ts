@@ -30,15 +30,15 @@ export interface BkManagedEnvironment {
 }
 
 /**
- * `staging` is expbkt3, the branch the fork ships to first; `production` is
+ * `staging` is stagebkt3, the branch the fork ships to first; `production` is
  * bkt3, which hosts the team's live coding sessions. See AGENTS.md, "Beknown
  * fork and deployments".
  */
 export const BK_MANAGED_ENVIRONMENTS: Readonly<Record<BkManagedChannel, BkManagedEnvironment>> = {
   staging: {
     channel: "staging",
-    httpBaseUrl: "https://expbkt3.dev.beknown.live",
-    wsBaseUrl: "wss://expbkt3.dev.beknown.live",
+    httpBaseUrl: "https://stagebkt3.dev.beknown.live",
+    wsBaseUrl: "wss://stagebkt3.dev.beknown.live",
   },
   production: {
     channel: "production",

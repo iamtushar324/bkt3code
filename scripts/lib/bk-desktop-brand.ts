@@ -12,8 +12,8 @@
  * packaged app (see `apps/desktop/src/branding/BkBrand.ts`). It is never read
  * from the environment on a user's machine, because nothing sets it there.
  *
- * There are two fork apps, one per managed environment: `expbkmain` builds ship
- * "BK T3 Code (Staging)" and `bkmain` builds ship "BK T3 Code". They differ in
+ * There are two fork apps, one per managed environment: `stage` builds ship
+ * "Stage BK T3 Code" and `bkmain` builds ship "BK T3 Code". They differ in
  * every field that decides whether macOS treats them as the same app — bundle
  * id, product name, user-data directory — and in `updateChannel`, which is what
  * keeps their auto-updates from crossing over.
@@ -49,7 +49,7 @@ export type DesktopBrandId = "upstream" | "bk";
 export const BK_DESKTOP_UPDATE_REPOSITORY = "beknown-work/bkt3code";
 
 /**
- * The fork ships one app per managed environment, so `expbkmain` and `bkmain`
+ * The fork ships one app per managed environment, so `stage` and `bkmain`
  * builds install and update independently instead of overwriting each other.
  * The variant is the managed channel: there is no third axis to configure.
  */
@@ -168,7 +168,7 @@ export const BK_DESKTOP_BRANDS: Readonly<Record<BkDesktopVariant, DesktopBrand>>
     macIconPng: BK_BRAND_ASSET_PATHS.macIconPng,
     linuxIconPng: BK_BRAND_ASSET_PATHS.universalIconPng,
     windowsIconIco: BK_BRAND_ASSET_PATHS.windowsIconIco,
-    updateChannel: "staging-nightly",
+    updateChannel: "stage-nightly",
     deepLinkScheme: null,
   },
 };

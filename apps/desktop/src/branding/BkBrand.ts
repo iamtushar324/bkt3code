@@ -7,7 +7,7 @@
  * user's machine — the same reason the Clerk publishable key is baked in via
  * `__T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__` (see `../app/DesktopClerk.ts`).
  *
- * Which of the two fork apps this is — staging (from `expbkmain`) or production
+ * Which of the two fork apps this is — staging (from `stage`) or production
  * (from `bkmain`) — is baked in the same way, as
  * `__T3CODE_BUILD_BRAND_VARIANT__`.
  *
@@ -76,7 +76,7 @@ export const BK_RUNTIME_BRANDS: Readonly<Record<BkRuntimeVariant, BkRuntimeBrand
     appUserModelId: "work.beknown.bkt3code.staging",
     linuxDesktopEntryName: "bkt3code-staging.desktop",
     linuxWmClass: "bkt3code-staging",
-    updateChannel: "staging-nightly",
+    updateChannel: "stage-nightly",
     deepLinkScheme: null,
   },
 };

@@ -15,7 +15,7 @@
  *    electron-updater picks the newest release whose `semver.prerelease(tag)[0]`
  *    equals the running app's channel, then reads `<channel>-mac.yml` from it.
  *    So the channel has to be the version's *first* prerelease identifier:
- *    `X.Y.Z-staging-nightly.YYYYMMDD.N` and `X.Y.Z-production-nightly.…`. A
+ *    `X.Y.Z-stage-nightly.YYYYMMDD.N` and `X.Y.Z-production-nightly.…`. A
  *    staging release is then simply invisible to a production app.
  *
  * 3. **The release pipeline must not fire.** `.github/workflows/release.yml`
@@ -36,11 +36,10 @@ import { BK_DESKTOP_BRANDS, type BkDesktopVariant } from "./bk-desktop-brand.ts"
 export const BK_DESKTOP_RELEASE_REPOSITORY = "beknown-work/bkt3code";
 
 /** Nightly-form version: `X.Y.Z-<channel>-nightly.YYYYMMDD.N`. */
-const NIGHTLY_VERSION_PATTERN =
-  /^(\d+)\.(\d+)\.(\d+)-(staging|production)-nightly\.(\d{8})\.(\d+)$/;
+const NIGHTLY_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)-(stage|production)-nightly\.(\d{8})\.(\d+)$/;
 
 /** Tags safe to push: nightly-form, which release.yml explicitly excludes. */
-const SAFE_TAG_PATTERN = /^v\d+\.\d+\.\d+-(staging|production)-nightly\.\d{8}\.\d+$/;
+const SAFE_TAG_PATTERN = /^v\d+\.\d+\.\d+-(stage|production)-nightly\.\d{8}\.\d+$/;
 
 export interface ParsedNightlyVersion {
   readonly baseVersion: string;
@@ -99,7 +98,7 @@ export function parseNightlyVersion(version: string): ParsedNightlyVersion | und
   const [, major, minor, patch, variant, date, counter] = match;
   return {
     baseVersion: `${major}.${minor}.${patch}`,
-    variant: variant as BkDesktopVariant,
+    variant: variant === "stage" ? "staging" : "production",
     date: date ?? "",
     counter: Number(counter),
   };

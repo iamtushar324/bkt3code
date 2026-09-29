@@ -83,20 +83,20 @@ describe("summarizeCommitSubjects", () => {
 
 /**
  * These tags are the real shapes, because the first version of this lookup keyed
- * on the brand's `updateChannel` — already `staging-nightly` — and searched for
- * `-staging-nightly-nightly.`. It matched nothing, so a release shipped with an
- * empty change list and nothing failed to say so.
+ * on the brand's `updateChannel` and accidentally searched for a doubled
+ * `-nightly` suffix. The new stage channel also must skip old expbkmain tags.
  */
 describe("findPreviousChannelTag", () => {
   const TAGS = [
-    "v0.0.34-staging-nightly.20260819.1",
+    "v0.0.34-staging-nightly.20260820.1",
+    "v0.0.34-stage-nightly.20260819.1",
     "v0.0.34-production-nightly.20260818.2",
-    "v0.0.34-staging-nightly.20260818.6",
+    "v0.0.34-stage-nightly.20260818.6",
     "v0.0.34-production-nightly.20260817.1",
   ];
 
   it("finds the newest tag of the requested channel", () => {
-    expect(findPreviousChannelTag(TAGS, "staging")).toBe("v0.0.34-staging-nightly.20260819.1");
+    expect(findPreviousChannelTag(TAGS, "staging")).toBe("v0.0.34-stage-nightly.20260819.1");
     expect(findPreviousChannelTag(TAGS, "production")).toBe(
       "v0.0.34-production-nightly.20260818.2",
     );
@@ -106,6 +106,12 @@ describe("findPreviousChannelTag", () => {
     expect(findPreviousChannelTag(["v0.0.34-production-nightly.20260818.2"], "staging")).toBe(
       undefined,
     );
+  });
+
+  it("skips historical expbkmain releases", () => {
+    expect(
+      findPreviousChannelTag(["v0.0.34-staging-nightly.20260820.1"], "staging"),
+    ).toBeUndefined();
   });
 
   it("returns undefined for the very first build of a channel", () => {

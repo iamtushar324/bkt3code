@@ -14,11 +14,11 @@ describe("resolveBkManagedEnvironment", () => {
     expect(resolveBkManagedEnvironment({ [BK_MANAGED_CHANNEL_ENV_VAR]: "   " })).toBeUndefined();
   });
 
-  it("resolves staging to expbkt3", () => {
+  it("resolves staging to stagebkt3", () => {
     expect(resolveBkManagedEnvironment({ [BK_MANAGED_CHANNEL_ENV_VAR]: "staging" })).toEqual({
       channel: "staging",
-      httpBaseUrl: "https://expbkt3.dev.beknown.live",
-      wsBaseUrl: "wss://expbkt3.dev.beknown.live",
+      httpBaseUrl: "https://stagebkt3.dev.beknown.live",
+      wsBaseUrl: "wss://stagebkt3.dev.beknown.live",
     });
   });
 

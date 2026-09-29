@@ -85,6 +85,12 @@ production starts at port 3773 and retains its existing local data; staging
 starts at port 4773 and stores new local data with the staging app. If a default
 port is busy, the app chooses the next available port in its range.
 
+Stage BK T3 Code connects to `stagebkt3.dev.beknown.live` and follows the
+`stage` branch's desktop updates. Install the first `stage-nightly` build from
+the [BK T3 Code releases](https://github.com/beknown-work/bkt3code/releases)
+manually; subsequent builds download in the background and appear in the app
+when ready to install.
+
 `T3CODE_PORT` sets a specific bundled-backend port and `T3CODE_HOME` sets a
 specific state directory. Those overrides apply exactly as supplied, so use
 different values for the two apps when running both.

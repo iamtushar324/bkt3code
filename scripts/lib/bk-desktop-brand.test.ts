@@ -94,7 +94,7 @@ describe("bk-desktop-brand variants", () => {
 
   it("gives each app its own updater channel", () => {
     // This is what stops a staging release being offered to production users.
-    expect(BK_DESKTOP_BRANDS.staging.updateChannel).toBe("staging-nightly");
+    expect(BK_DESKTOP_BRANDS.staging.updateChannel).toBe("stage-nightly");
     expect(BK_DESKTOP_BRANDS.production.updateChannel).toBe("production-nightly");
   });
 

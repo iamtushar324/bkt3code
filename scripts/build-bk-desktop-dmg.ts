@@ -7,10 +7,10 @@
  * the bundle id, product name, user-data directory, updater channel and the
  * central server the build orchestrates, all at once:
  *
- *   node scripts/build-bk-desktop-dmg.ts --channel staging     # BK T3 Code (Staging), expbkt3
+ *   node scripts/build-bk-desktop-dmg.ts --channel staging     # Stage BK T3 Code, stagebkt3
  *   node scripts/build-bk-desktop-dmg.ts --channel production  # BK T3 Code, bkt3
  *   node scripts/build-bk-desktop-dmg.ts --channel staging \
- *     --build-version 0.0.32-staging-nightly.20260810.1
+ *     --build-version 0.0.32-stage-nightly.20260810.1
  *
  * Must run on macOS: electron-builder cannot cross-compile a mac DMG, so this
  * fails fast anywhere else rather than producing something unusable. Set
@@ -398,7 +398,7 @@ const command = Command.make(
   {
     buildVersion: Flag.String("build-version").pipe(
       Flag.withDescription(
-        "Version to stamp, for example 0.0.32-staging-nightly.20260810.1. Must match --channel.",
+        "Version to stamp, for example 0.0.32-stage-nightly.20260810.1. Must match --channel.",
       ),
       Flag.optional,
     ),
@@ -408,7 +408,7 @@ const command = Command.make(
     // you accidentally publish a local build onto the team's channel.
     channel: Flag.String("channel").pipe(
       Flag.withDescription(
-        "Which fork app to build: staging (expbkt3, from expbkmain) or production " +
+        "Which fork app to build: staging (stagebkt3, from stage) or production " +
           "(bkt3, from bkmain).",
       ),
     ),

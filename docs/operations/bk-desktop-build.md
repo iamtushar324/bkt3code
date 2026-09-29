@@ -4,11 +4,11 @@ Fork-owned. How the two Beknown-branded macOS desktop apps are built, published 
 
 The fork does not need a new app: `apps/desktop` is upstream's Electron app, and the browser client is the same `apps/web` SPA that `deploy-bkt3.yml` already deploys. What this adds is _two distinct identities_ so each fork build installs alongside upstream T3 Code and alongside each other, and a publish path with working auto-update.
 
-| Branch      | App                | Bundle id                       | User data                                        | Updater cache                               | Orchestrates             | URL scheme  |
-| ----------- | ------------------ | ------------------------------- | ------------------------------------------------ | ------------------------------------------- | ------------------------ | ----------- |
-| `expbkmain` | `Stage BK T3 Code` | `work.beknown.bkt3code.staging` | `~/Library/Application Support/bkt3code-staging` | `~/Library/Caches/bkt3code-staging-updater` | expbkt3.dev.beknown.live | none        |
-| `bkmain`    | `BK T3 Code`       | `work.beknown.bkt3code`         | `~/Library/Application Support/bkt3code`         | `~/Library/Caches/bkt3code-updater`         | bkt3.dev.beknown.live    | `t3code://` |
-| _upstream_  | `T3 Code (Alpha)`  | `com.t3tools.t3code`            | `~/Library/Application Support/t3code`           | `~/Library/Caches/t3code-updater`           | —                        | `t3code://` |
+| Branch     | App                | Bundle id                       | User data                                        | Updater cache                               | Orchestrates               | URL scheme  |
+| ---------- | ------------------ | ------------------------------- | ------------------------------------------------ | ------------------------------------------- | -------------------------- | ----------- |
+| `stage`    | `Stage BK T3 Code` | `work.beknown.bkt3code.staging` | `~/Library/Application Support/bkt3code-staging` | `~/Library/Caches/bkt3code-staging-updater` | stagebkt3.dev.beknown.live | none        |
+| `bkmain`   | `BK T3 Code`       | `work.beknown.bkt3code`         | `~/Library/Application Support/bkt3code`         | `~/Library/Caches/bkt3code-updater`         | bkt3.dev.beknown.live      | `t3code://` |
+| _upstream_ | `T3 Code (Alpha)`  | `com.t3tools.t3code`            | `~/Library/Application Support/t3code`           | `~/Library/Caches/t3code-updater`           | —                          | `t3code://` |
 
 The **updater cache is a third isolation axis**, and an easy one to miss. It lives outside `userData`, so a distinct bundle id and user-data directory are not sufficient. electron-builder derives `updaterCacheDirName` in `app-update.yml` from the staged package name, which was hard-coded `"t3code"` — meaning all three apps shared `~/Library/Caches/t3code-updater` and could overwrite each other's part-downloaded update. `resolveDesktopStagePackageName` in `scripts/build-desktop-artifact.ts` now derives it from `userDataDirName`, so the two axes cannot drift apart.
 
@@ -46,11 +46,11 @@ those manage a _primary_ local backend, which a managed build does not have.
 To run agents on a teammate's Mac from elsewhere, install and launch `t3`
 separately on that Mac, expose it through an appropriate HTTPS/Tailscale or
 SSH route, and add it from **Settings → Connections → Add environment**. It
-remains a secondary environment; `bkt3.dev` or `expbkt3.dev` stays primary.
+remains a secondary environment; `bkt3.dev` or `stagebkt3.dev` stays primary.
 
-Every push to `expbkmain` or `bkmain` triggers `.github/workflows/bk-desktop-release.yml` on a GitHub-hosted `macos-26` runner, which builds that branch's app and publishes it. Standard GitHub-hosted runners are free on public repositories, so this costs nothing and needs no machine of ours. Running apps poll every 4 minutes and download in the background, then raise a native notification when a build is ready. Clicking that notification **surfaces the update in the app; it does not restart** — see [Update behaviour](#update-behaviour).
+Every push to `stage` or `bkmain` triggers `.github/workflows/bk-desktop-release.yml` on a GitHub-hosted `macos-26` runner, which builds that branch's app and publishes it. Standard GitHub-hosted runners are free on public repositories, so this costs nothing and needs no machine of ours. Running apps poll every 4 minutes and download in the background, then raise a native notification when a build is ready. Clicking that notification **surfaces the update in the app; it does not restart** — see [Update behaviour](#update-behaviour).
 
-**A push is currently the only way to trigger a build.** The workflow declares `workflow_dispatch`, but GitHub only offers that trigger for workflows present on the repository's **default branch** — and this fork's default branch is `main`, the pure upstream mirror, which by design never carries fork-owned workflows. So the "Run workflow" button will not appear. Push to `expbkmain` or `bkmain` instead, or build locally (see [Manual builds](#manual-builds)).
+**A push is currently the only way to trigger a build.** The workflow declares `workflow_dispatch`, but GitHub only offers that trigger for workflows present on the repository's **default branch** — and this fork's default branch is `main`, the pure upstream mirror, which by design never carries fork-owned workflows. So the "Run workflow" button will not appear. Push to `stage` or `bkmain` instead, or build locally (see [Manual builds](#manual-builds)).
 
 ## Managed builds are keyless
 
@@ -81,7 +81,7 @@ The click deliberately does not install. Installing quits the app: it stops ever
 
 Two installed apps both claiming `t3code://` is not a tie macOS breaks predictably — it routes to whichever became the handler most recently, so a staging pairing link could open production. State stays isolated either way, but to a user that is indistinguishable from channel leakage.
 
-Staging therefore pairs by pasting the credential into the pairing screen, which already accepts one (`PairingRouteSurface`). If staging ever needs working deep links, give it its own scheme in `deepLinkScheme` and have expbkt3 generate matching links — but note that `getDesktopScheme` in `apps/desktop/src/electron/ElectronProtocol.ts` is also the origin the renderer is _served_ from, and `apps/server/src/http.ts` allowlists `t3code://app` for CORS. Registering a different OS handler is a one-line manifest change; changing the serving origin is not.
+Staging therefore pairs by pasting the credential into the pairing screen, which already accepts one (`PairingRouteSurface`). If staging ever needs working deep links, give it its own scheme in `deepLinkScheme` and have stagebkt3 generate matching links — but note that `getDesktopScheme` in `apps/desktop/src/electron/ElectronProtocol.ts` is also the origin the renderer is _served_ from, and `apps/server/src/http.ts` allowlists `t3code://app` for CORS. Registering a different OS handler is a one-line manifest change; changing the serving origin is not.
 
 ## What keeps the two apps apart
 
@@ -89,10 +89,14 @@ One repository holds both apps' releases, and the **updater channel** is the onl
 
 | App        | Version                               | Channel              | Manifest                     |
 | ---------- | ------------------------------------- | -------------------- | ---------------------------- |
-| Staging    | `X.Y.Z-staging-nightly.YYYYMMDD.N`    | `staging-nightly`    | `staging-nightly-mac.yml`    |
+| Staging    | `X.Y.Z-stage-nightly.YYYYMMDD.N`      | `stage-nightly`      | `stage-nightly-mac.yml`      |
 | Production | `X.Y.Z-production-nightly.YYYYMMDD.N` | `production-nightly` | `production-nightly-mac.yml` |
 
 A staging release is therefore invisible to a production app, and vice versa.
+The old `staging-nightly` releases from `expbkmain` are also invisible to the
+new `stage-nightly` app. Install the first `stage-nightly` DMG manually over the
+existing Stage BK T3 Code installation; its bundle identity and profile path
+remain the same, and later updates follow `stage` automatically.
 
 Keeping `-nightly.YYYYMMDD.N` as the **suffix** is load-bearing, not decoration:
 
@@ -211,7 +215,7 @@ The build job is the one that holds the signing key — electron-builder signs d
 - **`persist-credentials: false`**, so no token is left in `.git/config` for build scripts to find.
 - **Actions pinned to commit SHAs.** A moving tag is a way for someone else's release to end up in the job that holds your private key.
 
-Pair that with branch protection on `expbkmain` and `bkmain`, CODEOWNERS review for `.github/workflows/**`, `scripts/**` and the lockfile, and **Settings → Actions → Fork pull request workflows from outside collaborators → Require approval for all external contributors**.
+Pair that with branch protection on `stage` and `bkmain`, CODEOWNERS review for `.github/workflows/**`, `scripts/**` and the lockfile, and **Settings → Actions → Fork pull request workflows from outside collaborators → Require approval for all external contributors**.
 
 The trade-off, stated plainly: the private key lives in GitHub Secrets rather than only in a Mac's keychain. For a public repository, secrets are not exposed to fork pull requests, and the triggers above are not fork-reachable. This is the standard pattern for signing any desktop app in CI, and it removes an always-on personal machine from the critical path.
 
@@ -243,7 +247,7 @@ pnpm publish:desktop:bk --channel production \
   --source-sha "$(git rev-parse HEAD)"
 ```
 
-`--source-sha` is required and becomes the release's tag target. Without it `gh release create` cuts the tag from the repository's **default branch**, so the tag would point at `main` while the assets contain `expbkmain` code — a release that lies about what is inside it.
+`--source-sha` is required and becomes the release's tag target. Without it `gh release create` cuts the tag from the repository's **default branch**, so the tag would point at `main` while the assets contain `stage` code — a release that lies about what is inside it.
 
 Add `--dry-run` to run every check without publishing. Do not insert a `--` separator before the flags: with pnpm 11.10.0 the separator reaches the script itself and the Effect CLI reports `Missing required flag`.
 
@@ -280,7 +284,7 @@ npm view t3 dist-tags
 ## Installing (send this to teammates)
 
 1. Install the `BK Code Signing` certificate and set it to **Always Trust** (one-time).
-2. Download the `.dmg` from the [latest prerelease](https://github.com/beknown-work/bkt3code/releases) — `BK T3 Code` for day-to-day work, `Stage BK T3 Code` to try `expbkmain`.
+2. Download the `.dmg` from the [latest prerelease](https://github.com/beknown-work/bkt3code/releases) — `BK T3 Code` for day-to-day work, `Stage BK T3 Code` to try `stage`.
 3. Drag it to Applications.
 4. Builds are not notarised, so macOS quarantines them. Clear that once per app:
    ```sh
@@ -304,7 +308,7 @@ Before advertising automatic updates on a channel, prove all of these. Nothing h
 
 1. **Keyless.** No `.env.local`, no `*CLERK*` variable in the build environment.
 2. **Bundle identity.** `appId`, product name and version are the expected ones for the channel.
-3. **Endpoint scan.** A staging bundle contains only `expbkt3` URLs; production only `bkt3`.
+3. **Endpoint scan.** A staging bundle contains only `stagebkt3` URLs; production only `bkt3`.
 4. **Channel manifest.** The release carries exactly `<channel>-nightly-mac.yml`, and it references the ZIP that is actually attached.
 5. **Tag target.** The release tag resolves to the workflow's `github.sha`, not the default branch.
 6. **Cross-channel isolation.** A higher staging release is never offered to a production app.
@@ -370,7 +374,7 @@ Replace `BK_ICON_BASE_COLOR` in `scripts/lib/bk-brand-icons.ts` to change the co
 
 ## Rollout
 
-Per [AGENTS.md](../../AGENTS.md), changes ship to `expbkmain` and are verified at expbkt3.dev.beknown.live before merging to `bkmain`. Merging to `bkmain` restarts `t3-bkmain.service` and kills the agent sessions running on it.
+Staging desktop releases now build from `stage` and connect to stagebkt3.dev.beknown.live. Production releases build from `bkmain`. Deploying `bkmain` restarts `t3-bkmain.service` and kills the agent sessions running on it.
 
 ## Files
 
