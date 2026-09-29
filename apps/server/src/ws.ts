@@ -3432,9 +3432,9 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetBackgroundPolicy]: (_input) =>
+          // T3-CUSTOM(expbkt3): BEGIN was `backgroundPolicy.snapshot`; thread scopes of other logins are dropped.
           observeRpcEffect(
             WS_METHODS.serverGetBackgroundPolicy,
-            // T3-CUSTOM(expbkt3): was `backgroundPolicy.snapshot`; thread scopes of other logins are dropped.
             Effect.map(backgroundPolicy.snapshot, (snapshot) =>
               redactBackgroundPolicySnapshot(snapshot, currentSessionId),
             ),
@@ -3442,6 +3442,7 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",

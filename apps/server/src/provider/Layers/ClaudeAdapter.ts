@@ -5005,6 +5005,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   type: "http",
                   url: mcpSession.endpoint,
                   headers: {
+                    // T3-CUSTOM(expbkt3): BEGIN bearer via env reference, plus proxied upstream MCP servers.
                     // Claude Code expands environment references in HTTP MCP
                     // headers. Keep the short-lived credential out of process
                     // arguments and provider diagnostic payloads.
@@ -5023,6 +5024,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                     },
                   ]),
                 ),
+                // T3-CUSTOM(expbkt3): END
               },
             }
           : {}),
