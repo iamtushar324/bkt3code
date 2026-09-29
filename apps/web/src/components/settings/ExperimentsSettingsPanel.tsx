@@ -30,6 +30,8 @@ export function ExperimentsSettingsPanel() {
   const agentUiSurfacesEnabled = useClientSettings((settings) => settings.agentUiSurfacesEnabled);
   // T3-CUSTOM(expbkt3): smart git button asks the agent.
   const smartGitPromptsEnabled = useClientSettings((settings) => settings.smartGitPromptsEnabled);
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  const chatCommentsEnabled = useClientSettings((settings) => settings.chatCommentsEnabled);
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   const nativePullRequestViewEnabled = useClientSettings(
     (settings) => settings.nativePullRequestViewEnabled,
@@ -99,6 +101,21 @@ export function ExperimentsSettingsPanel() {
                 updateSettings({ smartGitPromptsEnabled: Boolean(checked) })
               }
               aria-label="Smart git button"
+            />
+          }
+        />
+        {/* T3-CUSTOM(expbkt3): END */}
+        {/* T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages. */}
+        <SettingsRow
+          {...searchableSetting("chat-comments")}
+          description="Select text in an agent message and leave a comment, or mark it Good, Okay or Remove. Open comments are highlighted in the message, listed in the Comments panel beside the chat, and sent to the agent with every message until you resolve them; the agent can reply and mark one addressed. While off, the selection actions, highlights, panel entry and composer strip are hidden on this device — comments that are already open still reach the agent until they are resolved."
+          control={
+            <Switch
+              checked={chatCommentsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ chatCommentsEnabled: Boolean(checked) })
+              }
+              aria-label="Chat comments"
             />
           }
         />

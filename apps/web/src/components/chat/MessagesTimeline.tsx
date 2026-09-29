@@ -175,6 +175,11 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
+// T3-CUSTOM(expbkt3): review comments on agent messages.
+import {
+  ThreadCommentMarks,
+  ThreadCommentsSelectionActions,
+} from "~/fork/threadComments/threadCommentsSurface";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   AssistantCitationSource,
@@ -1365,6 +1370,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               viewport={timelineViewportElement}
               threadRef={citationThreadRef}
               onCite={onCiteAssistantText}
+              extraActions={ThreadCommentsSelectionActions} // T3-CUSTOM(expbkt3): review comments.
             />
           ) : null}
           <LegendList<MessagesTimelineRow>
@@ -2489,6 +2495,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
+        {/* T3-CUSTOM(expbkt3): review-comment highlights and pins for this message. */}
+        <ThreadCommentMarks messageId={row.message.id} threadRef={ctx.threadRef} />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}

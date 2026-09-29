@@ -848,6 +848,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/experiments",
     searchTerms: ["commit push create pr pull request agent prompt header highlight conductor"],
   },
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  {
+    id: "chat-comments",
+    title: "Chat comments",
+    to: "/settings/experiments",
+    searchTerms: ["review comment good okay remove highlight resolve agent message selection"],
+  },
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   {
     id: "native-pull-request-view",

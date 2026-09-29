@@ -211,6 +211,13 @@ import { PlanReviewTakeover } from "../fork/planReviewTakeover";
 // T3-CUSTOM(expbkt3): dock the one live composer inside native plan review.
 import { PlanReviewComposerDock } from "../fork/planReviewComposerDock";
 import { usePlanReviewTakeoverStore } from "../planReviewTakeoverStore";
+// T3-CUSTOM(expbkt3): review comments on agent messages.
+import {
+  THREAD_COMMENTS_EMPTY_SEND_TEXT,
+  ThreadCommentsPanel,
+  threadCommentsEmptySendAllowed,
+  useThreadCommentsChatView,
+} from "../fork/threadComments/threadCommentsSurface";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiExpandedSurface } from "../fork/agentUiSurface";
 import {
@@ -7019,6 +7026,12 @@ export default function ChatView(props: ChatViewProps) {
     usageLimitsBanner,
     wokeThreadBannerItem,
   ]);
+  // T3-CUSTOM(expbkt3): BEGIN — review comments: panel opener, composer strip, active summary.
+  const threadCommentsView = useThreadCommentsChatView({
+    threadRef: activeThreadRef,
+    bannerItems: composerBannerItems,
+  });
+  // T3-CUSTOM(expbkt3): END
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
@@ -8060,7 +8073,8 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       return;
     }
-    if (!hasSendableContent) {
+    // T3-CUSTOM(expbkt3): open review comments make an empty send valid; the server appends them.
+    if (!hasSendableContent && !threadCommentsEmptySendAllowed()) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -8109,7 +8123,11 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       useQueuedMessageStore.getState().enqueue(activeThreadKey, {
-        prompt: promptForSend,
+        // T3-CUSTOM(expbkt3): a comments-only send queues with the text it will carry.
+        prompt:
+          promptForSend.trim() === "" && threadCommentsEmptySendAllowed()
+            ? THREAD_COMMENTS_EMPTY_SEND_TEXT
+            : promptForSend,
         images: [...composerImages],
         files: [...composerFiles],
         terminalContexts: [...composerTerminalContexts],
@@ -8197,7 +8215,12 @@ export default function ChatView(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      // T3-CUSTOM(expbkt3): a comments-only send asks the agent to work through them.
+      text:
+        messageTextForSend ||
+        (threadCommentsEmptySendAllowed()
+          ? THREAD_COMMENTS_EMPTY_SEND_TEXT
+          : ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -10116,7 +10139,11 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : /* T3-CUSTOM(expbkt3): BEGIN — native plan review panel. */
+    ) : /* T3-CUSTOM(expbkt3): BEGIN — review comments panel. */
+    renderedRightPanelSurface?.kind === "comments" ? (
+      <ThreadCommentsPanel key={activeThreadKey} threadRef={activeThreadRef} />
+    ) : /* T3-CUSTOM(expbkt3): END */
+    /* T3-CUSTOM(expbkt3): BEGIN — native plan review panel. */
     renderedRightPanelSurface?.kind === "planReview" ? (
       <Suspense fallback={null}>
         <PlanReviewPanel
@@ -10632,7 +10659,7 @@ export default function ChatView(props: ChatViewProps) {
                                       : projectCloneSendBlockReason
                             }
                             isPreparingWorktree={isPreparingWorktree}
-                            bannerItems={composerBannerItems}
+                            bannerItems={threadCommentsView.bannerItems} // T3-CUSTOM(expbkt3): review-comments strip appended.
                             // With attachments or contexts aboard the pick just inserts the
                             // text, so it sends as a prompt like the typed path would.
                             onUsageLimitsCommand={
@@ -10911,6 +10938,7 @@ export default function ChatView(props: ChatViewProps) {
           agentsAvailable
           deviceAvailable={activeThreadRef !== null}
           liveAgentCount={agentPanelModel.liveCount}
+          {...threadCommentsView.tabProps} // T3-CUSTOM(expbkt3): review comments surface.
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -10968,6 +10996,7 @@ export default function ChatView(props: ChatViewProps) {
             agentsAvailable
             deviceAvailable={activeThreadRef !== null}
             liveAgentCount={agentPanelModel.liveCount}
+            {...threadCommentsView.tabProps} // T3-CUSTOM(expbkt3): review comments surface.
           >
             {rightPanelContent}
           </RightPanelTabs>
