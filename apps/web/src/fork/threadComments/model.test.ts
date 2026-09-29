@@ -9,9 +9,13 @@ import {
   countComments,
   deriveCommentDisplayState,
   filterComments,
+  filterCount,
   formatCommentsHeader,
   groupCommentsByMessage,
   highlightNameForComment,
+  matchesCommentsFilter,
+  messageMarkerState,
+  mostUrgentComment,
   quotePreview,
   THREAD_COMMENT_ACTIVE_HIGHLIGHT,
   THREAD_COMMENT_HIGHLIGHT_NAMES,
@@ -100,8 +104,25 @@ describe("counts, filter and header", () => {
       "addressed",
       "open",
     ]);
+    expect(filterComments(comments, "unaddressed").map((entry) => entry.status)).toEqual([
+      "open",
+      "open",
+    ]);
+    expect(filterComments(comments, "addressed").map((entry) => entry.status)).toEqual([
+      "addressed",
+    ]);
     expect(filterComments(comments, "resolved")).toHaveLength(1);
     expect(filterComments(comments, "all")).toHaveLength(4);
+    expect(matchesCommentsFilter({ status: "addressed" }, "unaddressed")).toBe(false);
+  });
+
+  it("badges each filter with the count it would show", () => {
+    const counts = countComments(comments);
+    expect(filterCount(counts, "open")).toBe(3);
+    expect(filterCount(counts, "unaddressed")).toBe(2);
+    expect(filterCount(counts, "addressed")).toBe(1);
+    expect(filterCount(counts, "resolved")).toBe(1);
+    expect(filterCount(counts, "all")).toBe(4);
   });
 
   it("formats the header and hides the addressed count when it is zero", () => {
@@ -179,6 +200,33 @@ describe("composer strip and empty send", () => {
     expect(allowsEmptySend({ ...idle, enabled: false })).toBe(false);
     // While a turn runs an empty Enter keeps upstream's meaning: nothing is queued.
     expect(allowsEmptySend({ ...idle, running: true })).toBe(false);
+  });
+});
+
+describe("message marker", () => {
+  it("counts unresolved comments and takes the most urgent colour", () => {
+    expect(
+      messageMarkerState([comment({ status: "addressed" }), comment({ status: "resolved" })]),
+    ).toEqual({ urgency: "addressed", count: 1 });
+    expect(
+      messageMarkerState([
+        comment({ status: "addressed" }),
+        comment({ status: "open" }),
+        comment({ status: "open" }),
+      ]),
+    ).toEqual({ urgency: "open", count: 3 });
+    expect(messageMarkerState([comment({ status: "resolved" })])).toBeNull();
+  });
+
+  it("opens the oldest open comment, else the oldest addressed one", () => {
+    const addressedOld = comment({ number: 1, status: "addressed" });
+    const openNew = comment({ number: 3, status: "open" });
+    const openNewer = comment({ number: 4, status: "open" });
+    expect(mostUrgentComment([openNewer, addressedOld, openNew])).toBe(openNew);
+    expect(mostUrgentComment([comment({ number: 9, status: "resolved" }), addressedOld])).toBe(
+      addressedOld,
+    );
+    expect(mostUrgentComment([comment({ status: "resolved" })])).toBeNull();
   });
 });
 

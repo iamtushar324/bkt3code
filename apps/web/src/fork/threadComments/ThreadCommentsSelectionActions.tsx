@@ -18,6 +18,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { toastManager } from "../../components/ui/toast";
 import { cn } from "../../lib/utils";
 import { useThreadCommentsCommands, useThreadCommentsEnabled } from "./hooks";
+import { applyMarkdownShortcutToTextarea, markdownShortcutForKey } from "./markdownShortcuts";
 import { buildCommentAnchor, quotePreview, THREAD_COMMENT_KIND_LABEL } from "./model";
 import type { AssistantSelectionToolbarExtrasProps } from "./selectionToolbarExtras";
 
@@ -144,6 +145,12 @@ export function ThreadCommentsSelectionActions({
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.nativeEvent.isComposing) return;
+            const shortcut = markdownShortcutForKey(event);
+            if (shortcut !== null && textareaRef.current) {
+              event.preventDefault();
+              setBody(applyMarkdownShortcutToTextarea(textareaRef.current, shortcut));
+              return;
+            }
             if (event.key === "Escape") {
               event.preventDefault();
               setEditing(false);
@@ -168,7 +175,9 @@ export function ThreadCommentsSelectionActions({
             onChange={(event) => setBody(event.target.value)}
           />
           <div className="mt-1.5 flex items-center gap-2">
-            <span className="flex items-center gap-1 text-3xs text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-1 text-3xs text-muted-foreground">
+              Markdown supported
+              <span aria-hidden>·</span>
               <Kbd>{isApplePlatform ? "⌘" : "Ctrl"}↵</Kbd> add
               <span aria-hidden>·</span>
               <Kbd>Esc</Kbd> cancel
