@@ -79,6 +79,7 @@ import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
   EnvironmentAppearanceDialogHost,
   EnvironmentAppearanceMenuItem,
+  EnvironmentAppearanceSettingsRow,
 } from "../environment/EnvironmentAppearanceDialog";
 import { EnvironmentAppearanceIcon } from "../environment/EnvironmentBadge";
 import {
@@ -3749,6 +3750,10 @@ export function ConnectionsSettings() {
         </>
       ) : (
         <SettingsSection {...searchableSetting("connections-environment")}>
+          {/* T3-CUSTOM(expbkt3): members lack the header menu above but may rename the host. */}
+          {primaryEnvironmentId !== null ? (
+            <EnvironmentAppearanceSettingsRow environmentId={primaryEnvironmentId} />
+          ) : null}
           <SettingsRow
             title="Administrative access"
             description="Pairing links and client-session management require the access:write scope for this backend."

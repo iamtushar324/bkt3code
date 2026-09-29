@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { MenuItem } from "../ui/menu";
+import { SettingsRow } from "../settings/settingsLayout";
 import { EnvironmentAppearanceEditor } from "./EnvironmentAppearanceEditor";
 
 const useAppearanceDialogStore = create<{
@@ -49,6 +50,33 @@ export function EnvironmentAppearanceMenuItem({
       <PaletteIcon />
       Appearance…
     </MenuItem>
+  );
+}
+
+/**
+ * Settings row that opens the same dialog. Used where there is no row menu to hang
+ * `EnvironmentAppearanceMenuItem` on: a member session (no `access:write`) sees
+ * Connections without the primary environment's header menu, but may still write
+ * server settings (`orchestration:operate`), so it can rename the host too.
+ */
+export function EnvironmentAppearanceSettingsRow({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
+  const open = useAppearanceDialogStore((state) => state.open);
+  const environment = useEnvironment(environmentId);
+  return (
+    <SettingsRow
+      title="Appearance"
+      description={`Nickname, icon and colour for ${environment?.label ?? "this host"}, shown to everyone connected to it.`}
+      control={
+        <Button type="button" variant="outline" size="xs" onClick={() => open(environmentId)}>
+          <PaletteIcon />
+          Edit…
+        </Button>
+      }
+    />
   );
 }
 
