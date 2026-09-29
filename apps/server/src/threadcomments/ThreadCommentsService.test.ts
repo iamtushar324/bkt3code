@@ -241,7 +241,7 @@ describe("ThreadCommentsService", () => {
         });
         const earlyResolvedAt = early.comments[2]!.resolvedAt;
 
-        const snapshot = yield* service.resolveAll(threadId);
+        const snapshot = yield* service.resolveAll({ threadId });
         expect(snapshot.comments.map((comment) => comment.status)).toEqual([
           "resolved",
           "resolved",
@@ -377,6 +377,45 @@ describe("ThreadCommentsService", () => {
         const snapshots = yield* Fiber.join(collector);
         expect(snapshots.map((snapshot) => snapshot.comments.length)).toEqual([1, 2, 2]);
         expect(snapshots.map((snapshot) => snapshot.deliveryPaused)).toEqual([false, false, true]);
+      }),
+    ),
+  );
+
+  it.effect("resolveAll with only: addressed leaves open comments for the agent", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        yield* service.add({ threadId, kind: "comment", anchor: anchor(), body: "open", ...actor });
+        const two = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "done",
+          ...actor,
+        });
+        yield* service.agentReply({
+          threadId,
+          commentId: two.comments[1]!.commentId,
+          addressed: true,
+        });
+        // Another thread's addressed comment is not touched.
+        const elsewhere = yield* service.add({
+          threadId: otherThreadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "elsewhere",
+          ...actor,
+        });
+        yield* service.agentReply({
+          threadId: otherThreadId,
+          commentId: elsewhere.comments[0]!.commentId,
+          addressed: true,
+        });
+
+        const snapshot = yield* service.resolveAll({ threadId, only: "addressed" });
+        expect(snapshot.comments.map((comment) => comment.status)).toEqual(["open", "resolved"]);
+        expect(snapshot.comments[1]?.resolvedAt).not.toBeNull();
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+        expect((yield* service.snapshot(otherThreadId)).comments[0]?.status).toBe("addressed");
       }),
     ),
   );

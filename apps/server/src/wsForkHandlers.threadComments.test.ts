@@ -202,6 +202,21 @@ describe("thread comment websocket handlers", () => {
     }),
   );
 
+  it.effect("forwards the resolve-all scope to the service", () =>
+    Effect.gen(function* () {
+      const { handlers, calls } = makeHandlers();
+      yield* handlers[WS_FORK_METHODS.threadCommentsResolveAll]({
+        threadId: visibleThreadId,
+        only: "addressed",
+      });
+      yield* handlers[WS_FORK_METHODS.threadCommentsResolveAll]({ threadId: visibleThreadId });
+      expect(calls).toEqual([
+        { method: "resolveAll", input: { threadId: visibleThreadId, only: "addressed" } },
+        { method: "resolveAll", input: { threadId: visibleThreadId } },
+      ]);
+    }),
+  );
+
   it.effect("streams snapshots for an accessible thread", () =>
     Effect.gen(function* () {
       const { handlers } = makeHandlers();

@@ -17,6 +17,7 @@ import {
   type ThreadCommentsAddInput,
   type ThreadCommentsRemoveInput,
   type ThreadCommentsReplyInput,
+  type ThreadCommentsResolveAllInput,
   type ThreadCommentsSetDeliveryPausedInput,
   type ThreadCommentsSetStatusInput,
   type ThreadCommentsSnapshot,
@@ -63,9 +64,12 @@ export interface ThreadCommentsServiceShape {
   readonly setStatus: (
     input: ThreadCommentsSetStatusInput,
   ) => Effect.Effect<ThreadCommentsSnapshot, ThreadCommentsError>;
-  /** Resolves every open and addressed comment on the thread. */
+  /**
+   * Resolves every open and addressed comment on the thread, or with
+   * `only: "addressed"` just the ones the agent has marked done.
+   */
   readonly resolveAll: (
-    threadId: ThreadId,
+    input: ThreadCommentsResolveAllInput,
   ) => Effect.Effect<ThreadCommentsSnapshot, ThreadCommentsError>;
   readonly remove: (
     input: ThreadCommentsRemoveInput,
@@ -269,14 +273,14 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const resolveAll: ThreadCommentsServiceShape["resolveAll"] = (threadId) =>
+  const resolveAll: ThreadCommentsServiceShape["resolveAll"] = (input) =>
     mutate(
       "resolveAll",
-      threadId,
+      input.threadId,
       Effect.gen(function* () {
         const resolvedAt = yield* nowIso;
         yield* repository
-          .resolveAll({ threadId, resolvedAt })
+          .resolveAll({ threadId: input.threadId, resolvedAt, only: input.only })
           .pipe(Effect.mapError(internal("resolveAll")));
       }),
     );
