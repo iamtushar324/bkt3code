@@ -167,6 +167,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** T3-CUSTOM(expbkt3): server exposes review comments on agent messages
       (threadComments.* and subscribeThreadComments). Same contract as planReview. */
   threadComments: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): server answers the `t3_user_presence` MCP tool and
+      `GET /api/presence`, and clients report the open thread as a background scope. */
+  userPresence: Schema.optionalKey(Schema.Boolean),
   /** Server supports legacy linkedPullRequest updates through thread.meta.update.
       Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),

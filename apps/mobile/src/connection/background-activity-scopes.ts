@@ -90,3 +90,29 @@ export function onRetainedMobileBackgroundScopesChange(listener: () => void): ()
     listeners.delete(listener);
   };
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — retain a scope without a subscription, so the
+// thread screen can report the open thread (features/presence).
+export function retainMobileBackgroundScope(
+  environmentId: EnvironmentId,
+  scope: BackgroundScope,
+): () => void {
+  const key = stableScopeKey(environmentId, scope);
+  const current = retainedScopes.get(key);
+  if (current) {
+    current.refCount += 1;
+  } else {
+    retainedScopes.set(key, { environmentId, scope, refCount: 1 });
+    notify();
+  }
+  return () => {
+    const retained = retainedScopes.get(key);
+    if (!retained) return;
+    retained.refCount -= 1;
+    if (retained.refCount <= 0) {
+      retainedScopes.delete(key);
+      notify();
+    }
+  };
+}
+// T3-CUSTOM(expbkt3): END

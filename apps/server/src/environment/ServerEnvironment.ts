@@ -254,6 +254,8 @@ export const make = Effect.gen(function* () {
       planReview: true,
       // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
       threadComments: true,
+      // T3-CUSTOM(expbkt3): t3_user_presence and GET /api/presence.
+      userPresence: true,
       environmentIcon: true,
       // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
       environmentAppearance: true,
