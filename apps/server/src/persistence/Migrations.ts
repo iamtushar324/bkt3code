@@ -148,6 +148,8 @@ import Migration1037 from "./Migrations/053_PullRequestFilesViewed.ts";
 import Migration1038 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 // T3-CUSTOM(expbkt3): per-thread custom sidebar group.
 import Migration1039 from "./Migrations/1039_ProjectionThreadsCustomGroup.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import Migration1040 from "./Migrations/1040_ThreadComments.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -285,6 +287,8 @@ const migrationEntries = [
   [1038, "ProjectionThreadsAutoSettleDisabledAt", Migration1038],
   // T3-CUSTOM(expbkt3): per-thread custom sidebar group.
   [1039, "ProjectionThreadsCustomGroup", Migration1039],
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  [1040, "ThreadComments", Migration1040],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

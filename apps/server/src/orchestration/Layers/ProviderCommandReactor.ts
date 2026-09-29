@@ -83,6 +83,8 @@ import {
   unresolvedSessionIdentityEnvironment,
 } from "../../identity/SessionIdentityEnvironment.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
+// T3-CUSTOM(expbkt3): open review comments ride along with every turn.
+import { appendOpenThreadComments } from "../../threadcomments/turnContext.ts";
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
@@ -1764,10 +1766,15 @@ const make = Effect.gen(function* () {
     }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      }),
+      // T3-CUSTOM(expbkt3): BEGIN open review comments ride along with every turn.
+      messageText: yield* appendOpenThreadComments(
+        event.payload.threadId,
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+      ),
+      // T3-CUSTOM(expbkt3): END
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

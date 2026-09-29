@@ -27,6 +27,8 @@ import { OrchestrationAccessControl } from "../../../orchestration/Services/Acce
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
+// T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
@@ -48,6 +50,7 @@ const dependencies = [
   Crypto.Crypto,
 ];
 const agentUiDependencies = [...dependencies, AgentUiService];
+const threadCommentsDependencies = [...dependencies, ThreadCommentsService];
 const configurationDependencies = [...dependencies, ProviderRegistry, ServerSettingsService];
 const ownershipDependencies = [ClerkDirectory, ServerConfig];
 const projectDependencies = [
@@ -671,6 +674,57 @@ export const T3ShowUiTool = readonlyTool(
 );
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — review comments on assistant messages in chat.
+//
+// Both tools act on the caller's own session only. Names avoid "create",
+// "file", "agent" and "command" for the same classifier reason as t3_show_ui.
+export const T3ListCommentsTool = readonlyTool(
+  Tool.make("t3_list_comments", {
+    description:
+      "List the review comments the user left on your earlier messages in this session. A comment quotes a passage of one of your messages and carries either free text or a reaction: good (keep this as it is), okay (acceptable, no change needed) or remove (drop this / do not do this). Status `open` means the comment is an active instruction for you and is re-sent with every turn until you mark it addressed with t3_reply_comment; `addressed` means you reported it done and the user has not closed it yet; `resolved` means the user closed it. Defaults to open comments only.",
+    parameters: Schema.Struct({
+      status: Schema.optional(
+        described(
+          Schema.Literals(["open", "addressed", "resolved", "all"]),
+          "Which comments to return. Defaults to `open`, the ones still waiting on you.",
+        ),
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlToolError,
+    dependencies: threadCommentsDependencies,
+  }).annotate(Tool.Title, "List review comments on this session"),
+);
+
+export const T3ReplyCommentTool = mutatingTool(
+  Tool.make("t3_reply_comment", {
+    description:
+      "Reply to one of the user's review comments on this session, and/or mark it addressed. Call it once per comment you have handled: pass `addressed: true` when the request in the comment is done, with a short `body` saying what you did (or, for a reaction, that you took note). Use a `body` without `addressed` to ask a question or explain why you are not doing it; the comment then stays open and is re-sent next turn. Only the user can resolve a comment; an addressed comment waits for them, and a user reply reopens it. Pass at least one of `body` or `addressed`.",
+    parameters: Schema.Struct({
+      commentId: described(
+        Schema.String,
+        "The comment's id, as shown in the `id` attribute of the review_comment block in your input or by t3_list_comments.",
+      ),
+      body: Schema.optional(
+        described(
+          Schema.String,
+          "Your reply, shown to the user under the comment. Keep it to a sentence or two.",
+        ),
+      ),
+      addressed: Schema.optional(
+        described(
+          Schema.Boolean,
+          "Set to true once you have done what the comment asks; it stops the comment being re-sent to you. Omit or pass false to reply without closing it.",
+        ),
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlToolError,
+    dependencies: threadCommentsDependencies,
+  }).annotate(Tool.Title, "Reply to a review comment"),
+);
+// T3-CUSTOM(expbkt3): END
+
 export const T3ControlToolkit = Toolkit.make(
   T3ListSessionsTool,
   T3GetSessionTool,
@@ -692,4 +746,7 @@ export const T3ControlToolkit = Toolkit.make(
   T3DispatchCommandTool,
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
   T3ShowUiTool,
+  // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
+  T3ListCommentsTool,
+  T3ReplyCommentTool,
 );
