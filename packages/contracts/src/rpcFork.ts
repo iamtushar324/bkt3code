@@ -36,6 +36,16 @@ import {
   PlanReviewVersionDiffResult,
 } from "./planReview.ts";
 import { ThreadUsage, ThreadUsageInput } from "./threadUsage.ts";
+import {
+  ThreadCommentsAddInput,
+  ThreadCommentsError,
+  ThreadCommentsRemoveInput,
+  ThreadCommentsReplyInput,
+  ThreadCommentsSetDeliveryPausedInput,
+  ThreadCommentsSetStatusInput,
+  ThreadCommentsSnapshot,
+  ThreadCommentsThreadInput,
+} from "./threadComments.ts";
 import { UsageReadError } from "./usage.ts";
 import {
   SessionArchiveBackfillInput,
@@ -106,6 +116,15 @@ export const WS_FORK_METHODS = {
   agentUiGetRender: "agentUi.getRender",
   // T3-CUSTOM(expbkt3): per-thread API-level cost.
   threadUsageGet: "threadUsage.get",
+  // T3-CUSTOM(expbkt3): review comments on agent messages.
+  threadCommentsList: "threadComments.list",
+  threadCommentsAdd: "threadComments.add",
+  threadCommentsReply: "threadComments.reply",
+  threadCommentsSetStatus: "threadComments.setStatus",
+  threadCommentsResolveAll: "threadComments.resolveAll",
+  threadCommentsRemove: "threadComments.remove",
+  threadCommentsSetDeliveryPaused: "threadComments.setDeliveryPaused",
+  subscribeThreadComments: "subscribeThreadComments",
 } as const;
 
 export const WsPersonalMcpGetProfileRpc = Rpc.make(WS_FORK_METHODS.personalMcpGetProfile, {
@@ -362,7 +381,71 @@ export const WsSubscribePlanReviewRpc = Rpc.make(WS_FORK_METHODS.subscribePlanRe
   stream: true,
 });
 
+// T3-CUSTOM(expbkt3): review comments on agent messages. Every mutation returns
+// the thread's fresh snapshot; the subscription pushes one after any client's write.
+const threadCommentsError = Schema.Union([ThreadCommentsError, EnvironmentAuthorizationError]);
+
+export const WsThreadCommentsListRpc = Rpc.make(WS_FORK_METHODS.threadCommentsList, {
+  payload: ThreadCommentsThreadInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsAddRpc = Rpc.make(WS_FORK_METHODS.threadCommentsAdd, {
+  payload: ThreadCommentsAddInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsReplyRpc = Rpc.make(WS_FORK_METHODS.threadCommentsReply, {
+  payload: ThreadCommentsReplyInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsSetStatusRpc = Rpc.make(WS_FORK_METHODS.threadCommentsSetStatus, {
+  payload: ThreadCommentsSetStatusInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsResolveAllRpc = Rpc.make(WS_FORK_METHODS.threadCommentsResolveAll, {
+  payload: ThreadCommentsThreadInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsRemoveRpc = Rpc.make(WS_FORK_METHODS.threadCommentsRemove, {
+  payload: ThreadCommentsRemoveInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
+export const WsThreadCommentsSetDeliveryPausedRpc = Rpc.make(
+  WS_FORK_METHODS.threadCommentsSetDeliveryPaused,
+  {
+    payload: ThreadCommentsSetDeliveryPausedInput,
+    success: ThreadCommentsSnapshot,
+    error: threadCommentsError,
+  },
+);
+
+export const WsSubscribeThreadCommentsRpc = Rpc.make(WS_FORK_METHODS.subscribeThreadComments, {
+  payload: ThreadCommentsThreadInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+  stream: true,
+});
+
 export const FORK_WS_RPCS = [
+  WsThreadCommentsListRpc,
+  WsThreadCommentsAddRpc,
+  WsThreadCommentsReplyRpc,
+  WsThreadCommentsSetStatusRpc,
+  WsThreadCommentsResolveAllRpc,
+  WsThreadCommentsRemoveRpc,
+  WsThreadCommentsSetDeliveryPausedRpc,
+  WsSubscribeThreadCommentsRpc,
   WsThreadUsageGetRpc,
   WsPlanReviewGetRpc,
   WsPlanReviewListRpc,

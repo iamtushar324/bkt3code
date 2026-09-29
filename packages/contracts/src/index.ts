@@ -37,6 +37,8 @@ export * from "./linearIssue.ts";
 export * from "./planReview.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 export * from "./agentUi.ts";
+// T3-CUSTOM(expbkt3): review comments on agent messages in the main chat.
+export * from "./threadComments.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";

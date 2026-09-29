@@ -164,6 +164,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       fork servers from before it shipped, so clients hide the plan-review
       surface entirely rather than probing for it. */
   planReview: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): server exposes review comments on agent messages
+      (threadComments.* and subscribeThreadComments). Same contract as planReview. */
+  threadComments: Schema.optionalKey(Schema.Boolean),
   /** Server supports legacy linkedPullRequest updates through thread.meta.update.
       Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
