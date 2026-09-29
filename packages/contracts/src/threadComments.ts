@@ -108,6 +108,16 @@ export type ThreadCommentsSnapshot = typeof ThreadCommentsSnapshot.Type;
 export const ThreadCommentsThreadInput = Schema.Struct({ threadId: ThreadId });
 export type ThreadCommentsThreadInput = typeof ThreadCommentsThreadInput.Type;
 
+/**
+ * Resolve every unresolved comment, or with `only: "addressed"` just the ones the
+ * agent has marked done. Absent `only` keeps the original resolve-all behaviour.
+ */
+export const ThreadCommentsResolveAllInput = Schema.Struct({
+  threadId: ThreadId,
+  only: Schema.optional(Schema.Literal("addressed")),
+});
+export type ThreadCommentsResolveAllInput = typeof ThreadCommentsResolveAllInput.Type;
+
 export const ThreadCommentsAddInput = Schema.Struct({
   threadId: ThreadId,
   kind: ThreadCommentKind,
