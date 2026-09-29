@@ -10,8 +10,6 @@ import {
   type UserId,
 } from "@t3tools/contracts";
 
-import { withPresenceEnvironment } from "../presence/presenceEnvironment.expbkt3.ts"; // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL.
-
 export interface McpUpstreamServerConfig {
   readonly id: PersonalMcpIntegrationId;
   readonly name: string;
@@ -48,23 +46,15 @@ export interface McpProviderSessionConfig {
 /** Provider env with the device variables applied over `base`, or `base` untouched. */
 export function withAgentDeviceEnvironment(
   base: NodeJS.ProcessEnv,
-  // T3-CUSTOM(expbkt3): every adapter passes the full config; endpoint and
-  // threadId feed BK_T3_PRESENCE_URL (presence/presenceEnvironment.expbkt3.ts).
-  config:
-    | (Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> &
-        Partial<Pick<McpProviderSessionConfig, "endpoint" | "threadId">>)
-    | undefined,
+  config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,
 ): NodeJS.ProcessEnv {
   const extra = config?.agentDeviceEnvironment;
-  // T3-CUSTOM(expbkt3): BEGIN — presence URL rides on the same seam as the device env.
-  const withPresence = withPresenceEnvironment(base, config);
-  if (!extra) return withPresence;
-  // T3-CUSTOM(expbkt3): END
+  if (!extra) return base;
   const separator = extra.PATH_SEPARATOR ?? ":";
   const basePath = base.PATH ?? base.Path;
   const { PATH: shimDir, PATH_SEPARATOR: _separator, ...rest } = extra;
   return {
-    ...withPresence, // T3-CUSTOM(expbkt3): was `...base`.
+    ...base,
     ...rest,
     ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
   };

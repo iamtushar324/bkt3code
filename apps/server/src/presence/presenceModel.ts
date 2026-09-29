@@ -29,6 +29,12 @@ export const PRESENCE_WARMUP_MS = 2 * PRESENCE_HEARTBEAT_INTERVAL_MS;
  * escalating to Mattermost.
  */
 export const PRESENCE_RECENT_EVIDENCE_MS = 2 * 60_000;
+/**
+ * A focused window left alone is not a person reading it. "Viewing" and
+ * "active" both need an input event within this window; after it the client
+ * is idle, even with the session open and the window focused.
+ */
+export const PRESENCE_INTERACTION_WINDOW_MS = 3 * 60_000;
 
 export type PresenceState =
   | "viewing-this-session"
@@ -96,7 +102,8 @@ export interface PresenceSessionInput {
 
 export interface PresenceReportInput {
   readonly nowMs: number;
-  readonly trackingSinceMs: number;
+  /** When the first client report arrived; `null` until one has. */
+  readonly trackingSinceMs: number | null;
   readonly session: PresenceSessionInput;
   readonly people: ReadonlyArray<PresencePersonInput>;
   /** Extra caveats the caller already knows (for example "thread has no owner"). */
@@ -111,8 +118,10 @@ export interface PresenceClientReport {
   readonly focused: boolean;
   readonly recentlyInteracted: boolean;
   readonly appState: PresenceClientInput["appState"];
-  readonly viewingThreadId: string | null;
+  /** From the last report; `live` says whether that report still counts. */
   readonly viewingThisSession: boolean;
+  /** Some other session was open instead. Which one is never reported. */
+  readonly viewingAnotherSession: boolean;
   readonly lastReportAt: string;
   readonly secondsSinceReport: number;
   readonly leaseExpiresAt: string;
@@ -148,7 +157,7 @@ export interface PresenceRecommendation {
 
 export interface PresenceReport {
   readonly now: string;
-  readonly trackingSince: string;
+  readonly trackingSince: string | null;
   readonly heartbeatIntervalMs: number;
   readonly leaseTtlMs: number;
   readonly session: PresenceSessionInput;
@@ -205,6 +214,15 @@ export const isClientLive = (client: PresenceClientInput, nowMs: number): boolea
 export const clientViewsSession = (client: PresenceClientInput, sessionId: string): boolean =>
   client.viewingThreadIds.includes(sessionId);
 
+const isForeground = (client: PresenceClientInput): boolean =>
+  client.visible && client.appState !== "background" && client.appState !== "inactive";
+
+/** An input event within the interaction window, by the report flag or the tracker's history. */
+export const interactedRecently = (client: PresenceClientInput, nowMs: number): boolean =>
+  client.lastInteractionAtMs === null
+    ? client.recentlyInteracted
+    : nowMs - client.lastInteractionAtMs <= PRESENCE_INTERACTION_WINDOW_MS;
+
 /**
  * The state one client contributes. `null` when the client's lease has
  * expired: an expired lease says nothing about now, only about the past.
@@ -215,12 +233,11 @@ export function classifyClient(
   nowMs: number,
 ): PresenceState | null {
   if (!isClientLive(client, nowMs)) return null;
-  const foreground =
-    client.visible && client.appState !== "background" && client.appState !== "inactive";
-  if (!foreground) return "background";
-  const engaged = client.focused || client.recentlyInteracted;
-  if (clientViewsSession(client, sessionId) && engaged) return "viewing-this-session";
-  if (client.focused && client.recentlyInteracted) return "active-elsewhere";
+  if (!isForeground(client)) return "background";
+  const interacted = interactedRecently(client, nowMs);
+  const viewing = clientViewsSession(client, sessionId);
+  if (viewing && interacted) return "viewing-this-session";
+  if (!viewing && client.focused && interacted) return "active-elsewhere";
   return "idle";
 }
 
@@ -241,16 +258,22 @@ const describeClient = (
       ? client.recentlyInteracted
         ? "interacting"
         : "no input seen"
-      : `interacted ${describeAgo(nowMs, client.lastInteractionAtMs)}`;
+      : interactedRecently(client, nowMs)
+        ? `interacted ${describeAgo(nowMs, client.lastInteractionAtMs)}`
+        : `no input for ${describeAgo(nowMs, client.lastInteractionAtMs).replace(/ ago$/, "")}`;
   switch (state) {
     case "viewing-this-session":
       return `${client.focused ? "focused" : "visible"} ${kind}, this session open, ${interaction}`;
-    case "active-elsewhere": {
-      const other = client.viewingThreadIds.find((id) => id !== sessionId);
-      return `focused ${kind} on ${other ? `session ${other}` : "another view"}, ${interaction}`;
+    case "active-elsewhere":
+      return `focused ${kind} in ${client.viewingThreadIds.length > 0 ? "another session" : "another view"}, ${interaction}`;
+    case "idle": {
+      const where = clientViewsSession(client, sessionId)
+        ? "this session open"
+        : client.viewingThreadIds.length > 0
+          ? "another session open"
+          : "no session open";
+      return `${kind} visible${client.focused ? "" : ", not focused"}, ${where}, ${interaction}`;
     }
-    case "idle":
-      return `${kind} ${client.visible ? "visible" : "open"}${client.focused ? "" : ", not focused"}, ${interaction}`;
     case "background":
       return `${kind} connected but ${client.appState === "background" || client.appState === "inactive" ? "in the background" : "hidden"}, last reported ${describeAgo(nowMs, client.lastReportAtMs)}`;
     case "away":
@@ -317,7 +340,12 @@ export function derivePersonPresence(
     stateReason = parts.join("; ");
   }
 
-  const viewingThisSession = state === "viewing-this-session";
+  // Open and in the foreground counts as viewing even without recent input;
+  // the state says whether anyone is actually reading it.
+  const viewingThisSession = person.clients.some(
+    (client) =>
+      isClientLive(client, nowMs) && isForeground(client) && clientViewsSession(client, sessionId),
+  );
   return {
     userId: person.userId,
     email: person.email,
@@ -343,10 +371,9 @@ export function derivePersonPresence(
         focused: client.focused,
         recentlyInteracted: client.recentlyInteracted,
         appState: client.appState,
-        viewingThreadId: clientViewsSession(client, sessionId)
-          ? sessionId
-          : (client.viewingThreadIds[0] ?? null),
-        viewingThisSession: clientState !== null && clientViewsSession(client, sessionId),
+        viewingThisSession: clientViewsSession(client, sessionId),
+        viewingAnotherSession:
+          !clientViewsSession(client, sessionId) && client.viewingThreadIds.length > 0,
         lastReportAt: iso(client.lastReportAtMs),
         secondsSinceReport: secondsSince(nowMs, client.lastReportAtMs) ?? 0,
         leaseExpiresAt: iso(client.leaseExpiresAtMs),
@@ -362,19 +389,27 @@ const personLabel = (person: PresencePersonReport): string =>
   person.name ?? person.email ?? person.userId ?? "an unidentified client";
 
 /** Picks the action for the best-placed relevant person. */
+export const isWarmingUp = (nowMs: number, trackingSinceMs: number | null): boolean =>
+  trackingSinceMs === null || nowMs - trackingSinceMs < PRESENCE_WARMUP_MS;
+
+const describeWarmup = (nowMs: number, trackingSinceMs: number | null): string =>
+  trackingSinceMs === null
+    ? "no client has reported since the server started"
+    : `tracking started ${describeAgo(nowMs, trackingSinceMs)}`;
+
 export function recommend(
   people: ReadonlyArray<PresencePersonReport>,
   nowMs: number,
-  trackingSinceMs: number,
+  trackingSinceMs: number | null,
 ): PresenceRecommendation {
   const ranked = people.toSorted((left, right) => STATE_RANK[left.state] - STATE_RANK[right.state]);
   const best = ranked[0];
-  const warmingUp = nowMs - trackingSinceMs < PRESENCE_WARMUP_MS;
+  const warmingUp = isWarmingUp(nowMs, trackingSinceMs);
   if (best === undefined) {
     return {
       action: warmingUp ? "wait-for-reply" : "notify-mattermost",
       reason: warmingUp
-        ? "nobody is linked to this session and the server only just started tracking; re-check before escalating"
+        ? `nobody is linked to this session and ${describeWarmup(nowMs, trackingSinceMs)}; re-check before escalating`
         : "nobody is linked to this session and no client has reported",
       suggestedFollowUpSeconds: warmingUp ? 60 : 1800,
     };
@@ -396,7 +431,7 @@ export function recommend(
     case "idle":
       return {
         action: "ask-in-chat-and-notify",
-        reason: `${label} has T3 open but is not interacting (${best.stateReason}); ask in chat and nudge on Mattermost`,
+        reason: `${label} has T3 open but has not touched it lately (${best.stateReason}); ask in chat and nudge on Mattermost`,
         suggestedFollowUpSeconds: 600,
       };
     case "background":
@@ -414,7 +449,7 @@ export function recommend(
         return {
           action: "wait-for-reply",
           reason: warmingUp
-            ? `tracking started ${describeAgo(nowMs, trackingSinceMs)} and no client has reported yet; ask in chat, then re-check before escalating`
+            ? `${describeWarmup(nowMs, trackingSinceMs)}, so a missing client is not evidence of absence; ask in chat, then re-check before escalating`
             : `${label} was seen ${describeAgo(nowMs, nowMs - (best.secondsSinceSeen ?? 0) * 1000)} but has no live client; ask in chat and re-check shortly before notifying`,
           suggestedFollowUpSeconds: 60,
         };
@@ -438,9 +473,9 @@ export function buildPresenceReport(input: PresenceReportInput): PresenceReport 
     (person) => person.state === "viewing-this-session" || person.state === "active-elsewhere",
   );
   const caveats: Array<string> = [...(input.caveats ?? [])];
-  if (nowMs - trackingSinceMs < PRESENCE_WARMUP_MS) {
+  if (isWarmingUp(nowMs, trackingSinceMs)) {
     caveats.push(
-      `presence tracking started ${describeAgo(nowMs, trackingSinceMs)} (server restart); clients report every ${PRESENCE_HEARTBEAT_INTERVAL_MS / 1000} s, so the live picture may be incomplete`,
+      `${describeWarmup(nowMs, trackingSinceMs)} (server restart); clients report every ${PRESENCE_HEARTBEAT_INTERVAL_MS / 1000} s, so the live picture may be incomplete`,
     );
   }
   const unidentified = people.find((person) => person.userId === null);
@@ -463,7 +498,7 @@ export function buildPresenceReport(input: PresenceReportInput): PresenceReport 
   }
   return {
     now: iso(nowMs),
-    trackingSince: iso(trackingSinceMs),
+    trackingSince: isoOrNull(trackingSinceMs),
     heartbeatIntervalMs: PRESENCE_HEARTBEAT_INTERVAL_MS,
     leaseTtlMs: PRESENCE_LEASE_TTL_MS,
     session,

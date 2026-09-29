@@ -9,6 +9,7 @@ import {
   buildPresenceReport,
   classifyClient,
   derivePersonPresence,
+  PRESENCE_INTERACTION_WINDOW_MS,
   PRESENCE_RECENT_EVIDENCE_MS,
   PRESENCE_WARMUP_MS,
   recommend,
@@ -21,6 +22,17 @@ const NOW = Date.parse("2026-09-29T12:00:00.000Z");
 const MINUTE = 60_000;
 const SESSION = "thread-here";
 const OTHER = "thread-elsewhere";
+const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+
+/** Walks a value's strings without serialising it, so no thread id can hide in a nested field. */
+const mentions = (value: unknown, needle: string): boolean =>
+  typeof value === "string"
+    ? value.includes(needle)
+    : Array.isArray(value)
+      ? value.some((entry) => mentions(entry, needle))
+      : typeof value === "object" && value !== null
+        ? Object.values(value).some((entry) => mentions(entry, needle))
+        : false;
 
 const session: PresenceSessionInput = {
   sessionId: SESSION,
@@ -53,6 +65,9 @@ function client(overrides: Partial<PresenceClientInput> = {}): PresenceClientInp
   };
 }
 
+/** A focused window nobody has touched for longer than the interaction window. */
+const stale = { recentlyInteracted: false, lastInteractionAtMs: NOW - 5 * MINUTE } as const;
+
 function person(overrides: Partial<PresencePersonInput> = {}): PresencePersonInput {
   return {
     userId: "user-owner",
@@ -73,37 +88,58 @@ describe("classifyClient", () => {
     expect(classifyClient(client({ leaseExpiresAtMs: NOW - 1 }), SESSION, NOW)).toBeNull();
   });
 
-  it("is viewing when the session is in scope on a focused or interacting visible client", () => {
+  it("is viewing when the session is in scope on a visible client with recent input", () => {
     expect(classifyClient(client(), SESSION, NOW)).toBe("viewing-this-session");
-    expect(classifyClient(client({ focused: false, recentlyInteracted: true }), SESSION, NOW)).toBe(
-      "viewing-this-session",
-    );
-    expect(classifyClient(client({ focused: true, recentlyInteracted: false }), SESSION, NOW)).toBe(
-      "viewing-this-session",
-    );
-  });
-
-  it("is active elsewhere when focused and interacting on another thread", () => {
-    expect(classifyClient(client({ viewingThreadIds: [OTHER] }), SESSION, NOW)).toBe(
-      "active-elsewhere",
-    );
-    expect(classifyClient(client({ viewingThreadIds: [] }), SESSION, NOW)).toBe("active-elsewhere");
-  });
-
-  it("is idle when visible but not engaging", () => {
+    expect(classifyClient(client({ focused: false }), SESSION, NOW)).toBe("viewing-this-session");
     expect(
       classifyClient(
-        client({ viewingThreadIds: [OTHER], focused: true, recentlyInteracted: false }),
+        client({
+          recentlyInteracted: false,
+          lastInteractionAtMs: NOW - PRESENCE_INTERACTION_WINDOW_MS,
+        }),
+        SESSION,
+        NOW,
+      ),
+    ).toBe("viewing-this-session");
+  });
+
+  it("drops a focused window to idle once the interaction window has passed", () => {
+    expect(classifyClient(client(stale), SESSION, NOW)).toBe("idle");
+    expect(
+      classifyClient(
+        client({
+          recentlyInteracted: false,
+          lastInteractionAtMs: NOW - PRESENCE_INTERACTION_WINDOW_MS - 1,
+        }),
         SESSION,
         NOW,
       ),
     ).toBe("idle");
+    expect(classifyClient(client({ ...stale, viewingThreadIds: [OTHER] }), SESSION, NOW)).toBe(
+      "idle",
+    );
+  });
+
+  it("falls back to the report flag when the tracker has no interaction history", () => {
+    expect(
+      classifyClient(client({ recentlyInteracted: true, lastInteractionAtMs: null }), SESSION, NOW),
+    ).toBe("viewing-this-session");
     expect(
       classifyClient(
-        client({ viewingThreadIds: [SESSION], focused: false, recentlyInteracted: false }),
+        client({ recentlyInteracted: false, lastInteractionAtMs: null }),
         SESSION,
         NOW,
       ),
+    ).toBe("idle");
+  });
+
+  it("is active elsewhere when focused with recent input on another thread", () => {
+    expect(classifyClient(client({ viewingThreadIds: [OTHER] }), SESSION, NOW)).toBe(
+      "active-elsewhere",
+    );
+    expect(classifyClient(client({ viewingThreadIds: [] }), SESSION, NOW)).toBe("active-elsewhere");
+    expect(
+      classifyClient(client({ viewingThreadIds: [OTHER], focused: false }), SESSION, NOW),
     ).toBe("idle");
   });
 
@@ -146,6 +182,15 @@ describe("derivePersonPresence", () => {
     expect(report.connected).toBe(true);
   });
 
+  it("keeps viewingThisSession while idle with the session open", () => {
+    const report = derivePersonPresence(person({ clients: [client(stale)] }), SESSION, NOW);
+    expect(report.state).toBe("idle");
+    expect(report.viewingThisSession).toBe(true);
+    expect(report.stateReason).toBe("desktop app visible, this session open, no input for 5 min");
+    expect(report.clients[0]?.viewingThisSession).toBe(true);
+    expect(report.clients[0]?.viewingAnotherSession).toBe(false);
+  });
+
   it("is away with history after the lease expires, and keeps the durable facts", () => {
     const report = derivePersonPresence(
       person({
@@ -165,10 +210,8 @@ describe("derivePersonPresence", () => {
     );
     expect(report.state).toBe("away");
     expect(report.viewingThisSession).toBe(false);
-    expect(report.lastViewedThisSessionAt).toBe(
-      DateTime.formatIso(DateTime.makeUnsafe(NOW - 6 * MINUTE)),
-    );
-    expect(report.lastSeenAt).toBe(DateTime.formatIso(DateTime.makeUnsafe(NOW - 4 * MINUTE)));
+    expect(report.lastViewedThisSessionAt).toBe(iso(NOW - 6 * MINUTE));
+    expect(report.lastSeenAt).toBe(iso(NOW - 4 * MINUTE));
     expect(report.secondsSinceSeen).toBe(240);
     expect(report.secondsSinceLastMessageInSession).toBe(1800);
     expect(report.stateReason).toBe(
@@ -194,16 +237,27 @@ describe("derivePersonPresence", () => {
     expect(report.stateReason).toBe("never observed: no client report, no login, no message");
   });
 
-  it("points the client at the other session it has open", () => {
+  it("never names the other session a client has open", () => {
     const report = derivePersonPresence(
       person({ clients: [client({ viewingThreadIds: [OTHER] })] }),
       SESSION,
       NOW,
     );
     expect(report.state).toBe("active-elsewhere");
-    expect(report.clients[0]?.viewingThreadId).toBe(OTHER);
     expect(report.clients[0]?.viewingThisSession).toBe(false);
-    expect(report.stateReason).toBe(`focused desktop app on session ${OTHER}, interacted 8 s ago`);
+    expect(report.clients[0]?.viewingAnotherSession).toBe(true);
+    expect(report.stateReason).toBe("focused desktop app in another session, interacted 8 s ago");
+    expect(mentions(report, OTHER)).toBe(false);
+
+    const idleElsewhere = derivePersonPresence(
+      person({ clients: [client({ ...stale, viewingThreadIds: [OTHER] })] }),
+      SESSION,
+      NOW,
+    );
+    expect(idleElsewhere.stateReason).toBe(
+      "desktop app visible, another session open, no input for 5 min",
+    );
+    expect(mentions(idleElsewhere, OTHER)).toBe(false);
   });
 });
 
@@ -218,10 +272,11 @@ describe("recommend", () => {
     expect(recommendation.reason).toContain("Owner has this session open now");
   });
 
-  it("asks in chat and notifies for active-elsewhere, idle and background", () => {
+  it("asks in chat and notifies for active-elsewhere, idle (even with this session open) and background", () => {
     const cases: ReadonlyArray<[Partial<PresenceClientInput>, number]> = [
       [{ viewingThreadIds: [OTHER] }, 300],
-      [{ viewingThreadIds: [OTHER], recentlyInteracted: false }, 600],
+      [stale, 600],
+      [{ ...stale, viewingThreadIds: [OTHER] }, 600],
       [{ visible: false }, 900],
     ];
     for (const [overrides, followUp] of cases) {
@@ -256,9 +311,13 @@ describe("recommend", () => {
     expect(recommendation.suggestedFollowUpSeconds).toBe(60);
   });
 
-  it("waits rather than escalating while the tracker is warming up after a restart", () => {
+  it("waits rather than escalating while the tracker is warming up or has no report yet", () => {
     const justStarted = NOW - PRESENCE_WARMUP_MS / 2;
     expect(recommend([derived(person())], NOW, justStarted).action).toBe("wait-for-reply");
+    expect(recommend([derived(person())], NOW, null).action).toBe("wait-for-reply");
+    expect(recommend([derived(person())], NOW, null).reason).toContain(
+      "no client has reported since the server started",
+    );
     expect(recommend([], NOW, justStarted).action).toBe("wait-for-reply");
     expect(recommend([], NOW, settled).action).toBe("notify-mattermost");
   });
@@ -293,10 +352,11 @@ describe("buildPresenceReport", () => {
     expect(report.heartbeatIntervalMs).toBe(25_000);
     expect(report.leaseTtlMs).toBe(45_000);
     expect(report.now).toBe("2026-09-29T12:00:00.000Z");
+    expect(report.trackingSince).toBe(iso(NOW - 10 * MINUTE));
     expect(report.caveats).toEqual([]);
   });
 
-  it("is unattended when nobody is live, and adds the restart caveat", () => {
+  it("is unattended when nobody is live or everyone is idle, and adds the restart caveat", () => {
     const report = buildPresenceReport({
       nowMs: NOW,
       trackingSinceMs: NOW - 10_000,
@@ -306,7 +366,28 @@ describe("buildPresenceReport", () => {
     });
     expect(report.attended).toBe(false);
     expect(report.caveats[0]).toBe("this session has no owner");
-    expect(report.caveats[1]).toContain("presence tracking started 10 s ago");
+    expect(report.caveats[1]).toContain("tracking started 10 s ago");
+
+    const idle = buildPresenceReport({
+      nowMs: NOW,
+      trackingSinceMs: NOW - 10 * MINUTE,
+      session,
+      people: [person({ clients: [client(stale)] })],
+    });
+    expect(idle.attended).toBe(false);
+    expect(idle.people[0]?.viewingThisSession).toBe(true);
+  });
+
+  it("reports a null trackingSince and its caveat before any client has reported", () => {
+    const report = buildPresenceReport({
+      nowMs: NOW,
+      trackingSinceMs: null,
+      session,
+      people: [person()],
+    });
+    expect(report.trackingSince).toBeNull();
+    expect(report.caveats[0]).toContain("no client has reported since the server started");
+    expect(report.recommendation.action).toBe("wait-for-reply");
   });
 
   it("flags unidentified live clients and vanished mobile clients", () => {
@@ -315,12 +396,13 @@ describe("buildPresenceReport", () => {
       trackingSinceMs: NOW - 10 * MINUTE,
       session: { ...session, archived: true },
       people: [
-        person({ userId: null, email: null, name: null, roles: [], clients: [client()] }),
+        person({ userId: null, email: null, name: null, roles: ["viewer"], clients: [client()] }),
         person({
           clients: [client({ clientKind: "mobile", leaseExpiresAtMs: NOW - 1 })],
         }),
       ],
     });
+    expect(report.attended).toBe(true);
     expect(report.caveats).toEqual([
       "1 live client(s) carry no user identity and are grouped under userId null",
       "a mobile client stops reporting as soon as the app leaves the foreground, so its absence does not mean the phone is unreachable",

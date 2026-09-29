@@ -41,6 +41,7 @@ import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
 // T3-CUSTOM(expbkt3): user presence for agents deciding how to reach the human.
+import { resolvePresenceTarget } from "../../../presence/presenceTarget.ts";
 import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../../../serverSettings.ts";
@@ -1415,7 +1416,11 @@ const handlers = {
   // unless a user-wide credential names one it can see.
   t3_user_presence: Effect.fn("T3ControlToolkit.userPresence")(function* (input) {
     const operation = "user-presence";
-    const sessionId = yield* resolveSessionId(operation, input.sessionId);
+    // Own session by default, even for a user-bound credential that could
+    // also name others: "is the human here?" is about the session I am in.
+    const sessionId = yield* resolvePresenceTarget(input.sessionId).pipe(
+      Effect.mapError((error) => new T3ControlToolError({ operation, message: error.message })),
+    );
     const presence = yield* UserPresenceService;
     return yield* presence
       .report({

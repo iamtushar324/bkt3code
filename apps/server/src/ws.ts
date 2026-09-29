@@ -182,6 +182,8 @@ import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+// T3-CUSTOM(expbkt3): other users' open threads stay out of the background policy RPCs.
+import { redactBackgroundPolicySnapshot } from "./presence/backgroundPolicyRedaction.expbkt3.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
 import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
@@ -3430,9 +3432,16 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetBackgroundPolicy]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverGetBackgroundPolicy, backgroundPolicy.snapshot, {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.serverGetBackgroundPolicy,
+            // T3-CUSTOM(expbkt3): was `backgroundPolicy.snapshot`; thread scopes of other logins are dropped.
+            Effect.map(backgroundPolicy.snapshot, (snapshot) =>
+              redactBackgroundPolicySnapshot(snapshot, currentSessionId),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",
@@ -4624,7 +4633,12 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeBackgroundPolicy,
             Stream.unwrap(
               Effect.map(backgroundPolicy.subscribe, ({ latest, changes }) =>
-                Stream.concat(Stream.make(latest), changes),
+                // T3-CUSTOM(expbkt3): thread scopes of other logins are dropped.
+                Stream.concat(Stream.make(latest), changes).pipe(
+                  Stream.map((snapshot) =>
+                    redactBackgroundPolicySnapshot(snapshot, currentSessionId),
+                  ),
+                ),
               ),
             ),
             { "rpc.aggregate": "server" },

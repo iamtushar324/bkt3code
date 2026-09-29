@@ -1,6 +1,7 @@
 /**
- * T3-CUSTOM(expbkt3): the tracker keeps history past the lease, maps auth
- * sessions to people, bounds what it remembers, and folds the durable facts in.
+ * T3-CUSTOM(expbkt3): the tracker keeps history past the lease, keys
+ * connections like upstream does, maps logins to people, bounds what it
+ * remembers, and folds the durable facts in.
  */
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
@@ -24,8 +25,14 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SessionStore from "../auth/SessionStore.ts";
 import { BackgroundPolicy } from "../background/BackgroundPolicy.ts";
+import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
+import {
+  PresenceMessageQuery,
+  PresenceMessageReadError,
+  type LatestUserMessage,
+} from "./presenceMessages.ts";
 import {
   ingestLease,
   ingestSnapshot,
@@ -41,11 +48,24 @@ const threadId = ThreadId.make("thread-here");
 const otherThreadId = ThreadId.make("thread-elsewhere");
 const ownerId = UserId.make("user-owner");
 const memberId = UserId.make("user-member");
+const strangerId = UserId.make("user-stranger");
 const ownerSession = AuthSessionId.make("auth-owner");
 const memberSession = AuthSessionId.make("auth-member");
+const strangerSession = AuthSessionId.make("auth-stranger");
 const anonymousSession = AuthSessionId.make("auth-anon");
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
+const iso = (ms: number) => DateTime.formatIso(at(ms));
+
+/** Walks a value's strings without serialising it, so no thread id can hide in a nested field. */
+const mentions = (value: unknown, needle: string): boolean =>
+  typeof value === "string"
+    ? value.includes(needle)
+    : Array.isArray(value)
+      ? value.some((entry) => mentions(entry, needle))
+      : typeof value === "object" && value !== null
+        ? Object.values(value).some((entry) => mentions(entry, needle))
+        : false;
 
 function lease(overrides: Partial<ClientActivityLease> = {}): ClientActivityLease {
   const updatedAt = overrides.updatedAt ?? at(START);
@@ -98,11 +118,16 @@ interface Harness {
   readonly sessionChanges: PubSub.PubSub<SessionStore.SessionCredentialChange>;
   readonly snapshot: { current: BackgroundPolicySnapshot };
   readonly authSessions: { current: ReadonlyArray<AuthClientSession> };
+  readonly messages: { current: ReadonlyArray<LatestUserMessage>; fail: boolean };
   readonly userLookups: Array<string>;
+  readonly accessChecks: Array<string>;
 }
 
-const snapshotWith = (leases: ReadonlyArray<ClientActivityLease>): BackgroundPolicySnapshot =>
-  ({ leases }) as unknown as BackgroundPolicySnapshot;
+const snapshotWith = (
+  leases: ReadonlyArray<ClientActivityLease>,
+  updatedAtMs: number,
+): BackgroundPolicySnapshot =>
+  ({ leases, updatedAt: at(updatedAtMs) }) as unknown as BackgroundPolicySnapshot;
 
 const makeHarness = Effect.gen(function* () {
   const policyChanges = yield* PubSub.unbounded<BackgroundPolicySnapshot>();
@@ -110,9 +135,17 @@ const makeHarness = Effect.gen(function* () {
   const harness: Harness = {
     policyChanges,
     sessionChanges,
-    snapshot: { current: snapshotWith([]) },
+    snapshot: { current: snapshotWith([], START - 10 * MINUTE) },
     authSessions: { current: [authSession()] },
+    messages: {
+      current: [
+        { userId: String(ownerId), createdAt: iso(START - 20 * MINUTE) },
+        { userId: String(memberId), createdAt: iso(START - 5 * MINUTE) },
+      ],
+      fail: false,
+    },
     userLookups: [],
+    accessChecks: [],
   };
   const layer = Layer.mergeAll(
     Layer.mock(BackgroundPolicy)({
@@ -147,43 +180,35 @@ const makeHarness = Effect.gen(function* () {
       getThreadShellById: (id) =>
         Effect.succeed(id === threadId ? Option.some(shell) : Option.none()),
       getThreadAccessById: () => Effect.succeed(Option.none()),
-      getThreadDetailSnapshot: (id) =>
-        Effect.succeed(
-          id === threadId
-            ? Option.some({
-                snapshotSequence: 1,
-                thread: {
-                  ...shell,
-                  messages: [
-                    {
-                      role: "user",
-                      sentByUserId: ownerId,
-                      createdAt: DateTime.formatIso(at(START - 20 * MINUTE)),
-                    },
-                    {
-                      role: "assistant",
-                      sentByUserId: null,
-                      createdAt: DateTime.formatIso(at(START - 19 * MINUTE)),
-                    },
-                    {
-                      role: "user",
-                      sentByUserId: memberId,
-                      createdAt: DateTime.formatIso(at(START - 5 * MINUTE)),
-                    },
-                  ],
-                },
-              } as never)
-            : Option.none(),
-        ),
+    }),
+    Layer.mock(OrchestrationAccessControl)({
+      actorFor: () => Option.none(),
+      canAccessThread: (userId, id) =>
+        Effect.sync(() => {
+          harness.accessChecks.push(`${userId}@${id}`);
+          return String(userId) !== String(strangerId);
+        }),
+    }),
+    Layer.mock(PresenceMessageQuery)({
+      latestUserMessageBySender: () =>
+        harness.messages.fail
+          ? Effect.fail(new PresenceMessageReadError({ threadId, cause: "sqlite busy" }))
+          : Effect.succeed(harness.messages.current),
     }),
   );
   const service = yield* make.pipe(Effect.provide(layer));
+  // Let the forked subscribers attach before the first publish.
+  yield* TestClock.adjust(0);
   return { harness, service };
 });
 
-const publishPolicy = (harness: Harness, leases: ReadonlyArray<ClientActivityLease>) =>
+const publishPolicy = (
+  harness: Harness,
+  leases: ReadonlyArray<ClientActivityLease>,
+  updatedAtMs: number,
+) =>
   Effect.gen(function* () {
-    harness.snapshot.current = snapshotWith(leases);
+    harness.snapshot.current = snapshotWith(leases, updatedAtMs);
     yield* PubSub.publish(harness.policyChanges, harness.snapshot.current);
     // Let the forked subscriber run.
     yield* TestClock.adjust(0);
@@ -195,6 +220,7 @@ describe("ingestLease", () => {
 
   it("remembers interaction, focus and viewed threads past later reports", () => {
     const first = record({});
+    expect(first.rpcClientId).toBe(RpcClientId.make(1));
     expect(first.lastInteractionAtMs).toBe(START);
     expect(first.lastFocusedAtMs).toBe(START);
     expect([...first.viewedThreads]).toEqual([[String(threadId), START]]);
@@ -240,24 +266,58 @@ describe("ingestLease", () => {
 });
 
 describe("ingestSnapshot", () => {
-  it("keys clients by auth session and client id, and evicts the stalest past the cap", () => {
+  it("keys connections by login, socket and client id, so two tabs do not overwrite each other", () => {
     const clients = new Map<string, TrackedClient>();
-    ingestSnapshot(clients, snapshotWith([lease(), lease({ rpcClientId: RpcClientId.make(2) })]));
-    expect(clients.size).toBe(1);
+    ingestSnapshot(
+      clients,
+      snapshotWith(
+        [
+          lease({ scopes: [{ type: "thread", threadId }] }),
+          lease({
+            rpcClientId: RpcClientId.make(2),
+            scopes: [{ type: "thread", threadId: otherThreadId }],
+          }),
+        ],
+        START,
+      ),
+    );
+    expect(clients.size).toBe(2);
+    expect([...clients.values()].map((client) => client.viewingThreadIds)).toEqual([
+      [String(threadId)],
+      [String(otherThreadId)],
+    ]);
+  });
 
+  it("ends the lease of a connection that left the snapshot", () => {
+    const clients = new Map<string, TrackedClient>();
+    ingestSnapshot(clients, snapshotWith([lease()], START));
+    ingestSnapshot(clients, snapshotWith([], START + 5_000));
+    const [client] = clients.values();
+    assert(client !== undefined);
+    expect(client.leaseExpiresAtMs).toBe(START + 5_000);
+    expect(client.lastReportAtMs).toBe(START);
+    // A later snapshot must not push the end forward again.
+    ingestSnapshot(clients, snapshotWith([], START + 9_000));
+    expect([...clients.values()][0]?.leaseExpiresAtMs).toBe(START + 5_000);
+  });
+
+  it("evicts the stalest connection past the cap", () => {
+    const clients = new Map<string, TrackedClient>();
+    ingestSnapshot(clients, snapshotWith([lease()], START));
     for (let index = 0; index < MAX_TRACKED_CLIENTS + 5; index += 1) {
       ingestSnapshot(
         clients,
-        snapshotWith([lease({ clientId: `client-${index}`, updatedAt: at(START + 1 + index) })]),
+        snapshotWith(
+          [lease({ rpcClientId: RpcClientId.make(100 + index), updatedAt: at(START + 1 + index) })],
+          START + 1 + index,
+        ),
       );
     }
     expect(clients.size).toBe(MAX_TRACKED_CLIENTS);
-    expect([...clients.values()].some((client) => client.clientId === "client-owner")).toBe(false);
-    expect([...clients.values()].some((client) => client.clientId === "client-0")).toBe(false);
+    expect([...clients.values()].some((client) => client.rpcClientId === 1)).toBe(false);
+    expect([...clients.values()].some((client) => client.rpcClientId === 100)).toBe(false);
     expect(
-      [...clients.values()].some(
-        (client) => client.clientId === `client-${MAX_TRACKED_CLIENTS + 4}`,
-      ),
+      [...clients.values()].some((client) => client.rpcClientId === 100 + MAX_TRACKED_CLIENTS + 4),
     ).toBe(true);
   });
 });
@@ -268,16 +328,36 @@ describe("UserPresenceService.report", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(START - 10 * MINUTE);
         const { harness, service } = yield* makeHarness;
+        expect(yield* service.trackingSince).toBeNull();
+        // Warm-up runs from the first report, not from construction.
+        yield* publishPolicy(
+          harness,
+          [lease({ updatedAt: at(START - 10 * MINUTE) })],
+          START - 10 * MINUTE,
+        );
+        expect(yield* service.trackingSince).toBe(START - 10 * MINUTE);
         yield* TestClock.setTime(START);
-        yield* publishPolicy(harness, [
-          lease(),
-          lease({
-            sessionId: anonymousSession,
-            clientId: "client-anon",
-            clientKind: "web",
-            scopes: [{ type: "thread", threadId }],
-          }),
-        ]);
+        yield* publishPolicy(
+          harness,
+          [
+            lease(),
+            lease({
+              sessionId: anonymousSession,
+              rpcClientId: RpcClientId.make(2),
+              clientId: "client-anon",
+              clientKind: "web",
+              scopes: [{ type: "thread", threadId }],
+            }),
+            lease({
+              sessionId: anonymousSession,
+              rpcClientId: RpcClientId.make(3),
+              clientId: "client-anon",
+              clientKind: "web",
+              scopes: [{ type: "thread", threadId: otherThreadId }],
+            }),
+          ],
+          START,
+        );
 
         const report = yield* service.report({ threadId });
         expect(report.session).toEqual({
@@ -289,7 +369,7 @@ describe("UserPresenceService.report", () => {
           humanAttentionReasons: ["user-input"],
           archived: false,
         });
-        expect(report.trackingSince).toBe("2026-09-29T11:50:00.000Z");
+        expect(report.trackingSince).toBe(iso(START - 10 * MINUTE));
         expect(report.attended).toBe(true);
         expect(report.recommendation.action).toBe("ask-in-chat");
 
@@ -299,7 +379,7 @@ describe("UserPresenceService.report", () => {
         expect(owner.email).toBe("owner@example.com");
         expect(owner.name).toBe("Owner");
         expect(owner.state).toBe("viewing-this-session");
-        expect(owner.lastMessageInSessionAt).toBe("2026-09-29T11:40:00.000Z");
+        expect(owner.lastMessageInSessionAt).toBe(iso(START - 20 * MINUTE));
         expect(owner.clients).toHaveLength(1);
         expect(owner.clients[0]?.viewingThisSession).toBe(true);
 
@@ -308,44 +388,85 @@ describe("UserPresenceService.report", () => {
         expect(member.roles).toEqual(["member", "last-sender"]);
         expect(member.email).toBeNull();
         expect(member.state).toBe("away");
-        expect(member.lastMessageInSessionAt).toBe("2026-09-29T11:55:00.000Z");
-        expect(member.lastSeenAt).toBe("2026-09-29T11:55:00.000Z");
+        expect(member.lastMessageInSessionAt).toBe(iso(START - 5 * MINUTE));
+        expect(member.lastSeenAt).toBe(iso(START - 5 * MINUTE));
 
+        // Only the unidentified tab that has this session open is reported.
         const anonymous = report.people.find((person) => person.userId === null);
         assert(anonymous !== undefined);
         expect(anonymous.roles).toEqual(["viewer"]);
         expect(anonymous.state).toBe("viewing-this-session");
+        expect(anonymous.clients).toHaveLength(1);
+        expect(anonymous.clients[0]?.viewingThisSession).toBe(true);
         expect(report.caveats).toEqual([
           "1 live client(s) carry no user identity and are grouped under userId null",
         ]);
         expect(harness.userLookups).toEqual([String(ownerId), String(memberId)]);
+        // Owner and member need no access check for their viewer role.
+        expect(harness.accessChecks).toEqual([]);
+
+        const elsewhere = yield* service.report({ threadId: otherThreadId }).pipe(Effect.flip);
+        expect(elsewhere.reason).toBe("not-found");
       }),
     ),
   );
 
-  it.effect("keeps the person's history after the lease expires and picks up new logins", () =>
+  it.effect("leaves out unidentified clients that are not looking at this session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(START);
+        const { harness, service } = yield* makeHarness;
+        yield* publishPolicy(
+          harness,
+          [
+            lease({
+              sessionId: anonymousSession,
+              clientId: "client-anon",
+              scopes: [{ type: "thread", threadId: otherThreadId }],
+            }),
+          ],
+          START,
+        );
+        const report = yield* service.report({ threadId });
+        expect(report.people.some((person) => person.userId === null)).toBe(false);
+        expect(report.attended).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("keeps a person's history after the socket closes and picks up new logins", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(START - 10 * MINUTE);
         const { harness, service } = yield* makeHarness;
         yield* TestClock.setTime(START - 3 * MINUTE);
-        yield* publishPolicy(harness, [lease({ updatedAt: at(START - 3 * MINUTE) })]);
-        // The policy forgets the lease; the tracker must not.
-        yield* TestClock.setTime(START);
-        harness.snapshot.current = snapshotWith([]);
+        yield* publishPolicy(
+          harness,
+          [lease({ updatedAt: at(START - 3 * MINUTE) })],
+          START - 3 * MINUTE,
+        );
+        // The socket closes: the policy drops the lease before its expiry.
+        yield* publishPolicy(harness, [], START - 3 * MINUTE + 10_000);
+        yield* TestClock.setTime(START - 3 * MINUTE + 20_000);
 
+        const early = yield* service.report({ threadId });
+        const ownerEarly = early.people.find((person) => person.userId === String(ownerId));
+        assert(ownerEarly !== undefined);
+        expect(ownerEarly.state).toBe("away");
+        expect(ownerEarly.clients[0]?.live).toBe(false);
+        expect(ownerEarly.clients[0]?.leaseExpiresAt).toBe(iso(START - 3 * MINUTE + 10_000));
+
+        yield* TestClock.setTime(START);
         const report = yield* service.report({ threadId });
         const owner = report.people.find((person) => person.userId === String(ownerId));
         assert(owner !== undefined);
         expect(owner.state).toBe("away");
-        expect(owner.lastInteractionAt).toBe("2026-09-29T11:57:00.000Z");
-        expect(owner.lastViewedThisSessionAt).toBe("2026-09-29T11:57:00.000Z");
+        expect(owner.lastInteractionAt).toBe(iso(START - 3 * MINUTE));
+        expect(owner.lastViewedThisSessionAt).toBe(iso(START - 3 * MINUTE));
         expect(owner.secondsSinceInteraction).toBe(180);
-        expect(owner.clients[0]?.live).toBe(false);
         expect(owner.connected).toBe(true);
         expect(report.attended).toBe(false);
-        // Auth-session last seen (3 min) beats the directory (2 min)? No: newest wins.
-        expect(owner.lastSeenAt).toBe("2026-09-29T11:58:00.000Z");
+        expect(owner.lastSeenAt).toBe(iso(START - 2 * MINUTE));
         expect(report.recommendation.action).toBe("notify-mattermost");
 
         // A login that arrives later is mapped from the change stream, not a re-read.
@@ -359,44 +480,87 @@ describe("UserPresenceService.report", () => {
           }),
         });
         yield* TestClock.adjust(0);
-        yield* publishPolicy(harness, [
-          lease({
-            sessionId: memberSession,
-            clientId: "client-member",
-            clientKind: "mobile",
-            appState: "active",
-            updatedAt: at(START),
-            scopes: [{ type: "thread", threadId: otherThreadId }],
-          }),
-        ]);
+        yield* publishPolicy(
+          harness,
+          [
+            lease({
+              sessionId: memberSession,
+              rpcClientId: RpcClientId.make(7),
+              clientId: "client-member",
+              clientKind: "mobile",
+              appState: "active",
+              updatedAt: at(START),
+              scopes: [{ type: "thread", threadId: otherThreadId }],
+            }),
+          ],
+          START,
+        );
         const next = yield* service.report({ threadId });
         const member = next.people.find((person) => person.userId === String(memberId));
         assert(member !== undefined);
         expect(member.state).toBe("active-elsewhere");
-        expect(member.clients[0]?.viewingThreadId).toBe(String(otherThreadId));
+        expect(member.clients[0]?.viewingAnotherSession).toBe(true);
+        expect(mentions(next, String(otherThreadId))).toBe(false);
         expect(next.recommendation.action).toBe("ask-in-chat-and-notify");
       }),
     ),
   );
 
-  it.effect("filters by userId or email and fails for an unknown session", () =>
+  it.effect("only lists a viewer who may access the thread", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(START);
-        const { service } = yield* makeHarness;
-        const byEmail = yield* service.report({ threadId, email: "OWNER@example.com" });
-        expect(byEmail.people.map((person) => person.userId)).toEqual([String(ownerId)]);
-        const byUser = yield* service.report({ threadId, userId: String(memberId) });
-        expect(byUser.people.map((person) => person.userId)).toEqual([String(memberId)]);
-        const none = yield* service.report({ threadId, email: "nobody@example.com" });
-        expect(none.people).toEqual([]);
-        expect(none.caveats).toContain("no person on this session matches the userId/email filter");
-
-        const missing = yield* Effect.flip(
-          service.report({ threadId: ThreadId.make("thread-nope") }),
+        const { harness, service } = yield* makeHarness;
+        harness.authSessions.current = [
+          authSession(),
+          authSession({
+            sessionId: strangerSession,
+            userId: EnvironmentUserId.make(String(strangerId)),
+            subject: `clerk:${strangerId}`,
+          }),
+        ];
+        yield* publishPolicy(
+          harness,
+          [lease({ sessionId: strangerSession, clientId: "client-stranger" })],
+          START,
         );
-        expect(missing.reason).toBe("not-found");
+        const report = yield* service.report({ threadId });
+        expect(report.people.some((person) => person.userId === String(strangerId))).toBe(false);
+        expect(harness.accessChecks).toEqual([`${strangerId}@${threadId}`]);
+        expect(report.attended).toBe(false);
       }),
     ),
+  );
+
+  it.effect(
+    "filters by userId or email, survives a failed message read, and fails for an unknown session",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(START);
+          const { harness, service } = yield* makeHarness;
+          const byEmail = yield* service.report({ threadId, email: "OWNER@example.com" });
+          expect(byEmail.people.map((person) => person.userId)).toEqual([String(ownerId)]);
+          const byUser = yield* service.report({ threadId, userId: String(memberId) });
+          expect(byUser.people.map((person) => person.userId)).toEqual([String(memberId)]);
+          const none = yield* service.report({ threadId, email: "nobody@example.com" });
+          expect(none.people).toEqual([]);
+          expect(none.caveats).toContain(
+            "no person on this session matches the userId/email filter",
+          );
+
+          harness.messages.fail = true;
+          const degraded = yield* service.report({ threadId });
+          expect(degraded.caveats).toContain(
+            "last-message times are unavailable: the message read failed",
+          );
+          expect(degraded.people.map((person) => person.roles)).toEqual([["owner"], ["member"]]);
+
+          const missing = yield* Effect.flip(
+            service.report({ threadId: ThreadId.make("thread-nope") }),
+          );
+          expect(missing.reason).toBe("not-found");
+        }),
+      ),
   );
 });

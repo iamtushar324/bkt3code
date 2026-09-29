@@ -7,9 +7,10 @@
  *
  * The bearer is the same credential the MCP endpoint takes (provider-session,
  * external-user or external-operator) and the target session is authorized the
- * same way the control tools do it: an in-session credential may only ask
- * about its own session (and may omit `sessionId`), a user-wide credential
- * must name a session its actor can see. The body is `PresenceReport` JSON.
+ * way `t3_user_presence` does it: a provider-session credential asks about its
+ * own session when `sessionId` is omitted (a user-bound one may also name
+ * another session its actor can see); an external credential must name one.
+ * The body is `PresenceReport` JSON.
  */
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,9 +22,9 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { resolveMcpSessionTarget } from "../mcp/mcpSessionTarget.ts";
 import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
 import { PRESENCE_ROUTE_PATH } from "./presenceEnvironment.expbkt3.ts";
+import { resolvePresenceTarget } from "./presenceTarget.ts";
 import { UserPresenceService } from "./UserPresenceService.ts";
 
 export { PRESENCE_ROUTE_PATH };
@@ -73,7 +74,7 @@ export const presenceHandler = Effect.gen(function* () {
   }
 
   const target = yield* Effect.result(
-    resolveMcpSessionTarget({ requested, capability: "t3.read" }).pipe(
+    resolvePresenceTarget(requested).pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
     ),
   );

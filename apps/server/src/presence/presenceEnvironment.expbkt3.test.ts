@@ -1,15 +1,14 @@
 /**
  * T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL is derived from the MCP endpoint the
- * session was issued for, and rides every adapter's device-environment seam.
+ * session was issued for; the adapters spread it beside the bearer.
  */
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 
-import { withAgentDeviceEnvironment } from "../mcp/McpProviderSession.ts";
 import {
   PRESENCE_URL_KEY,
+  presenceEnvironmentFor,
   presenceUrlForSession,
-  withPresenceEnvironment,
 } from "./presenceEnvironment.expbkt3.ts";
 
 const threadId = ThreadId.make("thread-abc/1");
@@ -25,34 +24,10 @@ describe("presenceUrlForSession", () => {
   });
 });
 
-describe("withPresenceEnvironment", () => {
-  it("adds the variable only when the session has an endpoint and a thread", () => {
-    const base = { PATH: "/bin" };
-    expect(withPresenceEnvironment(base, undefined)).toBe(base);
-    expect(withPresenceEnvironment(base, { endpoint: "http://h/mcp" })).toBe(base);
-    expect(withPresenceEnvironment(base, { endpoint: "http://h/mcp", threadId })).toEqual({
-      PATH: "/bin",
-      [PRESENCE_URL_KEY]: "http://h/api/presence?sessionId=thread-abc%2F1",
-    });
-  });
-
-  it("is applied by withAgentDeviceEnvironment with and without device variables", () => {
-    const session = { endpoint: "http://h:1/mcp", threadId };
-    expect(withAgentDeviceEnvironment({ HOME: "/home" }, session)).toEqual({
-      HOME: "/home",
+describe("presenceEnvironmentFor", () => {
+  it("yields exactly the one variable for a session config", () => {
+    expect(presenceEnvironmentFor({ endpoint: "http://h:1/mcp", threadId })).toEqual({
       [PRESENCE_URL_KEY]: "http://h:1/api/presence?sessionId=thread-abc%2F1",
     });
-    expect(
-      withAgentDeviceEnvironment(
-        { HOME: "/home", PATH: "/bin" },
-        { ...session, agentDeviceEnvironment: { PATH: "/shims", AGENT_DEVICE_URL: "x" } },
-      ),
-    ).toEqual({
-      HOME: "/home",
-      PATH: "/shims:/bin",
-      AGENT_DEVICE_URL: "x",
-      [PRESENCE_URL_KEY]: "http://h:1/api/presence?sessionId=thread-abc%2F1",
-    });
-    expect(withAgentDeviceEnvironment({ HOME: "/home" }, undefined)).toEqual({ HOME: "/home" });
   });
 });

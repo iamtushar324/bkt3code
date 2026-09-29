@@ -46,6 +46,14 @@ const tokens = new Map<string, McpInvocationContext.McpInvocationScope>([
   ["in-session", scope({})],
   ["no-read", scope({ capabilities: new Set(["preview"]) })],
   ["user-wide", scope({ capabilities: new Set(["t3.read", "t3.session.create"]) })],
+  [
+    "external",
+    scope({
+      principal: "external-user",
+      threadId: ThreadId.make("external-user:user-actor"),
+      capabilities: new Set(["t3.read", "t3.session.create"]),
+    }),
+  ],
 ]);
 
 const report = (threadId: ThreadId, query: PresenceQuery): PresenceReport =>
@@ -83,7 +91,7 @@ const servicesLayer = Layer.mergeAll(
       Effect.succeed(threadId !== hiddenThreadId),
   }),
   Layer.mock(UserPresenceService)({
-    trackingSinceMs: 0,
+    trackingSince: Effect.succeed(null),
     report: (query) =>
       query.threadId === ThreadId.make("thread-missing")
         ? Effect.fail(new PresenceError({ reason: "not-found", message: "missing" }))
@@ -159,8 +167,16 @@ describe("GET /api/presence", () => {
           disableLogger: true,
         }).pipe(Layer.build);
 
+        // A user-bound provider credential still means its own session by default.
         const unnamed = yield* request(PRESENCE_ROUTE_PATH, "user-wide");
-        assert.strictEqual(unnamed.status, 400);
+        assert.strictEqual(unnamed.status, 200);
+        assert.strictEqual(
+          (unnamed.body.session as { sessionId: string }).sessionId,
+          String(ownThreadId),
+        );
+
+        const operator = yield* request(PRESENCE_ROUTE_PATH, "external");
+        assert.strictEqual(operator.status, 400);
 
         const visible = yield* request(
           `${PRESENCE_ROUTE_PATH}?sessionId=${otherThreadId}`,

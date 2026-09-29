@@ -91,6 +91,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { presenceEnvironmentFor } from "../../presence/presenceEnvironment.expbkt3.ts"; // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL.
 // T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
@@ -4991,6 +4992,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(mcpSession
             ? {
                 T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                ...presenceEnvironmentFor(mcpSession), // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL beside the bearer.
               }
             : {}),
         },

@@ -48,6 +48,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { presenceEnvironmentFor } from "../../presence/presenceEnvironment.expbkt3.ts"; // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL.
 // T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 
@@ -2314,6 +2315,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                     mcpSession,
                   ),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...presenceEnvironmentFor(mcpSession), // T3-CUSTOM(expbkt3): BK_T3_PRESENCE_URL beside the bearer.
                 },
                 appServerArgs: [
                   "-c",

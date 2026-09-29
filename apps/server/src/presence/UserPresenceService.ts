@@ -4,13 +4,14 @@
  * Upstream's `BackgroundPolicy` keeps a 45 s lease per connected client and
  * forgets it on expiry — enough to throttle background work, not enough to
  * tell an agent whether the human is still around. This service follows the
- * policy's snapshot stream and keeps, per client, the last report and the
- * facts that should outlive the lease: when it last reported, last interacted,
- * last had focus, and which threads it had open when. Clients are mapped to
- * environment users through the auth session that reported them, so the
- * answer is phrased per person, and the durable facts the server already has
- * (auth-session last-seen, the person's last message in the thread) fill the
- * gap right after a restart, when no client has reported yet.
+ * policy's snapshot stream and keeps, per connection (login, socket, browser
+ * profile), the last report and the facts that should outlive the lease: when
+ * it last reported, last interacted, last had focus, and which threads it had
+ * open when. Connections are mapped to environment users through the login
+ * that reported them, so the answer is phrased per person, and the durable
+ * facts the server already has (auth-session last-seen, the person's last
+ * message in the thread) fill the gap right after a restart, when no client
+ * has reported yet.
  *
  * The rules that turn these inputs into a state and a recommendation live in
  * `presenceModel.ts`; this file only gathers.
@@ -18,11 +19,13 @@
 import {
   EnvironmentUserId,
   ThreadId,
+  UserId,
   userIdFromSubject,
   type AuthSessionId,
   type BackgroundPolicySnapshot,
   type ClientActivityLease,
   type OrchestrationThreadShell,
+  type RpcClientId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -35,30 +38,38 @@ import * as Stream from "effect/Stream";
 
 import * as SessionStore from "../auth/SessionStore.ts";
 import { BackgroundPolicy } from "../background/BackgroundPolicy.ts";
+import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
+import { PresenceMessageQuery } from "./presenceMessages.ts";
 import {
   buildPresenceReport,
+  clientViewsSession,
+  isClientLive,
   type PresenceClientInput,
   type PresencePersonInput,
   type PresenceReport,
   type PresenceRole,
 } from "./presenceModel.ts";
 
-/** Distinct clients remembered after their lease expires; the oldest report goes first. */
+/** Distinct connections remembered after their lease expires; the oldest report goes first. */
 export const MAX_TRACKED_CLIENTS = 256;
-/** Threads remembered per client; the least recently viewed goes first. */
+/** Threads remembered per connection; the least recently viewed goes first. */
 export const MAX_VIEWED_THREADS_PER_CLIENT = 32;
-/** Turns read from the thread to find each person's last message. */
-const LAST_MESSAGE_TURN_WINDOW = 50;
 
 export class PresenceError extends Schema.TaggedError<PresenceError>()("PresenceError", {
   reason: Schema.Literals(["not-found", "read-failed"]),
   message: Schema.String,
 }) {}
 
+/**
+ * One connection, keyed like upstream's lease: login + socket + browser
+ * profile. Two tabs of one profile are two sockets and must not overwrite
+ * each other's reports.
+ */
 export interface TrackedClient {
   readonly authSessionId: AuthSessionId;
+  readonly rpcClientId: RpcClientId;
   readonly clientId: string;
   readonly clientKind: ClientActivityLease["clientKind"];
   readonly visible: boolean;
@@ -70,6 +81,7 @@ export interface TrackedClient {
   readonly networkType: string | null;
   readonly viewingThreadIds: ReadonlyArray<string>;
   readonly lastReportAtMs: number;
+  /** Clamped to the moment the lease left the policy snapshot (socket closed). */
   readonly leaseExpiresAtMs: number;
   readonly lastInteractionAtMs: number | null;
   readonly lastFocusedAtMs: number | null;
@@ -86,20 +98,22 @@ export interface PresenceQuery {
 export class UserPresenceService extends Context.Service<
   UserPresenceService,
   {
-    readonly trackingSinceMs: number;
+    /** When the first client report was folded in; `null` until one arrives. */
+    readonly trackingSince: Effect.Effect<number | null>;
     readonly report: (query: PresenceQuery) => Effect.Effect<PresenceReport, PresenceError>;
     /** Exposed for tests and diagnostics. */
     readonly trackedClients: Effect.Effect<ReadonlyArray<TrackedClient>>;
   }
 >()("t3/presence/UserPresenceService") {}
 
-const trackedKey = (lease: Pick<ClientActivityLease, "sessionId" | "clientId">): string =>
-  JSON.stringify([lease.sessionId, lease.clientId]);
+const trackedKey = (
+  lease: Pick<ClientActivityLease, "sessionId" | "rpcClientId" | "clientId">,
+): string => JSON.stringify([lease.sessionId, lease.rpcClientId, lease.clientId]);
 
 const threadScopes = (lease: ClientActivityLease): ReadonlyArray<string> =>
   lease.scopes.flatMap((scope) => (scope.type === "thread" ? [String(scope.threadId)] : []));
 
-/** Folds one lease into the client's record; a report older than the record is ignored. */
+/** Folds one lease into the connection's record; a report older than the record is ignored. */
 export function ingestLease(
   previous: TrackedClient | undefined,
   lease: ClientActivityLease,
@@ -122,6 +136,7 @@ export function ingestLease(
   }
   return {
     authSessionId: lease.sessionId,
+    rpcClientId: lease.rpcClientId,
     clientId: lease.clientId,
     clientKind: lease.clientKind,
     visible: lease.visible,
@@ -143,15 +158,27 @@ export function ingestLease(
   };
 }
 
-/** Applies a policy snapshot to the tracked set, evicting the stalest clients past the cap. */
+/**
+ * Applies a policy snapshot to the tracked set. A connection missing from the
+ * snapshot has closed or expired, so its lease ends now rather than at the
+ * expiry it once announced. Past the cap the stalest connection is evicted.
+ */
 export function ingestSnapshot(
   clients: Map<string, TrackedClient>,
-  snapshot: Pick<BackgroundPolicySnapshot, "leases">,
+  snapshot: Pick<BackgroundPolicySnapshot, "leases" | "updatedAt">,
 ): void {
+  const nowMs = DateTime.toEpochMillis(snapshot.updatedAt);
+  const present = new Set<string>();
   for (const lease of snapshot.leases) {
     const key = trackedKey(lease);
+    present.add(key);
     const next = ingestLease(clients.get(key), lease);
     if (next !== undefined) clients.set(key, next);
+  }
+  for (const [key, client] of clients) {
+    if (!present.has(key) && client.leaseExpiresAtMs > nowMs) {
+      clients.set(key, { ...client, leaseExpiresAtMs: nowMs });
+    }
   }
   while (clients.size > MAX_TRACKED_CLIENTS) {
     let oldest: [string, TrackedClient] | undefined;
@@ -201,17 +228,29 @@ const sessionFacts = (shell: OrchestrationThreadShell | undefined, threadId: Thr
   };
 };
 
+const readFailed = (cause: unknown) =>
+  new PresenceError({ reason: "read-failed", message: String(cause) });
+
 export const make = Effect.gen(function* () {
   const backgroundPolicy = yield* BackgroundPolicy;
   const sessions = yield* SessionStore.SessionStore;
   const users = yield* EnvironmentUsers.EnvironmentUserRepository;
   const query = yield* ProjectionSnapshotQuery;
-  const trackingSinceMs = yield* Clock.currentTimeMillis;
+  const accessControl = yield* OrchestrationAccessControl;
+  const messages = yield* PresenceMessageQuery;
 
   const clients = new Map<string, TrackedClient>();
-  // Auth session → user id (null = a login with no user identity). Filled from
-  // the session store's change stream and refreshed on a miss.
+  let trackingSinceMs: number | null = null;
+  // Login → user id (null = a login with no user identity). Filled from the
+  // session store's change stream and refreshed on every report.
   const identities = new Map<string, string | null>();
+
+  const ingest = (snapshot: Pick<BackgroundPolicySnapshot, "leases" | "updatedAt">) => {
+    if (trackingSinceMs === null && snapshot.leases.length > 0) {
+      trackingSinceMs = DateTime.toEpochMillis(snapshot.updatedAt);
+    }
+    ingestSnapshot(clients, snapshot);
+  };
 
   const rememberIdentity = (session: {
     readonly sessionId: AuthSessionId;
@@ -234,7 +273,7 @@ export const make = Effect.gen(function* () {
   yield* listAuthSessions;
 
   yield* backgroundPolicy.streamChanges.pipe(
-    Stream.runForEach((snapshot) => Effect.sync(() => ingestSnapshot(clients, snapshot))),
+    Stream.runForEach((snapshot) => Effect.sync(() => ingest(snapshot))),
     Effect.tapCause(Effect.logError),
     Effect.forkScoped,
   );
@@ -258,33 +297,30 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const canAccess = (userId: string, threadId: ThreadId) =>
+    accessControl
+      .canAccessThread(UserId.make(userId), threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+
   const report: UserPresenceService["Service"]["report"] = Effect.fn("UserPresenceService.report")(
     function* (input) {
       const threadId = input.threadId;
+      const threadKey = String(threadId);
       const caveats: Array<string> = [];
 
       // Fold the freshest leases in before answering: the stream is asynchronous
       // and a report that raced a heartbeat should still see it.
-      yield* backgroundPolicy.snapshot.pipe(
-        Effect.map((snapshot) => ingestSnapshot(clients, snapshot)),
-        Effect.ignore,
-      );
+      yield* backgroundPolicy.snapshot.pipe(Effect.map(ingest), Effect.ignore);
 
-      const shell = yield* query.getThreadShellById(threadId).pipe(
-        Effect.map(Option.getOrUndefined),
-        Effect.mapError(
-          (cause) => new PresenceError({ reason: "read-failed", message: String(cause) }),
-        ),
-      );
+      const shell = yield* query
+        .getThreadShellById(threadId)
+        .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(readFailed));
       const access =
         shell !== undefined
           ? { ownerUserId: shell.ownerUserId, memberUserIds: shell.memberUserIds }
-          : yield* query.getThreadAccessById(threadId).pipe(
-              Effect.map(Option.getOrUndefined),
-              Effect.mapError(
-                (cause) => new PresenceError({ reason: "read-failed", message: String(cause) }),
-              ),
-            );
+          : yield* query
+              .getThreadAccessById(threadId)
+              .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(readFailed));
       if (access === undefined) {
         return yield* new PresenceError({
           reason: "not-found",
@@ -294,35 +330,26 @@ export const make = Effect.gen(function* () {
 
       const lastMessageByUser = new Map<string, number>();
       let lastSenderUserId: string | null = null;
-      const detail = yield* query
-        .getThreadDetailSnapshot(threadId, { turnLimit: LAST_MESSAGE_TURN_WINDOW })
-        .pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("presence: thread detail read failed", { threadId, cause }).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  caveats.push(
-                    "last-message times are unavailable: the thread history failed to load",
-                  );
-                }),
-              ),
-              Effect.as(undefined),
+      const latestMessages = yield* messages.latestUserMessageBySender(threadId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("presence: last-message read failed", { threadId, cause }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                caveats.push("last-message times are unavailable: the message read failed");
+              }),
             ),
+            Effect.as([] as ReadonlyArray<never>),
           ),
-        );
-      if (detail !== undefined) {
-        let lastSenderAtMs = -1;
-        for (const message of detail.thread.messages) {
-          if (message.role !== "user" || message.sentByUserId === null) continue;
-          const atMs = Date.parse(message.createdAt);
-          if (Number.isNaN(atMs)) continue;
-          const userId = String(message.sentByUserId);
-          lastMessageByUser.set(userId, Math.max(lastMessageByUser.get(userId) ?? 0, atMs));
-          if (atMs >= lastSenderAtMs) {
-            lastSenderAtMs = atMs;
-            lastSenderUserId = userId;
-          }
+        ),
+      );
+      let lastSenderAtMs = -1;
+      for (const message of latestMessages) {
+        const atMs = Date.parse(message.createdAt);
+        if (Number.isNaN(atMs)) continue;
+        lastMessageByUser.set(message.userId, atMs);
+        if (atMs > lastSenderAtMs) {
+          lastSenderAtMs = atMs;
+          lastSenderUserId = message.userId;
         }
       }
 
@@ -364,11 +391,13 @@ export const make = Effect.gen(function* () {
       if (access.ownerUserId !== null) addRole(String(access.ownerUserId), "owner");
       for (const memberId of access.memberUserIds) addRole(String(memberId), "member");
       if (lastSenderUserId !== null) addRole(lastSenderUserId, "last-sender");
+      // A viewer report only counts for someone who may see the thread; a
+      // stale scope from a login that lost access must not put them back.
       for (const [userId, bucket] of clientsByUser) {
-        if (userId === null) continue;
-        if (bucket.some((client) => client.viewedThreads.has(String(threadId)))) {
-          addRole(userId, "viewer");
+        if (userId === null || !bucket.some((client) => client.viewedThreads.has(threadKey))) {
+          continue;
         }
+        if (roles.has(userId) || (yield* canAccess(userId, threadId))) addRole(userId, "viewer");
       }
       if (access.ownerUserId === null) caveats.push("this session has no owner");
 
@@ -382,7 +411,7 @@ export const make = Effect.gen(function* () {
           name: user?.displayName ?? null,
           roles: [...roleSet],
           clients: (clientsByUser.get(userId) ?? []).map((client) =>
-            toClientInput(client, String(threadId)),
+            toClientInput(client, threadKey),
           ),
           authSessionLastConnectedAtMs: auth?.lastConnectedAtMs ?? null,
           authSessionConnected: auth?.connected ?? false,
@@ -390,20 +419,19 @@ export const make = Effect.gen(function* () {
           lastMessageInSessionAtMs: lastMessageByUser.get(userId) ?? null,
         });
       }
-      const unidentified = clientsByUser.get(null) ?? [];
-      if (
-        unidentified.some(
-          (client) => client.leaseExpiresAtMs > nowMs || client.viewedThreads.has(String(threadId)),
-        )
-      ) {
+      // A login without an identity (single-user or local mode) is only
+      // relevant to this session while it is actually looking at it; an
+      // unidentified client somewhere else says nothing about this session.
+      const unidentifiedHere = (clientsByUser.get(null) ?? [])
+        .map((client) => toClientInput(client, threadKey))
+        .filter((client) => isClientLive(client, nowMs) && clientViewsSession(client, threadKey));
+      if (unidentifiedHere.length > 0) {
         people.push({
           userId: null,
           email: null,
           name: null,
-          roles: unidentified.some((client) => client.viewedThreads.has(String(threadId)))
-            ? ["viewer"]
-            : [],
-          clients: unidentified.map((client) => toClientInput(client, String(threadId))),
+          roles: ["viewer"],
+          clients: unidentifiedHere,
           authSessionLastConnectedAtMs: null,
           authSessionConnected: false,
           directoryLastSeenAtMs: null,
@@ -440,7 +468,7 @@ export const make = Effect.gen(function* () {
   );
 
   return UserPresenceService.of({
-    trackingSinceMs,
+    trackingSince: Effect.sync(() => trackingSinceMs),
     report,
     trackedClients: Effect.sync(() => [...clients.values()]),
   });

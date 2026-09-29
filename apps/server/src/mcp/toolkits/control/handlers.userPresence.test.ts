@@ -34,7 +34,7 @@ const invocation = (
 function makeService() {
   const queries: Array<PresenceQuery> = [];
   const service = {
-    trackingSinceMs: 0,
+    trackingSince: Effect.succeed(null),
     trackedClients: Effect.succeed([]),
     report: (query: PresenceQuery) => {
       queries.push(query);
@@ -90,6 +90,24 @@ it.effect("requires t3.read", () =>
     );
     expect(error.message).toBe("This MCP credential does not grant t3.read.");
     expect(queries).toEqual([]);
+  }),
+);
+
+it.effect("defaults a user-bound provider credential to its own session too", () =>
+  Effect.gen(function* () {
+    const { service, queries } = makeService();
+    const userBound = invocation({ capabilities: new Set(["t3.read", "t3.session.create"]) });
+    const result = yield* __testing.userPresence({}).pipe(provide(service, userBound));
+    expect(result).toEqual({ session: { sessionId: String(ownThreadId) }, attended: true });
+    expect(queries).toEqual([{ threadId: ownThreadId }]);
+
+    const external = invocation({
+      principal: "external-user",
+      threadId: ThreadId.make("external-user:user-agent-owner"),
+      capabilities: new Set(["t3.read", "t3.session.create"]),
+    });
+    const error = yield* Effect.flip(__testing.userPresence({}).pipe(provide(service, external)));
+    expect(error.message).toBe("sessionId is required for a user-wide MCP call.");
   }),
 );
 

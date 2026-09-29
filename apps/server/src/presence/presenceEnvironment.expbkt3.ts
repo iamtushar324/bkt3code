@@ -9,7 +9,9 @@
  *
  *   curl -H "Authorization: Bearer $T3_MCP_BEARER_TOKEN" "$BK_T3_PRESENCE_URL"
  *
- * works unchanged on every deployment.
+ * works unchanged on every deployment. It is injected only where the bearer
+ * is (the Claude and Codex adapters); a URL without the credential beside it
+ * would be a dead end.
  */
 import type { ThreadId } from "@t3tools/contracts";
 
@@ -22,11 +24,10 @@ export function presenceUrlForSession(mcpEndpoint: string, threadId: ThreadId): 
   return `${base}${PRESENCE_ROUTE_PATH}?sessionId=${encodeURIComponent(String(threadId))}`;
 }
 
-/** Adds the variable when the session has an MCP endpoint; leaves `base` alone otherwise. */
-export function withPresenceEnvironment(
-  base: NodeJS.ProcessEnv,
-  config: { readonly endpoint?: string; readonly threadId?: ThreadId } | undefined,
-): NodeJS.ProcessEnv {
-  if (config?.endpoint === undefined || config.threadId === undefined) return base;
-  return { ...base, [PRESENCE_URL_KEY]: presenceUrlForSession(config.endpoint, config.threadId) };
+/** The one variable to spread into a provider environment next to `T3_MCP_BEARER_TOKEN`. */
+export function presenceEnvironmentFor(config: {
+  readonly endpoint: string;
+  readonly threadId: ThreadId;
+}): Readonly<Record<string, string>> {
+  return { [PRESENCE_URL_KEY]: presenceUrlForSession(config.endpoint, config.threadId) };
 }

@@ -93,6 +93,7 @@ import { pullRequestStateRouteLayer } from "./orchestration/pullRequestStateHttp
 // T3-CUSTOM(expbkt3): BEGIN — user presence for agents (t3_user_presence, GET /api/presence).
 import * as EnvironmentUsers from "./persistence/EnvironmentUsers.ts";
 import { presenceRouteLayer } from "./presence/presenceHttp.expbkt3.ts";
+import * as PresenceMessageQuery from "./presence/presenceMessages.ts";
 import * as UserPresenceService from "./presence/UserPresenceService.ts";
 // T3-CUSTOM(expbkt3): END
 import * as DeviceService from "./device/DeviceService.ts";
@@ -745,7 +746,11 @@ const McpRoutesLive = Layer.mergeAll(
   // Its user directory is composed here so route tests never inherit the repository.
   Layer.provideMerge(
     UserPresenceService.layer.pipe(
-      Layer.provide(EnvironmentUsers.layer.pipe(Layer.provide(PersistenceLayerLive))),
+      Layer.provide(
+        Layer.mergeAll(EnvironmentUsers.layer, PresenceMessageQuery.layer).pipe(
+          Layer.provide(PersistenceLayerLive),
+        ),
+      ),
     ),
   ),
   Layer.provide(ClerkDirectoryLive),
