@@ -23,6 +23,46 @@ export type PersonalMcpIntegrationId = typeof PersonalMcpIntegrationId.Type;
 
 export const BIFROST_MCP_INTEGRATION_ID = "bifrost" as const;
 export const BIFROST_MCP_URL = "https://bk-toolhub.beknown.live/mcp" as const;
+/** toolyard, the Bifrost-compatible replacement gateway. Opt-in per user. */
+export const TOOLYARD_MCP_URL = "https://toolyard.dev.beknown.live/mcp" as const;
+
+/**
+ * The only endpoints an `x-bf-vk` integration may target, so a stored virtual
+ * key is never sent to an arbitrary URL. The first entry is the default.
+ */
+export const BIFROST_GATEWAYS = [
+  { url: BIFROST_MCP_URL, integrationName: "Bifrost" },
+  { url: TOOLYARD_MCP_URL, integrationName: "Bifrost (toolyard)" },
+] as const;
+export type BifrostGateway = (typeof BIFROST_GATEWAYS)[number];
+
+const normalizeGatewayUrl = (value: string): string | undefined => {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  // The WHATWG parser already lowercases scheme and host, drops the default
+  // port, and resolves dot segments; anything beyond scheme, host and path
+  // (credentials, a port, a query, a fragment) disqualifies the URL.
+  if (url.username || url.password || url.port || url.search || url.hash) return undefined;
+  const pathname = url.pathname.replace(/\/+$/, "").toLowerCase();
+  return `${url.protocol}//${url.host}${pathname}`;
+};
+
+/**
+ * The allowlisted gateway `url` names, matched exactly after normalisation
+ * (case, trailing slash). Returns the canonical entry, never the input.
+ */
+export const resolveBifrostGateway = (url: string): BifrostGateway | undefined => {
+  const normalized = normalizeGatewayUrl(url);
+  if (normalized === undefined) return undefined;
+  return BIFROST_GATEWAYS.find((gateway) => normalizeGatewayUrl(gateway.url) === normalized);
+};
+
+export const isAllowedBifrostGatewayUrl = (url: string): boolean =>
+  resolveBifrostGateway(url) !== undefined;
 
 export const PersonalMcpIntegration = Schema.Struct({
   id: PersonalMcpIntegrationId,
