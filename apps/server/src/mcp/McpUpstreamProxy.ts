@@ -2,7 +2,13 @@
  * T3-CUSTOM(expbkt3): Authenticated MCP reverse proxy that resolves upstream
  * credentials from the user bound to the active ACP generation.
  */
-import { PersonalMcpIntegrationId, type PersonalMcpAuthMode } from "@t3tools/contracts";
+import {
+  PersonalMcpIntegrationId,
+  resolveBifrostGateway,
+  TOOLYARD_MCP_URL,
+  type PersonalMcpAuthMode,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -18,7 +24,13 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
 
 const PATH = /^\/mcp\/upstream\/([A-Za-z0-9._-]+)$/;
+/**
+ * Names the T3 thread a call comes from, for toolyard's audit. Only the proxy
+ * sets it, and only toward toolyard; a caller-supplied value is dropped.
+ */
+const T3_SESSION_ID_HEADER = "x-t3-session-id";
 const REQUEST_HEADERS_NOT_FORWARDED = [
+  T3_SESSION_ID_HEADER,
   "authorization",
   "cookie",
   "host",
@@ -58,7 +70,11 @@ interface ForwardedRequestOptions {
   readonly authMode: PersonalMcpAuthMode;
   readonly customHeaderName: string;
   readonly credential: string;
+  readonly threadId: ThreadId;
 }
+
+const isToolyardGatewayUrl = (url: string): boolean =>
+  resolveBifrostGateway(url)?.url === TOOLYARD_MCP_URL;
 
 const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(function* (
   incoming: Request,
@@ -98,6 +114,9 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
         HttpClientRequest.setHeader(options.customHeaderName, options.credential),
       );
       break;
+  }
+  if (isToolyardGatewayUrl(options.url)) {
+    outgoing = outgoing.pipe(HttpClientRequest.setHeader(T3_SESSION_ID_HEADER, options.threadId));
   }
   return outgoing;
 });
@@ -191,6 +210,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       authMode: integration.authMode,
       customHeaderName: integration.customHeaderName,
       credential,
+      threadId: invocation.threadId,
     });
 
     const client = yield* HttpClient.HttpClient;
