@@ -9,6 +9,7 @@ import {
   type PersonalMcpAuthMode,
   type PersonalMcpIntegration,
   type PersonalMcpIntegrationUpdate,
+  TOOLYARD_MCP_URL,
 } from "@t3tools/contracts";
 import { CopyIcon, KeyRoundIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -26,6 +27,12 @@ import { SettingsRow, SettingsSection } from "./settingsLayout";
 export function formatExternalMcpApiKey(bytes: Uint8Array): string {
   return `t3exp_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
+
+/** The Bifrost-compatible gateways a user can route their `bifrost` tools through. */
+const bifrostGatewayOptions: ReadonlyArray<{ value: string; label: string }> = [
+  { value: BIFROST_MCP_URL, label: "Bifrost (bk-toolhub)" },
+  { value: TOOLYARD_MCP_URL, label: "toolyard (toolyard.dev.beknown.live)" },
+];
 
 export function buildBifrostIntegration(): PersonalMcpIntegration {
   return {
@@ -320,12 +327,30 @@ export function ExternalMcpSettingsSection() {
           >
             <div className="mt-3 mb-4 grid gap-2 md:grid-cols-2">
               {integration.id === BIFROST_MCP_INTEGRATION_ID ? (
-                <Input
-                  className="font-mono text-xs md:col-span-2"
-                  value={BIFROST_MCP_URL}
-                  readOnly
-                  aria-label="Bifrost MCP URL"
-                />
+                <div className="grid gap-1.5 md:col-span-2">
+                  <Select
+                    items={bifrostGatewayOptions}
+                    value={integration.url}
+                    onValueChange={(url) => {
+                      if (url === null || url === integration.url) return;
+                      void persistIntegrations(patchIntegration(integration.id, { url }));
+                    }}
+                  >
+                    <SelectTrigger aria-label="Bifrost gateway">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {bifrostGatewayOptions.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    toolyard uses your toolyard Beknown key (toolyard → Agents → Your Beknown key).
+                  </p>
+                </div>
               ) : (
                 <>
                   <Input
