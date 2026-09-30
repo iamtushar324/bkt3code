@@ -5,12 +5,13 @@
  * user/integration-namespaced ServerSecretStore entries and never returned.
  */
 import {
-  BIFROST_MCP_URL,
+  BIFROST_GATEWAYS,
   PersonalMcpProfile,
   type PersonalMcpProfileUpdate,
   PersonalMcpSettingsError,
   PersonalMcpIntegration,
   type PersonalMcpIntegrationId,
+  resolveBifrostGateway,
   UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -62,20 +63,26 @@ const hash = (value: string): string =>
 const secretName = (userId: UserId, integrationId: PersonalMcpIntegrationId): string =>
   `user-mcp-${hash(`${userId}\0${integrationId}`)}`;
 
+/**
+ * Pins every `x-bf-vk` integration to an allowlisted Bifrost-compatible
+ * gateway: an allowlisted URL is kept (in canonical form), anything else falls
+ * back to Bifrost. Applied on write and on every read.
+ */
 export const canonicalizePersonalMcpIntegration = <
   T extends PersonalMcpProfileUpdate["integrations"][number] | PersonalMcpIntegration,
 >(
   integration: T,
-): T =>
-  integration.authMode === "x-bf-vk"
-    ? {
-        ...integration,
-        name: "Bifrost",
-        url: BIFROST_MCP_URL,
-        authMode: "x-bf-vk",
-        customHeaderName: "",
-      }
-    : integration;
+): T => {
+  if (integration.authMode !== "x-bf-vk") return integration;
+  const gateway = resolveBifrostGateway(integration.url) ?? BIFROST_GATEWAYS[0];
+  return {
+    ...integration,
+    name: gateway.integrationName,
+    url: gateway.url,
+    authMode: "x-bf-vk",
+    customHeaderName: "",
+  };
+};
 
 const parseStoredProfile = Effect.fn("UserMcpProfileStore.parseStoredProfile")(function* (
   profileJson: string,
