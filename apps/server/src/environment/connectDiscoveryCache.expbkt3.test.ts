@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -7,7 +8,7 @@ import { TestClock } from "effect/testing";
 import { makeStaleWhileRevalidate } from "./connectDiscoveryCache.expbkt3.ts";
 
 /** A discovery that takes `scanTime` and returns how many scans have started. */
-const countingDiscovery = (scanTime: string) => {
+const countingDiscovery = (scanTime: Duration.Input) => {
   let scans = 0;
   const discover = Effect.sync(() => ++scans).pipe(Effect.delay(scanTime));
   return { discover, scans: () => scans };
