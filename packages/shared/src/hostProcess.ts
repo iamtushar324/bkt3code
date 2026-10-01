@@ -25,6 +25,24 @@ export const HostProcessHostname = Context.Reference<string>(
   },
 );
 
+// T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. The login account on
+// the environment host, so a remote open-in-editor deep link can name the user
+// to SSH as. Hosts differ (ds1 is `ubuntu`, a Mac is not), and the viewer's own
+// username is not a usable guess, so the host reports its own.
+export const HostProcessUsername = Context.Reference<string | null>(
+  "@t3tools/shared/hostProcess/HostProcessUsername",
+  {
+    defaultValue: () => {
+      try {
+        return NodeOS.userInfo().username.trim() || null;
+      } catch {
+        return null;
+      }
+    },
+  },
+);
+// T3-CUSTOM(expbkt3): END
+
 export const HostProcessEnvironment = Context.Reference<NodeJS.ProcessEnv>(
   "@t3tools/shared/hostProcess/HostProcessEnvironment",
   {

@@ -1,5 +1,6 @@
 import { it } from "@effect/vitest";
-import { HostProcessHostname } from "@t3tools/shared/hostProcess";
+// T3-CUSTOM(expbkt3): HostProcessUsername is a backport of upstream #8305.
+import { HostProcessHostname, HostProcessUsername } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -52,9 +53,16 @@ const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
   readonly tailscale: { readonly exitCode: number; readonly stdout: string };
   readonly hostname: string;
+  // T3-CUSTOM(expbkt3): username is a backport of upstream #8305.
+  readonly username?: string | null;
 }) =>
   Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
     Effect.provideService(HostProcessHostname, input.hostname),
+    // T3-CUSTOM(expbkt3): backport of upstream #8305.
+    Effect.provideService(
+      HostProcessUsername,
+      input.username === undefined ? null : input.username,
+    ),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(netLayer(input.sshd), spawnerLayer(input.tailscale))),
@@ -124,3 +132,40 @@ describe("RemoteOpenTargets", () => {
     }),
   );
 });
+
+// T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. One client opens
+// worktrees on several hosts (ds1 runs as `ubuntu`, a Mac as something else),
+// so each host advertises the account to SSH as rather than letting the viewer's
+// own username be guessed.
+describe("RemoteOpenTargets host login account", () => {
+  it.effect("advertises the host's own login account with every name", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: true },
+        tailscale: TAILSCALE_UP,
+        hostname: "bb-1",
+        username: "ubuntu",
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "ubuntu" },
+        { kind: "mdns", host: "bb-1.local", username: "ubuntu" },
+      ]);
+    }),
+  );
+
+  it.effect("still advertises hostnames when the username is unavailable", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: true },
+        tailscale: TAILSCALE_UP,
+        hostname: "bb-1",
+        username: null,
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net" },
+        { kind: "mdns", host: "bb-1.local" },
+      ]);
+    }),
+  );
+});
+// T3-CUSTOM(expbkt3): END

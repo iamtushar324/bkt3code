@@ -29,7 +29,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://127.0.0.1:8000"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -40,7 +40,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("https://sol.tail1234.ts.net"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -56,7 +56,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://172.29.112.1:14369"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -71,7 +71,7 @@ describe("resolveRemoteOpenState", () => {
           label: "WSL (Ubuntu)",
           connectionId: "local:wsl-1",
         }),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -86,7 +86,7 @@ describe("resolveRemoteOpenState", () => {
           label: "sol",
           connectionId: "ssh-1",
         }),
-        sshAlias: "sol",
+        sshTarget: { alias: "sol", username: null },
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -98,7 +98,7 @@ describe("resolveRemoteOpenState", () => {
       expect(
         resolveRemoteOpenState({
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-          sshAlias: null,
+          sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
         }),
@@ -110,7 +110,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: null,
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: undefined,
       }),
