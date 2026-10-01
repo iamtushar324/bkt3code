@@ -234,6 +234,8 @@ export const OpenInPicker = memo(function OpenInPicker({
         const url = buildRemoteOpenUrl({
           editor,
           host: remote.host.host,
+          // T3-CUSTOM(expbkt3): username is a backport of upstream #8305.
+          ...(remote.host.username === undefined ? {} : { username: remote.host.username }),
           absolutePath: openInCwd,
         });
         if (url === undefined) return;

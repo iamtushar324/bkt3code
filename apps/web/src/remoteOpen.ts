@@ -4,9 +4,12 @@
  * deep link (local editor connects over SSH) instead of exec'ing an editor
  * on the environment host.
  *
- * Host precedence: a desktop-SSH environment's real `~/.ssh/config` alias
- * beats server-advertised names; among advertised names the tailnet MagicDNS
- * name beats mDNS `<hostname>.local` (server sends them in that order).
+ * T3-CUSTOM(expbkt3): the wording below follows upstream #8305, where the
+ * desktop-SSH alias became a target carrying its login account.
+ *
+ * Host precedence: a desktop-SSH environment's configured target beats
+ * server-advertised names; among advertised names the tailnet MagicDNS name
+ * beats mDNS `<hostname>.local` (server sends them in that order).
  */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
@@ -20,6 +23,9 @@ import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+// T3-CUSTOM(expbkt3): a managed build's primary is a central server, not this machine.
+import { isBkManagedPrimary } from "~/fork/managedEnvironment";
+import { desktopManagesPrimaryBackend } from "~/fork/remoteOpenManaged";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useEnvironmentPresentation } from "~/state/presentation";
@@ -27,6 +33,8 @@ import { useEnvironmentPresentation } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
+  // T3-CUSTOM(expbkt3): `username` is a backport of upstream #8305.
+  readonly username?: string;
 }
 
 export type RemoteOpenState =
@@ -58,8 +66,10 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  /** Real ssh alias for desktop-SSH environments; null elsewhere. */
-  readonly sshAlias: string | null;
+  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305; was `sshAlias: string | null`.
+  /** Configured target for desktop-SSH environments; null elsewhere. */
+  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  // T3-CUSTOM(expbkt3): END
   /** Server-advertised hosts; undefined on servers that predate the feature. */
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
@@ -86,9 +96,18 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  if (input.sshAlias !== null && input.sshAlias.length > 0) {
-    return { mode: "remote-links", host: { kind: "ssh-alias", host: input.sshAlias } };
+  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
+  if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
+    return {
+      mode: "remote-links",
+      host: {
+        kind: "ssh-alias",
+        host: input.sshTarget.alias,
+        ...(input.sshTarget.username === null ? {} : { username: input.sshTarget.username }),
+      },
+    };
   }
+  // T3-CUSTOM(expbkt3): END
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
     return { mode: "remote-links", host: advertised };
@@ -104,14 +123,25 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
       return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(presentation.entry.profile);
-    const sshAlias =
-      profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
+    // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
+    const sshTarget =
+      profile !== null && profile._tag === "SshConnectionProfile"
+        ? { alias: profile.target.alias, username: profile.target.username }
+        : null;
+    // T3-CUSTOM(expbkt3): END
     return {
       state: resolveRemoteOpenState({
         target: presentation.entry.target,
-        sshAlias,
+        // T3-CUSTOM(expbkt3): backport of upstream #8305.
+        sshTarget,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
+        // T3-CUSTOM(expbkt3): the flag means "the desktop app manages its own
+        // primary backend", which a managed BK build does not — see
+        // fork/remoteOpenManaged.
+        isDesktopRenderer: desktopManagesPrimaryBackend({
+          hasDesktopBridge: window.desktopBridge !== undefined,
+          isManagedPrimary: isBkManagedPrimary(),
+        }),
       }),
       isResolved: true,
     };

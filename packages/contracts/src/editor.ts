@@ -119,6 +119,8 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
+  // T3-CUSTOM(expbkt3): `username` is a backport of upstream #8305.
+  readonly username?: string;
   readonly absolutePath: string;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
@@ -128,7 +130,12 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
-  const encodedHost = encodeURIComponent(input.host);
+  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. Without the login
+  // account, Remote-SSH connects as the *viewer's* username, which is wrong on
+  // every host whose account differs from the client machine's.
+  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  const encodedHost = encodeURIComponent(destination);
+  // T3-CUSTOM(expbkt3): END
   if (input.editor === "zed") {
     // Zed's remote server resolves a rooted path on the system drive, so a
     // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
@@ -154,6 +161,11 @@ export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
+  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. Login account on
+  // the environment host. Optional for compatibility with servers that
+  // advertised only a hostname.
+  username: Schema.optionalKey(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): END
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 

@@ -9,7 +9,8 @@
  * on the tailnet; `<hostname>.local` only on the same LAN).
  */
 import { type RemoteOpenTarget } from "@t3tools/contracts";
-import { HostProcessHostname } from "@t3tools/shared/hostProcess";
+// T3-CUSTOM(expbkt3): HostProcessUsername is a backport of upstream #8305.
+import { HostProcessHostname, HostProcessUsername } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
@@ -45,6 +46,11 @@ export const make = Effect.gen(function* () {
     }
 
     const targets: Array<RemoteOpenTarget> = [];
+    // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. Each host reports
+    // the account its own T3 server runs as, so one client can open worktrees on
+    // several machines with different logins without per-host configuration.
+    const username = yield* HostProcessUsername;
+    // T3-CUSTOM(expbkt3): END
 
     // Tailscale absent or down is the common case, not an error.
     const magicDnsName = yield* readTailscaleStatus.pipe(
@@ -53,7 +59,13 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     if (magicDnsName !== null) {
-      targets.push({ kind: "tailscale", host: magicDnsName });
+      // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
+      targets.push({
+        kind: "tailscale",
+        host: magicDnsName,
+        ...(username === null ? {} : { username }),
+      });
+      // T3-CUSTOM(expbkt3): END
     }
 
     // os.hostname() may already be an FQDN (macOS often reports
@@ -61,7 +73,13 @@ export const make = Effect.gen(function* () {
     const hostname = yield* HostProcessHostname;
     const shortHostname = hostname.split(".")[0]?.trim();
     if (shortHostname !== undefined && shortHostname.length > 0) {
-      targets.push({ kind: "mdns", host: `${shortHostname}.local` });
+      // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
+      targets.push({
+        kind: "mdns",
+        host: `${shortHostname}.local`,
+        ...(username === null ? {} : { username }),
+      });
+      // T3-CUSTOM(expbkt3): END
     }
 
     return targets;
