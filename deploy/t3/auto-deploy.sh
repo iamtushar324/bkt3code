@@ -6,7 +6,15 @@ REPO_DIR="${T3_REPO_DIR:-/home/ubuntu/repos/t3code}"
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_BRANCH="t3main"
 DEPLOYED_SHA_FILE="/home/ubuntu/.t3/beknown-dev/deployed-sha"
-WORKFLOW_RUNS_URL="https://api.github.com/repos/beknown-work/bkt3code/actions/workflows/deploy-t3.yml/runs?branch=t3main&event=push&per_page=20"
+# The repository has been transferred once already; the old owner only still
+# resolves through GitHub's redirect. Read the slug from the checkout's origin
+# so a future transfer needs no change here.
+REPOSITORY="$(git -C "$REPO_DIR" remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')"
+if [[ ! "$REPOSITORY" =~ ^[^/]+/[^/]+$ ]]; then
+  echo "ERROR: could not read the GitHub repository from origin in $REPO_DIR." >&2
+  exit 1
+fi
+WORKFLOW_RUNS_URL="https://api.github.com/repos/$REPOSITORY/actions/workflows/deploy-t3.yml/runs?branch=t3main&event=push&per_page=20"
 
 CURRENT_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 if [[ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]]; then

@@ -293,6 +293,22 @@ fork's RPC handler map: that map is rebuilt per connection, so a cache created
 there would collapse one client's tabs and nothing else — which is not where the
 multiplication comes from.
 
+## Bifrost-compatible gateways
+
+An `x-bf-vk` integration may only point at an allowlisted gateway
+(`BIFROST_GATEWAYS` in `packages/contracts/src/personalMcp.ts`): Bifrost
+(bk-toolhub, the default) or toolyard. `canonicalizePersonalMcpIntegration`
+runs on every write and every read, keeps an allowlisted URL in canonical form,
+and rewrites anything else to Bifrost, so a stored virtual key is never sent to
+an arbitrary URL. Matching is exact after URL normalisation; credentials, a
+port, a query, or a lookalike host disqualify the URL.
+
+Choosing toolyard changes only the URL and display name. The integration id
+stays `bifrost`, so provider sessions still expose `mcp__bifrost__*` and every
+skill keeps working. The Linear status fallback above is not routed: it always
+posts to bk-toolhub with the stored key, so a viewer on toolyard (whose stored
+key is a toolyard key) gets status from the bridge only.
+
 ## Row change-request badge and settle-on-merge
 
 The experimental sidebar row shows its PR next to the Linear tag:
