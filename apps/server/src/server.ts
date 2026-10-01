@@ -137,7 +137,6 @@ import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceCont
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import { ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -178,6 +177,11 @@ import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.t
 import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
 // T3-CUSTOM(expbkt3): 6-hourly SQLite statistics refresh.
 import { SqliteOptimizeScheduleLive } from "./persistence/sqliteOptimize.expbkt3.ts";
+// T3-CUSTOM(expbkt3): connect-time discovery answered from the last result.
+import {
+  cachedExternalLauncherLayer,
+  cachedRemoteOpenTargetsLayer,
+} from "./environment/connectDiscoveryCache.expbkt3.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
 // T3-CUSTOM(expbkt3): archive-time history export reads activities, thread
 // rows (for the soft-deleted backfill), and provider resume cursors.
@@ -769,8 +773,11 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
-  Layer.provideMerge(ExternalLauncher.layer),
-  Layer.provideMerge(RemoteOpenTargets.layer),
+  // T3-CUSTOM(expbkt3): BEGIN - reconnects reuse the last discovered editors and
+  // SSH targets instead of rescanning on the connection's 15 s setup budget.
+  Layer.provideMerge(cachedExternalLauncherLayer),
+  Layer.provideMerge(cachedRemoteOpenTargetsLayer),
+  // T3-CUSTOM(expbkt3): END
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
 );
