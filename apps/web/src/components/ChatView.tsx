@@ -90,6 +90,8 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+// T3-CUSTOM(expbkt3): the saved new-thread defaults seed the pull-request checkout draft.
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -2745,14 +2747,19 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
+      // T3-CUSTOM(expbkt3): BEGIN — the saved defaults (project, then host) decide
+      // the permissions and the starting mode; Plan only while its toggle exists.
+      const newThreadDefaults = resolveNewThreadDefaults(settings, activeProject.id, activeProject);
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
-          .defaultRuntimeMode,
-        interactionMode: DEFAULT_INTERACTION_MODE,
+        runtimeMode: newThreadDefaults.runtimeMode,
+        interactionMode: settings.planModeAvailable
+          ? newThreadDefaults.interactionMode
+          : DEFAULT_INTERACTION_MODE,
         ...input,
       });
+      // T3-CUSTOM(expbkt3): END
       await navigate({
         to: "/draft/$draftId",
         params: buildDraftThreadRouteParams(nextDraftId),

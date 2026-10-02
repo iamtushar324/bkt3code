@@ -39,12 +39,17 @@ function isInteractionMode(value: string | null): value is ProviderInteractionMo
   return value === "default" || value === "plan";
 }
 
-/** Plan or Build for new threads. Applies where the plan toggle is available. */
+/**
+ * Plan or Build for new threads. Hidden while this device has the plan toggle
+ * off (`planModeAvailable`), since a saved Plan default is then coerced to
+ * Build everywhere it would apply.
+ */
 export function StartingModeDefaultRow({ isProjectScope }: { isProjectScope: boolean }) {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["defaultThreadInteractionMode"]);
   const value = settings.defaultThreadInteractionMode;
+  if (!settings.planModeAvailable) return null;
   return (
     <SettingsRow
       serverScoped

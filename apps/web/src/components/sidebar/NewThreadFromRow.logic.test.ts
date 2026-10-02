@@ -26,12 +26,14 @@ function parent(overrides: Partial<NewThreadParentThread> = {}): NewThreadParent
 }
 
 describe("buildNewThreadFromRowCreateInput", () => {
-  it("parents the new thread and inherits the parent's model, not its plan mode", () => {
+  it("parents the new thread and inherits the parent's model when no default is saved", () => {
     const input = buildNewThreadFromRowCreateInput({
       parent: parent(),
       threadId: NEW_THREAD_ID,
       workspace: resolveSameWorktreeWorkspace(parent()),
+      modelSelection: null,
       runtimeMode: "full-access",
+      interactionMode: "default",
       createdAt: CREATED_AT,
     });
 
@@ -47,12 +49,37 @@ describe("buildNewThreadFromRowCreateInput", () => {
     });
   });
 
+  it("starts with the saved default model, options included, and the saved starting mode", () => {
+    const saved = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5",
+      options: [{ id: "effort", value: "max" }],
+    };
+    const input = buildNewThreadFromRowCreateInput({
+      parent: parent(),
+      threadId: NEW_THREAD_ID,
+      workspace: resolveSameWorktreeWorkspace(parent()),
+      modelSelection: saved,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      createdAt: CREATED_AT,
+    });
+
+    expect(input).toMatchObject({
+      modelSelection: saved,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+  });
+
   it("reuses the parent's worktree and branch for the same-worktree choice", () => {
     const input = buildNewThreadFromRowCreateInput({
       parent: parent(),
       threadId: NEW_THREAD_ID,
       workspace: resolveSameWorktreeWorkspace(parent()),
+      modelSelection: null,
       runtimeMode: "full-access",
+      interactionMode: "default",
       createdAt: CREATED_AT,
     });
 

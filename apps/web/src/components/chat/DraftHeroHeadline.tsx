@@ -1,7 +1,8 @@
 // T3-CUSTOM(expbkt3): BEGIN — environment-qualified project picker imports.
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import type { DraftId } from "~/composerDraftStore";
-import { useComposerDraftStore } from "~/composerDraftStore";
+// T3-CUSTOM(expbkt3): an empty draft follows the new project's saved defaults.
+import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 // T3-CUSTOM(expbkt3): END
@@ -45,7 +46,8 @@ import {
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+// T3-CUSTOM(expbkt3): the saved new-thread defaults (project, then host), one resolver.
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 
 interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
@@ -83,6 +85,12 @@ export function DraftHeroHeadline({
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
+  // T3-CUSTOM(expbkt3): BEGIN — retargeting an empty draft resets its modes to
+  // the new project's saved defaults; Plan only while its toggle exists.
+  const setRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
+  const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
+  const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
+  // T3-CUSTOM(expbkt3): END
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   const environmentLabelById = useMemo(
@@ -259,19 +267,41 @@ export function DraftHeroHeadline({
             // place. The prompt stays in the same composer session, so the
             // sidebar only gets a draft row if the user later navigates away.
             const currentDraft = getComposerDraft(draftId);
+            const environmentSettings = environments.find(
+              (environment) => environment.environmentId === project.environmentId,
+            )?.serverConfig?.settings;
+            // An empty draft is a new thread in the project it now targets: its
+            // permissions, starting mode and model follow that project's saved
+            // defaults, over the previous project's and over the composer's own
+            // toggles. A draft with typed content keeps what the user set up.
+            const retargetDefaults =
+              environmentSettings && !composerDraftHasUserContent(currentDraft)
+                ? resolveNewThreadDefaults(environmentSettings, project.id, project)
+                : null;
             setLogicalProjectDraftThreadId(
               entry.group.projectKey,
               scopeProjectRef(project.environmentId, project.id),
               draftId,
+              retargetDefaults
+                ? {
+                    runtimeMode: retargetDefaults.runtimeMode,
+                    interactionMode: planModeAvailable
+                      ? retargetDefaults.interactionMode
+                      : "default",
+                  }
+                : undefined,
             );
-            if (!hasExplicitComposerModelSelection(currentDraft)) {
+            if (retargetDefaults) {
+              setRuntimeMode(draftId, null);
+              setInteractionMode(draftId, null);
+            }
+            if (
+              !hasExplicitComposerModelSelection(currentDraft) ||
+              retargetDefaults?.modelSelection != null
+            ) {
               applyStickyState(draftId);
-              const environmentSettings = environments.find(
-                (environment) => environment.environmentId === project.environmentId,
-              )?.serverConfig?.settings;
               const defaultModelSelection = environmentSettings
-                ? resolveProjectSettings(environmentSettings, project.id, project).settings
-                    .defaultModelSelection
+                ? resolveNewThreadDefaults(environmentSettings, project.id, project).modelSelection
                 : project.defaultModelSelection;
               if (defaultModelSelection) {
                 setModelSelection(draftId, defaultModelSelection, {

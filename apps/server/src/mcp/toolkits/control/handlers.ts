@@ -936,6 +936,18 @@ const handlers = {
         { actorUserId: ownerUserId },
       )
       .pipe(mapControlError(operation));
+    // T3-CUSTOM(expbkt3): clients read the project's override entry once the
+    // legacy column is folded, so a requested default model is written there too.
+    if (input.defaultModelSelection) {
+      const settingsService = yield* ServerSettingsService;
+      yield* settingsService
+        .updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { defaultModelSelection: input.defaultModelSelection },
+          },
+        })
+        .pipe(mapControlError(operation));
+    }
     return {
       created: true,
       project: {

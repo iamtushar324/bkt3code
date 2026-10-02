@@ -58,13 +58,15 @@ const threadCommentsDependencies = [...dependencies, ThreadCommentsService];
 const userPresenceDependencies = [...dependencies, UserPresenceService];
 const configurationDependencies = [...dependencies, ProviderRegistry, ServerSettingsService];
 const ownershipDependencies = [ClerkDirectory, ServerConfig];
+// T3-CUSTOM(expbkt3): t3_create_project and t3_update_project write the
+// project's settings override entry.
 const projectDependencies = [
   ...dependencies,
   ...ownershipDependencies,
   Path.Path,
   WorkspacePaths.WorkspacePaths,
+  ServerSettingsService,
 ];
-// T3-CUSTOM(expbkt3): t3_update_project writes the project's settings override entry.
 const updateProjectDependencies = [...dependencies, ServerSettingsService];
 const sessionDependencies = [...dependencies, ...ownershipDependencies];
 const sessionCreationDependencies = [
@@ -420,7 +422,7 @@ export const T3UpdateProjectTool = mutatingTool(
 export const T3CreateSessionTool = mutatingTool(
   Tool.make("t3_create_session", {
     description:
-      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags.",
+      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags. An omitted model, runtimeMode or interactionMode follows the project's saved new-thread defaults, then the host's — including the host's starting mode, which may be plan; pass interactionMode: \"default\" to force build mode.",
     parameters: Schema.Struct({
       projectId: described(Schema.String, "Target project ID obtained from t3_list_projects."),
       title: Schema.optional(
@@ -447,7 +449,7 @@ export const T3CreateSessionTool = mutatingTool(
       interactionMode: Schema.optional(
         described(
           ProviderInteractionMode,
-          "Initial plan or default (build) interaction mode. Defaults to the project's saved starting mode, then the host's.",
+          "Initial plan or default (build) interaction mode. Defaults to the project's saved starting mode, then the host's, which may be plan.",
         ),
       ),
       branch: Schema.optional(

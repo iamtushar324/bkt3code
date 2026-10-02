@@ -15,6 +15,7 @@
 import type {
   ModelSelection,
   ProjectId,
+  ProviderInteractionMode,
   RuntimeMode,
   SourceControlProfileId,
   ThreadId,
@@ -67,21 +68,26 @@ export function buildNewThreadFromRowCreateInput(input: {
   readonly parent: NewThreadParentThread;
   readonly threadId: ThreadId;
   readonly workspace: NewThreadWorkspace;
+  /** The saved default model with its options; null when none is saved. */
+  readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
   readonly createdAt: string;
 }): CreateThreadInput {
-  const { parent, threadId, workspace, runtimeMode, createdAt } = input;
+  const { parent, threadId, workspace, modelSelection, runtimeMode, interactionMode, createdAt } =
+    input;
   return {
     threadId,
     projectId: parent.projectId,
     title: NEW_THREAD_FROM_ROW_TITLE,
-    // A tab of the same work should answer with the same agent, so the provider
-    // and model come from the parent rather than from the app defaults. The
-    // interaction mode deliberately does not: inheriting Plan mode into a fresh
-    // session surprises far more often than it helps.
-    modelSelection: parent.modelSelection,
+    // The saved defaults (project, then host) always win for a new thread. Only
+    // when no default model is saved does a tab of the same work answer with
+    // the same agent as its parent. The parent's interaction mode never
+    // carries: inheriting Plan mode into a fresh session surprises far more
+    // often than it helps, so the saved starting mode decides.
+    modelSelection: modelSelection ?? parent.modelSelection,
     runtimeMode,
-    interactionMode: "default",
+    interactionMode,
     branch: workspace.branch,
     worktreePath: workspace.worktreePath,
     sourceControlProfileId: parent.sourceControlProfileId,

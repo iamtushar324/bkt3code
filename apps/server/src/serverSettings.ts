@@ -39,6 +39,8 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+// T3-CUSTOM(expbkt3): deprecated thread-default patch keys land on upstream's keys.
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -510,13 +512,26 @@ function foldLegacyProjectSettings(
 // defaults into upstream's keys, which the web, the sidebar, the MCP tools and
 // the per-project overrides all resolve through (`newThreadDefaults.expbkt3`).
 // Only a key present in the file counts as set, because the decoder fills the
-// defaults in. The upstream key wins when both exist. The fork key is reset to
-// its default afterwards so the write strips it from the file, which is what
-// makes the fold idempotent: a later reset of `defaultModelSelection` in the UI
-// is not undone by the next load.
+// defaults in. The upstream key wins when both exist, except that a fork model
+// naming the same instance and model lends its options (effort, context size)
+// to an upstream entry that has none: the settings UI used to save the model
+// without options, so those options only ever lived on the fork key. The fork
+// key is reset to its default afterwards so the write strips it from the file,
+// which is what makes the fold idempotent: a later reset of
+// `defaultModelSelection` in the UI is not undone by the next load.
 const decodeSettingsJsonKeys = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
+function foldThreadModelDefault(
+  upstream: ServerSettings["defaultModelSelection"],
+  fork: ServerSettings["defaultThreadModelSelection"],
+): ServerSettings["defaultModelSelection"] {
+  if (upstream === null) return fork;
+  const sameModel = upstream.instanceId === fork.instanceId && upstream.model === fork.model;
+  const upstreamHasOptions = (upstream.options?.length ?? 0) > 0;
+  const forkHasOptions = (fork.options?.length ?? 0) > 0;
+  return sameModel && !upstreamHasOptions && forkHasOptions ? fork : upstream;
+}
 function foldLegacyThreadDefaults(settings: ServerSettings, rawJson: string): ServerSettings {
   const raw = decodeSettingsJsonKeys(rawJson);
   if (Option.isNone(raw)) return settings;
@@ -527,8 +542,10 @@ function foldLegacyThreadDefaults(settings: ServerSettings, rawJson: string): Se
     ...settings,
     ...(hasForkModel
       ? {
-          defaultModelSelection:
-            settings.defaultModelSelection ?? settings.defaultThreadModelSelection,
+          defaultModelSelection: foldThreadModelDefault(
+            settings.defaultModelSelection,
+            settings.defaultThreadModelSelection,
+          ),
           defaultThreadModelSelection: DEFAULT_SERVER_SETTINGS.defaultThreadModelSelection,
         }
       : {}),
@@ -539,6 +556,37 @@ function foldLegacyThreadDefaults(settings: ServerSettings, rawJson: string): Se
             : settings.defaultThreadRuntimeMode,
           defaultThreadRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultThreadRuntimeMode,
         }
+      : {}),
+  };
+}
+
+// The deprecated patch keys still arrive from older clients and from
+// `t3_update_server_settings`. They land on upstream's keys (a partial model
+// patch completes from the current default, like `textGenerationModelSelection`
+// does through deepMerge) and never re-enter the file; an upstream key in the
+// same patch wins.
+function translateDeprecatedThreadDefaultsPatch(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+): ServerSettingsPatch {
+  const { defaultThreadModelSelection, defaultThreadRuntimeMode, ...rest } = patch;
+  if (defaultThreadModelSelection === undefined && defaultThreadRuntimeMode === undefined) {
+    return patch;
+  }
+  const base = current.defaultModelSelection ?? current.defaultThreadModelSelection;
+  return {
+    ...rest,
+    ...(defaultThreadModelSelection !== undefined && rest.defaultModelSelection === undefined
+      ? {
+          defaultModelSelection: createModelSelection(
+            defaultThreadModelSelection.instanceId ?? base.instanceId,
+            defaultThreadModelSelection.model ?? base.model,
+            defaultThreadModelSelection.options ?? base.options,
+          ),
+        }
+      : {}),
+    ...(defaultThreadRuntimeMode !== undefined && rest.defaultRuntimeMode === undefined
+      ? { defaultRuntimeMode: defaultThreadRuntimeMode }
       : {}),
   };
 }
@@ -1004,7 +1052,11 @@ const make = Effect.gen(function* () {
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = applyServerSettingsPatch(current, patch);
+        // T3-CUSTOM(expbkt3): deprecated thread-default keys map onto upstream's.
+        const updated = applyServerSettingsPatch(
+          current,
+          translateDeprecatedThreadDefaultsPatch(current, patch),
+        );
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>

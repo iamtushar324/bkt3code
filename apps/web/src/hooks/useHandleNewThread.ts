@@ -32,8 +32,6 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-// T3-CUSTOM(expbkt3): the saved default always wins for a new thread.
-import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
@@ -163,20 +161,13 @@ export function useNewThreadHandler() {
         project?.id ?? null,
         project,
       );
-      // T3-CUSTOM(expbkt3): BEGIN — the saved defaults (project override, then
-      // host) decide the model with its options, the permissions and the
-      // starting mode of every new thread; Plan only while its toggle exists.
-      const newThreadDefaults = resolveNewThreadDefaults(
-        targetServerSettings,
-        project?.id ?? null,
-        project,
-      );
-      const projectDefaultModelSelection = newThreadDefaults.modelSelection;
-      const defaultRuntimeMode = newThreadDefaults.runtimeMode;
+      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
+      const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+      // T3-CUSTOM(expbkt3): the saved Starting mode (project override, then host)
+      // seeds every new thread; Plan only while its toggle exists.
       const defaultInteractionMode = planModeAvailable
-        ? newThreadDefaults.interactionMode
+        ? projectSettings.settings.defaultThreadInteractionMode
         : DEFAULT_PROVIDER_INTERACTION_MODE;
-      // T3-CUSTOM(expbkt3): END
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: projectDefaultModelSelection ?? null,
