@@ -20,21 +20,27 @@ import { SettingsRow, SettingsSection } from "../components/settings/settingsLay
 import { Button } from "../components/ui/button";
 import { toastManager } from "../components/ui/toast";
 import { isElectron } from "../env";
-import { logoutPrimaryEnvironment } from "../environments/primary";
 import { useCurrentUserId } from "../state/identity";
 import { useOrgMembers } from "../state/orgMembers";
 import {
   createLogoutRunner,
+  endPrimaryEnvironmentSession,
   navigateAfterLogout,
   performExperimentsLogout,
   resolveExperimentsLogoutPlan,
+  resolveExperimentsLogoutSource,
   type ExperimentsLogoutPlan,
 } from "./experimentsLogout";
 import { isBkManagedPrimary } from "./managedEnvironment";
 
 export function ExperimentsLogoutControl() {
-  if (hasClerkPublicConfig()) return <ClerkAccountLogout />;
-  if (isElectron && isBkManagedPrimary()) return <PairedDesktopLogout />;
+  const source = resolveExperimentsLogoutSource({
+    hasClerkConfig: hasClerkPublicConfig(),
+    isElectron,
+    managedPrimary: isBkManagedPrimary(),
+  });
+  if (source === "clerk") return <ClerkAccountLogout />;
+  if (source === "paired-session") return <PairedDesktopLogout />;
   return null;
 }
 
@@ -90,7 +96,7 @@ function ExperimentsLogoutSection({
     const started = runner.run(
       () =>
         performExperimentsLogout(plan, {
-          logoutEnvironment: logoutPrimaryEnvironment,
+          logoutEnvironment: () => endPrimaryEnvironmentSession(),
           signOutClerk,
           navigate: (destination) =>
             navigateAfterLogout(destination, window.location, window.history),

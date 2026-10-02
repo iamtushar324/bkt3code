@@ -25,9 +25,31 @@
  * open WebSocket connections and cached atoms, and the Electron Clerk provider
  * deliberately never reloads the renderer on its own.
  *
+ * A session the server no longer knows counts as already revoked; see
+ * `endPrimaryEnvironmentSession`.
+ *
  * @module fork/experimentsLogout
  */
+import * as Schema from "effect/Schema";
+
 import { performWebLogout } from "../components/clerk/WebLogoutControl";
+import { logoutPrimaryEnvironment, PrimaryEnvironmentRequestError } from "../environments/primary";
+import { clearManagedPrimaryAccessToken } from "./managedPrimaryCredential";
+
+/**
+ * Whose session the control reads. Clerk hooks are only safe where `main.tsx`
+ * mounted a ClerkProvider, which it does exactly when a publishable key is
+ * configured; a keyless managed desktop reads the paired session instead.
+ */
+export function resolveExperimentsLogoutSource(input: {
+  readonly hasClerkConfig: boolean;
+  readonly isElectron: boolean;
+  readonly managedPrimary: boolean;
+}): "clerk" | "paired-session" | null {
+  if (input.hasClerkConfig) return "clerk";
+  if (input.isElectron && input.managedPrimary) return "paired-session";
+  return null;
+}
 
 export type ExperimentsLogoutDestination = "browser-pairing" | "desktop-pairing" | "desktop-reload";
 
@@ -69,6 +91,35 @@ export interface ExperimentsLogoutEffects {
 }
 
 const skip = async (): Promise<void> => undefined;
+
+const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+
+/** The logout call answered 401: the server no longer knows this session. */
+export function isEnvironmentSessionAlreadyEnded(error: unknown): boolean {
+  return isPrimaryEnvironmentRequestError(error) && error.status === 401;
+}
+
+/**
+ * Revokes the primary environment session, treating one that is already gone as
+ * revoked. A session revoked from Member devices, or simply expired, makes the
+ * logout call answer 401; stopping there would strand the user. On the web every
+ * retry would fail before reaching Clerk, and the next visit to /pair would trade
+ * the still-live Clerk session for a new server session. On a managed desktop
+ * the stored token would never be cleared, because `logoutPrimaryEnvironment`
+ * clears it only after a successful call — so clear it here. Any other failure
+ * still stops the logout.
+ */
+export async function endPrimaryEnvironmentSession(
+  logout: () => Promise<void> = logoutPrimaryEnvironment,
+  clearStoredToken: () => void = clearManagedPrimaryAccessToken,
+): Promise<void> {
+  try {
+    await logout();
+  } catch (error) {
+    if (!isEnvironmentSessionAlreadyEnded(error)) throw error;
+    clearStoredToken();
+  }
+}
 
 /** Runs a plan's steps in `performWebLogout`'s order, skipping the ones it leaves out. */
 export function performExperimentsLogout(

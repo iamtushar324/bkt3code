@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { PrimaryEnvironmentRequestError } from "../environments/primary";
 import {
   createLogoutRunner,
   desktopPairingHref,
+  endPrimaryEnvironmentSession,
   navigateAfterLogout,
   performExperimentsLogout,
   resolveExperimentsLogoutPlan,
+  resolveExperimentsLogoutSource,
   type ExperimentsLogoutPlan,
 } from "./experimentsLogout";
 
@@ -105,6 +108,94 @@ describe("experiments logout sequencing", () => {
       }),
     ).rejects.toThrow("Environment unavailable");
     expect(operations).toEqual([]);
+  });
+});
+
+describe("experiments logout control variant", () => {
+  it("reads Clerk wherever a provider is mounted, on either platform", () => {
+    for (const isElectron of [false, true]) {
+      expect(
+        resolveExperimentsLogoutSource({ hasClerkConfig: true, isElectron, managedPrimary: false }),
+      ).toBe("clerk");
+    }
+  });
+
+  it("reads the paired session on a keyless managed desktop", () => {
+    expect(
+      resolveExperimentsLogoutSource({
+        hasClerkConfig: false,
+        isElectron: true,
+        managedPrimary: true,
+      }),
+    ).toBe("paired-session");
+  });
+
+  it("renders nothing without Clerk on the web or on an unmanaged desktop", () => {
+    expect(
+      resolveExperimentsLogoutSource({
+        hasClerkConfig: false,
+        isElectron: false,
+        managedPrimary: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveExperimentsLogoutSource({
+        hasClerkConfig: false,
+        isElectron: true,
+        managedPrimary: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("ending a session the server no longer knows", () => {
+  function requestError(status: number) {
+    return new PrimaryEnvironmentRequestError({
+      operation: "logout-current-session",
+      status,
+      cause: new Error(`HTTP ${status}`),
+    });
+  }
+
+  function effectsFailingWith(status: number) {
+    const { operations, effects } = recordingEffects();
+    return {
+      operations,
+      effects: {
+        ...effects,
+        logoutEnvironment: () =>
+          endPrimaryEnvironmentSession(
+            async () => {
+              throw requestError(status);
+            },
+            () => {
+              operations.push("clear-token");
+            },
+          ),
+      },
+    };
+  }
+
+  it("web: a 401 still signs out of Clerk, so a retry cannot strand a live Clerk session", async () => {
+    const { operations, effects } = effectsFailingWith(401);
+    await performExperimentsLogout(browser, effects);
+    expect(operations).toEqual(["clear-token", "clerk", "navigate:browser-pairing"]);
+  });
+
+  it("managed desktop: a 401 clears the stored token and reloads into pairing", async () => {
+    const { operations, effects } = effectsFailingWith(401);
+    await performExperimentsLogout(pairedDesktop, effects);
+    expect(operations).toEqual(["clear-token", "navigate:desktop-pairing"]);
+  });
+
+  it("any other failure stops before Clerk and navigation, and reaches the error toast", async () => {
+    const { operations, effects } = effectsFailingWith(503);
+    const onError = vi.fn();
+
+    await createLogoutRunner().run(() => performExperimentsLogout(browser, effects), onError);
+
+    expect(operations).toEqual([]);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: 503 }));
   });
 });
 

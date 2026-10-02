@@ -135,7 +135,7 @@ export function toolyardConnectErrorMessage(code: string | undefined): string {
     case "store_failed":
       return "T3 could not save the toolyard connection. Try again.";
     case "no_clerk_token":
-      return "This app can't sign in to toolyard by itself. Open the web app once to connect.";
+      return "No sign-in token is available. Sign out and back in, then reconnect.";
     case undefined:
       return "toolyard could not be connected.";
     default:
@@ -186,15 +186,25 @@ export function resolveToolyardCardView(input: {
     return { status, action: input.canSignIn ? { kind: "reconnect" } : { kind: "none" } };
   }
   if (input.canSignIn) return { status: "Not connected", action: { kind: "reconnect" } };
-  const webOrigin = toWebOrigin(input.webAppUrl);
+  const webOrigin = toolyardWebAppOrigin(input.webAppUrl);
+  if (webOrigin === null) {
+    return {
+      status: "Not connected · toolyard connects from the web app; this app has no web sign-in",
+      action: { kind: "none" },
+    };
+  }
   return {
     status: "Not connected · connect once from the web app",
-    action: webOrigin === null ? { kind: "none" } : { kind: "open-web", url: webOrigin },
+    action: { kind: "open-web", url: webOrigin },
   };
 }
 
-/** The https origin of a web app URL, or null for anything that is not one. */
-function toWebOrigin(url: string | null): string | null {
+/**
+ * The https origin of a web app URL, or null for anything that is not one. A
+ * keyless client only points at a web app it can link to, so the card's status
+ * and description both key off this.
+ */
+export function toolyardWebAppOrigin(url: string | null): string | null {
   if (url === null) return null;
   try {
     const parsed = new URL(url);

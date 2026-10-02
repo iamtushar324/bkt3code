@@ -20,6 +20,7 @@ import {
   resolveToolyardCardView,
   toolyardConnectErrorMessage,
   toolyardIntegrationOf,
+  toolyardWebAppOrigin,
 } from "../../fork/toolyardConnect";
 import { usePersonalMcpProfile } from "../../hooks/usePersonalMcpProfile";
 import { ensureLocalApi } from "../../localApi";
@@ -34,10 +35,11 @@ export function ToolyardSettingsSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canSignIn = hasClerkPublicConfig();
+  const webAppUrl = readBkManagedEnvironment()?.httpBaseUrl ?? null;
   const view = resolveToolyardCardView({
     toolyard,
     canSignIn,
-    webAppUrl: readBkManagedEnvironment()?.httpBaseUrl ?? null,
+    webAppUrl,
     formatConnectedAt: formatRelativeTimeLabel,
   });
 
@@ -77,7 +79,9 @@ export function ToolyardSettingsSection() {
         description={
           canSignIn
             ? "Connected through your Beknown Google sign-in; no key to paste. Agents see its tools as mcp__toolyard__*."
-            : "Connected once from the web app through your Beknown Google sign-in; this app uses that connection. Agents see its tools as mcp__toolyard__*."
+            : toolyardWebAppOrigin(webAppUrl) !== null
+              ? "Connected once from the web app through your Beknown Google sign-in; this app uses that connection. Agents see its tools as mcp__toolyard__*."
+              : "toolyard connects from the web app through a Beknown Google sign-in; this app has no web sign-in. Agents see its tools as mcp__toolyard__*."
         }
         status={view.status}
         control={

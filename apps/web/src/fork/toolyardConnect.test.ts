@@ -185,9 +185,9 @@ describe("toolyardConnectErrorMessage", () => {
     );
   });
 
-  it("tells a client that cannot sign in to use the web app, on either platform", () => {
+  it("asks for a fresh sign-in when a signed-in client has no Clerk token", () => {
     expect(toolyardConnectErrorMessage("no_clerk_token")).toBe(
-      "This app can't sign in to toolyard by itself. Open the web app once to connect.",
+      "No sign-in token is available. Sign out and back in, then reconnect.",
     );
   });
 
@@ -248,8 +248,11 @@ describe("resolveToolyardCardView", () => {
 
   it("offers no link when there is no https web app to send the person to", () => {
     expect(
-      resolveToolyardCardView({ ...desktop, webAppUrl: null, toolyard: toolyard(false) }).action,
-    ).toEqual({ kind: "none" });
+      resolveToolyardCardView({ ...desktop, webAppUrl: null, toolyard: toolyard(false) }),
+    ).toEqual({
+      status: "Not connected · toolyard connects from the web app; this app has no web sign-in",
+      action: { kind: "none" },
+    });
     expect(
       resolveToolyardCardView({
         ...desktop,
