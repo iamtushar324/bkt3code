@@ -5043,20 +5043,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     size: composerControlsInStrip ? "xs" : "sm",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
-  // T3-CUSTOM(expbkt3): Claude account profiles per thread. A resting block, so the
-  // strip's overflow measurement counts it; it sits first and so hides last.
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread. An icon button in the
+  // footer's right-hand actions, beside "Attach files".
   const claudeAccountControl = useClaudeAccountPickerControl({
     environmentId,
     threadRef: routeThreadRef,
     driverKind: selectedProviderEntry?.driverKind,
     multipleModels: multipleModelSelections !== null,
     running: phase === "running",
-    size: composerControlsInStrip ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > (providerTraitsPicker ? 2 : 1),
+    size: "sm",
+    hidden: composerControlsHidden,
   });
   const restingBlockDefs = [
-    // T3-CUSTOM(expbkt3): Claude account profiles per thread.
-    ...(claudeAccountControl ? [{ id: "claude-account", content: claudeAccountControl }] : []),
     ...(providerTraitsPicker
       ? [
           {
@@ -7081,6 +7079,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {
+                    /* T3-CUSTOM(expbkt3): Claude account profiles per thread. */ claudeAccountControl
+                  }
                   {showComposerAttachAction ? (
                     <>
                       <input

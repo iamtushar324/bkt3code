@@ -30,6 +30,22 @@ export const WEEKLY_TRIP_PERCENT = 95;
 
 export type UsageBand = "ok" | "warn" | "bad";
 
+/**
+ * The composer trigger's two rings (outer = 5-hour, inner = weekly) stay
+ * quiet until they matter: yellow from 75% used, red from 90%.
+ */
+export const RING_WARN_PERCENT = 75;
+export const RING_BAD_PERCENT = 90;
+
+export type RingTone = "quiet" | "warn" | "bad";
+
+export function ringTone(usedPercent: number | null): RingTone {
+  if (usedPercent === null) return "quiet";
+  if (usedPercent >= RING_BAD_PERCENT) return "bad";
+  if (usedPercent >= RING_WARN_PERCENT) return "warn";
+  return "quiet";
+}
+
 interface UsageWindow {
   readonly usedPercent: number;
   readonly resetsAt?: string;

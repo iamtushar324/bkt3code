@@ -18,15 +18,12 @@ import {
 } from "@t3tools/contracts";
 import { type ReactNode, useEffect, useState } from "react";
 
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  type ComposerControlSize,
-} from "../../components/chat/ComposerControl";
+import { type ComposerControlSize } from "../../components/chat/ComposerControl";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { useComposerMenuState } from "../../components/chat/useComposerMenuState";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import {
   Menu,
   MenuPopup,
@@ -57,6 +54,8 @@ import {
   triggerTooltip,
   triggerView,
   unavailableLine,
+  ringTone,
+  type RingTone,
   type UsageBand,
 } from "./model";
 
@@ -94,12 +93,6 @@ const TAG_VARIANT: Record<AccountTagTone, "error" | "warning" | "outline"> = {
   warn: "warning",
   muted: "outline",
 };
-
-function indicatorBackgroundFor(size: ComposerControlSize): string {
-  return size === "xs"
-    ? "color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent)"
-    : "var(--contrast-input)";
-}
 
 /** The Claude mark with the account's badge letter at its corner. */
 function AccountMark(props: {
@@ -219,6 +212,72 @@ function AccountRow({ row }: { readonly row: AccountRowView }) {
   );
 }
 
+const RING_ARC_CLASS: Record<RingTone, string> = {
+  quiet: "stroke-muted-foreground/70",
+  warn: "stroke-warning",
+  bad: "stroke-destructive",
+};
+
+/** One ring: a faint track plus an arc for percent used, drawn from 12 o'clock. */
+function UsageRing(props: { readonly radius: number; readonly used: number | null }) {
+  const circumference = 2 * Math.PI * props.radius;
+  const used = Math.max(0, Math.min(100, props.used ?? 0));
+  return (
+    <>
+      <circle
+        cx="12"
+        cy="12"
+        r={props.radius}
+        fill="none"
+        strokeWidth="2"
+        className="stroke-muted-foreground/15"
+      />
+      {used > 0 ? (
+        <circle
+          cx="12"
+          cy="12"
+          r={props.radius}
+          fill="none"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray={`${(circumference * used) / 100} ${circumference}`}
+          transform="rotate(-90 12 12)"
+          className={RING_ARC_CLASS[ringTone(props.used)]}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The composer trigger: outer ring = 5-hour use, inner ring = weekly use,
+ * quiet grey until 75% (yellow) and 90% (red); the account letter sits in
+ * the centre ("A" while Auto has not placed the thread yet).
+ */
+function UsageRings(props: {
+  readonly fiveHourUsed: number | null;
+  readonly weeklyUsed: number | null;
+  readonly label: string;
+}) {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5.5" aria-hidden>
+      <UsageRing radius={10.4} used={props.fiveHourUsed} />
+      <UsageRing radius={6.9} used={props.weeklyUsed} />
+      <text
+        x="12"
+        y="12"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize="6.8"
+        fontWeight="600"
+        className="fill-muted-foreground"
+      >
+        {props.label}
+      </text>
+    </svg>
+  );
+}
+
 function ClaudeAccountPickerMenu(props: {
   readonly threadRef: ScopedThreadRef;
   readonly snapshot: ClaudeAccountsSnapshot;
@@ -226,7 +285,7 @@ function ClaudeAccountPickerMenu(props: {
   readonly size: ComposerControlSize;
   readonly hidden: boolean;
 }) {
-  const { snapshot, size } = props;
+  const { snapshot } = props;
   const { account, setMode } = useThreadClaudeAccount(props.threadRef, true);
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const [now, setNow] = useState(() => Date.now());
@@ -243,24 +302,8 @@ function ClaudeAccountPickerMenu(props: {
   const mode = account?.mode ?? CLAUDE_ACCOUNT_MODE_AUTO;
   const rows = accountRows(snapshot, account, now);
   const unavailable = unavailableLine(snapshot);
-  const indicatorBackground = indicatorBackgroundFor(size);
   const hoveredSwitches =
     hoveredValue !== null && switchRestartsSession(account, valueMode(hoveredValue));
-
-  const triggerText =
-    view.kind === "auto-unresolved"
-      ? "Auto"
-      : view.weeklyUsed === null
-        ? null
-        : `${view.weeklyUsed}%`;
-  const triggerTextClass =
-    view.kind !== "account"
-      ? null
-      : view.warn === "logged_out" || view.warn === "limit"
-        ? "text-destructive-foreground"
-        : view.weeklyBand
-          ? BAND_TEXT_CLASS[view.weeklyBand]
-          : null;
 
   return (
     <Menu
@@ -275,31 +318,27 @@ function ClaudeAccountPickerMenu(props: {
           render={
             <MenuTrigger
               render={
-                <ComposerControl
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label={`Claude account: ${tooltip}`}
                   data-claude-account-picker="true"
-                  size={size}
-                  className="shrink-0 whitespace-nowrap"
+                  onPointerDown={(event) => event.preventDefault()}
                 />
               }
             />
           }
         >
-          <AccountMark
-            label={view.kind === "account" ? view.label : null}
-            auto={view.kind === "auto-unresolved" || view.auto}
-            indicatorBackground={indicatorBackground}
+          <UsageRings
+            fiveHourUsed={view.kind === "account" ? view.fiveHourUsed : null}
+            weeklyUsed={view.kind === "account" ? view.weeklyUsed : null}
+            label={view.kind === "account" ? view.label : "A"}
           />
-          {triggerText ? (
-            <span data-composer-control-label className={cn("tabular-nums", triggerTextClass)}>
-              {triggerText}
-            </span>
-          ) : null}
-          <ComposerControlChevron size={size} />
         </TooltipTrigger>
         <TooltipPopup side="top">{tooltip}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start" className="w-[23rem]" {...composerFloatingLayerProps}>
+      <MenuPopup align="end" className="w-[23rem]" {...composerFloatingLayerProps}>
         <span className="grid gap-0.5 px-2 pt-1 pb-1">
           <span className="font-semibold text-muted-foreground text-2xs uppercase tracking-wide">
             Claude account

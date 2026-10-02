@@ -13,6 +13,7 @@ import {
   orderAccounts,
   recoversIn,
   resetsIn,
+  ringTone,
   statusTag,
   switchRestartsSession,
   triggerTooltip,
@@ -308,5 +309,17 @@ describe("switching", () => {
     ).toBe(
       "Account data unavailable (claude-autoswitch not found) — Auto uses the host's current account",
     );
+  });
+});
+
+describe("ringTone", () => {
+  it("stays quiet below 75%, turns yellow from 75% and red from 90%", () => {
+    expect(ringTone(null)).toBe("quiet");
+    expect(ringTone(0)).toBe("quiet");
+    expect(ringTone(74)).toBe("quiet");
+    expect(ringTone(75)).toBe("warn");
+    expect(ringTone(89)).toBe("warn");
+    expect(ringTone(90)).toBe("bad");
+    expect(ringTone(100)).toBe("bad");
   });
 });
