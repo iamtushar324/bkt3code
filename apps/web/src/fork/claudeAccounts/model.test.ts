@@ -7,16 +7,19 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  accountChips,
   accountRows,
   accountWarning,
+  autoRowDetail,
   orderAccounts,
-  remaining,
+  recoversIn,
   resetsIn,
-  switchRestartsCache,
+  statusTag,
+  switchRestartsSession,
   triggerTooltip,
   triggerView,
   unavailableLine,
+  usageBand,
+  used,
 } from "./model";
 
 const NOW = Date.parse("2026-10-02T08:00:00.000Z");
@@ -57,12 +60,21 @@ function thread(overrides: Partial<ThreadClaudeAccount>): ThreadClaudeAccount {
   return { threadId, mode: { kind: "auto" }, ...overrides };
 }
 
-describe("remaining", () => {
-  it("turns percent used into percent left, clamped and rounded", () => {
-    expect(remaining({ usedPercent: 60 })).toBe(40);
-    expect(remaining({ usedPercent: 27.6 })).toBe(72);
-    expect(remaining({ usedPercent: 140 })).toBe(0);
-    expect(remaining(undefined)).toBeNull();
+describe("used", () => {
+  it("rounds and clamps percent used", () => {
+    expect(used({ usedPercent: 27.6 })).toBe(28);
+    expect(used({ usedPercent: 140 })).toBe(100);
+    expect(used({ usedPercent: -3 })).toBe(0);
+    expect(used(undefined)).toBeNull();
+  });
+
+  it("bands like the dashboard: green, amber from 60%, red at the trip line", () => {
+    expect(usageBand(59, 90)).toBe("ok");
+    expect(usageBand(60, 90)).toBe("warn");
+    expect(usageBand(89, 90)).toBe("warn");
+    expect(usageBand(90, 90)).toBe("bad");
+    expect(usageBand(94, 95)).toBe("warn");
+    expect(usageBand(95, 95)).toBe("bad");
   });
 
   it("phrases the reset countdown", () => {
@@ -82,95 +94,94 @@ describe("triggerView", () => {
     expect(triggerView(snapshot([agent]), thread({}))).toEqual({ kind: "auto-unresolved" });
   });
 
-  it("shows the placed account's badge and weekly limit left in Auto", () => {
-    expect(triggerView(snapshot([agent]), thread({ resolvedProfile: "agent" }))).toEqual({
+  it("shows the placed account's badge and weekly % used, with its band", () => {
+    const view = triggerView(snapshot([agent]), thread({ resolvedProfile: "agent" }));
+    expect(view).toMatchObject({
       kind: "account",
       profile: "agent",
       label: "a",
-      weeklyRemaining: 40,
-      fiveHourRemaining: 72,
+      weeklyUsed: 60,
+      weeklyBand: "warn",
+      fiveHourUsed: 28,
       auto: true,
       warn: null,
-      autoSkip: null,
     });
   });
 
   it("shows the pinned account even before a session has run on it", () => {
     const view = triggerView(
-      snapshot([agent, account({ name: "sam", weekly: { usedPercent: 10 } })]),
-      thread({ mode: { kind: "profile", profile: "sam" }, resolvedProfile: "agent" }),
+      snapshot([agent]),
+      thread({ mode: { kind: "profile", profile: "agent" } }),
     );
-    expect(view).toMatchObject({
-      kind: "account",
-      profile: "sam",
-      auto: false,
-      weeklyRemaining: 90,
-    });
+    expect(view).toMatchObject({ kind: "account", profile: "agent", auto: false });
   });
 
-  it("warns on a logged-out, spent or nearly spent account", () => {
-    const pinned = (profile: string) => thread({ mode: { kind: "profile", profile } });
-    const accounts = snapshot([
-      account({ name: "out", auth: "logged_out" }),
-      account({ name: "spent", weekly: { usedPercent: 100 } }),
-      account({ name: "near", fiveHour: { usedPercent: 85 } }),
-    ]);
-    expect(triggerView(accounts, pinned("out"))).toMatchObject({ warn: "logged_out" });
-    expect(triggerView(accounts, pinned("spent"))).toMatchObject({ warn: "limit" });
-    expect(triggerView(accounts, pinned("near"))).toMatchObject({ warn: "near" });
+  it("warns on a logged-out, over-limit or nearly spent account", () => {
+    expect(accountWarning(account({ name: "x", auth: "logged_out" }))).toBe("logged_out");
+    expect(accountWarning(account({ name: "x", weekly: { usedPercent: 99 } }))).toBe("limit");
+    expect(accountWarning(account({ name: "x", fiveHour: { usedPercent: 92 } }))).toBe("limit");
+    expect(accountWarning(account({ name: "x", fiveHour: { usedPercent: 83 } }))).toBe("near");
+    expect(accountWarning(agent)).toBeNull();
   });
 
   it("falls back to the name's first letter for an account the snapshot lacks", () => {
-    expect(
-      triggerView(snapshot([]), thread({ mode: { kind: "profile", profile: "tushar" } })),
-    ).toMatchObject({ label: "t", weeklyRemaining: null, warn: null });
+    const view = triggerView(snapshot([]), thread({ resolvedProfile: "zed" }));
+    expect(view).toMatchObject({ kind: "account", label: "z", weeklyUsed: null });
   });
 });
 
 describe("triggerTooltip", () => {
-  it("names the mode, the account and both windows", () => {
-    const accounts = snapshot([agent]);
-    expect(triggerTooltip(triggerView(accounts, thread({ resolvedProfile: "agent" })))).toBe(
-      "Auto (account) · on agent · weekly 40% left · 5-hour 72% left",
+  it("names the mode, the account and both windows as % used", () => {
+    expect(
+      triggerTooltip(triggerView(snapshot([agent]), thread({ resolvedProfile: "agent" }))),
+    ).toBe("Auto (account) · on agent · week 60% used · 5-hour 28% used");
+    expect(triggerTooltip({ kind: "auto-unresolved" })).toBe(
+      "Auto (account) · Picks an account on the first message",
     );
+  });
+
+  it("adds the reason for an account Auto would skip", () => {
+    const audit = account({
+      name: "audit",
+      eligible: false,
+      why: "over weekly 99% >= 95%",
+      fiveHour: { usedPercent: 36 },
+      weekly: { usedPercent: 99 },
+    });
     expect(
       triggerTooltip(
-        triggerView(accounts, thread({ mode: { kind: "profile", profile: "agent" } })),
+        triggerView(snapshot([audit]), thread({ mode: { kind: "profile", profile: "audit" } })),
       ),
-    ).toBe("agent (pinned) · weekly 40% left · 5-hour 72% left");
-    expect(triggerTooltip({ kind: "auto-unresolved" })).toBe(
-      "Auto (account) · picks an account when the thread starts",
-    );
+    ).toBe("audit (pinned) · week 99% used · 5-hour 36% used · over: weekly 99% ≥ 95%");
   });
 });
 
-describe("accountChips", () => {
-  const labels = (status: ClaudeAccountStatus) => accountChips(status).map((chip) => chip.label);
-
-  it("reads limits from the numbers, not the switcher's reason", () => {
-    // Real `claude-autoswitch --status --json` reasons alongside the figures they come with.
+describe("statusTag", () => {
+  it("shows one tag, most severe first, in the dashboard's spelling", () => {
     expect(
-      labels(
-        account({
-          name: "x",
-          auth: "logged_out",
-          eligible: false,
-          why: "logged out",
-        }),
-      ),
-    ).toEqual(["logged out"]);
+      statusTag(account({ name: "x", auth: "logged_out", weekly: { usedPercent: 99 } })),
+    ).toMatchObject({ id: "logged-out", tone: "bad" });
     expect(
-      labels(
+      statusTag(
         account({
           name: "x",
           eligible: false,
-          why: "over five_hour 100% >= 90%",
-          fiveHour: { usedPercent: 100 },
+          why: "over five_hour 94% >= 90%",
+          fiveHour: { usedPercent: 94 },
         }),
       ),
-    ).toEqual(["at limit"]);
+    ).toMatchObject({ id: "over", label: "over: five_hour 94% ≥ 90%", tone: "bad" });
     expect(
-      labels(
+      statusTag(account({ name: "x", eligible: false, fiveHour: { usedPercent: 100 } })),
+    ).toMatchObject({ id: "over", label: "over: five_hour 100% ≥ 90%" });
+    // An excluded account past a trip line names the line, not the exclusion.
+    expect(
+      statusTag(
+        account({ name: "x", eligible: false, why: "excluded", fiveHour: { usedPercent: 92 } }),
+      ),
+    ).toMatchObject({ id: "over", label: "over: five_hour 92% ≥ 90%" });
+    expect(
+      statusTag(
         account({
           name: "x",
           eligible: false,
@@ -178,105 +189,103 @@ describe("accountChips", () => {
           fiveHour: { usedPercent: 83 },
         }),
       ),
-    ).toEqual(["near limit", "not used by Auto"]);
+    ).toMatchObject({ id: "near-limit", tone: "warn", detail: "near trip: five_hour 83% ≥ 80%" });
     expect(
-      labels(
+      statusTag(
         account({
           name: "x",
+          eligible: false,
+          why: "Fable cap spent (100%)",
           scoped: { label: "Fable", usedPercent: 100 },
-          sessions: 3,
         }),
       ),
-    ).toEqual(["Fable spent", "in use by 3"]);
+    ).toMatchObject({ id: "scoped-spent", label: "Fable spent" });
+    expect(statusTag(account({ name: "x", eligible: false, why: "excluded" }))).toMatchObject({
+      id: "not-used",
+      tone: "muted",
+      detail: "excluded",
+    });
+    expect(statusTag(agent)).toBeNull();
   });
 
-  it("explains every other reason Auto skips an account on hover", () => {
-    for (const why of [
-      "over weekly 95% >= 95%",
-      "Fable cap spent (97%)",
-      "excluded",
-      "not in rotation",
-    ]) {
-      const status = account({
-        name: "x",
-        eligible: false,
-        why,
-        weekly: { usedPercent: 95 },
-        scoped: { label: "Fable", usedPercent: 97 },
-      });
-      expect(accountChips(status)).toEqual([
-        { id: "not-used", label: "not used by Auto", tone: "muted", detail: why },
-      ]);
-      // Under 100% everywhere: not "at limit", whatever the reason says.
-      expect(accountWarning(status)).toBeNull();
-    }
-  });
-
-  it("names the skip in the trigger's tooltip of a pinned account", () => {
-    const view = triggerView(
-      snapshot([
-        account({ name: "sam", eligible: false, why: "excluded", weekly: { usedPercent: 10 } }),
-      ]),
-      thread({ mode: { kind: "profile", profile: "sam" } }),
-    );
-    expect(triggerTooltip(view)).toBe(
-      "sam (pinned) · weekly 90% left · not used by Auto (excluded)",
-    );
+  it("says when an over-limit account recovers: the latest blocking reset", () => {
+    const status = account({
+      name: "x",
+      fiveHour: { usedPercent: 95, resetsAt: "2026-10-02T09:04:00.000Z" },
+      weekly: { usedPercent: 96, resetsAt: "2026-10-03T09:00:00.000Z" },
+    });
+    expect(recoversIn(status, NOW)).toBe("recovers 1d 1h");
+    expect(
+      recoversIn(
+        account({ name: "y", fiveHour: { usedPercent: 94, resetsAt: "2026-10-02T09:04:00.000Z" } }),
+        NOW,
+      ),
+    ).toBe("recovers 1h 4m");
+    expect(recoversIn(agent, NOW)).toBeNull();
   });
 });
 
 describe("account rows", () => {
-  it("orders by rank with unranked accounts last", () => {
-    const ordered = orderAccounts([
-      account({ name: "zed" }),
-      account({ name: "sam", rank: 2 }),
-      account({ name: "agent", rank: 1 }),
-      account({ name: "barsha" }),
+  it("lists usable accounts first, each group by rank", () => {
+    const over = account({ name: "over", rank: 1, fiveHour: { usedPercent: 95 } });
+    const second = account({ name: "second", rank: 2 });
+    const unranked = account({ name: "unranked" });
+    const out = account({ name: "out", rank: 3, auth: "logged_out" });
+    expect(orderAccounts([out, unranked, over, second]).map((status) => status.name)).toEqual([
+      "second",
+      "unranked",
+      "over",
+      "out",
     ]);
-    expect(ordered.map((status) => status.name)).toEqual(["agent", "sam", "barsha", "zed"]);
   });
 
-  it("builds windows, checks the pinned account and disables logged-out ones", () => {
+  it("builds % used windows with bands, marks the current account, disables logged-out", () => {
+    const fable = account({
+      name: "sam",
+      rank: 2,
+      weekly: { usedPercent: 74 },
+      scoped: { label: "Fable", usedPercent: 70 },
+      auth: "logged_out",
+    });
     const rows = accountRows(
-      snapshot([
-        account({ name: "out", auth: "logged_out", rank: 2 }),
-        { ...agent, scoped: { label: "Fable", usedPercent: 50 } },
-      ]),
+      snapshot([agent, fable]),
       thread({ mode: { kind: "profile", profile: "agent" }, resolvedProfile: "agent" }),
       NOW,
     );
-    expect(rows.map((row) => row.name)).toEqual(["agent", "out"]);
-    const [first, second] = rows;
-    expect(first).toMatchObject({ checked: true, current: true, disabled: false, sessions: 2 });
-    expect(first?.windows).toEqual([
-      { id: "fiveHour", label: "5h", remaining: 72, resetsIn: "resets in 2h 13m" },
-      { id: "weekly", label: "Week", remaining: 40, resetsIn: null },
-      { id: "scoped", label: "Fable", remaining: 50, resetsIn: null },
+    expect(rows.map((row) => row.name)).toEqual(["agent", "sam"]);
+    expect(rows[0]).toMatchObject({ current: true, disabled: false, sessions: 2, tag: null });
+    expect(rows[0]?.windows).toEqual([
+      { id: "fiveHour", label: "5-hour", used: 28, band: "ok", resetsIn: "resets in 2h 13m" },
+      { id: "weekly", label: "Week", used: 60, band: "warn", resetsIn: null },
     ]);
-    expect(second).toMatchObject({ checked: false, disabled: true, windows: [] });
+    expect(rows[1]).toMatchObject({ current: false, disabled: true });
+    expect(rows[1]?.windows.map((win) => win.label)).toEqual(["Week", "Fable"]);
+  });
+
+  it("describes the Auto row before and after placement", () => {
+    expect(autoRowDetail(null)).toBe("Picks an account on the first message");
+    expect(autoRowDetail(thread({ resolvedProfile: "audit" }))).toBe(
+      "On audit · new sessions go to the account with the most room",
+    );
   });
 });
 
 describe("switching", () => {
-  it("warns about the prompt cache only when a pin leaves the current account", () => {
+  it("restarts the session only when a pin leaves the current account", () => {
     const placed = thread({ resolvedProfile: "agent" });
-    expect(switchRestartsCache(placed, { kind: "profile", profile: "sam" })).toBe(true);
-    expect(switchRestartsCache(placed, { kind: "profile", profile: "agent" })).toBe(false);
-    expect(switchRestartsCache(placed, { kind: "auto" })).toBe(false);
-    expect(switchRestartsCache(thread({}), { kind: "profile", profile: "sam" })).toBe(false);
+    expect(switchRestartsSession(placed, { kind: "profile", profile: "sam" })).toBe(true);
+    expect(switchRestartsSession(placed, { kind: "profile", profile: "agent" })).toBe(false);
+    expect(switchRestartsSession(placed, { kind: "auto" })).toBe(false);
+    expect(switchRestartsSession(thread({}), { kind: "profile", profile: "sam" })).toBe(false);
   });
 
   it("explains missing account data, and says loading before the first poll", () => {
     expect(unavailableLine(snapshot([account({ name: "agent" })]))).toBeNull();
-    // Before the first poll the server sends available + "loading" with no profiles.
     expect(unavailableLine({ ...snapshot([]), unavailableReason: "loading" })).toBe(
       "Loading account data…",
     );
     expect(unavailableLine(snapshot([]))).toBe("Loading account data…");
     expect(unavailableLine({ ...snapshot([]), available: false })).toBe("Loading account data…");
-    expect(
-      unavailableLine({ ...snapshot([]), available: false, unavailableReason: "loading accounts" }),
-    ).toBe("Loading account data…");
     expect(
       unavailableLine({
         ...snapshot([]),

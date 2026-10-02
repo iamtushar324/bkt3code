@@ -186,7 +186,8 @@ How it works when the flag is on:
   server's placements from the last 90 s, so a burst of ten threads spreads instead of
   piling onto one account; placements run one at a time behind a lock. `--avoid` carries
   accounts a hard limit took out. The choice is persisted per thread and is **sticky**:
-  nearing a limit never moves an existing thread (its prompt cache would be lost); only a
+  nearing a limit never moves an existing thread (a move restarts its session; the prompt
+  cache itself survives, since every profile is a seat in the same organisation); only a
   hard limit, a sign-out or an exhausted mark does.
 - **Pinned.** `claudeAccounts.setThreadMode` with `{ kind: "profile", profile }` makes the
   thread spawn on that account. A draft thread may be pinned before its first send. A
