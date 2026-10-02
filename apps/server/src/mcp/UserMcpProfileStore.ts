@@ -70,6 +70,10 @@ const hash = (value: string): string =>
 const secretName = (userId: UserId, integrationId: PersonalMcpIntegrationId): string =>
   `user-mcp-${hash(`${userId}\0${integrationId}`)}`;
 
+/** Equal credentials, compared in constant time over their digests. */
+const credentialsMatch = (left: string, right: string): boolean =>
+  NodeCrypto.timingSafeEqual(Buffer.from(hash(left), "hex"), Buffer.from(hash(right), "hex"));
+
 /**
  * The built-in toolyard integration every profile carries. Its credential is
  * written only by the connect flow (`ToolyardConnect.ts`), never by a client,
@@ -246,17 +250,26 @@ export class UserMcpProfileStore extends Context.Service<
       userId: UserId,
       integrationId: PersonalMcpIntegrationId,
       credential: string,
-      connection?: IntegrationConnection,
+      connection: IntegrationConnection,
     ) => Effect.Effect<PersonalMcpProfile, PersonalMcpSettingsError>;
     /**
-     * Forgets a credential the upstream has rejected: the secret is removed
-     * and the integration reads as unconfigured (and, for toolyard, as never
-     * connected), so the client connects it again on its next load.
+     * Forgets a credential the upstream has rejected, but only if `credential`
+     * — the one the caller actually sent — is still the stored one (compared
+     * under the user's lock, constant-time over hashes). A Reconnect that
+     * raced an in-flight call has already replaced the secret, and that
+     * rejection was for the old token: nothing happens, `retired` is false.
+     * When it does retire, the secret is removed and the integration reads as
+     * unconfigured (and, for toolyard, as never connected), so the client
+     * connects it again on its next load.
      */
     readonly retireIntegrationCredential: (
       userId: UserId,
       integrationId: PersonalMcpIntegrationId,
-    ) => Effect.Effect<PersonalMcpProfile, PersonalMcpSettingsError>;
+      credential: string,
+    ) => Effect.Effect<
+      { readonly retired: boolean; readonly profile: PersonalMcpProfile },
+      PersonalMcpSettingsError
+    >;
   }
 >()("t3/mcp/UserMcpProfileStore") {}
 
@@ -452,7 +465,7 @@ export const layer = Layer.effect(
       userId: UserId,
       integrationId: PersonalMcpIntegrationId,
       credential: string,
-      connection?: IntegrationConnection,
+      connection: IntegrationConnection,
     ) {
       const current = yield* getUnlocked(userId);
       const target = current.integrations.find((entry) => entry.id === integrationId);
@@ -479,9 +492,8 @@ export const layer = Layer.effect(
             ? {
                 ...entry,
                 credentialConfigured: true,
-                ...(connection === undefined
-                  ? {}
-                  : { connectedEmail: connection.email, connectedAt }),
+                connectedEmail: connection.email,
+                connectedAt,
               }
             : entry,
         ),
@@ -491,8 +503,17 @@ export const layer = Layer.effect(
 
     const retireIntegrationCredentialUnlocked = Effect.fn(
       "UserMcpProfileStore.retireIntegrationCredential",
-    )(function* (userId: UserId, integrationId: PersonalMcpIntegrationId) {
+    )(function* (userId: UserId, integrationId: PersonalMcpIntegrationId, credential: string) {
       const current = yield* getUnlocked(userId);
+      const stored = yield* secrets
+        .get(secretName(userId, integrationId))
+        .pipe(Effect.mapError((cause) => fail("read-integration-secret", cause)));
+      if (
+        Option.isNone(stored) ||
+        !credentialsMatch(textDecoder.decode(stored.value), credential)
+      ) {
+        return { retired: false, profile: current };
+      }
       yield* removeSecret(userId, integrationId);
       yield* persistStored(userId, {
         externalAccessEnabled: current.externalAccessEnabled,
@@ -502,7 +523,7 @@ export const layer = Layer.effect(
           return { ...rest, credentialConfigured: false };
         }),
       });
-      return yield* getUnlocked(userId);
+      return { retired: true, profile: yield* getUnlocked(userId) };
     });
 
     const rotateExternalTokenUnlocked = Effect.fn("UserMcpProfileStore.rotateExternalToken")(
@@ -606,8 +627,11 @@ export const layer = Layer.effect(
           userId,
           setIntegrationCredentialUnlocked(userId, integrationId, credential, connection),
         ),
-      retireIntegrationCredential: (userId, integrationId) =>
-        userLock.withLock(userId, retireIntegrationCredentialUnlocked(userId, integrationId)),
+      retireIntegrationCredential: (userId, integrationId, credential) =>
+        userLock.withLock(
+          userId,
+          retireIntegrationCredentialUnlocked(userId, integrationId, credential),
+        ),
     });
     // T3-CUSTOM(expbkt3): The HTTP proxy is deliberately bound to the same
     // process-scoped store instance as WS settings and token issuance.
@@ -631,14 +655,21 @@ export const getActiveIntegrationCredential = (
     ? activeUserMcpProfileStore.getIntegrationCredential(userId, integrationId)
     : Effect.succeed(undefined);
 
-/** Forgets a rejected credential through the process-scoped store, if one is up. */
+/**
+ * Forgets a rejected credential through the process-scoped store, if one is
+ * up and `credential` is still the stored one. `true` when it was retired.
+ */
 export const retireActiveIntegrationCredential = (
   userId: UserId,
   integrationId: PersonalMcpIntegrationId,
-): Effect.Effect<void, PersonalMcpSettingsError> =>
+  credential: string,
+): Effect.Effect<boolean, PersonalMcpSettingsError> =>
   activeUserMcpProfileStore
-    ? Effect.asVoid(activeUserMcpProfileStore.retireIntegrationCredential(userId, integrationId))
-    : Effect.void;
+    ? Effect.map(
+        activeUserMcpProfileStore.retireIntegrationCredential(userId, integrationId, credential),
+        (outcome) => outcome.retired,
+      )
+    : Effect.succeed(false);
 
 export const resolveActiveExternalToken = (
   rawToken: string,

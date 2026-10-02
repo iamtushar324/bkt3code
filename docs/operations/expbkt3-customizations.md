@@ -274,10 +274,15 @@ read-modify-writes inside `UserMcpProfileStore`.
 
 A stored token can die outside T3: another T3 origin connecting through
 toolyard's allowlist, the agent rotated or disabled on toolyard's Agents page.
-When the proxy sees toolyard answer 401 it calls
-`retireIntegrationCredential`, which removes the secret and marks toolyard
-unconnected (`connectedAt` cleared), so the card reads "Not connected" and the
-next app load reconnects; the agent's call still gets that 401. toolyard counts
+When toolyard answers 401 twice in a row for the same stored token within ten
+minutes (`UpstreamRejectionTracker`; one 401 can be a transient verification
+error, and an accepted call in between forgets the first), the proxy calls
+`retireIntegrationCredential` with the token it actually sent. The store
+retires only if that is still the stored token — compare-and-swap under the
+user's lock — so a Reconnect that raced an in-flight call keeps its new token.
+Retiring removes the secret and marks toolyard unconnected (`connectedAt`
+cleared), so the card reads "Not connected" and the next app load reconnects;
+the agent's call still gets that 401. toolyard counts
 as connected only while `connectedAt` is set, which only the connect flow
 writes: a pre-existing hand-made `toolyard` entry is demoted on first read and
 its stale secret removed.

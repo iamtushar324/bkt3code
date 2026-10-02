@@ -314,7 +314,9 @@ describe("UserMcpProfileStore", () => {
     return withStore(secrets, (store) =>
       Effect.gen(function* () {
         const error: PersonalMcpSettingsError = yield* store
-          .setIntegrationCredential(userId, "ghost" as PersonalMcpIntegrationId, "secret")
+          .setIntegrationCredential(userId, "ghost" as PersonalMcpIntegrationId, "secret", {
+            email: "a@b.c",
+          })
           .pipe(Effect.flip);
         expect(error.operation).toBe("set-integration-credential");
         expect(entries.size).toBe(0);
@@ -328,8 +330,9 @@ describe("UserMcpProfileStore", () => {
       Effect.gen(function* () {
         yield* store.setIntegrationCredential(userId, toolyardId, "ty_dead", { email: "a@b.c" });
 
-        const retired = yield* store.retireIntegrationCredential(userId, toolyardId);
-        expect(retired.integrations[0]).toEqual({
+        const retired = yield* store.retireIntegrationCredential(userId, toolyardId, "ty_dead");
+        expect(retired.retired).toBe(true);
+        expect(retired.profile.integrations[0]).toEqual({
           id: "toolyard",
           name: "toolyard",
           url: TOOLYARD_MCP_URL,
@@ -613,6 +616,49 @@ describe("UserMcpProfileStore", () => {
         expect(["vk_1", "vk_2", "vk_3"]).toContain(
           yield* store.getIntegrationCredential(userId, bifrostId),
         );
+      }),
+    );
+  });
+});
+
+describe("UserMcpProfileStore.retireIntegrationCredential", () => {
+  it.effect("retires nothing when the rejected credential is no longer the stored one", () => {
+    const { store: secrets, entries } = makeSecrets();
+    return withStore(secrets, (store) =>
+      Effect.gen(function* () {
+        // The agent's in-flight call used ty_old; a Reconnect stored ty_new before its 401 came back.
+        yield* store.setIntegrationCredential(userId, toolyardId, "ty_old", { email: "a@b.c" });
+        yield* store.setIntegrationCredential(userId, toolyardId, "ty_new", { email: "a@b.c" });
+
+        const outcome = yield* store.retireIntegrationCredential(userId, toolyardId, "ty_old");
+        expect(outcome.retired).toBe(false);
+        expect(outcome.profile.integrations[0]).toMatchObject({
+          credentialConfigured: true,
+          connectedEmail: "a@b.c",
+        });
+        assert.isString(outcome.profile.integrations[0]?.connectedAt);
+        expect(yield* store.getIntegrationCredential(userId, toolyardId)).toBe("ty_new");
+        expect(entries.has(secretNameFor("toolyard"))).toBe(true);
+
+        // The current token, however, is retired.
+        const current = yield* store.retireIntegrationCredential(userId, toolyardId, "ty_new");
+        expect(current.retired).toBe(true);
+        expect(current.profile.integrations[0]).toMatchObject({ credentialConfigured: false });
+        expect(entries.has(secretNameFor("toolyard"))).toBe(false);
+      }),
+    );
+  });
+
+  it.effect("is a no-op when no credential is stored", () => {
+    const { store: secrets } = makeSecrets();
+    return withStore(secrets, (store) =>
+      Effect.gen(function* () {
+        const outcome = yield* store.retireIntegrationCredential(userId, toolyardId, "ty_ghost");
+        expect(outcome.retired).toBe(false);
+        expect(outcome.profile.integrations[0]).toMatchObject({
+          id: "toolyard",
+          credentialConfigured: false,
+        });
       }),
     );
   });
