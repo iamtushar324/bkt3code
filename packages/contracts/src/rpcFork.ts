@@ -48,6 +48,14 @@ import {
   ThreadCommentsThreadInput,
 } from "./threadComments.ts";
 import { UsageReadError } from "./usage.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import {
+  ClaudeAccountsError,
+  ClaudeAccountsSetThreadModeInput,
+  ClaudeAccountsSnapshot,
+  ClaudeAccountsThreadInput,
+  ThreadClaudeAccount,
+} from "./claudeAccounts.ts";
 import {
   SessionArchiveBackfillInput,
   SessionArchiveBackfillResult,
@@ -126,6 +134,11 @@ export const WS_FORK_METHODS = {
   threadCommentsRemove: "threadComments.remove",
   threadCommentsSetDeliveryPaused: "threadComments.setDeliveryPaused",
   subscribeThreadComments: "subscribeThreadComments",
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  claudeAccountsGetThread: "claudeAccounts.getThread",
+  claudeAccountsSetThreadMode: "claudeAccounts.setThreadMode",
+  subscribeClaudeAccounts: "subscribeClaudeAccounts",
+  subscribeThreadClaudeAccount: "subscribeThreadClaudeAccount",
 } as const;
 
 export const WsPersonalMcpGetProfileRpc = Rpc.make(WS_FORK_METHODS.personalMcpGetProfile, {
@@ -438,6 +451,43 @@ export const WsSubscribeThreadCommentsRpc = Rpc.make(WS_FORK_METHODS.subscribeTh
   stream: true,
 });
 
+// T3-CUSTOM(expbkt3): Claude account profiles per thread. The snapshot stream
+// pushes every account's limits and live session count; the thread stream
+// pushes that thread's mode and the account it resolved to.
+const claudeAccountsError = Schema.Union([ClaudeAccountsError, EnvironmentAuthorizationError]);
+
+export const WsClaudeAccountsGetThreadRpc = Rpc.make(WS_FORK_METHODS.claudeAccountsGetThread, {
+  payload: ClaudeAccountsThreadInput,
+  success: ThreadClaudeAccount,
+  error: claudeAccountsError,
+});
+
+export const WsClaudeAccountsSetThreadModeRpc = Rpc.make(
+  WS_FORK_METHODS.claudeAccountsSetThreadMode,
+  {
+    payload: ClaudeAccountsSetThreadModeInput,
+    success: ThreadClaudeAccount,
+    error: claudeAccountsError,
+  },
+);
+
+export const WsSubscribeClaudeAccountsRpc = Rpc.make(WS_FORK_METHODS.subscribeClaudeAccounts, {
+  payload: Schema.Struct({}),
+  success: ClaudeAccountsSnapshot,
+  error: claudeAccountsError,
+  stream: true,
+});
+
+export const WsSubscribeThreadClaudeAccountRpc = Rpc.make(
+  WS_FORK_METHODS.subscribeThreadClaudeAccount,
+  {
+    payload: ClaudeAccountsThreadInput,
+    success: ThreadClaudeAccount,
+    error: claudeAccountsError,
+    stream: true,
+  },
+);
+
 export const FORK_WS_RPCS = [
   WsThreadCommentsListRpc,
   WsThreadCommentsAddRpc,
@@ -480,4 +530,9 @@ export const FORK_WS_RPCS = [
   WsSessionArchiveBackfillRpc,
   WsThreadContextExportRpc,
   WsAgentUiGetRenderRpc,
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  WsClaudeAccountsGetThreadRpc,
+  WsClaudeAccountsSetThreadModeRpc,
+  WsSubscribeClaudeAccountsRpc,
+  WsSubscribeThreadClaudeAccountRpc,
 ] as const;

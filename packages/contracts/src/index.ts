@@ -39,6 +39,8 @@ export * from "./planReview.ts";
 export * from "./agentUi.ts";
 // T3-CUSTOM(expbkt3): review comments on agent messages in the main chat.
 export * from "./threadComments.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+export * from "./claudeAccounts.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";

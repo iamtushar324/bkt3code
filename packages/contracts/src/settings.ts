@@ -16,6 +16,8 @@ import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./env
 // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
 import { EnvironmentAppearanceSetting } from "./environmentAppearance.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import { ClaudeAccountProfilesSettings } from "./claudeAccounts.ts";
 import {
   // T3-CUSTOM(expbkt3): default agent-session model (below).
   DEFAULT_MODEL,
@@ -1033,6 +1035,10 @@ export const ExperimentalSettings = Schema.Struct({
   externalMcp: ExternalMcpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
   sessionArchive: SessionArchiveSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  claudeAccountProfiles: ClaudeAccountProfilesSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ExperimentalSettings = typeof ExperimentalSettings.Type;
 // T3-CUSTOM(expbkt3): END
@@ -1741,6 +1747,14 @@ export const ServerSettingsPatch = Schema.Struct({
               minArchivedDays: Schema.optionalKey(SessionArchiveMinArchivedDays),
             }),
           ),
+        }),
+      ),
+      // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+      claudeAccountProfiles: Schema.optionalKey(
+        Schema.Struct({
+          enabled: Schema.optionalKey(Schema.Boolean),
+          autoswitchPath: Schema.optionalKey(TrimmedString),
+          shortLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }),
       ),
     }),
