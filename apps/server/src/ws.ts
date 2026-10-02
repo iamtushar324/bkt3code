@@ -2319,6 +2319,8 @@ const makeWsRpcLayer = (
         requireThreadAccess,
         visibleAggregateIdsForActor,
         claudeAccounts,
+        // T3-CUSTOM(expbkt3): Claude account access per user is admin-managed.
+        actorIsAdmin,
       });
       // T3-CUSTOM(expbkt3): END
 

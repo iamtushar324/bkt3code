@@ -34,6 +34,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import * as ThreadClaudeAccountRepo from "../persistence/ThreadClaudeAccount.ts";
+import * as ClaudeAccountProfileAccessRepo from "../persistence/ClaudeAccountProfileAccess.ts";
 import { ProviderAdapterValidationError } from "../provider/Errors.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -177,6 +178,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const enabled = yield* Ref.make(options.enabled ?? true);
     const sessions = yield* Ref.make<ReadonlyArray<ProviderSession>>([]);
     const shellSession = yield* Ref.make<OrchestrationSession | null>(null);
+    /** The thread shell's owner; `undefined` means no shell (a draft). */
+    const shellOwner = yield* Ref.make<UserId | null | undefined>(owner);
 
     // Subscriptions are taken here, before the service exists, so an event
     // published at any point after harness creation reaches the service.
@@ -214,11 +217,11 @@ const makeHarness = (options: HarnessOptions = {}) =>
         }),
     };
 
-    const shell = Ref.get(shellSession).pipe(
+    const shell = Effect.all([Ref.get(shellSession), Ref.get(shellOwner)]).pipe(
       Effect.map(
-        (session) =>
+        ([session, ownerUserId]) =>
           ({
-            ownerUserId: owner,
+            ownerUserId,
             modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -229,6 +232,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
 
     const layer = ClaudeAccountsServiceLayer.layer.pipe(
       Layer.provide(ThreadClaudeAccountRepo.layer),
+      Layer.provide(ClaudeAccountProfileAccessRepo.layer),
       Layer.provide(MigrationsLive),
       Layer.provide(SqlitePersistenceMemory),
       Layer.provide(Layer.succeed(ClaudeAutoswitchClient, client)),
@@ -260,7 +264,14 @@ const makeHarness = (options: HarnessOptions = {}) =>
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
-          getThreadShellById: () => shell.pipe(Effect.map(Option.some)),
+          getThreadShellById: () =>
+            Effect.flatMap(shell, (value) =>
+              Ref.get(shellOwner).pipe(
+                Effect.map((ownerUserId) =>
+                  ownerUserId === undefined ? Option.none() : Option.some(value),
+                ),
+              ),
+            ),
         }),
       ),
       Layer.provide(NodeServices.layer),
@@ -277,6 +288,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       enabled,
       sessions,
       shellSession,
+      shellOwner,
       providerEvents,
       domainEvents,
       settingsChanges,
@@ -1228,5 +1240,225 @@ describe("ClaudeAccountsService hard limits", () => {
         else process.env.T3_CLAUDE_ACTIVE_LINK = previous;
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("ClaudeAccountsService access per user", () => {
+  const colleague = UserId.make("user-colleague");
+
+  scenario("leaves every account open while no users are assigned", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const resolution = yield* service.resolveForSession(ThreadId.make("thread-open"));
+      assert.equal(resolution?.profile, "tushar");
+      assert.deepEqual(harness.placeCalls[0]!.avoid, []);
+      assert.deepEqual((yield* service.listAccess()).entries, []);
+    }),
+  );
+
+  scenario("makes Auto avoid an account assigned only to other users", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+      const resolution = yield* service.resolveForSession(ThreadId.make("thread-avoid"));
+      assert.equal(resolution?.profile, "agent");
+      assert.include(harness.placeCalls[0]!.avoid, "tushar");
+    }),
+  );
+
+  scenario("lets an assigned user keep using their account", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      yield* service.setAccess({
+        profile: "tushar",
+        userIds: [colleague, owner],
+        actorUserId: null,
+      });
+      const resolution = yield* service.resolveForSession(ThreadId.make("thread-assigned"));
+      assert.equal(resolution?.profile, "tushar");
+      assert.deepEqual(harness.placeCalls[0]!.avoid, []);
+    }),
+  );
+
+  scenario(
+    "refuses a pin to an account the caller may not use, and fails a stored one",
+    {},
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-pin-revoked");
+        // Pinned while the account was still open.
+        yield* service.setThreadMode({
+          threadId,
+          mode: { kind: "profile", profile: "barsha" },
+          actorUserId: owner,
+        });
+        yield* service.setAccess({ profile: "barsha", userIds: [colleague], actorUserId: null });
+
+        const refused = yield* service
+          .setThreadMode({
+            threadId: ThreadId.make("thread-pin-new"),
+            mode: { kind: "profile", profile: "barsha" },
+            actorUserId: owner,
+          })
+          .pipe(Effect.result);
+        assert.equal(refused._tag, "Failure");
+        if (refused._tag === "Failure") assert.equal(refused.failure.reason, "forbidden");
+
+        const start = yield* service.resolveForSession(threadId).pipe(Effect.result);
+        assert.equal(start._tag, "Failure");
+        if (start._tag === "Failure") {
+          assert.instanceOf(start.failure, ClaudeAccountPolicyError);
+          assert.equal(
+            start.failure.detail,
+            "You don't have access to Claude account barsha — ask an admin or switch to Auto.",
+          );
+        }
+      }),
+  );
+
+  scenario(
+    "checks a draft's pin against the caller, since no owner exists yet",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        yield* Ref.set(harness.shellOwner, undefined);
+        yield* service.setAccess({ profile: "agent", userIds: [colleague], actorUserId: null });
+        const threadId = ThreadId.make("draft-pin-access");
+        const refused = yield* service
+          .setThreadMode({
+            threadId,
+            mode: { kind: "profile", profile: "agent" },
+            actorUserId: owner,
+          })
+          .pipe(Effect.result);
+        assert.equal(refused._tag, "Failure");
+        if (refused._tag === "Failure") assert.equal(refused.failure.reason, "forbidden");
+
+        const accepted = yield* service.setThreadMode({
+          threadId,
+          mode: { kind: "profile", profile: "agent" },
+          actorUserId: colleague,
+        });
+        assert.deepEqual(accepted.mode, { kind: "profile", profile: "agent" });
+      }),
+  );
+
+  scenario("re-places a sticky thread once its account is taken away", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const threadId = ThreadId.make("thread-sticky-revoked");
+      assert.equal((yield* service.resolveForSession(threadId))?.profile, "tushar");
+
+      yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+      const moved = yield* service.resolveForSession(threadId);
+      assert.equal(moved?.profile, "agent");
+      assert.equal(harness.placeCalls.length, 2);
+      assert.include(harness.placeCalls[1]!.avoid, "tushar");
+      assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+    }),
+  );
+
+  scenario("fails clearly when the owner may use no account at all", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      for (const profile of ["tushar", "agent", "barsha", "sam"]) {
+        yield* service.setAccess({ profile, userIds: [colleague], actorUserId: null });
+      }
+      const result = yield* service
+        .resolveForSession(ThreadId.make("thread-no-access"))
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(
+          result.failure.detail,
+          "You don't have access to any Claude account — ask an admin to give you one.",
+        );
+      }
+      assert.equal(harness.placeCalls.length, 0);
+    }),
+  );
+
+  scenario("leaves the unidentified local operator unrestricted", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      yield* Ref.set(harness.shellOwner, null);
+      yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+      const threadId = ThreadId.make("thread-local");
+      const resolution = yield* service.resolveForSession(threadId);
+      assert.equal(resolution?.profile, "tushar");
+      assert.deepEqual(harness.placeCalls[0]!.avoid, []);
+      const pinned = yield* service.setThreadMode({
+        threadId,
+        mode: { kind: "profile", profile: "tushar" },
+        actorUserId: null,
+      });
+      assert.deepEqual(pinned.mode, { kind: "profile", profile: "tushar" });
+    }),
+  );
+
+  scenario(
+    "narrows each viewer's snapshot and pushes a new one when access changes",
+    {},
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const member = yield* watchSnapshotInto(service);
+        const nonAdmin = yield* service
+          .watchSnapshot({ userId: owner, isAdmin: false })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.equal(Array.from(nonAdmin)[0]!.profiles.length, 4);
+        assert.equal(member.initial.profiles.length, 4);
+
+        yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+        const [restricted] = yield* service
+          .watchSnapshot({ userId: owner, isAdmin: false })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.deepEqual(
+          restricted!.profiles.map((status) => status.name),
+          ["agent", "barsha", "sam"],
+        );
+        assert.isUndefined(restricted!.profiles[0]!.allowed);
+
+        const [admin] = yield* service
+          .watchSnapshot({ userId: owner, isAdmin: true })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.deepEqual(
+          admin!.profiles.map((status) => [status.name, status.allowed]),
+          [
+            ["tushar", false],
+            ["agent", true],
+            ["barsha", true],
+            ["sam", true],
+          ],
+        );
+        // An unfiltered watcher hears the change too.
+        yield* Queue.take(member.seen);
+      }),
+  );
+
+  scenario("lists and clears allow lists", {}, (_harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const set = yield* service.setAccess({
+        profile: "agent",
+        userIds: [owner, colleague, owner],
+        actorUserId: owner,
+      });
+      assert.deepEqual(set.entries, [{ profile: "agent", userIds: [colleague, owner] }]);
+      const cleared = yield* service.setAccess({
+        profile: "agent",
+        userIds: [],
+        actorUserId: owner,
+      });
+      assert.deepEqual(cleared.entries, []);
+
+      const unknown = yield* service
+        .setAccess({ profile: "nobody", userIds: [owner], actorUserId: owner })
+        .pipe(Effect.result);
+      assert.equal(unknown._tag, "Failure");
+      if (unknown._tag === "Failure") assert.equal(unknown.failure.reason, "invalid");
+    }),
   );
 });

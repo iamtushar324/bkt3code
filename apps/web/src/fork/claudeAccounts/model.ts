@@ -297,7 +297,12 @@ export function accountRows(
 ): ReadonlyArray<AccountRowView> {
   if (snapshot === null) return [];
   const current = effectiveProfile(thread) ?? null;
-  return orderAccounts(snapshot.profiles).map((status) => ({
+  // Admins are sent accounts they may not use (to manage access); offer only
+  // the usable ones, plus the thread's own so the current choice still shows.
+  const offered = snapshot.profiles.filter(
+    (status) => status.allowed !== false || status.name === current,
+  );
+  return orderAccounts(offered).map((status) => ({
     name: status.name,
     shortLabel: status.shortLabel || status.name.slice(0, 1),
     emailMasked: status.emailMasked ?? null,

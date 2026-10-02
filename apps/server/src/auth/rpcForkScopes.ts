@@ -70,6 +70,10 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.subscribeClaudeAccounts]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.subscribeThreadClaudeAccount]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.claudeAccountsSetThreadMode]: AuthOrchestrationOperateScope,
+  // T3-CUSTOM(expbkt3): Claude account access per user. Listing is a read and
+  // replacing an allow list is operate; both handlers also require an admin.
+  [WS_FORK_METHODS.claudeAccountsAccessList]: AuthOrchestrationReadScope,
+  [WS_FORK_METHODS.claudeAccountsAccessSet]: AuthOrchestrationOperateScope,
   // T3-CUSTOM(expbkt3): toolyard auto-connect
   // Connecting writes a credential, so it needs operate.
   [WS_FORK_METHODS.personalMcpConnectToolyard]: AuthOrchestrationOperateScope,

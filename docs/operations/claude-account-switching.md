@@ -236,12 +236,41 @@ account `~/.claude-active` resolves to (realpath; `default` for `~/.claude`), st
 per thread. A switcher crash or 10 s timeout logs a warning and leaves the spawn
 environment unchanged; only the two policy outcomes above fail a start. When no account
 has headroom the start fails with "All Claude accounts are at their limit — first resets
-at HH:MM UTC." The binary path is the setting, else `~/.local/bin/claude-autoswitch`;
-`T3_CLAUDE_AUTOSWITCH_BIN` overrides it for tests. Calls use an argv array, never a shell
+at HH:MM UTC." The binary path is the setting, else `~/.local/bin/claude-autoswitch`
+(a leading `~` expands to the server user's home, so macOS hosts work too);
+`T3_CLAUDE_AUTOSWITCH_BIN` overrides it for tests. The hard-limit rotation runs the same
+resolved binary. Calls use an argv array, never a shell
 string, and the JSON is decoded tolerantly (unknown keys ignored).
 
 Tests: `apps/server/src/claudeAccounts/*.test.ts` and
 `apps/server/src/provider/claudeHardLimitRotation.expbkt3.test.ts`.
+
+### Account access per user
+
+Clerk org admins choose who may use each account under **Settings → Claude Account
+Access** (`claudeAccounts.access.list` / `claudeAccounts.access.set`, migration
+`1042_ClaudeAccountProfileAccess`). It is an allow list per account: an account with nobody
+assigned is open to everyone; once users are assigned, only they may use it. Admins are
+bound by it too. Both RPCs answer `forbidden` to a non-admin; the unidentified local
+operator (no Clerk) is unrestricted everywhere and the page is hidden.
+
+The rule follows the thread's **owner**, the user its sessions run for:
+
+- Auto passes every account the owner may not use to `--avoid`, alongside exhausted ones.
+  If the owner may use none of the accounts the switcher lists, the start fails with
+  "You don't have access to any Claude account — ask an admin to give you one."; if all
+  of theirs are at a limit, "Every Claude account you can use is at its limit — first
+  resets at HH:MM UTC."
+- A pin is refused (`forbidden`) when the caller or the thread's owner may not use the
+  account; a draft has no owner yet, so the caller is checked. A pin that loses access
+  later fails its next start with "You don't have access to Claude account <x> — ask an
+  admin or switch to Auto."
+- A sticky Auto thread whose account is taken away is placed again at its next start, as
+  are hard-limit moves. A session already running keeps its account until then.
+- `subscribeClaudeAccounts` is filtered per connection: a member sees only the accounts
+  they may use; an admin sees all, each with `allowed`, and the composer still offers
+  only the allowed ones (plus the thread's current account). Changing access pushes a new
+  snapshot to every connection.
 
 ## Staging verification
 

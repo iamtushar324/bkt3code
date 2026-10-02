@@ -1,9 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - expected paths are computed independently.
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import {
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
+  type ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +21,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   runClaudeAutoswitchElection,
   runClaudeHardLimitRotation,
@@ -83,13 +89,19 @@ function commandHandle(input: {
   });
 }
 
-function electionLayer(input: Parameters<typeof commandHandle>[0]) {
+/** The switcher under the home of whoever runs the tests, never a fixed `/home/ubuntu`. */
+const DEFAULT_SWITCHER = NodePath.join(NodeOS.homedir(), ".local", "bin", "claude-autoswitch");
+
+function electionLayer(
+  input: Parameters<typeof commandHandle>[0],
+  expectedCommand: string = DEFAULT_SWITCHER,
+) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       assert.isTrue(ChildProcess.isStandardCommand(command));
       if (!ChildProcess.isStandardCommand(command)) return Effect.die("expected standard command");
-      assert.equal(command.command, "/home/ubuntu/.local/bin/claude-autoswitch");
+      assert.equal(command.command, expectedCommand);
       assert.deepEqual(command.args, ["--hard-limit", "five_hour", "--json"]);
       return Effect.succeed(commandHandle(input));
     }),
@@ -303,6 +315,35 @@ describe("Claude authoritative hard-limit handling", () => {
 });
 
 describe("claude-autoswitch hard-limit contract", () => {
+  it.effect("runs the switcher the settings name, with a leading ~ expanded", () =>
+    Effect.gen(function* () {
+      const settings = {
+        experimental: {
+          claudeAccountProfiles: {
+            enabled: false,
+            autoswitchPath: "~/bin/my-switcher",
+            shortLabels: {},
+          },
+        },
+      } as unknown as ServerSettings;
+      const result = yield* runClaudeAutoswitchElection("five_hour").pipe(
+        Effect.provide(
+          Layer.merge(
+            electionLayer(
+              {
+                stdout:
+                  '{"status":"switched","hardLimitType":"five_hour","from":"a","to":"b","reason":"r"}',
+              },
+              NodePath.join(NodeOS.homedir(), "bin", "my-switcher"),
+            ),
+            Layer.mock(ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+          ),
+        ),
+      );
+      assert.deepEqual(result, { status: "switched" });
+    }),
+  );
+
   it.effect("accepts only an exit-zero switched response", () =>
     Effect.gen(function* () {
       const result = yield* runClaudeAutoswitchElection("five_hour").pipe(

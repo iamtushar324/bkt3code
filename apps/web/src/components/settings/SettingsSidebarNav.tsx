@@ -13,6 +13,7 @@ import {
   ArchiveIcon,
   // T3-CUSTOM(expbkt3): BEGIN — fork-only settings sections.
   UsersIcon,
+  KeyRoundIcon,
   // T3-CUSTOM(expbkt3): END
   BlocksIcon,
   BotIcon,
@@ -100,6 +101,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": Link2Icon,
   // T3-CUSTOM(expbkt3): fork-only settings sections.
   "/settings/project-access": UsersIcon,
+  "/settings/claude-account-access": KeyRoundIcon,
   "/settings/experiments": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
@@ -134,11 +136,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       isSettingsOverviewVisible(scopeSearch),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
-  // T3-CUSTOM(expbkt3): Project Access is an admin-only section; upstream
-  // derives the nav from the section registry, so filter it here.
+  // T3-CUSTOM(expbkt3): Project Access and Claude Account Access are
+  // admin-only sections; upstream derives the nav from the section registry,
+  // so filter them here.
   const isTeamAdmin = useIsTeamAdmin();
   const visibleNavItems = navItems.filter(
-    (item) => item.to !== "/settings/project-access" || isTeamAdmin,
+    (item) =>
+      (item.to !== "/settings/project-access" && item.to !== "/settings/claude-account-access") ||
+      isTeamAdmin,
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");

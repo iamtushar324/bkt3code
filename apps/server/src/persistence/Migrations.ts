@@ -152,6 +152,8 @@ import Migration1039 from "./Migrations/1039_ProjectionThreadsCustomGroup.ts";
 import Migration1040 from "./Migrations/1040_ThreadComments.ts";
 // T3-CUSTOM(expbkt3): Claude account profiles per thread.
 import Migration1041 from "./Migrations/1041_ThreadClaudeAccount.ts";
+// T3-CUSTOM(expbkt3): Claude account access per user.
+import Migration1042 from "./Migrations/1042_ClaudeAccountProfileAccess.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -293,6 +295,8 @@ const migrationEntries = [
   [1040, "ThreadComments", Migration1040],
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   [1041, "ThreadClaudeAccount", Migration1041],
+  // T3-CUSTOM(expbkt3): Claude account access per user.
+  [1042, "ClaudeAccountProfileAccess", Migration1042],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

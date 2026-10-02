@@ -126,6 +126,7 @@ import * as ClaudeHardLimitRotation from "./provider/claudeHardLimitRotation.exp
 import * as ClaudeAccountsServiceLayer from "./claudeAccounts/ClaudeAccountsService.ts";
 import * as ClaudeAutoswitchClient from "./claudeAccounts/ClaudeAutoswitchClient.ts";
 import * as ThreadClaudeAccount from "./persistence/ThreadClaudeAccount.ts";
+import * as ClaudeAccountProfileAccess from "./persistence/ClaudeAccountProfileAccess.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -567,6 +568,7 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 // resolver the same way, so neither upstream contract widens.
 const ClaudeAccountsLayerLive = ClaudeAccountsServiceLayer.layer.pipe(
   Layer.provide(ThreadClaudeAccount.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(ClaudeAccountProfileAccess.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provide(
     ClaudeAutoswitchClient.layer.pipe(
       Layer.provide(ProcessRunner.layer),
@@ -581,7 +583,7 @@ const ClaudeAccountsLayerLive = ClaudeAccountsServiceLayer.layer.pipe(
 // and lifecycle service as the reaper, without widening upstream contracts.
 const ProviderRuntimeLayerLive = Layer.mergeAll(
   ProviderSessionReaperLive,
-  ClaudeHardLimitRotation.layer,
+  ClaudeHardLimitRotation.layer.pipe(Layer.provide(ServerSettingsLayerLive)),
   ProviderUsageLimitsIngestionLive,
   ClaudeAccountsLayerLive, // T3-CUSTOM(expbkt3): Claude account profiles per thread.
 ).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));

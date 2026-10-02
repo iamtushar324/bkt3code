@@ -27,6 +27,7 @@ export type SettingsPath =
   // T3-CUSTOM(expbkt3): fork-only settings sections. "/settings/projects" is
   // upstream's now, and the route picks the fork panel behind the flag.
   | "/settings/project-access"
+  | "/settings/claude-account-access"
   | "/settings/experiments"
   | "/settings/archived";
 
@@ -103,6 +104,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/connections": "Connections",
   // T3-CUSTOM(expbkt3): fork-only settings sections.
   "/settings/project-access": "Project Access",
+  "/settings/claude-account-access": "Claude Account Access",
   "/settings/experiments": "Experiments",
   "/settings/archived": "Archive",
 };
@@ -912,6 +914,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // T3-CUSTOM(expbkt3): BEGIN — fork-only sections render at any selection.
   "/settings/users": null,
   "/settings/project-access": null,
+  "/settings/claude-account-access": null,
   "/settings/experiments": null,
   // T3-CUSTOM(expbkt3): END
 };

@@ -88,6 +88,8 @@ import {
   EnvironmentUserSourceControlProfileSetInput,
   EnvironmentUserUpdateInput,
 } from "./users.ts";
+// T3-CUSTOM(expbkt3): Claude account access per user.
+import { ClaudeAccountAccessList, ClaudeAccountsAccessSetInput } from "./claudeAccounts.ts";
 // T3-CUSTOM(expbkt3): toolyard auto-connect
 import {
   PersonalMcpToolyardConnectInput,
@@ -144,6 +146,9 @@ export const WS_FORK_METHODS = {
   claudeAccountsSetThreadMode: "claudeAccounts.setThreadMode",
   subscribeClaudeAccounts: "subscribeClaudeAccounts",
   subscribeThreadClaudeAccount: "subscribeThreadClaudeAccount",
+  // T3-CUSTOM(expbkt3): Claude account access per user (admin only).
+  claudeAccountsAccessList: "claudeAccounts.access.list",
+  claudeAccountsAccessSet: "claudeAccounts.access.set",
   // T3-CUSTOM(expbkt3): toolyard auto-connect
   personalMcpConnectToolyard: "personalMcp.connectToolyard",
 } as const;
@@ -495,6 +500,20 @@ export const WsSubscribeThreadClaudeAccountRpc = Rpc.make(
   },
 );
 
+// T3-CUSTOM(expbkt3): Claude account access per user. Admins list and replace
+// each account's allow list; the handlers refuse everyone else as `forbidden`.
+export const WsClaudeAccountsAccessListRpc = Rpc.make(WS_FORK_METHODS.claudeAccountsAccessList, {
+  payload: Schema.Struct({}),
+  success: ClaudeAccountAccessList,
+  error: claudeAccountsError,
+});
+
+export const WsClaudeAccountsAccessSetRpc = Rpc.make(WS_FORK_METHODS.claudeAccountsAccessSet, {
+  payload: ClaudeAccountsAccessSetInput,
+  success: ClaudeAccountAccessList,
+  error: claudeAccountsError,
+});
+
 // T3-CUSTOM(expbkt3): toolyard auto-connect
 /**
  * Connects the built-in toolyard integration: the server exchanges the
@@ -557,6 +576,9 @@ export const FORK_WS_RPCS = [
   WsClaudeAccountsSetThreadModeRpc,
   WsSubscribeClaudeAccountsRpc,
   WsSubscribeThreadClaudeAccountRpc,
+  // T3-CUSTOM(expbkt3): Claude account access per user.
+  WsClaudeAccountsAccessListRpc,
+  WsClaudeAccountsAccessSetRpc,
   // T3-CUSTOM(expbkt3): toolyard auto-connect
   WsPersonalMcpConnectToolyardRpc,
 ] as const;

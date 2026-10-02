@@ -30,6 +30,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsExperimentsRouteImport } from './routes/settings.experiments'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsClaudeAccountAccessRouteImport } from './routes/settings.claude-account-access'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
@@ -142,6 +143,12 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsClaudeAccountAccessRoute =
+  SettingsClaudeAccountAccessRouteImport.update({
+    id: '/claude-account-access',
+    path: '/claude-account-access',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -185,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/claude-account-access': typeof SettingsClaudeAccountAccessRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
@@ -212,6 +220,7 @@ export interface FileRoutesByTo {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/claude-account-access': typeof SettingsClaudeAccountAccessRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
@@ -242,6 +251,7 @@ export interface FileRoutesById {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/claude-account-access': typeof SettingsClaudeAccountAccessRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
@@ -273,6 +283,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/claude-account-access'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/experiments'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/claude-account-access'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/experiments'
@@ -329,6 +341,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/claude-account-access'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/experiments'
@@ -507,6 +520,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/claude-account-access': {
+      id: '/settings/claude-account-access'
+      path: '/claude-account-access'
+      fullPath: '/settings/claude-account-access'
+      preLoaderRoute: typeof SettingsClaudeAccountAccessRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -571,6 +591,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsClaudeAccountAccessRoute: typeof SettingsClaudeAccountAccessRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
@@ -590,6 +611,7 @@ interface SettingsRouteChildren {
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsClaudeAccountAccessRoute: SettingsClaudeAccountAccessRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsExperimentsRoute: SettingsExperimentsRoute,

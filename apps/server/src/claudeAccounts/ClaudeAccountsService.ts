@@ -16,13 +16,19 @@
  * - the **hard-limit path**: an account-wide rejection (`five_hour`,
  *   `seven_day`) marks the account exhausted and moves every Auto thread off
  *   it as they start; a model-scoped one (`seven_day_opus`, …) moves only the
- *   affected Auto thread. Pinned threads get a notice instead.
+ *   affected Auto thread. Pinned threads get a notice instead;
+ * - **access per user**: an account with no users assigned is open to
+ *   everyone; once an admin assigns users, only they may use it. Placement
+ *   avoids the accounts the thread's owner may not use, a pin to one fails,
+ *   and each connection's snapshot shows only the accounts its user may use
+ *   (admins see every account, flagged).
  *
  * The switcher is the only ranker. Nothing here reads credentials.
  */
 import * as NodeOS from "node:os";
 
 import {
+  type ClaudeAccountAccessList,
   type ClaudeAccountMode,
   type ClaudeAccountStatus,
   type ClaudeAccountWindow,
@@ -35,6 +41,7 @@ import {
   type ProviderRuntimeEvent,
   type ThreadClaudeAccount,
   type ThreadId,
+  type UserId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -53,6 +60,7 @@ import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ClaudeAccountProfileAccessRepository } from "../persistence/ClaudeAccountProfileAccess.ts";
 import {
   type ThreadClaudeAccountRow,
   ThreadClaudeAccountRepository,
@@ -97,16 +105,36 @@ export interface ClaudeAccountProfilesSettingsView {
   readonly shortLabels: Readonly<Record<string, string>>;
 }
 
+/** Who a snapshot is for. A null user (the local operator) sees and may use everything. */
+export interface ClaudeAccountsViewer {
+  readonly userId: UserId | null;
+  readonly isAdmin: boolean;
+}
+
 export interface ClaudeAccountsServiceShape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
+  /** `actorUserId` is the caller; a pin they (or the thread's owner) may not use is `forbidden`. */
   readonly setThreadMode: (input: {
     readonly threadId: ThreadId;
     readonly mode: ClaudeAccountMode;
+    readonly actorUserId?: UserId | null;
   }) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
+  /** The host-wide snapshot, unfiltered. */
   readonly snapshot: () => Effect.Effect<ClaudeAccountsSnapshot>;
-  readonly watchSnapshot: () => Stream.Stream<ClaudeAccountsSnapshot, ClaudeAccountsError>;
+  /** Live snapshots; with a viewer, narrowed to what that user may use. */
+  readonly watchSnapshot: (
+    viewer?: ClaudeAccountsViewer,
+  ) => Stream.Stream<ClaudeAccountsSnapshot, ClaudeAccountsError>;
+  /** Every account's allow list. Callers check the admin gate. */
+  readonly listAccess: () => Effect.Effect<ClaudeAccountAccessList, ClaudeAccountsError>;
+  /** Replaces one account's allow list; empty opens it. Callers check the admin gate. */
+  readonly setAccess: (input: {
+    readonly profile: string;
+    readonly userIds: ReadonlyArray<UserId>;
+    readonly actorUserId: UserId | null;
+  }) => Effect.Effect<ClaudeAccountAccessList, ClaudeAccountsError>;
   readonly watchThread: (
     threadId: ThreadId,
   ) => Stream.Stream<ThreadClaudeAccount, ClaudeAccountsError>;
@@ -209,6 +237,7 @@ function shortUnavailableReason(failure: ClaudeAutoswitchFailure): string {
 
 export const make = Effect.gen(function* () {
   const repository = yield* ThreadClaudeAccountRepository;
+  const accessRepository = yield* ClaudeAccountProfileAccessRepository;
   const client = yield* ClaudeAutoswitchClient;
   const settingsService = yield* ServerSettingsService;
   const providers = yield* ProviderService;
@@ -279,6 +308,82 @@ export const make = Effect.gen(function* () {
       reason: "internal",
       detail: cause instanceof Error ? cause.message : String(cause),
     });
+
+  // ------------------------------------------------------------------ access
+
+  /**
+   * Allow lists by account, read once and kept until an admin changes them
+   * (this server is the table's only writer). The generation stops a read
+   * that started before a write from caching what the write replaced.
+   */
+  let accessCache: ReadonlyMap<string, ReadonlySet<UserId>> | undefined;
+  let accessGeneration = 0;
+
+  const accessMap = Effect.gen(function* () {
+    if (accessCache !== undefined) return accessCache;
+    const generation = accessGeneration;
+    const entries = yield* accessRepository.listAll();
+    const next: ReadonlyMap<string, ReadonlySet<UserId>> = new Map(
+      entries.map((entry) => [entry.profile, new Set(entry.userIds)] as const),
+    );
+    if (generation === accessGeneration) accessCache = next;
+    return next;
+  });
+
+  /** Open accounts (no users assigned) admit everyone; a null user is the unrestricted local operator. */
+  const mayUse = (
+    access: ReadonlyMap<string, ReadonlySet<UserId>>,
+    userId: UserId | null,
+    profile: string,
+  ): boolean => userId === null || (access.get(profile)?.has(userId) ?? true);
+
+  const noAccessDetail = (profile: string) =>
+    `You don't have access to Claude account ${profile} — ask an admin or switch to Auto.`;
+
+  /** The user a thread's sessions run for: its owner, or nobody (unrestricted) without a shell. */
+  const threadOwner = (threadId: ThreadId): Effect.Effect<UserId | null> =>
+    query.getThreadShellById(threadId).pipe(
+      Effect.map((shell) => (Option.isSome(shell) ? shell.value.ownerUserId : null)),
+      Effect.orElseSucceed(() => null),
+    );
+
+  /** The accounts the thread's owner may not use; empty when unrestricted. */
+  const disallowedFor = (
+    threadId: ThreadId,
+  ): Effect.Effect<
+    { readonly owner: UserId | null; readonly disallowed: ReadonlySet<string> },
+    ClaudeAccountPolicyError
+  > =>
+    Effect.gen(function* () {
+      const owner = yield* threadOwner(threadId);
+      if (owner === null) return { owner, disallowed: new Set<string>() };
+      const access = yield* accessMap.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ClaudeAccountPolicyError({
+              threadId,
+              detail: `Could not read Claude account access — try again. (${cause.message})`,
+            }),
+        ),
+      );
+      const disallowed = new Set<string>();
+      for (const profile of access.keys()) {
+        if (!mayUse(access, owner, profile)) disallowed.add(profile);
+      }
+      return { owner, disallowed };
+    });
+
+  const accessList: Effect.Effect<ClaudeAccountAccessList, ClaudeAccountsError> = accessMap.pipe(
+    Effect.map((access) => ({
+      entries: [...access]
+        .map(([profile, users]) => ({
+          profile,
+          userIds: [...users].toSorted(),
+        }))
+        .toSorted((left, right) => left.profile.localeCompare(right.profile)),
+    })),
+    Effect.mapError(internal("listAccess")),
+  );
 
   // ---------------------------------------------------------------- snapshot
 
@@ -420,6 +525,40 @@ export const make = Effect.gen(function* () {
       };
     });
 
+  /**
+   * Narrows a snapshot to one viewer: admins get every account with an
+   * `allowed` flag (they manage access); everyone else only the accounts they
+   * may use. A composer pinned to a revoked account still renders its badge
+   * from the thread's own row.
+   */
+  const viewSnapshot = (
+    current: ClaudeAccountsSnapshot,
+    viewer: ClaudeAccountsViewer | undefined,
+  ): Effect.Effect<ClaudeAccountsSnapshot> =>
+    Effect.gen(function* () {
+      if (viewer === undefined || viewer.userId === null || current.profiles.length === 0) {
+        return current;
+      }
+      const userId = viewer.userId;
+      const accessResult = yield* accessMap.pipe(Effect.result);
+      if (accessResult._tag === "Failure") {
+        yield* Effect.logWarning("claude.account.access-read-failed", {
+          cause: accessResult.failure.message,
+        });
+        return { ...current, profiles: [] };
+      }
+      const access = accessResult.success;
+      return {
+        ...current,
+        profiles: viewer.isAdmin
+          ? current.profiles.map((status) => ({
+              ...status,
+              allowed: mayUse(access, userId, status.name),
+            }))
+          : current.profiles.filter((status) => mayUse(access, userId, status.name)),
+      };
+    });
+
   const adoptStatus = (status: SwitcherStatus) =>
     Effect.gen(function* () {
       lastStatus = status;
@@ -540,7 +679,19 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
     Effect.gen(function* () {
       const pending = yield* pendingCounts;
-      const avoidSet = new Set([...(yield* exhaustedNames), ...avoid]);
+      const { owner, disallowed } = yield* disallowedFor(threadId);
+      if (
+        owner !== null &&
+        lastStatus !== undefined &&
+        lastStatus.profiles.length > 0 &&
+        lastStatus.profiles.every((profile) => disallowed.has(profile.name))
+      ) {
+        return yield* new ClaudeAccountPolicyError({
+          threadId,
+          detail: "You don't have access to any Claude account — ask an admin to give you one.",
+        });
+      }
+      const avoidSet = new Set([...(yield* exhaustedNames), ...avoid, ...disallowed]);
       const outcome = yield* client.place({ pending, avoid: [...avoidSet] });
       if (outcome.kind !== "ok") {
         // `available` tracks `--status` alone; a failed `--place` only logs.
@@ -561,7 +712,10 @@ export const make = Effect.gen(function* () {
         const recoversAt = isoOrUndefined(result.recovers_at) ?? firstRecovery();
         return yield* new ClaudeAccountPolicyError({
           threadId,
-          detail: `All Claude accounts are at their limit — first resets at ${formatResetClock(recoversAt)}.`,
+          detail:
+            disallowed.size > 0
+              ? `Every Claude account you can use is at its limit — first resets at ${formatResetClock(recoversAt)}.`
+              : `All Claude accounts are at their limit — first resets at ${formatResetClock(recoversAt)}.`,
         });
       }
       const atMs = yield* Clock.currentTimeMillis;
@@ -606,9 +760,13 @@ export const make = Effect.gen(function* () {
       yield* pruneExhausted;
       // A spawn is the restart a deferred mode change was waiting for.
       if (pendingRestart.delete(threadId)) yield* announce(threadId);
+      const { disallowed } = yield* disallowedFor(threadId);
 
       if (row.mode.kind === "profile") {
         const pinned = row.mode.profile;
+        if (disallowed.has(pinned)) {
+          return yield* new ClaudeAccountPolicyError({ threadId, detail: noAccessDetail(pinned) });
+        }
         if (!(yield* profileExists(pinned))) {
           return yield* new ClaudeAccountPolicyError({
             threadId,
@@ -641,8 +799,12 @@ export const make = Effect.gen(function* () {
       // Sticky: an account the thread already ran on is kept until a hard
       // limit, a sign-out, an exhausted mark or its removal takes it out.
       // Nearing a limit never moves an existing thread; only new placements
-      // avoid it.
-      if (row.resolvedProfile !== null && (yield* usableAndPresent(row.resolvedProfile))) {
+      // avoid it. Losing access to the account re-places it too.
+      if (
+        row.resolvedProfile !== null &&
+        !disallowed.has(row.resolvedProfile) &&
+        (yield* usableAndPresent(row.resolvedProfile))
+      ) {
         threadProfiles.set(threadId, row.resolvedProfile);
         return {
           profile: row.resolvedProfile,
@@ -746,7 +908,11 @@ export const make = Effect.gen(function* () {
       yield* announce(threadId);
     });
 
-  const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({ threadId, mode }) =>
+  const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({
+    threadId,
+    mode,
+    actorUserId = null,
+  }) =>
     Effect.gen(function* () {
       if (mode.kind === "profile" && !(yield* profileExists(mode.profile))) {
         return yield* new ClaudeAccountsError({
@@ -754,6 +920,23 @@ export const make = Effect.gen(function* () {
           reason: "invalid",
           detail: `Unknown Claude account '${mode.profile}'.`,
         });
+      }
+      // A draft has no owner yet; its first send makes the caller the owner.
+      const owner = (yield* threadOwner(threadId)) ?? actorUserId;
+      const access = yield* accessMap.pipe(Effect.mapError(internal("setThreadMode")));
+      if (mode.kind === "profile") {
+        const refusal = !mayUse(access, actorUserId, mode.profile)
+          ? noAccessDetail(mode.profile)
+          : !mayUse(access, owner, mode.profile)
+            ? `This thread's owner doesn't have access to Claude account ${mode.profile} — pick another account or Auto.`
+            : undefined;
+        if (refusal !== undefined) {
+          return yield* new ClaudeAccountsError({
+            operation: "setThreadMode",
+            reason: "forbidden",
+            detail: refusal,
+          });
+        }
       }
       const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("setThreadMode")));
       const updatedAt = yield* nowIso;
@@ -767,7 +950,9 @@ export const make = Effect.gen(function* () {
       const wouldChange =
         mode.kind === "profile"
           ? row.resolvedProfile !== mode.profile
-          : row.resolvedProfile !== null && !(yield* usableAndPresent(row.resolvedProfile));
+          : row.resolvedProfile !== null &&
+            (!mayUse(access, owner, row.resolvedProfile) ||
+              !(yield* usableAndPresent(row.resolvedProfile)));
       if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
         notices.set(
           threadId,
@@ -1026,20 +1211,53 @@ export const make = Effect.gen(function* () {
 
   // ----------------------------------------------------------------- streams
 
-  const watchSnapshot: ClaudeAccountsServiceShape["watchSnapshot"] = () =>
+  const watchSnapshot: ClaudeAccountsServiceShape["watchSnapshot"] = (viewer) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
-        const initial = yield* snapshot();
+        const view = Effect.flatMap(snapshot(), (current) => viewSnapshot(current, viewer));
+        const initial = yield* view;
         return Stream.concat(
           Stream.make(initial),
           Stream.fromSubscription(subscription).pipe(
             Stream.filter((changed) => changed === SNAPSHOT_CHANGE),
-            Stream.mapEffect(() => snapshot()),
+            Stream.mapEffect(() => view),
           ),
         );
       }),
     );
+
+  // ------------------------------------------------------------------ access
+
+  const listAccess: ClaudeAccountsServiceShape["listAccess"] = () => accessList;
+
+  const setAccess: ClaudeAccountsServiceShape["setAccess"] = ({ profile, userIds, actorUserId }) =>
+    Effect.gen(function* () {
+      // Clearing a list is allowed for an account that is gone, to tidy up.
+      if (userIds.length > 0 && !(yield* profileExists(profile))) {
+        return yield* new ClaudeAccountsError({
+          operation: "setAccess",
+          reason: "invalid",
+          detail: `Unknown Claude account '${profile}'.`,
+        });
+      }
+      const addedAt = yield* nowIso;
+      accessGeneration += 1;
+      accessCache = undefined;
+      yield* accessRepository
+        .setUsers({ profile, userIds, addedByUserId: actorUserId, addedAt })
+        .pipe(Effect.mapError(internal("setAccess")));
+      accessGeneration += 1;
+      accessCache = undefined;
+      yield* Effect.logInfo("claude.account.access-set", {
+        profile,
+        users: userIds.length,
+        actorUserId,
+      });
+      // Snapshots are filtered per viewer, so every connection re-reads its view.
+      yield* announceSnapshot;
+      return yield* accessList;
+    });
 
   const watchThread: ClaudeAccountsServiceShape["watchThread"] = (threadId) =>
     Stream.unwrap(
@@ -1076,6 +1294,8 @@ export const make = Effect.gen(function* () {
     setThreadMode,
     snapshot,
     watchSnapshot,
+    listAccess,
+    setAccess,
     watchThread,
     resolveForSession,
     refreshStatus,
