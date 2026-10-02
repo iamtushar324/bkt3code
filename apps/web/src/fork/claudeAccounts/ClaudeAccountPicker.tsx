@@ -252,12 +252,14 @@ function UsageRing(props: { readonly radius: number; readonly used: number | nul
 /**
  * The composer trigger: outer ring = 5-hour use, inner ring = weekly use,
  * quiet grey until 75% (yellow) and 90% (red); the account letter sits in
- * the centre ("A" while Auto has not placed the thread yet).
+ * the centre ("A" while Auto has not placed the thread yet). A small blue dot
+ * at the top right means Auto chose the account; a pinned account has none.
  */
 function UsageRings(props: {
   readonly fiveHourUsed: number | null;
   readonly weeklyUsed: number | null;
   readonly label: string;
+  readonly auto: boolean;
 }) {
   return (
     <svg viewBox="0 0 24 24" className="size-5.5" aria-hidden>
@@ -274,6 +276,15 @@ function UsageRings(props: {
       >
         {props.label}
       </text>
+      {props.auto ? (
+        <circle
+          cx="20.6"
+          cy="3.4"
+          r="2.3"
+          strokeWidth="1.2"
+          className="fill-info stroke-background"
+        />
+      ) : null}
     </svg>
   );
 }
@@ -333,6 +344,7 @@ function ClaudeAccountPickerMenu(props: {
             fiveHourUsed={view.kind === "account" ? view.fiveHourUsed : null}
             weeklyUsed={view.kind === "account" ? view.weeklyUsed : null}
             label={view.kind === "account" ? view.label : "A"}
+            auto={view.kind === "auto-unresolved" || view.auto}
           />
         </TooltipTrigger>
         <TooltipPopup side="top">{tooltip}</TooltipPopup>
