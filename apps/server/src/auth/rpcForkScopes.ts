@@ -70,4 +70,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.subscribeClaudeAccounts]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.subscribeThreadClaudeAccount]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.claudeAccountsSetThreadMode]: AuthOrchestrationOperateScope,
+  // T3-CUSTOM(expbkt3): toolyard auto-connect
+  // Connecting writes a credential, so it needs operate.
+  [WS_FORK_METHODS.personalMcpConnectToolyard]: AuthOrchestrationOperateScope,
 } as const;

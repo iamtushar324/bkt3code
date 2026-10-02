@@ -3,12 +3,13 @@
  * credentials from the user bound to the active ACP generation.
  */
 import {
+  isToolyardGatewayUrl,
   PersonalMcpIntegrationId,
-  resolveBifrostGateway,
-  TOOLYARD_MCP_URL,
+  TOOLYARD_MCP_INTEGRATION_ID,
   type PersonalMcpAuthMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -21,6 +22,7 @@ import {
 } from "effect/unstable/http";
 
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { makeUpstreamRejectionTracker, rejectionKey } from "./UpstreamRejectionTracker.ts";
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
 
 const PATH = /^\/mcp\/upstream\/([A-Za-z0-9._-]+)$/;
@@ -73,9 +75,6 @@ interface ForwardedRequestOptions {
   readonly threadId: ThreadId;
 }
 
-const isToolyardGatewayUrl = (url: string): boolean =>
-  resolveBifrostGateway(url)?.url === TOOLYARD_MCP_URL;
-
 const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(function* (
   incoming: Request,
   options: ForwardedRequestOptions,
@@ -121,6 +120,29 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
   return outgoing;
 });
 
+/**
+ * Whether an upstream answer means the stored credential is dead. Only
+ * toolyard's: its agent token is rotated or revoked outside T3 (another T3
+ * origin connecting through toolyard's allowlist, the agent rotated or
+ * disabled on toolyard's Agents page, two connects stored out of order), and
+ * a 401 is how T3 finds out. Retiring it makes the client reconnect on its
+ * next load instead of sending a dead bearer forever.
+ */
+export const shouldRetireUpstreamCredential = (integrationId: string, status: number): boolean =>
+  integrationId === TOOLYARD_MCP_INTEGRATION_ID && status === 401;
+
+/**
+ * One 401 may be a transient verification error on toolyard's side, so a
+ * token is retired only on the second consecutive 401 for that same token
+ * within this window; an accepted call in between forgets the first strike.
+ */
+const RETIRE_AFTER_CONSECUTIVE_REJECTIONS = 2;
+const REJECTION_WINDOW_MS = 10 * 60 * 1_000;
+const rejections = makeUpstreamRejectionTracker({
+  threshold: RETIRE_AFTER_CONSECUTIVE_REJECTIONS,
+  windowMs: REJECTION_WINDOW_MS,
+});
+
 export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
   "*",
   "/mcp/upstream/*",
@@ -142,10 +164,11 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
     ) {
       return unauthorized("A user-bound T3 provider credential is required.");
     }
+    const actorUserId = invocation.actorUserId;
 
-    const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(
-      invocation.actorUserId,
-    ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+    const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(actorUserId).pipe(
+      Effect.catch(() => Effect.succeed(undefined)),
+    );
     const integration = profile?.integrations.find(
       (candidate) =>
         candidate.id === integrationId &&
@@ -213,8 +236,54 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       threadId: invocation.threadId,
     });
 
+    // The agent still gets toolyard's answer as is; this only decides whether
+    // T3 keeps trusting the token it just sent. Retiring is compare-and-swap
+    // on that exact credential, so a Reconnect that landed meanwhile keeps
+    // its new token.
+    const noteUpstreamAnswer = Effect.fn("McpUpstreamProxy.noteUpstreamAnswer")(function* (
+      status: number,
+    ) {
+      if (integrationId !== TOOLYARD_MCP_INTEGRATION_ID) return;
+      const key = rejectionKey(actorUserId, credential);
+      if (!shouldRetireUpstreamCredential(integrationId, status)) {
+        if (status < 400) rejections.recordAcceptance(key);
+        return;
+      }
+      const now = yield* Clock.currentTimeMillis;
+      if (!rejections.recordRejection(key, now)) {
+        yield* Effect.logInfo("personal MCP upstream rejected the credential once", {
+          actorUserId,
+          integrationId,
+        });
+        return;
+      }
+      const retired = yield* UserMcpProfileStore.retireActiveIntegrationCredential(
+        actorUserId,
+        PersonalMcpIntegrationId.make(integrationId),
+        credential,
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("personal MCP credential could not be retired", {
+            cause,
+            actorUserId,
+            integrationId,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      yield* retired
+        ? Effect.logWarning("personal MCP credential retired after repeated upstream 401s", {
+            actorUserId,
+            integrationId,
+          })
+        : Effect.logInfo("personal MCP credential was already replaced; nothing retired", {
+            actorUserId,
+            integrationId,
+          });
+    });
+
     const client = yield* HttpClient.HttpClient;
     return yield* client.execute(outgoing).pipe(
+      Effect.tap((response) => noteUpstreamAnswer(response.status)),
       Effect.map((response) =>
         HttpServerResponse.stream(response.stream, {
           status: response.status,

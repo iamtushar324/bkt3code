@@ -2,6 +2,7 @@
 // servers (e.g. Bifrost) that get proxied into the provider session alongside T3's own tools.
 import {
   BIFROST_MCP_INTEGRATION_ID,
+  TOOLYARD_MCP_INTEGRATION_ID,
   type EnvironmentId,
   type PersonalMcpAuthMode,
   type PersonalMcpIntegrationId,
@@ -20,6 +21,8 @@ export interface McpUpstreamServerConfig {
 
 export function upstreamMcpServerName(server: McpUpstreamServerConfig): string {
   if (server.id === BIFROST_MCP_INTEGRATION_ID) return BIFROST_MCP_INTEGRATION_ID;
+  // The built-in gateway keeps its plain name so tools read `mcp__toolyard__*`.
+  if (server.id === TOOLYARD_MCP_INTEGRATION_ID) return TOOLYARD_MCP_INTEGRATION_ID;
   return `t3_user_${server.id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
 }
 // T3-CUSTOM(expbkt3): END

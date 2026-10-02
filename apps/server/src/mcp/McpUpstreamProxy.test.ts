@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BIFROST_MCP_URL, ThreadId, TOOLYARD_MCP_URL } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -101,3 +101,42 @@ it.effect("does not name the T3 thread to the stock Bifrost gateway", () =>
     expect(outgoing.headers["x-bf-vk"]).toBe("vk-user-test");
   }),
 );
+
+it.effect("sends the toolyard bearer token and names the T3 thread to toolyard", () =>
+  Effect.gen(function* () {
+    const outgoing = yield* McpUpstreamProxy.__testing.makeForwardedRequest(
+      new Request("http://127.0.0.1/mcp/upstream/toolyard", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-t3-session-id": "spoofed",
+          cookie: "t3_session=browser-cookie",
+          authorization: "Bearer provider-run-token",
+        },
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
+      }),
+      {
+        url: TOOLYARD_MCP_URL,
+        authMode: "bearer",
+        customHeaderName: "",
+        credential: "ty_agent_token",
+        threadId,
+      },
+    );
+
+    expect(outgoing.headers.authorization).toBe("Bearer ty_agent_token");
+    expect(outgoing.headers["x-t3-session-id"]).toBe(threadId);
+    expect(outgoing.headers).not.toHaveProperty("cookie");
+    expect(outgoing.headers).not.toHaveProperty("x-bf-vk");
+  }),
+);
+
+describe("shouldRetireUpstreamCredential", () => {
+  it("retires only toolyard's credential, and only on a 401", () => {
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 401)).toBe(true);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 403)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 502)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("bifrost", 401)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("custom-tools", 401)).toBe(false);
+  });
+});

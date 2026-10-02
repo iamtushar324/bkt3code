@@ -85,8 +85,8 @@ and session scope checks run on every call.
 
 Codex, Claude Code, OpenCode, Cursor, and Grok all receive the same logical MCP
 configuration through their provider adapters. The configuration contains only a
-short-lived T3 bearer token. It never contains a user's Bifrost, Linear, GitHub,
-or other upstream credential.
+short-lived T3 bearer token. It never contains a user's toolyard, Bifrost,
+Linear, GitHub, or other upstream credential.
 
 When a user starts a turn, T3 binds the ACP generation to that authenticated user.
 If a different authorized user starts the next turn in a shared session, T3
@@ -110,6 +110,14 @@ another user's key.
 
 Bifrost integrations normally use `x-bf-vk`. Bearer, `x-api-key`, and validated
 custom-header authentication are also supported.
+
+toolyard is built in: every signed-in user has a `toolyard` integration that T3
+connects on their behalf through the Beknown Google sign-in, and agents see its
+tools as `mcp__toolyard__*`. There is no key to paste. **Settings → Experiments →
+toolyard** shows whether it is connected and as whom, and offers Reconnect when
+your toolyard access changed (for example after your toolyard account or agent
+was re-enabled). Bifrost stays available alongside it under **My managed MCP
+integrations**.
 
 ## Tools
 
