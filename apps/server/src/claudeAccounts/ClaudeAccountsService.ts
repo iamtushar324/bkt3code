@@ -1,0 +1,870 @@
+/**
+ * T3-CUSTOM(expbkt3): Claude account profiles per thread.
+ *
+ * One service owns the whole feature on the server:
+ *
+ * - the **host snapshot**: `claude-autoswitch --status --json`, polled every
+ *   15 s while the setting is on, overlaid with the live `rate_limit_event`
+ *   windows Claude streams mid-turn, published to `subscribeClaudeAccounts`;
+ * - **placement**: `resolveForSession` runs inside `ClaudeAdapter.startSession`
+ *   (through `applyClaudeAccountProfile`) and decides which config directory
+ *   the spawned CLI gets — a pinned account, the account the thread already
+ *   runs on (sticky, so the prompt cache survives), or `--place` for a new one;
+ * - **mode changes** from the composer, restarting an idle session at once and a
+ *   busy one when its turn ends;
+ * - the **hard-limit path**: an authoritative rejection marks the account
+ *   exhausted, moves an Auto thread to another account and asks it to continue;
+ *   a pinned thread gets a notice instead.
+ *
+ * The switcher is the only ranker. Nothing here reads credentials.
+ */
+import * as NodeOS from "node:os";
+
+import {
+  type ClaudeAccountMode,
+  type ClaudeAccountStatus,
+  type ClaudeAccountWindow,
+  type ClaudeAccountsSnapshot,
+  ClaudeAccountsError,
+  CommandId,
+  MessageId,
+  type ProviderRuntimeEvent,
+  type ThreadClaudeAccount,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  type ThreadClaudeAccountRow,
+  ThreadClaudeAccountRepository,
+} from "../persistence/ThreadClaudeAccount.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import {
+  ClaudeAccountPolicyError,
+  type ClaudeAccountResolution,
+  registerClaudeAccountResolver,
+} from "./applyClaudeAccountProfile.ts";
+import {
+  type ClaudeAutoswitchFailure,
+  ClaudeAutoswitchClient,
+  type SwitcherProfile,
+  type SwitcherStatus,
+} from "./ClaudeAutoswitchClient.ts";
+import {
+  type ClaudeHardLimitCondition,
+  registerClaudeHardLimitAccountsHook,
+} from "./hardLimitHook.ts";
+import { computeShortLabels } from "./shortLabels.ts";
+
+export const STATUS_POLL_INTERVAL = "15 seconds";
+/** A placement counts as pending — not yet visible in the switcher's session count — for this long. */
+const PENDING_PLACEMENT_WINDOW_MS = 90_000;
+/** How long an exhausted mark lasts when Claude did not say when the window resets. */
+const DEFAULT_EXHAUSTED_MS = 60 * 60 * 1000;
+const MAX_HANDLED_CONDITIONS = 256;
+const SNAPSHOT_CHANGE = "\u0000snapshot";
+
+export interface ClaudeAccountProfilesSettingsView {
+  readonly enabled: boolean;
+  readonly autoswitchPath: string;
+  readonly shortLabels: Readonly<Record<string, string>>;
+}
+
+export interface ClaudeAccountsServiceShape {
+  readonly getThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
+  readonly setThreadMode: (input: {
+    readonly threadId: ThreadId;
+    readonly mode: ClaudeAccountMode;
+  }) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
+  readonly snapshot: () => Effect.Effect<ClaudeAccountsSnapshot>;
+  readonly watchSnapshot: () => Stream.Stream<ClaudeAccountsSnapshot, ClaudeAccountsError>;
+  readonly watchThread: (
+    threadId: ThreadId,
+  ) => Stream.Stream<ThreadClaudeAccount, ClaudeAccountsError>;
+  /** Picks the account for a spawn. `undefined` leaves the environment alone. */
+  readonly resolveForSession: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError>;
+  /** Re-reads `--status --json` now; the poller calls this on its own schedule. */
+  readonly refreshStatus: () => Effect.Effect<void>;
+  readonly markExhausted: (profile: string, resetsAt: string | undefined) => Effect.Effect<void>;
+  /** Places the thread again, avoiding the given accounts, and persists the result. */
+  readonly reassign: (
+    threadId: ThreadId,
+    input: { readonly avoid: ReadonlyArray<string> },
+  ) => Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError>;
+  /** The hard-limit hook; `false` means the feature is off and the caller keeps its own path. */
+  readonly handleHardLimit: (condition: ClaudeHardLimitCondition) => Effect.Effect<boolean>;
+}
+
+export class ClaudeAccountsService extends Context.Service<
+  ClaudeAccountsService,
+  ClaudeAccountsServiceShape
+>()("t3/claudeAccounts/ClaudeAccountsService") {}
+
+interface WindowOverlay {
+  readonly atMs: number;
+  readonly fiveHour?: ClaudeAccountWindow;
+  readonly weekly?: ClaudeAccountWindow;
+}
+
+interface ExhaustedMark {
+  readonly untilMs: number;
+  readonly resetsAt: string | undefined;
+}
+
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function isoOrUndefined(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const parsed = DateTime.make(value);
+  return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : undefined;
+}
+
+function isoFromUnixSeconds(seconds: number): string | undefined {
+  const parsed = DateTime.make(seconds * 1000);
+  return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : undefined;
+}
+
+export function formatResetClock(iso: string | undefined): string {
+  const parsed = iso === undefined ? Option.none() : DateTime.make(iso);
+  if (Option.isNone(parsed)) return "an unknown time";
+  const parts = DateTime.toPartsUtc(parsed.value);
+  const hh = String(parts.hour).padStart(2, "0");
+  const mm = String(parts.minute).padStart(2, "0");
+  return `${hh}:${mm} UTC`;
+}
+
+function windowFrom(
+  raw: { readonly used?: number | null; readonly resets_at?: string | null } | null | undefined,
+): ClaudeAccountWindow | undefined {
+  if (!raw || typeof raw.used !== "number") return undefined;
+  const resetsAt = isoOrUndefined(raw.resets_at);
+  return { usedPercent: clampPercent(raw.used), ...(resetsAt ? { resetsAt } : {}) };
+}
+
+/** `default` lives at `~/.claude`; every other account under `~/.claude-profiles/<name>`. */
+export function defaultProfileDir(path: Path.Path, profile: string): string {
+  const home = NodeOS.homedir();
+  return profile === "default"
+    ? path.join(home, ".claude")
+    : path.join(home, ".claude-profiles", profile);
+}
+
+function activeLinkPath(path: Path.Path): string {
+  return process.env.T3_CLAUDE_ACTIVE_LINK?.trim() || path.join(NodeOS.homedir(), ".claude-active");
+}
+
+export const make = Effect.gen(function* () {
+  const repository = yield* ThreadClaudeAccountRepository;
+  const client = yield* ClaudeAutoswitchClient;
+  const settingsService = yield* ServerSettingsService;
+  const providers = yield* ProviderService;
+  const dispatcher = yield* OrchestrationEngineService;
+  const query = yield* ProjectionSnapshotQuery;
+  const crypto = yield* Crypto.Crypto;
+  const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+
+  /** The account `~/.claude-active` points at today — the degraded answer when the switcher cannot place. */
+  const currentProfileFromActiveLink: Effect.Effect<ClaudeAccountResolution | undefined> =
+    fileSystem.realPath(activeLinkPath(path)).pipe(
+      Effect.map((dir) => {
+        const resolved = path.resolve(dir);
+        const profile =
+          resolved === path.resolve(NodeOS.homedir(), ".claude")
+            ? "default"
+            : path.basename(resolved);
+        return profile
+          ? ({ profile, dir: resolved, mode: "auto", reason: "active-link" } as const)
+          : undefined;
+      }),
+      Effect.orElseSucceed(() => undefined),
+    );
+
+  // Host state. The switcher's last answer, the live windows Claude streamed
+  // since, and the accounts a hard limit took out of rotation.
+  let lastStatus: SwitcherStatus | undefined;
+  let lastStatusAtMs = 0;
+  let unavailableReason: string | undefined;
+  const overlays = new Map<string, WindowOverlay>();
+  const exhausted = new Map<string, ExhaustedMark>();
+  const pendingPlacements: Array<{ readonly profile: string; readonly atMs: number }> = [];
+  // Per-thread state the row does not carry.
+  const threadProfiles = new Map<ThreadId, string>();
+  const notices = new Map<ThreadId, string>();
+  const pendingRestart = new Set<ThreadId>();
+  const handledConditions = new Set<string>();
+
+  const changes = yield* PubSub.unbounded<string>();
+  const announce = (key: string) => PubSub.publish(changes, key).pipe(Effect.ignore);
+  const announceSnapshot = announce(SNAPSHOT_CHANGE);
+  const placementLock = yield* Semaphore.make(1);
+
+  const readSettings: Effect.Effect<ClaudeAccountProfilesSettingsView> =
+    settingsService.getSettings.pipe(
+      Effect.map((settings) => settings.experimental.claudeAccountProfiles),
+      Effect.orElseSucceed((): ClaudeAccountProfilesSettingsView => ({
+        enabled: false,
+        autoswitchPath: "",
+        shortLabels: {},
+      })),
+    );
+
+  const internal = (operation: string) => (cause: unknown) =>
+    new ClaudeAccountsError({
+      operation,
+      reason: "internal",
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
+
+  // ---------------------------------------------------------------- snapshot
+
+  const pruneExhausted = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const [profile, mark] of exhausted) {
+      if (mark.untilMs <= now) exhausted.delete(profile);
+    }
+  });
+
+  const knownProfile = (profile: string): SwitcherProfile | undefined =>
+    lastStatus?.profiles.find((candidate) => candidate.name === profile);
+
+  const liveWindow = (
+    profile: string,
+    key: "fiveHour" | "weekly",
+    raw: ClaudeAccountWindow | undefined,
+  ): ClaudeAccountWindow | undefined => {
+    const overlay = overlays.get(profile);
+    if (overlay !== undefined && overlay.atMs >= lastStatusAtMs && overlay[key] !== undefined) {
+      return overlay[key];
+    }
+    return raw;
+  };
+
+  const overHardLimit = (profile: string): boolean => {
+    const known = knownProfile(profile);
+    const fiveHour = liveWindow(profile, "fiveHour", windowFrom(known?.five_hour));
+    const weekly = liveWindow(profile, "weekly", windowFrom(known?.weekly));
+    return (fiveHour?.usedPercent ?? 0) >= 100 || (weekly?.usedPercent ?? 0) >= 100;
+  };
+
+  /** Whether an existing thread may keep running on this account. Unknown accounts are trusted. */
+  const usable = (profile: string): boolean => {
+    if (exhausted.has(profile)) return false;
+    const known = knownProfile(profile);
+    if (known === undefined) return true;
+    if (known.auth?.state === "logged_out") return false;
+    return !overHardLimit(profile);
+  };
+
+  const toStatus = (raw: SwitcherProfile, shortLabel: string): ClaudeAccountStatus => {
+    const mark = exhausted.get(raw.name);
+    const fiveHour = liveWindow(raw.name, "fiveHour", windowFrom(raw.five_hour));
+    const weekly = liveWindow(raw.name, "weekly", windowFrom(raw.weekly));
+    const scopedUsed = raw.scoped?.used;
+    const scopedResets = isoOrUndefined(raw.scoped?.resets_at);
+    const authState = raw.auth?.state;
+    const rank = raw.rank;
+    const sessions = raw.sessions;
+    const ageSec = raw.age_sec;
+    return {
+      name: raw.name,
+      shortLabel,
+      ...(raw.email_masked ? { emailMasked: raw.email_masked } : {}),
+      ...(typeof rank === "number" && Number.isInteger(rank) && rank >= 0 ? { rank } : {}),
+      eligible: mark === undefined && (raw.eligible ?? false) && authState !== "logged_out",
+      why:
+        mark !== undefined
+          ? `at its usage limit until ${formatResetClock(mark.resetsAt)}`
+          : (raw.why ?? ""),
+      elected: raw.elected ?? false,
+      auth: authState === "ok" || authState === "logged_out" ? authState : "unknown",
+      ...(fiveHour ? { fiveHour } : {}),
+      ...(weekly ? { weekly } : {}),
+      ...(typeof scopedUsed === "number"
+        ? {
+            scoped: {
+              label: raw.scoped?.label ?? "scoped",
+              usedPercent: clampPercent(scopedUsed),
+              ...(scopedResets ? { resetsAt: scopedResets } : {}),
+            },
+          }
+        : {}),
+      sessions:
+        typeof sessions === "number" && Number.isInteger(sessions) && sessions >= 0 ? sessions : 0,
+      ...(typeof ageSec === "number" && Number.isFinite(ageSec) ? { ageSec } : {}),
+    };
+  };
+
+  const snapshot: ClaudeAccountsServiceShape["snapshot"] = () =>
+    Effect.gen(function* () {
+      const settings = yield* readSettings;
+      const generatedAt = yield* nowIso;
+      if (!settings.enabled) {
+        return { enabled: false, available: false, generatedAt, profiles: [] };
+      }
+      yield* pruneExhausted;
+      if (lastStatus === undefined) {
+        return {
+          enabled: true,
+          available: false,
+          ...(unavailableReason ? { unavailableReason } : {}),
+          generatedAt,
+          profiles: [],
+        };
+      }
+      const labels = computeShortLabels(
+        lastStatus.profiles.map((profile) => profile.name),
+        settings.shortLabels,
+      );
+      return {
+        enabled: true,
+        available: unavailableReason === undefined,
+        ...(unavailableReason ? { unavailableReason } : {}),
+        generatedAt,
+        profiles: lastStatus.profiles.map((profile) =>
+          toStatus(profile, labels[profile.name] ?? profile.name),
+        ),
+      };
+    });
+
+  const adoptStatus = (status: SwitcherStatus) =>
+    Effect.gen(function* () {
+      lastStatus = status;
+      lastStatusAtMs = yield* Clock.currentTimeMillis;
+      unavailableReason = undefined;
+      // A fresher reading from the switcher supersedes older live overlays.
+      for (const [profile, overlay] of overlays) {
+        if (overlay.atMs < lastStatusAtMs) overlays.delete(profile);
+      }
+    });
+
+  const noteFailure = (failure: ClaudeAutoswitchFailure) =>
+    Effect.gen(function* () {
+      unavailableReason = failure.detail;
+      if (failure.kind === "unavailable") {
+        yield* Effect.logWarning("claude.account.switcher-unavailable", { detail: failure.detail });
+      } else {
+        yield* Effect.logWarning("claude.account.switcher-failed", { detail: failure.detail });
+      }
+    });
+
+  const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
+    Effect.gen(function* () {
+      const outcome = yield* client.status();
+      if (outcome.kind === "ok") {
+        yield* adoptStatus(outcome.value);
+      } else {
+        yield* noteFailure(outcome);
+      }
+      yield* announceSnapshot;
+    });
+
+  // Poll only while the setting is on; a disabled feature costs nothing but
+  // one settings read per interval, so toggling it needs no restart.
+  const pollLoop = Effect.gen(function* () {
+    let wasEnabled: boolean | undefined;
+    while (true) {
+      const settings = yield* readSettings;
+      if (settings.enabled) {
+        yield* refreshStatus();
+      } else if (wasEnabled !== false) {
+        yield* announceSnapshot;
+      }
+      wasEnabled = settings.enabled;
+      yield* Effect.sleep(STATUS_POLL_INTERVAL);
+    }
+  });
+
+  // ---------------------------------------------------------------- threads
+
+  const threadView = (row: ThreadClaudeAccountRow): ThreadClaudeAccount => {
+    const notice = notices.get(row.threadId);
+    return {
+      threadId: row.threadId,
+      mode: row.mode,
+      ...(row.resolvedProfile ? { resolvedProfile: row.resolvedProfile } : {}),
+      ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
+      ...(notice ? { notice } : {}),
+      ...(pendingRestart.has(row.threadId) ? { pendingRestart: true } : {}),
+    };
+  };
+
+  const getThread: ClaudeAccountsServiceShape["getThread"] = (threadId) =>
+    repository.get(threadId).pipe(Effect.map(threadView), Effect.mapError(internal("getThread")));
+
+  const persistResolved = (threadId: ThreadId, profile: string) =>
+    Effect.gen(function* () {
+      const resolvedAt = yield* nowIso;
+      threadProfiles.set(threadId, profile);
+      yield* repository.setResolved({ threadId, profile, resolvedAt });
+      yield* announce(threadId);
+    });
+
+  const profileDir = (profile: string): string => {
+    const known = knownProfile(profile);
+    return known?.dir ? known.dir : defaultProfileDir(path, profile);
+  };
+
+  const pendingCounts = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    while (
+      pendingPlacements.length > 0 &&
+      pendingPlacements[0]!.atMs + PENDING_PLACEMENT_WINDOW_MS <= now
+    ) {
+      pendingPlacements.shift();
+    }
+    const counts: Record<string, number> = {};
+    for (const placement of pendingPlacements) {
+      counts[placement.profile] = (counts[placement.profile] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+  const exhaustedNames = Effect.map(pruneExhausted, () => [...exhausted.keys()]);
+
+  const firstRecovery = (): string | undefined => {
+    let earliest: string | undefined;
+    for (const mark of exhausted.values()) {
+      if (mark.resetsAt && (earliest === undefined || mark.resetsAt < earliest)) {
+        earliest = mark.resetsAt;
+      }
+    }
+    return earliest;
+  };
+
+  /** Asks the switcher for an account. Must run under `placementLock`. */
+  const placeWith = (
+    threadId: ThreadId,
+    avoid: ReadonlyArray<string>,
+  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
+    Effect.gen(function* () {
+      const pending = yield* pendingCounts;
+      const avoidSet = new Set([...(yield* exhaustedNames), ...avoid]);
+      const outcome = yield* client.place({ pending, avoid: [...avoidSet] });
+      if (outcome.kind !== "ok") {
+        // `available` tracks `--status` alone; a failed `--place` only logs.
+        yield* Effect.logWarning("claude.account.place-failed", {
+          threadId,
+          kind: outcome.kind,
+          detail: outcome.detail,
+        });
+        if (outcome.kind === "unavailable") {
+          const fallback = yield* currentProfileFromActiveLink;
+          if (fallback !== undefined && !avoidSet.has(fallback.profile)) return fallback;
+        }
+        return undefined;
+      }
+      const result = outcome.value;
+      if (result.snapshot) yield* adoptStatus(result.snapshot);
+      if (result.status === "no_eligible_profile" || !result.chosen) {
+        const recoversAt = isoOrUndefined(result.recovers_at) ?? firstRecovery();
+        return yield* new ClaudeAccountPolicyError({
+          threadId,
+          detail: `All Claude accounts are at their limit — first resets at ${formatResetClock(recoversAt)}.`,
+        });
+      }
+      const atMs = yield* Clock.currentTimeMillis;
+      pendingPlacements.push({ profile: result.chosen, atMs });
+      return {
+        profile: result.chosen,
+        dir: result.dir ? result.dir : profileDir(result.chosen),
+        mode: "auto",
+        reason: result.reason ?? result.status,
+      } as const;
+    });
+
+  const placeAndPersist = (threadId: ThreadId, avoid: ReadonlyArray<string>) =>
+    Semaphore.withPermit(placementLock)(
+      Effect.gen(function* () {
+        const resolution = yield* placeWith(threadId, avoid);
+        if (resolution !== undefined) {
+          yield* persistResolved(threadId, resolution.profile).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
+            ),
+          );
+          yield* announceSnapshot;
+        }
+        return resolution;
+      }),
+    );
+
+  const resolveForSession: ClaudeAccountsServiceShape["resolveForSession"] = (threadId) =>
+    Effect.gen(function* () {
+      const settings = yield* readSettings;
+      if (!settings.enabled) return undefined;
+      const rowResult = yield* repository.get(threadId).pipe(Effect.result);
+      if (rowResult._tag === "Failure") {
+        yield* Effect.logWarning("claude.account.row-read-failed", {
+          threadId,
+          cause: rowResult.failure.message,
+        });
+        return undefined;
+      }
+      const row = rowResult.success;
+      yield* pruneExhausted;
+
+      if (row.mode.kind === "profile") {
+        const pinned = row.mode.profile;
+        if (knownProfile(pinned)?.auth?.state === "logged_out") {
+          return yield* new ClaudeAccountPolicyError({
+            threadId,
+            detail: `Claude account ${pinned} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
+          });
+        }
+        if (row.resolvedProfile !== pinned) {
+          yield* persistResolved(threadId, pinned).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
+            ),
+          );
+        } else {
+          threadProfiles.set(threadId, pinned);
+        }
+        return {
+          profile: pinned,
+          dir: profileDir(pinned),
+          mode: "profile",
+          reason: "pinned",
+        } as const;
+      }
+
+      // Sticky: an account the thread already ran on is kept until a hard
+      // limit, a sign-out or an exhausted mark takes it out. Nearing a limit
+      // never moves an existing thread; only new placements avoid it.
+      if (row.resolvedProfile !== null && usable(row.resolvedProfile)) {
+        threadProfiles.set(threadId, row.resolvedProfile);
+        return {
+          profile: row.resolvedProfile,
+          dir: profileDir(row.resolvedProfile),
+          mode: "auto",
+          reason: "sticky",
+        } as const;
+      }
+      return yield* placeAndPersist(threadId, row.resolvedProfile ? [row.resolvedProfile] : []);
+    });
+
+  const reassign: ClaudeAccountsServiceShape["reassign"] = (threadId, input) =>
+    placeAndPersist(threadId, input.avoid);
+
+  const markExhausted: ClaudeAccountsServiceShape["markExhausted"] = (profile, resetsAt) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const resetMs = resetsAt ? Date.parse(resetsAt) : Number.NaN;
+      const untilMs = Number.isNaN(resetMs)
+        ? now + DEFAULT_EXHAUSTED_MS
+        : Math.max(now + 1, resetMs);
+      exhausted.set(profile, { untilMs, resetsAt: isoOrUndefined(resetsAt) });
+      yield* announceSnapshot;
+    });
+
+  // ---------------------------------------------------------------- restarts
+
+  const stopSessionQuietly = (threadId: ThreadId, why: string) =>
+    providers.stopSession({ threadId }).pipe(
+      Effect.tap(() => Effect.logInfo("claude.account.session-stopped", { threadId, why })),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("claude.account.session-stop-failed", { threadId, why, cause }),
+      ),
+    );
+
+  /** Restarts the thread's provider session so its next turn spawns on the new account. */
+  const restartForNewAccount = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const sessions = yield* providers.listSessions();
+      const live = sessions.find(
+        (session) => session.threadId === threadId && session.status !== "closed",
+      );
+      if (live === undefined) return;
+      if (live.status === "running" || live.activeTurnId !== undefined) {
+        pendingRestart.add(threadId);
+        yield* Effect.logInfo("claude.account.restart-deferred", { threadId });
+        return;
+      }
+      yield* stopSessionQuietly(threadId, "mode-changed");
+    });
+
+  const completePendingRestart = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (!pendingRestart.delete(threadId)) return;
+      yield* stopSessionQuietly(threadId, "mode-changed-after-turn");
+      yield* announce(threadId);
+    });
+
+  const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({ threadId, mode }) =>
+    Effect.gen(function* () {
+      if (
+        mode.kind === "profile" &&
+        lastStatus !== undefined &&
+        knownProfile(mode.profile) === undefined
+      ) {
+        return yield* new ClaudeAccountsError({
+          operation: "setThreadMode",
+          reason: "invalid",
+          detail: `Unknown Claude account '${mode.profile}'.`,
+        });
+      }
+      const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("setThreadMode")));
+      const updatedAt = yield* nowIso;
+      yield* repository
+        .setMode({ threadId, mode, updatedAt })
+        .pipe(Effect.mapError(internal("setThreadMode")));
+      notices.delete(threadId);
+      yield* pruneExhausted;
+
+      const wouldChange =
+        mode.kind === "profile"
+          ? row.resolvedProfile !== mode.profile
+          : row.resolvedProfile !== null && !usable(row.resolvedProfile);
+      if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
+        notices.set(
+          threadId,
+          `Claude account ${mode.profile} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
+        );
+      }
+      if (wouldChange) {
+        yield* restartForNewAccount(threadId);
+      } else {
+        pendingRestart.delete(threadId);
+      }
+      yield* announce(threadId);
+      return yield* getThread(threadId);
+    });
+
+  // -------------------------------------------------------------- hard limit
+
+  const continueText = (from: string, to: string) =>
+    `Continue where you left off — this thread moved to Claude account ${to} because ${from} hit its usage limit.`;
+
+  const dispatchContinueTurn = (threadId: ThreadId, from: string, to: string) =>
+    Effect.gen(function* () {
+      const shell = yield* query.getThreadShellById(threadId);
+      if (Option.isNone(shell)) return;
+      const commandUuid = yield* uuid;
+      const messageUuid = yield* uuid;
+      const createdAt = yield* nowIso;
+      yield* dispatcher.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`server:claude-account-move:${commandUuid}`),
+        threadId,
+        message: {
+          messageId: MessageId.make(`claude-account-move:${messageUuid}`),
+          role: "user",
+          text: continueText(from, to),
+          attachments: [],
+        },
+        modelSelection: shell.value.modelSelection,
+        runtimeMode: shell.value.runtimeMode,
+        interactionMode: shell.value.interactionMode,
+        createdAt,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("claude.account.continue-turn-failed", { threadId, cause }),
+      ),
+    );
+
+  const rememberCondition = (key: string): boolean => {
+    if (handledConditions.has(key)) return false;
+    if (handledConditions.size >= MAX_HANDLED_CONDITIONS) {
+      const oldest = handledConditions.values().next().value;
+      if (oldest !== undefined) handledConditions.delete(oldest);
+    }
+    handledConditions.add(key);
+    return true;
+  };
+
+  const handleHardLimit: ClaudeAccountsServiceShape["handleHardLimit"] = (condition) =>
+    Effect.gen(function* () {
+      const settings = yield* readSettings;
+      if (!settings.enabled) return false;
+      const { threadId, rateLimitType } = condition;
+
+      const row = yield* repository.get(threadId).pipe(Effect.orElseSucceed(() => undefined));
+      let profile = threadProfiles.get(threadId) ?? row?.resolvedProfile ?? undefined;
+      if (profile === undefined) {
+        profile = (yield* currentProfileFromActiveLink)?.profile;
+      }
+      if (profile === undefined) {
+        yield* Effect.logWarning("claude.account.hard-limit-unattributed", {
+          threadId,
+          rateLimitType,
+        });
+        return true;
+      }
+      const resetsAt =
+        condition.resetAt !== undefined ? isoFromUnixSeconds(condition.resetAt) : undefined;
+      // Repeated copies of one rejection (same thread, limit and reset) are
+      // consumed once. The key leaves the account out on purpose: the first
+      // copy moves the thread, so a later copy would otherwise read as a new
+      // rejection against the account it just moved to.
+      if (!rememberCondition(`${threadId}\u0000${rateLimitType}\u0000${resetsAt ?? "unknown"}`)) {
+        return true;
+      }
+
+      // Keep the host-wide symlink honest: the switcher moves it only when this
+      // account is the elected one, and answers `no-op` otherwise.
+      const election = yield* client.hardLimit({ type: rateLimitType, profile });
+      yield* Effect.logInfo("claude.account.hard-limit", {
+        threadId,
+        profile,
+        rateLimitType,
+        resetsAt,
+        election: election.kind === "ok" ? election.value.status : election.kind,
+      });
+      yield* markExhausted(profile, resetsAt);
+
+      const mode = row?.mode ?? { kind: "auto" };
+      if (mode.kind === "profile") {
+        notices.set(
+          threadId,
+          `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`,
+        );
+        yield* announce(threadId);
+        return true;
+      }
+
+      const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
+      if (moved._tag === "Failure") {
+        notices.set(threadId, moved.failure.detail);
+        yield* announce(threadId);
+        return true;
+      }
+      if (moved.success === undefined) {
+        notices.set(
+          threadId,
+          `${profile} is at its usage limit until ${formatResetClock(resetsAt)} and no other account could be chosen.`,
+        );
+        yield* announce(threadId);
+        return true;
+      }
+      notices.delete(threadId);
+      yield* stopSessionQuietly(threadId, "hard-limit");
+      yield* dispatchContinueTurn(threadId, profile, moved.success.profile);
+      yield* announce(threadId);
+      return true;
+    });
+
+  // ------------------------------------------------------------------ events
+
+  const overlayFromEvent = (event: ProviderRuntimeEvent) =>
+    Effect.gen(function* () {
+      if (event.type !== "account.rate-limits.updated" || event.provider !== "claudeAgent") return;
+      const profile = threadProfiles.get(event.threadId);
+      if (profile === undefined) return;
+      const atMs = yield* Clock.currentTimeMillis;
+      const previous = overlays.get(profile);
+      let fiveHour = previous?.fiveHour;
+      let weekly = previous?.weekly;
+      for (const window of event.payload.limits.windows) {
+        const value: ClaudeAccountWindow = {
+          usedPercent: clampPercent(window.usedPercent),
+          ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
+        };
+        if (window.id === "five_hour") fiveHour = value;
+        else if (window.id === "seven_day") weekly = value;
+      }
+      const next: WindowOverlay = {
+        atMs,
+        ...(fiveHour ? { fiveHour } : {}),
+        ...(weekly ? { weekly } : {}),
+      };
+      overlays.set(profile, next);
+      yield* announceSnapshot;
+    });
+
+  const onProviderEvent = (event: ProviderRuntimeEvent) =>
+    Effect.gen(function* () {
+      yield* overlayFromEvent(event);
+      if (
+        (event.type === "turn.completed" || event.type === "turn.aborted") &&
+        pendingRestart.has(event.threadId)
+      ) {
+        yield* completePendingRestart(event.threadId);
+      }
+    });
+
+  // ----------------------------------------------------------------- streams
+
+  const watchSnapshot: ClaudeAccountsServiceShape["watchSnapshot"] = () =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(changes);
+        const initial = yield* snapshot();
+        return Stream.concat(
+          Stream.make(initial),
+          Stream.fromSubscription(subscription).pipe(
+            Stream.filter((changed) => changed === SNAPSHOT_CHANGE),
+            Stream.mapEffect(() => snapshot()),
+          ),
+        );
+      }),
+    );
+
+  const watchThread: ClaudeAccountsServiceShape["watchThread"] = (threadId) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(changes);
+        const initial = yield* getThread(threadId);
+        return Stream.concat(
+          Stream.make(initial),
+          Stream.fromSubscription(subscription).pipe(
+            Stream.filter((changed) => changed === threadId),
+            Stream.mapEffect(() => getThread(threadId)),
+          ),
+        );
+      }),
+    );
+
+  // ------------------------------------------------------------------ wiring
+
+  const unregisterResolver = registerClaudeAccountResolver(resolveForSession);
+  const unregisterHook = registerClaudeHardLimitAccountsHook({ handle: handleHardLimit });
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      unregisterResolver();
+      unregisterHook();
+    }),
+  );
+  yield* providers.streamEvents.pipe(Stream.runForEach(onProviderEvent), Effect.forkScoped);
+  yield* pollLoop.pipe(Effect.forkScoped);
+
+  return ClaudeAccountsService.of({
+    getThread,
+    setThreadMode,
+    snapshot,
+    watchSnapshot,
+    watchThread,
+    resolveForSession,
+    refreshStatus,
+    markExhausted,
+    reassign,
+    handleHardLimit,
+  });
+});
+
+export const layer = Layer.effect(ClaudeAccountsService, make);

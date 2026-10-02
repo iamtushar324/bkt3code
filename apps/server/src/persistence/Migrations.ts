@@ -150,6 +150,8 @@ import Migration1038 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledA
 import Migration1039 from "./Migrations/1039_ProjectionThreadsCustomGroup.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import Migration1040 from "./Migrations/1040_ThreadComments.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import Migration1041 from "./Migrations/1041_ThreadClaudeAccount.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -289,6 +291,8 @@ const migrationEntries = [
   [1039, "ProjectionThreadsCustomGroup", Migration1039],
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
   [1040, "ThreadComments", Migration1040],
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  [1041, "ThreadClaudeAccount", Migration1041],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

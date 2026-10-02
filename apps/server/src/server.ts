@@ -122,6 +122,10 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 // T3-CUSTOM(expbkt3): recycle only the Claude thread that reports a hard usage limit.
 import * as ClaudeHardLimitRotation from "./provider/claudeHardLimitRotation.expbkt3.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import * as ClaudeAccountsServiceLayer from "./claudeAccounts/ClaudeAccountsService.ts";
+import * as ClaudeAutoswitchClient from "./claudeAccounts/ClaudeAutoswitchClient.ts";
+import * as ThreadClaudeAccount from "./persistence/ThreadClaudeAccount.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -557,12 +561,29 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+// T3-CUSTOM(expbkt3): BEGIN Claude account profiles per thread. Placement reads
+// the provider event bus and lifecycle like the hard-limit rotation, which
+// hands it rejections through a module-level hook; the adapter reads the
+// resolver the same way, so neither upstream contract widens.
+const ClaudeAccountsLayerLive = ClaudeAccountsServiceLayer.layer.pipe(
+  Layer.provide(ThreadClaudeAccount.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(
+    ClaudeAutoswitchClient.layer.pipe(
+      Layer.provide(ProcessRunner.layer),
+      Layer.provide(ServerSettingsLayerLive),
+    ),
+  ),
+  Layer.provide(ServerSettingsLayerLive),
+);
+// T3-CUSTOM(expbkt3): END
+
 // T3-CUSTOM(expbkt3): hard-limit rotation consumes the same provider event bus
 // and lifecycle service as the reaper, without widening upstream contracts.
 const ProviderRuntimeLayerLive = Layer.mergeAll(
   ProviderSessionReaperLive,
   ClaudeHardLimitRotation.layer,
   ProviderUsageLimitsIngestionLive,
+  ClaudeAccountsLayerLive, // T3-CUSTOM(expbkt3): Claude account profiles per thread.
 ).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
 
 // T3-CUSTOM(expbkt3): archived-session worktree reclaim. Reads the projection

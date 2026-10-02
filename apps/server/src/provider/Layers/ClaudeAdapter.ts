@@ -127,6 +127,8 @@ import {
   claudeSessionIdentitySystemPrompt,
   withClaudeSessionIdentityTurnHook,
 } from "../claudeSessionIdentity.expbkt3.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread — per-spawn CLAUDE_CONFIG_DIR.
+import { applyClaudeAccountProfile } from "../../claudeAccounts/applyClaudeAccountProfile.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const encodeHistoryArgs = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -4444,9 +4446,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const existingResumeSessionId = resumeState?.resume;
       // T3-CUSTOM(expbkt3): BEGIN source-control identity — merge the per-call
       // execution environment so Claude attributes git/PR actions to the driving user.
-      const sessionEnvironment = executionOptions?.environment
-        ? mergeSourceControlEnvironment(claudeEnvironment, executionOptions.environment)
-        : claudeEnvironment;
+      // Then the per-thread Claude account picks this spawn's CLAUDE_CONFIG_DIR.
+      const sessionEnvironment = yield* applyClaudeAccountProfile(
+        threadId,
+        executionOptions?.environment
+          ? mergeSourceControlEnvironment(claudeEnvironment, executionOptions.environment)
+          : claudeEnvironment,
+      );
       // T3-CUSTOM(expbkt3): END
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;

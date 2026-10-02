@@ -36,7 +36,10 @@ row PR badge; native plan review; comments on agent messages (`chatCommentsEnabl
 history cache and queued sends; draft focus, right-panel memory and file-tree
 collapse-all; integrated-browser link routing; the mobile-web long-press menu;
 the async question indicator; a read-only environment badge; the BK desktop and
-mobile builds; the deploy, CI and marker tooling.
+mobile builds; the deploy, CI and marker tooling; Claude account profiles per thread
+(`experimental.claudeAccountProfiles`: Auto placement through `claude-autoswitch --place`,
+per-thread pinning, sticky `CLAUDE_CONFIG_DIR` per spawn, hard-limit move with a
+continue turn; [claude-account-switching.md](./claude-account-switching.md#per-thread-account-placement)).
 
 **Dropped in favour of upstream's own behaviour:**
 
