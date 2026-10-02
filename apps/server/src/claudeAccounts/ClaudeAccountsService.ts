@@ -10,7 +10,7 @@
  * - **placement**: `resolveForSession` runs inside `ClaudeAdapter.startSession`
  *   (through `applyClaudeAccountProfile`) and decides which config directory
  *   the spawned CLI gets — a pinned account, the account the thread already
- *   runs on (sticky, so the prompt cache survives), or `--place` for a new one;
+ *   runs on (sticky, so one thread does not hop accounts), or `--place` for a new one;
  * - **mode changes** from the composer, restarting an idle session at once and a
  *   busy one once its turn ends and nothing new has started;
  * - the **hard-limit path**: an account-wide rejection (`five_hour`,

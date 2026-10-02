@@ -3,9 +3,10 @@
  *
  * Sits next to the model picker while a Claude instance is selected and the
  * server has `experimental.claudeAccountProfiles` on. The trigger is the
- * Claude mark with the account's badge letter and its weekly limit left;
- * the menu offers "Auto (account)" (the default: the server places the
- * thread) or any account by hand, each with its live limits.
+ * Claude mark with the account's badge letter and its weekly % used; the
+ * menu offers "Auto (account)" (the default: the server places the thread)
+ * or any account by hand, each with its live usage, laid out like the
+ * Claude Accounts dashboard.
  */
 import {
   CLAUDE_ACCOUNT_MODE_AUTO,
@@ -36,7 +37,6 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { barColor } from "../../components/usage/UsageLimits";
 import { cn } from "../../lib/utils";
 import {
   useClaudeAccountsEnabled,
@@ -44,19 +44,20 @@ import {
   useThreadClaudeAccount,
 } from "./hooks";
 import {
-  type AccountChipTone,
   type AccountRowView,
-  type AccountWarning,
+  type AccountTag,
+  type AccountTagTone,
   accountRows,
-  AUTO_ACCOUNT_DESCRIPTION,
   AUTO_ACCOUNT_LABEL,
+  autoRowDetail,
   modeEquals,
   PENDING_RESTART_HINT,
-  SWITCH_RESTARTS_CACHE_HINT,
-  switchRestartsCache,
+  SWITCH_RESTARTS_SESSION_HINT,
+  switchRestartsSession,
   triggerTooltip,
   triggerView,
   unavailableLine,
+  type UsageBand,
 } from "./model";
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
@@ -75,15 +76,22 @@ function valueMode(value: string): ClaudeAccountMode {
     : CLAUDE_ACCOUNT_MODE_AUTO;
 }
 
-const WARNING_TEXT_CLASS: Record<AccountWarning, string> = {
-  near: "text-warning-foreground",
-  limit: "text-destructive-foreground",
-  logged_out: "text-destructive-foreground",
+/** The dashboard's bar bands: green, amber from 60% used, red at the trip line. */
+const BAND_FILL_CLASS: Record<UsageBand, string> = {
+  ok: "bg-success",
+  warn: "bg-warning",
+  bad: "bg-destructive",
 };
 
-const CHIP_VARIANT: Record<AccountChipTone, "error" | "warning" | "outline"> = {
-  destructive: "error",
-  warning: "warning",
+const BAND_TEXT_CLASS: Record<UsageBand, string | null> = {
+  ok: null,
+  warn: "text-warning-foreground",
+  bad: "text-destructive-foreground",
+};
+
+const TAG_VARIANT: Record<AccountTagTone, "error" | "warning" | "outline"> = {
+  bad: "error",
+  warn: "warning",
   muted: "outline",
 };
 
@@ -124,61 +132,76 @@ function AccountMark(props: {
   );
 }
 
-function RemainingBar({ remaining }: { readonly remaining: number }) {
+function UsageBar(props: { readonly used: number; readonly band: UsageBand }) {
   return (
     <span className="block h-1 w-full overflow-hidden rounded-full bg-muted">
       <span
-        className="block h-full rounded-full"
-        style={{ width: `${remaining}%`, backgroundColor: barColor(CLAUDE_DRIVER) }}
+        className={cn("block h-full rounded-full", BAND_FILL_CLASS[props.band])}
+        style={{ width: `${props.used}%` }}
       />
     </span>
   );
 }
 
+function TagPill({ tag }: { readonly tag: AccountTag }) {
+  const pill = (
+    <Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="max-w-40 truncate">
+      {tag.label}
+    </Badge>
+  );
+  if (!tag.detail) return pill;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="max-w-40 truncate" />}
+      >
+        {tag.label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{tag.detail}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** One account, laid out like a dashboard card: head line, then three meters. */
 function AccountRow({ row }: { readonly row: AccountRowView }) {
   return (
-    <span className="grid w-full gap-1 py-1">
-      <span className="flex min-w-0 items-center gap-2">
+    <span className="grid w-full gap-1.5 py-0.5">
+      <span className="flex min-w-0 items-center gap-1.5">
         <AccountMark label={row.shortLabel} auto={false} indicatorBackground="var(--popover)" />
-        <span className="shrink-0 font-medium">{row.name}</span>
+        <span className="shrink-0 font-medium text-sm">{row.name}</span>
+        {row.recoversIn ? (
+          <span className="shrink-0 text-muted-foreground text-2xs tabular-nums">
+            {row.recoversIn}
+          </span>
+        ) : null}
         {row.emailMasked ? (
-          <span className="min-w-0 truncate text-muted-foreground text-xs">{row.emailMasked}</span>
+          <span className="min-w-0 truncate text-muted-foreground/70 text-2xs">
+            {row.emailMasked}
+          </span>
         ) : null}
-        {row.current ? (
-          <span className="shrink-0 text-muted-foreground text-2xs">this thread</span>
-        ) : null}
-        {row.elected ? (
-          <span className="shrink-0 text-muted-foreground text-2xs">host default</span>
-        ) : null}
-        <span className="ms-auto flex shrink-0 items-center gap-1">
-          {row.chips.map((chip) =>
-            chip.detail ? (
-              <Tooltip key={chip.id}>
-                <TooltipTrigger render={<Badge variant={CHIP_VARIANT[chip.tone]} size="sm" />}>
-                  {chip.label}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{chip.detail}</TooltipPopup>
-              </Tooltip>
-            ) : (
-              <Badge key={chip.id} variant={CHIP_VARIANT[chip.tone]} size="sm">
-                {chip.label}
-              </Badge>
-            ),
-          )}
+        <span className="ms-auto flex min-w-0 shrink-0 items-center gap-1">
+          {row.tag ? <TagPill tag={row.tag} /> : null}
+          {row.sessions > 0 ? (
+            <Badge variant="outline" size="sm" className="text-muted-foreground">
+              {`in use · ${row.sessions}`}
+            </Badge>
+          ) : null}
           <MenuRadioItemIndicator />
         </span>
       </span>
       {row.windows.length > 0 ? (
-        <span className="grid grid-cols-3 gap-3 ps-6">
+        <span className="grid grid-cols-3 gap-3 ps-5.5">
           {row.windows.map((win) => (
             <span key={win.id} className="grid min-w-0 gap-0.5">
               <span className="flex min-w-0 items-baseline justify-between gap-1 text-2xs">
                 <span className="truncate text-muted-foreground">{win.label}</span>
-                <span className="shrink-0 font-medium tabular-nums">{win.remaining}% left</span>
+                <span className={cn("shrink-0 tabular-nums", BAND_TEXT_CLASS[win.band])}>
+                  {win.used}%
+                </span>
               </span>
-              <RemainingBar remaining={win.remaining} />
+              <UsageBar used={win.used} band={win.band} />
               <span className="truncate text-3xs text-muted-foreground tabular-nums">
-                {win.resetsIn ?? " "}
+                {win.resetsIn ?? "\u00a0"}
               </span>
             </span>
           ))}
@@ -214,15 +237,22 @@ function ClaudeAccountPickerMenu(props: {
   const unavailable = unavailableLine(snapshot);
   const indicatorBackground = indicatorBackgroundFor(size);
   const hoveredSwitches =
-    hoveredValue !== null && switchRestartsCache(account, valueMode(hoveredValue));
-  const resolvedProfile = account?.resolvedProfile;
+    hoveredValue !== null && switchRestartsSession(account, valueMode(hoveredValue));
 
   const triggerText =
     view.kind === "auto-unresolved"
       ? "Auto"
-      : view.weeklyRemaining === null
+      : view.weeklyUsed === null
         ? null
-        : `${view.weeklyRemaining}%`;
+        : `${view.weeklyUsed}%`;
+  const triggerTextClass =
+    view.kind !== "account"
+      ? null
+      : view.warn === "logged_out" || view.warn === "limit"
+        ? "text-destructive-foreground"
+        : view.weeklyBand
+          ? BAND_TEXT_CLASS[view.weeklyBand]
+          : null;
 
   return (
     <Menu
@@ -253,13 +283,7 @@ function ClaudeAccountPickerMenu(props: {
             indicatorBackground={indicatorBackground}
           />
           {triggerText ? (
-            <span
-              data-composer-control-label
-              className={cn(
-                "tabular-nums",
-                view.kind === "account" && view.warn ? WARNING_TEXT_CLASS[view.warn] : null,
-              )}
-            >
+            <span data-composer-control-label className={cn("tabular-nums", triggerTextClass)}>
               {triggerText}
             </span>
           ) : null}
@@ -267,9 +291,11 @@ function ClaudeAccountPickerMenu(props: {
         </TooltipTrigger>
         <TooltipPopup side="top">{tooltip}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start" className="w-96" {...composerFloatingLayerProps}>
-        <span className="grid gap-0.5 px-2 pt-1 pb-1.5">
-          <span className="font-medium text-muted-foreground text-xs">Claude account</span>
+      <MenuPopup align="start" className="w-[23rem]" {...composerFloatingLayerProps}>
+        <span className="grid gap-0.5 px-2 pt-1 pb-1">
+          <span className="font-semibold text-muted-foreground text-2xs uppercase tracking-wide">
+            Claude account
+          </span>
           {account?.notice ? (
             <span className="text-warning-foreground text-xs">{account.notice}</span>
           ) : null}
@@ -294,18 +320,11 @@ function ClaudeAccountPickerMenu(props: {
             onMouseEnter={() => setHoveredValue(AUTO_VALUE)}
             onFocus={() => setHoveredValue(AUTO_VALUE)}
           >
-            <span className="flex w-full items-center gap-2 py-1">
+            <span className="flex w-full items-center gap-2 py-0.5">
               <span className="grid min-w-0 flex-1 gap-0.5">
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  {AUTO_ACCOUNT_LABEL}
-                  {mode.kind === "auto" && resolvedProfile ? (
-                    <span className="font-normal text-muted-foreground text-xs">
-                      on {resolvedProfile}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-muted-foreground text-xs leading-4">
-                  {AUTO_ACCOUNT_DESCRIPTION}
+                <span className="font-medium text-sm">{AUTO_ACCOUNT_LABEL}</span>
+                <span className="truncate text-muted-foreground text-2xs">
+                  {autoRowDetail(account)}
                 </span>
               </span>
               <MenuRadioItemIndicator />
@@ -319,6 +338,7 @@ function ClaudeAccountPickerMenu(props: {
                 key={row.name}
                 value={value}
                 disabled={row.disabled}
+                className={cn(row.current && "bg-accent/40")}
                 closeOnClick
                 onMouseEnter={() => setHoveredValue(value)}
                 onFocus={() => setHoveredValue(value)}
@@ -328,11 +348,11 @@ function ClaudeAccountPickerMenu(props: {
             );
           })}
         </MenuRadioGroup>
-        {resolvedProfile ? (
-          <span className="block px-2 pt-1.5 pb-1 text-muted-foreground text-xs">
-            {hoveredSwitches
-              ? `${SWITCH_RESTARTS_CACHE_HINT}${props.running ? ` ${PENDING_RESTART_HINT}.` : ""}`
-              : `This thread runs on ${resolvedProfile}.`}
+        {hoveredSwitches ? (
+          <span className="block px-2 pt-1 pb-0.5 text-2xs text-muted-foreground">
+            {props.running
+              ? `${SWITCH_RESTARTS_SESSION_HINT}, after this turn.`
+              : `${SWITCH_RESTARTS_SESSION_HINT}.`}
           </span>
         ) : null}
       </MenuPopup>
