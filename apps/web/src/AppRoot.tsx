@@ -5,6 +5,8 @@ import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHo
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+// T3-CUSTOM(expbkt3): connect the built-in toolyard integration once per app load.
+import { ToolyardAutoConnect } from "./fork/toolyardAutoConnect";
 
 /**
  * Owns renderer-wide providers. The Electron browser host intentionally sits
@@ -18,6 +20,8 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
       <PreviewAutomationHosts />
       <ElectronBrowserHost />
       <QuitHoldOverlay />
+      {/* T3-CUSTOM(expbkt3): needs the registry above, which the Clerk shell wraps. */}
+      <ToolyardAutoConnect />
     </AppAtomRegistryProvider>
   );
 }

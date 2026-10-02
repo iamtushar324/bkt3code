@@ -3,8 +3,10 @@ import { expect, it } from "@effect/vitest";
 import {
   AuthSessionId,
   EnvironmentId,
+  type PersonalMcpIntegration,
   ProviderInstanceId,
   ThreadId,
+  TOOLYARD_MCP_URL,
   UserId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -697,5 +699,87 @@ it.effect("does not keep credentials of other threads alive", () =>
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+// T3-CUSTOM(expbkt3): the built-in toolyard integration rides along like any
+// other configured integration — present exactly when the user is connected.
+const toolyardIntegration = (credentialConfigured: boolean): PersonalMcpIntegration => ({
+  id: "toolyard",
+  name: "toolyard",
+  url: TOOLYARD_MCP_URL,
+  enabled: true,
+  authMode: "bearer",
+  customHeaderName: "",
+  credentialConfigured,
+  providerInstanceIds: [],
+  allowedTools: [],
+});
+
+const makeRegistryWithProfile = (
+  userId: UserId,
+  integrations: ReadonlyArray<PersonalMcpIntegration>,
+) =>
+  McpSessionRegistry.__testing
+    .make({
+      now: () => 1_000,
+      loadPersonalProfile: () =>
+        Effect.succeed({
+          userId,
+          externalAccessEnabled: false,
+          externalTokenConfigured: false,
+          externalTokenPrefix: "",
+          integrations,
+          updatedAt: "2026-10-02T00:00:00.000Z",
+        }),
+    })
+    .pipe(
+      Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+      Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+      Effect.provide(NodeServices.layer),
+    );
+
+it.effect("proxies the built-in toolyard integration once the user is connected", () =>
+  Effect.gen(function* () {
+    const userId = UserId.make("user-toolyard");
+    const registry = yield* makeRegistryWithProfile(userId, [toolyardIntegration(true)]);
+
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-toolyard"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      actorUserId: userId,
+    });
+
+    expect(issued.config.upstreamServers).toEqual([
+      {
+        id: "toolyard",
+        name: "toolyard",
+        endpoint: "http://127.0.0.1:43123/mcp/upstream/toolyard",
+        authMode: "bearer",
+        allowedTools: [],
+      },
+      {
+        id: "bifrost",
+        name: "Bifrost",
+        endpoint: "http://127.0.0.1:43123/mcp/upstream/bifrost",
+        authMode: "x-bf-vk",
+        allowedTools: [],
+      },
+    ]);
+  }),
+);
+
+it.effect("leaves toolyard out of a session until the user is connected", () =>
+  Effect.gen(function* () {
+    const userId = UserId.make("user-toolyard-pending");
+    const registry = yield* makeRegistryWithProfile(userId, [toolyardIntegration(false)]);
+
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-toolyard-pending"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      actorUserId: userId,
+    });
+
+    expect(issued.config.upstreamServers.map((server) => server.id)).toEqual(["bifrost"]);
   }),
 );

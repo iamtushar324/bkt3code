@@ -15,6 +15,18 @@ describe("upstreamMcpServerName", () => {
     ).toBe("bifrost");
   });
 
+  it("exposes the built-in toolyard integration as plain `toolyard`", () => {
+    expect(
+      upstreamMcpServerName({
+        id: "toolyard",
+        name: "toolyard",
+        endpoint: "http://127.0.0.1:43123/mcp/upstream/toolyard",
+        authMode: "bearer",
+        allowedTools: [],
+      }),
+    ).toBe("toolyard");
+  });
+
   it("keeps custom user integrations isolated under a reserved namespace", () => {
     expect(
       upstreamMcpServerName({

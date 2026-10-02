@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   type PersonalMcpProfile,
   type PersonalMcpProfileUpdate,
+  type PersonalMcpToolyardConnectResult,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -35,6 +36,13 @@ export function usePersonalMcpProfile() {
     serverEnvironment.revokePersonalMcpToken,
     "personal MCP token revocation",
   );
+  // Quiet on failure: the auto-connect runs unattended and the settings card
+  // words the outcome itself.
+  const connectToolyardCommand = useAtomCommand(serverEnvironment.connectToolyard, {
+    label: "toolyard connect",
+    reportFailure: false,
+    reportDefect: false,
+  });
   const refresh = useCallback(() => appAtomRegistry.refresh(profileAtom), [profileAtom]);
 
   const update = useCallback(
@@ -64,12 +72,32 @@ export function usePersonalMcpProfile() {
     return true;
   }, [primaryEnvironmentId, refresh, revokeCommand]);
 
+  /**
+   * Connects the built-in toolyard integration with a fresh Clerk token. The
+   * token is consumed once by the server; the result never carries a credential.
+   * `null` means the RPC itself failed (transport, authorization).
+   */
+  const connectToolyard = useCallback(
+    async (clerkToken: string): Promise<PersonalMcpToolyardConnectResult | null> => {
+      if (primaryEnvironmentId === null) return null;
+      const connected = await connectToolyardCommand({
+        environmentId: primaryEnvironmentId,
+        input: { clerkToken },
+      });
+      if (!AsyncResult.isSuccess(connected)) return null;
+      refresh();
+      return connected.value;
+    },
+    [connectToolyardCommand, primaryEnvironmentId, refresh],
+  );
+
   return {
     profile,
     loading: result.waiting,
     update,
     rotateToken,
     revokeToken,
+    connectToolyard,
     refresh,
   };
 }

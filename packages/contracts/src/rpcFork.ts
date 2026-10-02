@@ -80,6 +80,11 @@ import {
   EnvironmentUserSourceControlProfileSetInput,
   EnvironmentUserUpdateInput,
 } from "./users.ts";
+// T3-CUSTOM(expbkt3): toolyard auto-connect
+import {
+  PersonalMcpToolyardConnectInput,
+  PersonalMcpToolyardConnectResult,
+} from "./personalMcp.ts";
 
 export const WS_FORK_METHODS = {
   personalMcpGetProfile: "personalMcp.getProfile",
@@ -126,6 +131,8 @@ export const WS_FORK_METHODS = {
   threadCommentsRemove: "threadComments.remove",
   threadCommentsSetDeliveryPaused: "threadComments.setDeliveryPaused",
   subscribeThreadComments: "subscribeThreadComments",
+  // T3-CUSTOM(expbkt3): toolyard auto-connect
+  personalMcpConnectToolyard: "personalMcp.connectToolyard",
 } as const;
 
 export const WsPersonalMcpGetProfileRpc = Rpc.make(WS_FORK_METHODS.personalMcpGetProfile, {
@@ -438,6 +445,21 @@ export const WsSubscribeThreadCommentsRpc = Rpc.make(WS_FORK_METHODS.subscribeTh
   stream: true,
 });
 
+// T3-CUSTOM(expbkt3): toolyard auto-connect
+/**
+ * Connects the built-in toolyard integration: the server exchanges the
+ * browser's Clerk token for a toolyard agent token and stores it. toolyard's
+ * own refusals come back as `error` codes, never as an RPC failure.
+ */
+export const WsPersonalMcpConnectToolyardRpc = Rpc.make(
+  WS_FORK_METHODS.personalMcpConnectToolyard,
+  {
+    payload: PersonalMcpToolyardConnectInput,
+    success: PersonalMcpToolyardConnectResult,
+    error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const FORK_WS_RPCS = [
   WsThreadCommentsListRpc,
   WsThreadCommentsAddRpc,
@@ -480,4 +502,6 @@ export const FORK_WS_RPCS = [
   WsSessionArchiveBackfillRpc,
   WsThreadContextExportRpc,
   WsAgentUiGetRenderRpc,
+  // T3-CUSTOM(expbkt3): toolyard auto-connect
+  WsPersonalMcpConnectToolyardRpc,
 ] as const;

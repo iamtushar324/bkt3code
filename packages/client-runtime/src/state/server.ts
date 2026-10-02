@@ -1131,6 +1131,19 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.personalMcpRevokeToken,
       concurrency: configConcurrency,
     }),
+    // T3-CUSTOM(expbkt3): the built-in toolyard integration connects through
+    // the browser's Clerk token instead of a pasted credential.
+    connectToolyard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:personal-mcp:connect-toolyard",
+      tag: WS_METHODS.personalMcpConnectToolyard,
+      // Its own lane: a slow toolyard (up to the server's 10 s timeout) must
+      // not hold up settings writes, and two overlapping connects collapse.
+      concurrency: {
+        mode: "singleFlight" as const,
+        key: ({ environmentId }: { readonly environmentId: string }) =>
+          `personal-mcp:connect-toolyard:${environmentId}`,
+      },
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
