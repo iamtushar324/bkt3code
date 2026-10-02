@@ -62,7 +62,10 @@ export type EnvironmentSubscriptionRpcTag =
   // T3-CUSTOM(expbkt3): BEGIN — native plan review and review-comment snapshots.
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.subscribePlanReview
-  | typeof WS_METHODS.subscribeThreadComments;
+  | typeof WS_METHODS.subscribeThreadComments
+  // Claude account profiles per thread.
+  | typeof WS_METHODS.subscribeClaudeAccounts
+  | typeof WS_METHODS.subscribeThreadClaudeAccount;
 // T3-CUSTOM(expbkt3): END
 
 export type EnvironmentStreamCommandRpcTag =
