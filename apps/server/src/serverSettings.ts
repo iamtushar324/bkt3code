@@ -506,6 +506,44 @@ function foldLegacyProjectSettings(
   };
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — fold the fork's deprecated host-wide thread
+// defaults into upstream's keys, which the web, the sidebar, the MCP tools and
+// the per-project overrides all resolve through (`newThreadDefaults.expbkt3`).
+// Only a key present in the file counts as set, because the decoder fills the
+// defaults in. The upstream key wins when both exist. The fork key is reset to
+// its default afterwards so the write strips it from the file, which is what
+// makes the fold idempotent: a later reset of `defaultModelSelection` in the UI
+// is not undone by the next load.
+const decodeSettingsJsonKeys = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+function foldLegacyThreadDefaults(settings: ServerSettings, rawJson: string): ServerSettings {
+  const raw = decodeSettingsJsonKeys(rawJson);
+  if (Option.isNone(raw)) return settings;
+  const hasForkModel = Object.hasOwn(raw.value, "defaultThreadModelSelection");
+  const hasForkRuntime = Object.hasOwn(raw.value, "defaultThreadRuntimeMode");
+  if (!hasForkModel && !hasForkRuntime) return settings;
+  return {
+    ...settings,
+    ...(hasForkModel
+      ? {
+          defaultModelSelection:
+            settings.defaultModelSelection ?? settings.defaultThreadModelSelection,
+          defaultThreadModelSelection: DEFAULT_SERVER_SETTINGS.defaultThreadModelSelection,
+        }
+      : {}),
+    ...(hasForkRuntime
+      ? {
+          defaultRuntimeMode: Object.hasOwn(raw.value, "defaultRuntimeMode")
+            ? settings.defaultRuntimeMode
+            : settings.defaultThreadRuntimeMode,
+          defaultThreadRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultThreadRuntimeMode,
+        }
+      : {}),
+  };
+}
+// T3-CUSTOM(expbkt3): END
+
 const make = Effect.gen(function* () {
   const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -575,9 +613,11 @@ const make = Effect.gen(function* () {
     // A file that failed to decode must stay on disk for the user to repair;
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
+    let rawSettingsJson = "{}"; // T3-CUSTOM(expbkt3): key presence drives foldLegacyThreadDefaults.
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
+      rawSettingsJson = raw; // T3-CUSTOM(expbkt3)
       const decoded = decodeServerSettingsJsonExit(raw);
       const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
       if (persistedSettings._tag === "Success") {
@@ -651,7 +691,11 @@ const make = Effect.gen(function* () {
       restoreUsedProviders(settings, persisted, providerHistory),
     );
     const folded = settingsFileTrusted
-      ? foldLegacyProjectSettings(loaded, legacyProjectRows)
+      ? // T3-CUSTOM(expbkt3): the deprecated host-wide thread defaults fold too.
+        foldLegacyThreadDefaults(
+          foldLegacyProjectSettings(loaded, legacyProjectRows),
+          rawSettingsJson,
+        )
       : loaded;
     if (folded !== loaded) {
       yield* writeSettingsAtomically(folded);

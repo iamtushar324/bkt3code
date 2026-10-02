@@ -7,8 +7,10 @@ const testState = vi.hoisted(() => {
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree",
     newWorktreesStartFromOrigin: false,
-    defaultModelSelection: null,
+    defaultModelSelection: null as null | { instanceId: string; model: string },
     defaultRuntimeMode: "full-access" as RuntimeMode,
+    // T3-CUSTOM(expbkt3): the saved starting mode seeds every new thread.
+    defaultThreadInteractionMode: "default" as "default" | "plan",
   };
   let storedDraft: {
     readonly draftId: string;
@@ -34,11 +36,15 @@ const testState = vi.hoisted(() => {
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
+    // T3-CUSTOM(expbkt3): a reused empty draft drops its composer mode overrides.
+    setRuntimeMode: vi.fn(),
+    setInteractionMode: vi.fn(),
   };
 
   return {
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
+    planModeAvailable: true, // T3-CUSTOM(expbkt3)
     get projectFileRead() {
       return projectFileRead;
     },
@@ -58,11 +64,15 @@ const testState = vi.hoisted(() => {
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
         defaultModelSelection: null,
         defaultRuntimeMode: "full-access",
+        defaultThreadInteractionMode: "default",
       };
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
+      draftStore.setModelSelection.mockClear();
+      draftStore.setRuntimeMode.mockClear();
+      draftStore.setInteractionMode.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -95,7 +105,19 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 }));
 vi.mock("@t3tools/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
+  // T3-CUSTOM(expbkt3): plan mode is coerced off when its toggle is hidden.
+  DEFAULT_PROVIDER_INTERACTION_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
+}));
+// T3-CUSTOM(expbkt3): the shared resolver reads the target environment's
+// saved defaults; its own tests cover the project-override precedence.
+vi.mock("@t3tools/shared/newThreadDefaults.expbkt3", () => ({
+  resolveNewThreadDefaults: (settings: Record<string, unknown>) => ({
+    modelSelection: settings.defaultModelSelection ?? null,
+    runtimeMode: settings.defaultRuntimeMode,
+    interactionMode: settings.defaultThreadInteractionMode ?? "default",
+    envMode: settings.defaultThreadEnvMode ?? null,
+  }),
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   // Environment settings pass through; the tests set project fields on the
@@ -140,8 +162,9 @@ vi.mock("../composerDraftStore", () => {
 });
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
-  hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
+  // T3-CUSTOM(expbkt3): the stored draft reports an explicit pick, which a
+  // saved default must still outrank; the override resolver stays real.
+  hasExplicitComposerModelSelection: () => true,
 }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
@@ -178,7 +201,11 @@ vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+// T3-CUSTOM(expbkt3): the selector form reads the plan toggle's availability.
+vi.mock("./useSettings", () => ({
+  useClientSettings: (selector?: (settings: Record<string, unknown>) => unknown) =>
+    selector ? selector({ planModeAvailable: testState.planModeAvailable }) : {},
+}));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
 
@@ -286,4 +313,90 @@ describe.each([
       );
     },
   );
+});
+
+// T3-CUSTOM(expbkt3): the saved default always wins for a new thread.
+describe.each([
+  ["new", null],
+  [
+    "reusable",
+    {
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    },
+  ],
+])("useNewThreadHandler saved defaults with a %s draft", (_, draft) => {
+  const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+
+  it.each(["plan", "default"] as const)(
+    "starts every new thread in the saved %s mode",
+    async (interactionMode) => {
+      testState.reset(draft);
+      testState.planModeAvailable = true;
+      testState.targetSettings.defaultThreadInteractionMode = interactionMode;
+      const pendingOpen = useNewThreadHandler()(projectRef);
+      testState.completeProjectFileRead(null);
+      const opened = await pendingOpen;
+
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        opened!.draftId,
+        expect.objectContaining({ interactionMode }),
+      );
+    },
+  );
+
+  it("coerces a saved Plan default to Build while the plan toggle is hidden", async () => {
+    testState.reset(draft);
+    testState.planModeAvailable = false;
+    testState.targetSettings.defaultThreadInteractionMode = "plan";
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      opened!.draftId,
+      expect.objectContaining({ interactionMode: "default" }),
+    );
+    testState.planModeAvailable = true;
+  });
+
+  it("applies the saved default model, options included, over the last pick", async () => {
+    testState.reset(draft);
+    const model = {
+      instanceId: "claudeAgent",
+      model: "claude-opus-5",
+      options: [{ id: "effort", value: "max" }],
+    };
+    testState.targetSettings.defaultModelSelection = model;
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    // The stored draft reports an explicit pick (see the chatThreadActions
+    // mock); the saved default still replaces it, as a complete snapshot.
+    expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(opened!.draftId, model, {
+      replaceOptions: true,
+    });
+  });
+
+  it("clears a reused draft's composer mode overrides so the defaults show", async () => {
+    testState.reset(draft);
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    if (draft) {
+      expect(testState.draftStore.setRuntimeMode).toHaveBeenCalledWith(draft.draftId, null);
+      expect(testState.draftStore.setInteractionMode).toHaveBeenCalledWith(draft.draftId, null);
+    } else {
+      expect(testState.draftStore.setRuntimeMode).not.toHaveBeenCalled();
+      expect(testState.draftStore.setInteractionMode).not.toHaveBeenCalled();
+    }
+  });
 });

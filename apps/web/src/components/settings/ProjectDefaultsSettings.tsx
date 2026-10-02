@@ -25,6 +25,12 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+// T3-CUSTOM(expbkt3): fork rows (Starting mode, project-scope Permissions) and option-carrying model change.
+import {
+  carryModelOptionsToSelection,
+  PermissionsDefaultRow,
+  StartingModeDefaultRow,
+} from "./NewThreadModeSettings.expbkt3";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -172,9 +178,21 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     search: { environmentId: representative.environmentId, instanceId },
                   });
               }}
+              // T3-CUSTOM(expbkt3): BEGIN — a model change keeps the saved effort
+              // and context options the new model understands.
               onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
+                setModel(
+                  carryModelOptionsToSelection({
+                    previous: settings.defaultModelSelection,
+                    previousEntry: activeEntry,
+                    instanceId,
+                    model,
+                    entry: entries.find((entry) => entry.instanceId === instanceId),
+                    planModeAvailable: settings.planModeAvailable,
+                  }),
+                )
               }
+              // T3-CUSTOM(expbkt3): END
             />
             {!mixedModel ? (
               <TraitsPicker
@@ -268,6 +286,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {/* T3-CUSTOM(expbkt3): a project can override permissions and the starting mode too. */}
+          <PermissionsDefaultRow />
+          <StartingModeDefaultRow isProjectScope />
           {workspaceRow}
         </>
       ) : category === "general" ? (
@@ -334,6 +355,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
+          {/* T3-CUSTOM(expbkt3): Plan or Build for new threads, beside Permissions. */}
+          <StartingModeDefaultRow isProjectScope={isProjectScope} />
           {workspaceRow}
           <SettingsRow
             serverScoped

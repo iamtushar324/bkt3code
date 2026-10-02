@@ -185,6 +185,14 @@ export const SETTINGS_SEARCH_ITEMS = [
       "new thread default runtime mode supervised approvals auto accept edits full access",
     ],
   },
+  // T3-CUSTOM(expbkt3): the fork's Plan/Build starting mode for new threads.
+  {
+    id: "default-starting-mode",
+    title: "Starting mode",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["new thread default plan build interaction mode"],
+  },
   {
     id: "color-scheme",
     title: "Color scheme",

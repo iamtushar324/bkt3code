@@ -1157,6 +1157,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  // T3-CUSTOM(expbkt3): a project can pick Plan or Build for its new threads.
+  "defaultThreadInteractionMode",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1184,6 +1186,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  // T3-CUSTOM(expbkt3): per-project starting mode (Plan or Build) for new threads.
+  defaultThreadInteractionMode: Schema.optionalKey(ProviderInteractionMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1357,8 +1361,13 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
-  // T3-CUSTOM(expbkt3): agent-session defaults are separate from the small
-  // text-generation model used for titles, summaries, and source-control copy.
+  // T3-CUSTOM(expbkt3): BEGIN — `defaultThreadModelSelection` and
+  // `defaultThreadRuntimeMode` are deprecated: the server folds them into
+  // upstream's `defaultModelSelection` / `defaultRuntimeMode` on load (which
+  // projects can override through `projectSettingsOverrides`), and nothing
+  // writes them any more. They stay decodable so an un-folded file still
+  // loads. `defaultThreadInteractionMode` (Plan or Build for new threads) is
+  // live and project-scoped.
   defaultThreadModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1373,6 +1382,7 @@ export const ServerSettings = Schema.Struct({
   defaultThreadInteractionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  // T3-CUSTOM(expbkt3): END
   /**
    * Null defers to the repository's t3.json, then to recursive. A value
    * picked on a newer server decodes as null here rather than failing the
@@ -1692,7 +1702,8 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentAppearance: Schema.optionalKey(Schema.NullOr(EnvironmentAppearanceSetting)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
-  // T3-CUSTOM(expbkt3): default agent-session model/runtime/interaction mode patch fields.
+  // T3-CUSTOM(expbkt3): new-thread starting mode patch field, plus the two
+  // deprecated host-wide fields (still accepted; the server folds them).
   defaultThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
   defaultThreadRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadInteractionMode: Schema.optionalKey(ProviderInteractionMode),

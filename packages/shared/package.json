@@ -139,6 +139,10 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./newThreadDefaults.expbkt3": {
+      "types": "./src/newThreadDefaults.expbkt3.ts",
+      "import": "./src/newThreadDefaults.expbkt3.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"

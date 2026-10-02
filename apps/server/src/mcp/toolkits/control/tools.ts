@@ -64,6 +64,8 @@ const projectDependencies = [
   Path.Path,
   WorkspacePaths.WorkspacePaths,
 ];
+// T3-CUSTOM(expbkt3): t3_update_project writes the project's settings override entry.
+const updateProjectDependencies = [...dependencies, ServerSettingsService];
 const sessionDependencies = [...dependencies, ...ownershipDependencies];
 const sessionCreationDependencies = [
   ...sessionDependencies,
@@ -399,7 +401,7 @@ export const T3UpdateProjectTool = mutatingTool(
       defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)).pipe(
         Schema.annotateKey({
           description:
-            "Optional project agent model/options override, or null to inherit the app default.",
+            "Optional project agent model/options override, written to the project's settings overrides; null removes it so new sessions inherit the host default.",
         }),
       ),
       scripts: Schema.optional(Schema.Array(ProjectScript)).pipe(
@@ -411,7 +413,7 @@ export const T3UpdateProjectTool = mutatingTool(
     }),
     success: Schema.Unknown,
     failure: T3ControlToolError,
-    dependencies,
+    dependencies: updateProjectDependencies,
   }).annotate(Tool.Title, "Update T3 project"),
 );
 
@@ -433,14 +435,20 @@ export const T3CreateSessionTool = mutatingTool(
       modelSelection: Schema.optional(ModelSelection).pipe(
         Schema.annotateKey({
           description:
-            "Initial provider instance, model slug, and model options. Discover valid values with t3_get_configuration.",
+            "Initial provider instance, model slug, and model options. Defaults to the project's saved default model and options, then the host's. Discover valid values with t3_get_configuration.",
         }),
       ),
       runtimeMode: Schema.optional(
-        described(RuntimeMode, "Initial execution/sandbox mode. Defaults to full-access."),
+        described(
+          RuntimeMode,
+          "Initial execution/sandbox mode. Defaults to the project's saved permissions default, then the host's.",
+        ),
       ),
       interactionMode: Schema.optional(
-        described(ProviderInteractionMode, "Initial plan or default interaction mode."),
+        described(
+          ProviderInteractionMode,
+          "Initial plan or default (build) interaction mode. Defaults to the project's saved starting mode, then the host's.",
+        ),
       ),
       branch: Schema.optional(
         described(Schema.NullOr(Schema.String), "Optional source-control branch metadata."),

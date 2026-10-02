@@ -88,6 +88,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform, newThreadId, randomHex } from "../lib/utils";
 // T3-CUSTOM(expbkt3): temporary branch for a new-worktree tab started from a row.
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
 import {
   opensInIntegratedBrowser,
@@ -3299,7 +3300,8 @@ export function PhaseGroupedSidebar() {
             parent: row.thread,
             threadId,
             workspace,
-            runtimeMode: serverSettings.defaultThreadRuntimeMode,
+            // The saved permissions default: the row's project override, then the host.
+            runtimeMode: resolveNewThreadDefaults(serverSettings, row.thread.projectId).runtimeMode,
             createdAt: new Date().toISOString(),
           }),
         });
@@ -3337,7 +3339,7 @@ export function PhaseGroupedSidebar() {
       createWorktree,
       navigateToRow,
       projectByKey,
-      serverSettings.defaultThreadRuntimeMode,
+      serverSettings,
       setTreeKeysExpanded,
     ],
   );

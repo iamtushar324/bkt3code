@@ -6,6 +6,8 @@ import {
 } from "@t3tools/client-runtime/environment";
 // T3-CUSTOM(expbkt3): multi-line to add the EnvironmentId type import below.
 import {
+  // T3-CUSTOM(expbkt3): plan mode is coerced off when its toggle is hidden.
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
   // T3-CUSTOM(expbkt3): a child thread can start on another machine.
   type EnvironmentId,
@@ -30,6 +32,8 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+// T3-CUSTOM(expbkt3): the saved default always wins for a new thread.
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
@@ -75,6 +79,8 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  // T3-CUSTOM(expbkt3): a saved Plan default only applies while the plan toggle exists.
+  const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -112,6 +118,9 @@ export function useNewThreadHandler() {
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
+        // T3-CUSTOM(expbkt3): a reused empty draft drops its composer mode overrides.
+        setRuntimeMode,
+        setInteractionMode,
       } = useComposerDraftStore.getState();
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
@@ -120,12 +129,13 @@ export function useNewThreadHandler() {
       // viewed. The target project's configured model still wins; interaction
       // mode carries independently. Permissions, branch, worktree, and env mode
       // come from configured defaults unless the caller passes them explicitly.
+      // T3-CUSTOM(expbkt3): in the fork the interaction mode does not carry
+      // either: the saved Starting mode (project, then host) always wins, and
+      // the model carries only when no default is saved.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
           : null;
-      const carrySourceDraft =
-        currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
       // Composer overrides win over the persisted thread state — they are
       // what the user currently sees in the composer controls.
       const carrySourceComposer = currentRouteTarget
@@ -141,11 +151,6 @@ export function useNewThreadHandler() {
         : null;
       const carryModelSelection =
         composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
-      const carryInteractionMode =
-        carrySourceComposer?.interactionMode ??
-        carrySourceShell?.interactionMode ??
-        carrySourceDraft?.interactionMode ??
-        null;
       const project = projects.find(
         (candidate) =>
           candidate.id === projectRef.projectId &&
@@ -158,8 +163,20 @@ export function useNewThreadHandler() {
         project?.id ?? null,
         project,
       );
-      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
-      const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+      // T3-CUSTOM(expbkt3): BEGIN — the saved defaults (project override, then
+      // host) decide the model with its options, the permissions and the
+      // starting mode of every new thread; Plan only while its toggle exists.
+      const newThreadDefaults = resolveNewThreadDefaults(
+        targetServerSettings,
+        project?.id ?? null,
+        project,
+      );
+      const projectDefaultModelSelection = newThreadDefaults.modelSelection;
+      const defaultRuntimeMode = newThreadDefaults.runtimeMode;
+      const defaultInteractionMode = planModeAvailable
+        ? newThreadDefaults.interactionMode
+        : DEFAULT_PROVIDER_INTERACTION_MODE;
+      // T3-CUSTOM(expbkt3): END
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: projectDefaultModelSelection ?? null,
@@ -296,10 +313,17 @@ export function useNewThreadHandler() {
           if (workspaceContext) {
             setDraftThreadContext(emptyStoredDraftThread.draftId, {
               ...workspaceContext,
-              ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+              // T3-CUSTOM(expbkt3): saved defaults, not the stale draft's modes.
+              runtimeMode: defaultRuntimeMode,
+              interactionMode: defaultInteractionMode,
             });
           }
+          // T3-CUSTOM(expbkt3): BEGIN — a reused empty draft is a new thread:
+          // its composer-level permission and plan toggles from the previous
+          // visit are cleared so the saved defaults show and send.
+          setRuntimeMode(emptyStoredDraftThread.draftId, null);
+          setInteractionMode(emptyStoredDraftThread.draftId, null);
+          // T3-CUSTOM(expbkt3): END
           // Model intent: an explicit human pick always stands. Seeds and
           // legacy entries alike re-resolve here — sticky first, mirroring
           // the mint-fresh path, then the project default or carried
@@ -309,7 +333,9 @@ export function useNewThreadHandler() {
           // flag protects.
           const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
           const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
-          if (!storedDraftHasExplicitModelPick) {
+          // T3-CUSTOM(expbkt3): a saved default model outranks an explicit pick
+          // left in an empty draft; without one, the explicit pick stands.
+          if (!storedDraftHasExplicitModelPick || projectDefaultModelSelection !== null) {
             applyStickyState(emptyStoredDraftThread.draftId);
             const modelSelectionOverride = resolveModelSelectionOverride(
               emptyStoredDraftThread.draftId,
@@ -333,8 +359,9 @@ export function useNewThreadHandler() {
             {
               threadId: emptyStoredDraftThread.threadId,
               ...workspaceContext,
-              ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+              // T3-CUSTOM(expbkt3): saved defaults, not the stale draft's modes.
+              runtimeMode: defaultRuntimeMode,
+              interactionMode: defaultInteractionMode,
             },
           );
           const opened = {
@@ -381,10 +408,21 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
           threadId: latestActiveDraftThread.threadId,
           createdAt: latestActiveDraftThread.createdAt,
-          runtimeMode: latestActiveDraftThread.runtimeMode,
-          interactionMode: latestActiveDraftThread.interactionMode,
+          // T3-CUSTOM(expbkt3): saved defaults, not the open draft's modes.
+          runtimeMode: defaultRuntimeMode,
+          interactionMode: defaultInteractionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        // T3-CUSTOM(expbkt3): BEGIN — same reset as the stored-draft path: the
+        // composer's mode toggles and model pick give way to the saved defaults.
+        setRuntimeMode(currentRouteTarget.draftId, null);
+        setInteractionMode(currentRouteTarget.draftId, null);
+        if (projectDefaultModelSelection !== null) {
+          setModelSelection(currentRouteTarget.draftId, projectDefaultModelSelection, {
+            replaceOptions: true,
+          });
+        }
+        // T3-CUSTOM(expbkt3): END
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -451,7 +489,7 @@ export function useNewThreadHandler() {
               newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
             }),
           runtimeMode: defaultRuntimeMode,
-          ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+          interactionMode: defaultInteractionMode, // T3-CUSTOM(expbkt3): the saved Starting mode.
         });
         applyStickyState(draftId);
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
@@ -468,7 +506,14 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router],
+    // T3-CUSTOM(expbkt3): planModeAvailable joins the dependency list.
+    [
+      environmentServerConfigs,
+      getCurrentRouteTarget,
+      planModeAvailable,
+      projectGroupingSettings,
+      router,
+    ],
   );
 }
 
