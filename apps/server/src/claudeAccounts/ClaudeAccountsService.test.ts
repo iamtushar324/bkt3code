@@ -170,6 +170,16 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "claude-accounts-test-" });
     const dir: DirFor = (name) => `${root}/profiles/${name}`;
+    // Accounts the switcher does not list resolve under the profile root, which
+    // must be this sandbox rather than the real home of whoever runs the tests.
+    const previousProfileRoot = process.env.CLAUDE_PROFILE_ROOT;
+    process.env.CLAUDE_PROFILE_ROOT = `${root}/profiles`;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (previousProfileRoot === undefined) delete process.env.CLAUDE_PROFILE_ROOT;
+        else process.env.CLAUDE_PROFILE_ROOT = previousProfileRoot;
+      }),
+    );
     const status = (options.status ?? defaultStatus)(dir);
     for (const profile of status.profiles) {
       yield* fs.makeDirectory(dir(profile.name), { recursive: true });

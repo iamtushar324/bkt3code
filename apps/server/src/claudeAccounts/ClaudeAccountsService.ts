@@ -216,12 +216,16 @@ function windowFrom(
   return { usedPercent: clampPercent(raw.used), ...(resetsAt ? { resetsAt } : {}) };
 }
 
-/** `default` lives at `~/.claude`; every other account under `~/.claude-profiles/<name>`. */
+/**
+ * `default` lives at `~/.claude`; every other account under the profile root,
+ * `~/.claude-profiles/<name>` unless `CLAUDE_PROFILE_ROOT` names another (the
+ * same variable `claude-profile` and `claude-autoswitch` honour).
+ */
 export function defaultProfileDir(path: Path.Path, profile: string): string {
   const home = NodeOS.homedir();
-  return profile === "default"
-    ? path.join(home, ".claude")
-    : path.join(home, ".claude-profiles", profile);
+  if (profile === "default") return path.join(home, ".claude");
+  const root = process.env.CLAUDE_PROFILE_ROOT?.trim() || path.join(home, ".claude-profiles");
+  return path.join(root, profile);
 }
 
 function activeLinkPath(path: Path.Path): string {
