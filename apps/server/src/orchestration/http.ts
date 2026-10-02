@@ -35,6 +35,8 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ThreadExecutionSupervisor } from "../execution/ThreadExecutionSupervisor.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { discoverPullRequestLinks } from "../sourceControl/PullRequestLinkDiscovery.ts";
+// T3-CUSTOM(expbkt3): archived and deleted threads skip the full detail read.
+import { makeActiveThreadCheck } from "./activeThreadGate.expbkt3.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -47,6 +49,8 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const providerRegistry = yield* ProviderRegistry;
     const executionSupervisor = yield* ThreadExecutionSupervisor;
     const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+    // T3-CUSTOM(expbkt3): archived and deleted threads skip the full detail read.
+    const isActiveThread = yield* makeActiveThreadCheck;
 
     const attachExecutions = Effect.fn("orchestration.http.attachExecutions")(function* <
       T extends {
@@ -160,6 +164,17 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
               return yield* failEnvironmentNotFound("thread_not_found");
             }
           }
+          // T3-CUSTOM(expbkt3): BEGIN - an archived or deleted thread is a 404 either
+          // way; answer it before the full detail read (activeThreadGate.expbkt3.ts).
+          const active = yield* isActiveThread(args.params.threadId).pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+            ),
+          );
+          if (!active) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          // T3-CUSTOM(expbkt3): END
           const snapshot = yield* projectionSnapshotQuery
             .getThreadDetailSnapshot(
               args.params.threadId,
