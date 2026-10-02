@@ -15,7 +15,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedString, UserId } from "./baseSchemas.ts";
 
 export const ClaudeAccountProfileName = Schema.String.check(
   Schema.isNonEmpty(),
@@ -76,6 +76,12 @@ export const ClaudeAccountStatus = Schema.Struct({
   sessions: NonNegativeInt,
   /** Age of the usage figures, in seconds; absent when unknown. */
   ageSec: Schema.optionalKey(Schema.Number),
+  /**
+   * Whether the viewer may use this account. Only admins are sent accounts
+   * they cannot use (so they can manage access); everyone else gets only the
+   * accounts they may use, without this flag.
+   */
+  allowed: Schema.optionalKey(Schema.Boolean),
 });
 export type ClaudeAccountStatus = typeof ClaudeAccountStatus.Type;
 
@@ -117,6 +123,8 @@ export const ClaudeAccountsErrorReason = Schema.Literals([
   "invalid",
   "unavailable",
   "internal",
+  /** The caller may not use the account, or may not manage access. */
+  "forbidden",
 ]);
 export type ClaudeAccountsErrorReason = typeof ClaudeAccountsErrorReason.Type;
 
@@ -132,6 +140,26 @@ export class ClaudeAccountsError extends Schema.TaggedError<ClaudeAccountsError>
     return `Claude accounts ${this.operation} failed: ${this.detail}`;
   }
 }
+
+/**
+ * Who may use one account. An account with no users is open to everyone; once
+ * users are listed, only they may use it. Admins manage this list.
+ */
+export const ClaudeAccountAccessEntry = Schema.Struct({
+  profile: ClaudeAccountProfileName,
+  userIds: Schema.Array(UserId),
+});
+export type ClaudeAccountAccessEntry = typeof ClaudeAccountAccessEntry.Type;
+
+/** Every account that has an allow list; accounts absent here are open. */
+export const ClaudeAccountAccessList = Schema.Struct({
+  entries: Schema.Array(ClaudeAccountAccessEntry),
+});
+export type ClaudeAccountAccessList = typeof ClaudeAccountAccessList.Type;
+
+/** Replaces one account's allow list; an empty `userIds` opens it to everyone. */
+export const ClaudeAccountsAccessSetInput = ClaudeAccountAccessEntry;
+export type ClaudeAccountsAccessSetInput = typeof ClaudeAccountsAccessSetInput.Type;
 
 /** `experimental.claudeAccountProfiles` server settings. Off by default. */
 export const ClaudeAccountProfilesSettings = Schema.Struct({

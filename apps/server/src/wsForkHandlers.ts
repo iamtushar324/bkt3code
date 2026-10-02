@@ -40,6 +40,8 @@ import * as Stream from "effect/Stream";
 import type { HttpClient } from "effect/unstable/http";
 
 import type * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
+// T3-CUSTOM(expbkt3): Claude account access per user checks ids against the org.
+import type { ClerkDirectoryShape } from "./auth/ClerkDirectory.ts";
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import type * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import type * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -125,6 +127,10 @@ export interface ForkWsHandlerDeps {
   >;
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   readonly claudeAccounts: ClaudeAccountsService.ClaudeAccountsServiceShape;
+  /** Whether the connection's user is a Clerk org admin; false for the local operator. */
+  readonly actorIsAdmin: boolean;
+  /** The org directory; assigned users must be in it when team mode is on. */
+  readonly clerkDirectory: Pick<ClerkDirectoryShape, "enabled" | "listOrgMembers">;
 }
 
 export const makeForkWsHandlers = ({
@@ -152,6 +158,8 @@ export const makeForkWsHandlers = ({
   visibleAggregateIdsForActor,
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   claudeAccounts,
+  actorIsAdmin,
+  clerkDirectory,
 }: ForkWsHandlerDeps) => {
   // T3-CUSTOM(expbkt3): review comments. Access denial reads as "not found" so
   // a caller cannot tell a hidden thread from a missing one.
@@ -202,7 +210,8 @@ export const makeForkWsHandlers = ({
   // T3-CUSTOM(expbkt3): END native plan review helpers.
 
   // T3-CUSTOM(expbkt3): BEGIN Claude account profiles per thread. The host
-  // snapshot is readable by any authenticated user of the environment. Thread
+  // snapshot is readable by any authenticated user of the environment, narrowed
+  // to the accounts that user may use (admins see all, flagged). Thread
   // calls run the normal per-thread access check once the thread exists; a
   // draft thread (the web sets a mode before the first send, under the id the
   // bootstrap will adopt) has no row to check yet, so the caller is trusted.
@@ -227,6 +236,43 @@ export const makeForkWsHandlers = ({
             ),
       ),
     );
+  const requireClaudeAccountsAdmin = (operation: string) =>
+    actorUserId === null || actorIsAdmin
+      ? Effect.void
+      : Effect.fail(
+          new ClaudeAccountsError({
+            operation,
+            reason: "forbidden",
+            detail: "Only workspace admins can manage Claude account access.",
+          }),
+        );
+  /** In team mode every assigned id must be an org member; local mode has no directory. */
+  const requireOrgMembers = (userIds: ReadonlyArray<UserId>) =>
+    !clerkDirectory.enabled || userIds.length === 0
+      ? Effect.void
+      : clerkDirectory.listOrgMembers().pipe(
+          Effect.mapError(
+            (cause) =>
+              new ClaudeAccountsError({
+                operation: "setAccess",
+                reason: "unavailable",
+                detail: `Could not read the workspace directory: ${cause.message}`,
+              }),
+          ),
+          Effect.flatMap((members) => {
+            const known = new Set<string>(members.map((member) => member.id));
+            const unknown = userIds.filter((id) => !known.has(id));
+            return unknown.length === 0
+              ? Effect.void
+              : Effect.fail(
+                  new ClaudeAccountsError({
+                    operation: "setAccess",
+                    reason: "invalid",
+                    detail: `Not workspace members: ${unknown.join(", ")}.`,
+                  }),
+                );
+          }),
+        );
   const claudeAccountsHandlers = {
     [WS_FORK_METHODS.claudeAccountsGetThread]: (input) =>
       observeRpcEffect(
@@ -240,14 +286,33 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_FORK_METHODS.claudeAccountsSetThreadMode,
         guardClaudeAccountsThread("setThreadMode", input.threadId).pipe(
-          Effect.andThen(claudeAccounts.setThreadMode(input)),
+          Effect.andThen(claudeAccounts.setThreadMode({ ...input, actorUserId })),
         ),
         { "rpc.aggregate": "claude-accounts" },
       ),
     [WS_FORK_METHODS.subscribeClaudeAccounts]: () =>
-      observeRpcStream(WS_FORK_METHODS.subscribeClaudeAccounts, claudeAccounts.watchSnapshot(), {
-        "rpc.aggregate": "claude-accounts",
-      }),
+      observeRpcStream(
+        WS_FORK_METHODS.subscribeClaudeAccounts,
+        claudeAccounts.watchSnapshot({ userId: actorUserId, isAdmin: actorIsAdmin }),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
+    // Who may use each account is managed by Clerk org admins, like project
+    // access. The unidentified local operator is unrestricted.
+    [WS_FORK_METHODS.claudeAccountsAccessList]: () =>
+      observeRpcEffect(
+        WS_FORK_METHODS.claudeAccountsAccessList,
+        requireClaudeAccountsAdmin("listAccess").pipe(Effect.andThen(claudeAccounts.listAccess())),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
+    [WS_FORK_METHODS.claudeAccountsAccessSet]: (input) =>
+      observeRpcEffect(
+        WS_FORK_METHODS.claudeAccountsAccessSet,
+        requireClaudeAccountsAdmin("setAccess").pipe(
+          Effect.andThen(requireOrgMembers(input.userIds)),
+          Effect.andThen(claudeAccounts.setAccess({ ...input, actorUserId })),
+        ),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
     [WS_FORK_METHODS.subscribeThreadClaudeAccount]: (input) =>
       observeRpcStream(
         WS_FORK_METHODS.subscribeThreadClaudeAccount,
@@ -262,6 +327,8 @@ export const makeForkWsHandlers = ({
     | typeof WS_FORK_METHODS.claudeAccountsSetThreadMode
     | typeof WS_FORK_METHODS.subscribeClaudeAccounts
     | typeof WS_FORK_METHODS.subscribeThreadClaudeAccount
+    | typeof WS_FORK_METHODS.claudeAccountsAccessList
+    | typeof WS_FORK_METHODS.claudeAccountsAccessSet
   >;
   // T3-CUSTOM(expbkt3): END Claude account profiles per thread.
 

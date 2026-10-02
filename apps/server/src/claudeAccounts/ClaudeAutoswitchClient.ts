@@ -18,7 +18,8 @@ import { expandHomePath } from "../pathExpansion.ts";
 import { ProcessRunner } from "../processRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 
-export const DEFAULT_CLAUDE_AUTOSWITCH_PATH = "/home/ubuntu/.local/bin/claude-autoswitch";
+/** Where the switcher lives when nothing overrides it, under the server user's home. */
+export const DEFAULT_CLAUDE_AUTOSWITCH_PATH = "~/.local/bin/claude-autoswitch";
 const AUTOSWITCH_TIMEOUT = "10 seconds";
 const MAX_OUTPUT_BYTES = 256 * 1024;
 
@@ -131,13 +132,42 @@ export class ClaudeAutoswitchClient extends Context.Service<
   ClaudeAutoswitchClientShape
 >()("t3/claudeAccounts/ClaudeAutoswitchClient") {}
 
-/** The configured switcher binary: env override for tests, then settings, then the host default. */
+/**
+ * The configured switcher binary: `T3_CLAUDE_AUTOSWITCH_BIN`, then the
+ * `autoswitchPath` setting, then `~/.local/bin/claude-autoswitch`. A leading
+ * `~` expands to the home directory of the user running the server.
+ */
 export function resolveAutoswitchPath(configured: string | undefined): string {
   const fromEnv = process.env.T3_CLAUDE_AUTOSWITCH_BIN?.trim();
   if (fromEnv) return expandHomePath(fromEnv);
   const trimmed = configured?.trim() ?? "";
   return expandHomePath(trimmed.length > 0 ? trimmed : DEFAULT_CLAUDE_AUTOSWITCH_PATH);
 }
+
+/** The switcher binary this server's settings resolve to; unreadable settings fall back to the default. */
+export const autoswitchPathFrom = (
+  settings: ServerSettingsService["Service"],
+): Effect.Effect<string> =>
+  settings.getSettings.pipe(
+    Effect.map((value) =>
+      resolveAutoswitchPath(value.experimental.claudeAccountProfiles.autoswitchPath),
+    ),
+    Effect.orElseSucceed(() => resolveAutoswitchPath(undefined)),
+  );
+
+/**
+ * The same answer where the settings service may be absent (the hard-limit
+ * rotation), so the client and the rotation always run the same binary.
+ */
+export const configuredAutoswitchPath: Effect.Effect<string> = Effect.serviceOption(
+  ServerSettingsService,
+).pipe(
+  Effect.flatMap((settings) =>
+    Option.isSome(settings)
+      ? autoswitchPathFrom(settings.value)
+      : Effect.sync(() => resolveAutoswitchPath(undefined)),
+  ),
+);
 
 function placeArgs(input: ClaudeAutoswitchPlaceInput): ReadonlyArray<string> {
   const args: Array<string> = ["--place", "--json"];
@@ -159,12 +189,7 @@ export const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner;
   const settings = yield* ServerSettingsService;
 
-  const binaryPath = settings.getSettings.pipe(
-    Effect.map((value) =>
-      resolveAutoswitchPath(value.experimental.claudeAccountProfiles.autoswitchPath),
-    ),
-    Effect.orElseSucceed(() => resolveAutoswitchPath(undefined)),
-  );
+  const binaryPath = autoswitchPathFrom(settings);
 
   const invoke = <A>(
     args: ReadonlyArray<string>,

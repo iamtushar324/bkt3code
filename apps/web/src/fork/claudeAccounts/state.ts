@@ -2,8 +2,9 @@
  * T3-CUSTOM(expbkt3): Claude account atoms bound to the web connection.
  *
  * Built here from the client runtime's exported RPC helpers rather than in
- * `packages/client-runtime`, since only the web composer reads them. Mode
- * writes are serialised per thread so the last pick is the one that sticks.
+ * `packages/client-runtime`, since only the web composer and the Claude
+ * account access settings read them. Mode writes are serialised per thread so
+ * the last pick is the one that sticks.
  */
 import {
   createAtomCommandScheduler,
@@ -41,6 +42,22 @@ export const claudeAccountsEnvironment = {
     concurrency: {
       mode: "serial",
       key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+    },
+  }),
+  /** Every account's allow list (admins only). */
+  access: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:claude-accounts:access",
+    tag: WS_METHODS.claudeAccountsAccessList,
+    idleTtlMs: 5_000,
+  }),
+  /** Each write carries the account's whole list, so the last one per account wins. */
+  setAccess: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:claude-accounts:set-access",
+    tag: WS_METHODS.claudeAccountsAccessSet,
+    scheduler,
+    concurrency: {
+      mode: "serial",
+      key: ({ environmentId, input }) => `${environmentId}:access:${input.profile}`,
     },
   }),
 };

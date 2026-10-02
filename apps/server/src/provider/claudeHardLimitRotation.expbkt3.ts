@@ -15,14 +15,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { configuredAutoswitchPath } from "../claudeAccounts/ClaudeAutoswitchClient.ts";
 import {
   type ClaudeHardLimitAccountsHook,
   readClaudeHardLimitAccountsHook,
 } from "../claudeAccounts/hardLimitHook.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as ProviderService from "./Services/ProviderService.ts";
 
-const CLAUDE_AUTOSWITCH_COMMAND = "/home/ubuntu/.local/bin/claude-autoswitch";
 const CLAUDE_AUTOSWITCH_TIMEOUT = "10 seconds";
 const MAX_AUTOSWITCH_OUTPUT_BYTES = 4_096;
 const MAX_HANDLED_CONDITIONS = 128;
@@ -179,9 +180,11 @@ export const runClaudeAutoswitchElection = Effect.fn("ClaudeHardLimitRotation.el
   rateLimitType: ClaudeRateLimitType,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // The same binary the per-thread placement client runs.
+  const command = yield* configuredAutoswitchPath;
   const attempt = yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(
-      ChildProcess.make(CLAUDE_AUTOSWITCH_COMMAND, ["--hard-limit", rateLimitType, "--json"]),
+      ChildProcess.make(command, ["--hard-limit", rateLimitType, "--json"]),
     );
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
     const [stdout, , exitCode] = yield* Effect.all(
@@ -236,9 +239,12 @@ const makeLive = Effect.gen(function* () {
 
   const providers = yield* ProviderService.ProviderService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Settings decide which switcher binary runs, as they do for placement.
+  const settings = yield* ServerSettingsService;
   const requestElection = (rateLimitType: ClaudeRateLimitType) =>
     runClaudeAutoswitchElection(rateLimitType).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(ServerSettingsService, settings),
       Effect.tap((result) =>
         result.status === "switched"
           ? Effect.logInfo("claude hard-limit rotation confirmed profile election", {

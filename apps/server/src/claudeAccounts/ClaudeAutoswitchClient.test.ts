@@ -2,6 +2,10 @@
  * T3-CUSTOM(expbkt3): the switcher is called with an argv array, decoded
  * tolerantly, and an old binary without the new flags reads as unavailable.
  */
+// @effect-diagnostics nodeBuiltinImport:off - expected paths are computed independently.
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import type { ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,9 +15,11 @@ import { type ProcessRunInput, type ProcessRunOutput, ProcessRunner } from "../p
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   ClaudeAutoswitchClient,
-  DEFAULT_CLAUDE_AUTOSWITCH_PATH,
   layer as clientLayer,
+  resolveAutoswitchPath,
 } from "./ClaudeAutoswitchClient.ts";
+
+const homeSwitcher = NodePath.join(NodeOS.homedir(), ".local", "bin", "claude-autoswitch");
 
 function output(overrides: Partial<ProcessRunOutput>): ProcessRunOutput {
   return {
@@ -49,6 +55,32 @@ function harness(respond: (input: ProcessRunInput) => ProcessRunOutput, autoswit
   return { layer, calls };
 }
 
+describe("resolveAutoswitchPath", () => {
+  it("defaults to the switcher under the server user's home", () => {
+    assert.equal(resolveAutoswitchPath(undefined), homeSwitcher);
+    assert.equal(resolveAutoswitchPath("  "), homeSwitcher);
+  });
+
+  it("expands a leading ~ in the setting and lets the env override win", () => {
+    assert.equal(
+      resolveAutoswitchPath("~/tools/claude-autoswitch"),
+      NodePath.join(NodeOS.homedir(), "tools", "claude-autoswitch"),
+    );
+    assert.equal(resolveAutoswitchPath("/opt/claude-autoswitch"), "/opt/claude-autoswitch");
+    const previous = process.env.T3_CLAUDE_AUTOSWITCH_BIN;
+    process.env.T3_CLAUDE_AUTOSWITCH_BIN = "~/fake-switcher";
+    try {
+      assert.equal(
+        resolveAutoswitchPath("/opt/claude-autoswitch"),
+        NodePath.join(NodeOS.homedir(), "fake-switcher"),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.T3_CLAUDE_AUTOSWITCH_BIN;
+      else process.env.T3_CLAUDE_AUTOSWITCH_BIN = previous;
+    }
+  });
+});
+
 describe("ClaudeAutoswitchClient", () => {
   it.effect("asks for a placement with pending counts and avoided accounts as flags", () =>
     Effect.gen(function* () {
@@ -64,7 +96,7 @@ describe("ClaudeAutoswitchClient", () => {
       }).pipe(Effect.provide(layer));
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0]!.command, DEFAULT_CLAUDE_AUTOSWITCH_PATH);
+      assert.equal(calls[0]!.command, homeSwitcher);
       assert.deepEqual(calls[0]!.args, [
         "--place",
         "--json",
