@@ -6,13 +6,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { makeActiveThreadCheck } from "./activeThreadGate.expbkt3.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
-import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
+import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 
 const layer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
@@ -24,12 +24,11 @@ const layer = it.layer(
   ),
 );
 
-layer("makeActiveThreadCheck", (it) => {
-  it.effect("agrees with getThreadDetailSnapshot on which threads exist", () =>
+layer("getThreadDetailSnapshot archived early exit", (it) => {
+  it.effect("answers an archived, deleted or missing thread without the detail read", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const snapshots = yield* ProjectionSnapshotQuery;
-      const isActiveThread = yield* makeActiveThreadCheck;
 
       yield* sql`
         INSERT INTO projection_projects
@@ -53,26 +52,26 @@ layer("makeActiveThreadCheck", (it) => {
            NULL, '2026-10-01T01:00:00.000Z')
       `;
 
-      const expected = {
-        "thread-active": true,
-        "thread-archived": false,
-        "thread-deleted": false,
-        "thread-missing": false,
-      };
-      for (const [id, found] of Object.entries(expected)) {
-        const threadId = ThreadId.make(id);
-        assert.strictEqual(yield* isActiveThread(threadId), found, id);
-        // The gate stands in front of both read shapes the HTTP route serves.
-        assert.strictEqual(
-          Option.isSome(yield* snapshots.getThreadDetailSnapshot(threadId, { turnLimit: 20 })),
-          found,
-          `${id} (windowed)`,
-        );
-        assert.strictEqual(
-          Option.isSome(yield* snapshots.getThreadDetailSnapshot(threadId)),
-          found,
-          `${id} (full)`,
-        );
+      const statementsFor = (id: string, window?: { readonly turnLimit: number }) =>
+        Effect.gen(function* () {
+          const counter = makeSqlStatementCounter();
+          const snapshot = yield* snapshots
+            .getThreadDetailSnapshot(ThreadId.make(id), window)
+            .pipe(Effect.withTracer(counter.tracer));
+          return { found: Option.isSome(snapshot), statements: counter.count() };
+        });
+
+      // Both read shapes the HTTP and WebSocket routes serve.
+      for (const window of [{ turnLimit: 20 }, undefined]) {
+        const active = yield* statementsFor("thread-active", window);
+        assert.isTrue(active.found);
+        for (const id of ["thread-archived", "thread-deleted", "thread-missing"]) {
+          const gone = yield* statementsFor(id, window);
+          assert.isFalse(gone.found, id);
+          // One row lookup instead of every detail list.
+          assert.strictEqual(gone.statements, 1, id);
+          assert.isAbove(active.statements, gone.statements + 3, id);
+        }
       }
     }),
   );
