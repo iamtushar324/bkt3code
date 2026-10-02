@@ -20,7 +20,8 @@ import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedString } from "./baseSche
 export const ClaudeAccountProfileName = Schema.String.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(64),
-  Schema.isPattern(/^[A-Za-z0-9._-]+$/),
+  // A path component under ~/.claude-profiles: never `.` or `..`.
+  Schema.isPattern(/^(?!\.{1,2}$)[A-Za-z0-9._-]+$/),
 );
 export type ClaudeAccountProfileName = typeof ClaudeAccountProfileName.Type;
 

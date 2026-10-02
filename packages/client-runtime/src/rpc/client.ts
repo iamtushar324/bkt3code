@@ -59,11 +59,11 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
-  // T3-CUSTOM(expbkt3): BEGIN — native plan review and review-comment snapshots.
+  // T3-CUSTOM(expbkt3): BEGIN — native plan review, review-comment and Claude account snapshots.
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.subscribePlanReview
   | typeof WS_METHODS.subscribeThreadComments
-  // Claude account profiles per thread.
+  // Claude account profiles: the account snapshot and a thread's account choice.
   | typeof WS_METHODS.subscribeClaudeAccounts
   | typeof WS_METHODS.subscribeThreadClaudeAccount;
 // T3-CUSTOM(expbkt3): END

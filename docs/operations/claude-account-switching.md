@@ -196,25 +196,41 @@ How it works when the flag is on:
 - **Changing the mode on a live thread.** If the new mode means a different account and
   the session is idle, the provider session stops at once and the next turn respawns on
   the new account (resume cursor kept). If a turn is running, `pendingRestart` is set and
-  the stop happens when that turn completes.
+  the stop happens when a turn completes with nothing new started since (checked on both
+  the orchestration shell and the provider session; a queued next turn postpones it to
+  the following completion).
 - **Hard limit, Auto thread.** On an authoritative `rate_limit_event` rejection the server
   calls `claude-autoswitch --hard-limit <type> --profile <name> --json` (the switcher moves
-  the global symlink only if that account is the elected one, otherwise `no-op`), marks
-  the account exhausted until its reset, places the thread again avoiding it, stops the
-  session and dispatches one visible turn: "Continue where you left off — this thread moved
-  to Claude account <new> because <old> hit its usage limit." Repeated copies of the same
-  rejection are consumed once.
+  the global symlink only if that account is the elected one, otherwise `no-op`). An
+  account-wide type (`five_hour`, `seven_day`) marks the account exhausted until its
+  reset, so every Auto thread leaves it at its next start; a model-scoped type
+  (`seven_day_opus`, `seven_day_sonnet`, `overage`) marks nothing and moves only the
+  affected thread. The thread is placed again avoiding that account, its session stops,
+  and one visible turn is dispatched as the thread's owner: "Continue where you left off —
+  this thread moved to Claude account <new> because <old> hit its usage limit." Repeated
+  copies of one rejection (same thread, account, type and reset) are consumed once, and a
+  rejection arriving before the first turn starts on the new account is a stale copy from
+  the stopped session; a rejection from the new account, even with the same reset
+  instant, moves the thread again.
 - **Hard limit, pinned thread.** Nothing moves. The thread gets the notice "<x> is at its
-  usage limit until HH:MM UTC — switch to Auto or another account."
-- **Snapshot.** `claude-autoswitch --status --json` is polled every 15 s while the flag is
-  on and published to `subscribeClaudeAccounts`, overlaid with the live windows Claude
+  usage limit until HH:MM UTC — switch to Auto or another account." (account-wide) or
+  "<x> has no <scope> allowance left until HH:MM UTC — switch the model or account."
+- **Stale accounts.** A profile the switcher no longer lists, or whose directory is gone,
+  never reaches `CLAUDE_CONFIG_DIR`: a pin fails the start with "Claude account <x> no
+  longer exists — switch this thread to Auto or another account."; a sticky Auto thread is
+  placed again. A thread's row is deleted with the thread.
+- **Snapshot.** `claude-autoswitch --status --json` is polled every 15 s (± 3 s jitter)
+  while the flag is on, and at once when it turns on; until the first answer the snapshot
+  is `available: true` with `unavailableReason: "loading"`. It is published to
+  `subscribeClaudeAccounts`, overlaid with the live windows Claude
   streams mid-turn (attributed to the emitting thread's account). Badge labels are the
   shortest unique prefix of each name (`agent`/`audit` → `ag`/`au`), overridable by
   `shortLabels` (`{ "agent": "a" }` is honoured even beside `audit`).
 
 Fallbacks: with the flag off, nothing changes and the snapshot answers
 `{ enabled: false }`. If the switcher is missing or predates `--status`/`--place` (prints
-usage, exits non-zero), the snapshot reports `available: false` and Auto degrades to the
+usage, exits non-zero), the snapshot reports `available: false` with a short reason (the
+full detail goes to the server log) and Auto degrades to the
 account `~/.claude-active` resolves to (realpath; `default` for `~/.claude`), still sticky
 per thread. A switcher crash or 10 s timeout logs a warning and leaves the spawn
 environment unchanged; only the two policy outcomes above fail a start. When no account

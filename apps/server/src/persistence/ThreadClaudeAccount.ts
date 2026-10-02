@@ -61,6 +61,10 @@ export class ThreadClaudeAccountRepository extends Context.Service<
     readonly listByProfile: (
       profile: string,
     ) => Effect.Effect<ReadonlyArray<ThreadClaudeAccountRow>, ThreadClaudeAccountRepositoryError>;
+    /** Drops the row; a missing row is a no-op. */
+    readonly delete: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadClaudeAccountRepositoryError>;
   }
 >()("t3/persistence/ThreadClaudeAccount/ThreadClaudeAccountRepository") {}
 
@@ -137,6 +141,13 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  const deleteRow = SqlSchema.void({
+    Request: Schema.Struct({ threadId: ThreadId }),
+    execute: ({ threadId }) => sql`
+      DELETE FROM thread_claude_account WHERE thread_id = ${threadId}
+    `,
+  });
+
   return ThreadClaudeAccountRepository.of({
     get: (threadId) =>
       getRow({ threadId }).pipe(
@@ -151,6 +162,8 @@ export const make = Effect.gen(function* () {
       setResolvedRow(input).pipe(Effect.mapError(mapError("ThreadClaudeAccount.setResolved"))),
     listByProfile: (profile) =>
       listRows({ profile }).pipe(Effect.mapError(mapError("ThreadClaudeAccount.listByProfile"))),
+    delete: (threadId) =>
+      deleteRow({ threadId }).pipe(Effect.mapError(mapError("ThreadClaudeAccount.delete"))),
   });
 });
 

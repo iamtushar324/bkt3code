@@ -44,15 +44,15 @@ export function resetsIn(win: UsageWindow | undefined, now: number): string | nu
 }
 
 /**
- * Whether the account cannot take more work right now: a 5-hour or weekly
- * window is spent, or Auto skipped it for being over a limit. A spent scoped
- * window (one model's weekly allowance) is not this: the account still runs
- * every other model, so it gets its own chip instead.
+ * Whether a 5-hour or weekly window is spent. Read from the numbers, never
+ * from the switcher's `why` text, which is free-form (`over weekly 95% >= 95%`,
+ * `near trip: five_hour 83% >= 80%`, `excluded`, …). A spent scoped window
+ * (one model's weekly allowance) is not this: the account still runs every
+ * other model, so it gets its own chip instead.
  */
 export function isAtLimit(status: ClaudeAccountStatus): boolean {
   if ((status.fiveHour?.usedPercent ?? 0) >= 100) return true;
-  if ((status.weekly?.usedPercent ?? 0) >= 100) return true;
-  return !status.eligible && /limit/i.test(status.why);
+  return (status.weekly?.usedPercent ?? 0) >= 100;
 }
 
 export function isNearLimit(status: ClaudeAccountStatus): boolean {
@@ -72,9 +72,23 @@ export function accountWarning(status: ClaudeAccountStatus | undefined): Account
 export type AccountChipTone = "destructive" | "warning" | "muted";
 
 export interface AccountChip {
-  readonly id: "logged-out" | "at-limit" | "near-limit" | "scoped-spent" | "in-use";
+  readonly id: "logged-out" | "at-limit" | "near-limit" | "scoped-spent" | "not-used" | "in-use";
   readonly label: string;
   readonly tone: AccountChipTone;
+  /** The longer explanation shown on hover: the switcher's own reason. */
+  readonly detail?: string;
+}
+
+export const NOT_USED_BY_AUTO_LABEL = "not used by Auto";
+
+/**
+ * Why Auto skips this account, when no number-driven chip already says so.
+ * A logged-out or spent account is self-explanatory; anything else (a trip
+ * threshold, an exclusion, out of rotation) shows the switcher's reason.
+ */
+export function autoSkipReason(status: ClaudeAccountStatus): string | null {
+  if (status.eligible || status.auth === "logged_out" || isAtLimit(status)) return null;
+  return status.why.trim() || NOT_USED_BY_AUTO_LABEL;
 }
 
 /** State chips for one account row, most severe first. */
@@ -90,6 +104,10 @@ export function accountChips(status: ClaudeAccountStatus): ReadonlyArray<Account
   }
   if (status.scoped !== undefined && status.scoped.usedPercent >= 100) {
     chips.push({ id: "scoped-spent", label: `${status.scoped.label} spent`, tone: "warning" });
+  }
+  const skipped = autoSkipReason(status);
+  if (skipped !== null) {
+    chips.push({ id: "not-used", label: NOT_USED_BY_AUTO_LABEL, tone: "muted", detail: skipped });
   }
   if (status.sessions > 0) {
     chips.push({ id: "in-use", label: `in use by ${status.sessions}`, tone: "muted" });
@@ -134,6 +152,8 @@ export type TriggerView =
       readonly fiveHourRemaining: number | null;
       readonly auto: boolean;
       readonly warn: AccountWarning | null;
+      /** The switcher's reason when Auto would not place a session here. */
+      readonly autoSkip: string | null;
     };
 
 /** What the composer trigger shows: "Auto" until Auto has placed the thread. */
@@ -152,6 +172,7 @@ export function triggerView(
     fiveHourRemaining: remaining(status?.fiveHour),
     auto: thread?.mode.kind !== "profile",
     warn: accountWarning(status),
+    autoSkip: status === undefined ? null : autoSkipReason(status),
   };
 }
 
@@ -168,6 +189,7 @@ export function triggerTooltip(view: TriggerView): string {
   if (view.warn === "logged_out") parts.push("logged out");
   else if (view.warn === "limit") parts.push("at limit");
   else if (view.warn === "near") parts.push("near limit");
+  if (view.autoSkip !== null) parts.push(`${NOT_USED_BY_AUTO_LABEL} (${view.autoSkip})`);
   return parts.join(" · ");
 }
 
@@ -254,9 +276,16 @@ export function switchRestartsCache(
   return current !== undefined && target.kind === "profile" && target.profile !== current;
 }
 
-/** The muted line shown when the host switcher cannot report accounts. */
+export const LOADING_ACCOUNTS_LINE = "Loading account data…";
+
+/**
+ * The muted line shown when there are no account figures: still loading
+ * (before the server's first poll, which reports no reason or a `loading…`
+ * one), or the host switcher cannot report them.
+ */
 export function unavailableLine(snapshot: ClaudeAccountsSnapshot): string | null {
   if (snapshot.available) return null;
   const reason = snapshot.unavailableReason?.trim();
-  return `Account data unavailable${reason ? ` (${reason})` : ""} — Auto uses the host's current account`;
+  if (!reason || /^loading/i.test(reason)) return LOADING_ACCOUNTS_LINE;
+  return `Account data unavailable (${reason}) — Auto uses the host's current account`;
 }

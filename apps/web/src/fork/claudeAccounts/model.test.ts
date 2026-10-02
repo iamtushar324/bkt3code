@@ -91,6 +91,7 @@ describe("triggerView", () => {
       fiveHourRemaining: 72,
       auto: true,
       warn: null,
+      autoSkip: null,
     });
   });
 
@@ -144,23 +145,83 @@ describe("triggerTooltip", () => {
 });
 
 describe("accountChips", () => {
-  it("flags logged out, limits, a spent scoped allowance and live sessions", () => {
-    const labels = (status: ClaudeAccountStatus) => accountChips(status).map((chip) => chip.label);
-    expect(labels(account({ name: "x", auth: "logged_out" }))).toEqual(["logged out"]);
-    expect(labels(account({ name: "x", fiveHour: { usedPercent: 100 } }))).toEqual(["at limit"]);
-    expect(labels(account({ name: "x", eligible: false, why: "over weekly limit" }))).toEqual([
-      "at limit",
-    ]);
-    expect(labels(account({ name: "x", fiveHour: { usedPercent: 80 } }))).toEqual(["near limit"]);
+  const labels = (status: ClaudeAccountStatus) => accountChips(status).map((chip) => chip.label);
+
+  it("reads limits from the numbers, not the switcher's reason", () => {
+    // Real `claude-autoswitch --status --json` reasons alongside the figures they come with.
     expect(
-      labels(account({ name: "x", scoped: { label: "Fable", usedPercent: 100 }, sessions: 3 })),
+      labels(
+        account({
+          name: "x",
+          auth: "logged_out",
+          eligible: false,
+          why: "logged out",
+        }),
+      ),
+    ).toEqual(["logged out"]);
+    expect(
+      labels(
+        account({
+          name: "x",
+          eligible: false,
+          why: "over five_hour 100% >= 90%",
+          fiveHour: { usedPercent: 100 },
+        }),
+      ),
+    ).toEqual(["at limit"]);
+    expect(
+      labels(
+        account({
+          name: "x",
+          eligible: false,
+          why: "near trip: five_hour 83% >= 80%",
+          fiveHour: { usedPercent: 83 },
+        }),
+      ),
+    ).toEqual(["near limit", "not used by Auto"]);
+    expect(
+      labels(
+        account({
+          name: "x",
+          scoped: { label: "Fable", usedPercent: 100 },
+          sessions: 3,
+        }),
+      ),
     ).toEqual(["Fable spent", "in use by 3"]);
   });
 
-  it("does not call an account ineligible for other reasons at its limit", () => {
-    const status = account({ name: "x", eligible: false, why: "busiest account" });
-    expect(accountChips(status)).toEqual([]);
-    expect(accountWarning(status)).toBeNull();
+  it("explains every other reason Auto skips an account on hover", () => {
+    for (const why of [
+      "over weekly 95% >= 95%",
+      "Fable cap spent (97%)",
+      "excluded",
+      "not in rotation",
+    ]) {
+      const status = account({
+        name: "x",
+        eligible: false,
+        why,
+        weekly: { usedPercent: 95 },
+        scoped: { label: "Fable", usedPercent: 97 },
+      });
+      expect(accountChips(status)).toEqual([
+        { id: "not-used", label: "not used by Auto", tone: "muted", detail: why },
+      ]);
+      // Under 100% everywhere: not "at limit", whatever the reason says.
+      expect(accountWarning(status)).toBeNull();
+    }
+  });
+
+  it("names the skip in the trigger's tooltip of a pinned account", () => {
+    const view = triggerView(
+      snapshot([
+        account({ name: "sam", eligible: false, why: "excluded", weekly: { usedPercent: 10 } }),
+      ]),
+      thread({ mode: { kind: "profile", profile: "sam" } }),
+    );
+    expect(triggerTooltip(view)).toBe(
+      "sam (pinned) · weekly 90% left · not used by Auto (excluded)",
+    );
   });
 });
 
@@ -205,8 +266,12 @@ describe("switching", () => {
     expect(switchRestartsCache(thread({}), { kind: "profile", profile: "sam" })).toBe(false);
   });
 
-  it("explains missing account data", () => {
+  it("explains missing account data, and says loading before the first poll", () => {
     expect(unavailableLine(snapshot([]))).toBeNull();
+    expect(unavailableLine({ ...snapshot([]), available: false })).toBe("Loading account data…");
+    expect(
+      unavailableLine({ ...snapshot([]), available: false, unavailableReason: "loading accounts" }),
+    ).toBe("Loading account data…");
     expect(
       unavailableLine({
         ...snapshot([]),

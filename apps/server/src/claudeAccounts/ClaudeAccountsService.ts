@@ -3,18 +3,20 @@
  *
  * One service owns the whole feature on the server:
  *
- * - the **host snapshot**: `claude-autoswitch --status --json`, polled every
- *   15 s while the setting is on, overlaid with the live `rate_limit_event`
- *   windows Claude streams mid-turn, published to `subscribeClaudeAccounts`;
+ * - the **host snapshot**: `claude-autoswitch --status --json`, polled about
+ *   every 15 s while the setting is on (at once when it turns on), overlaid
+ *   with the live `rate_limit_event` windows Claude streams mid-turn, published
+ *   to `subscribeClaudeAccounts`;
  * - **placement**: `resolveForSession` runs inside `ClaudeAdapter.startSession`
  *   (through `applyClaudeAccountProfile`) and decides which config directory
  *   the spawned CLI gets — a pinned account, the account the thread already
  *   runs on (sticky, so the prompt cache survives), or `--place` for a new one;
  * - **mode changes** from the composer, restarting an idle session at once and a
- *   busy one when its turn ends;
- * - the **hard-limit path**: an authoritative rejection marks the account
- *   exhausted, moves an Auto thread to another account and asks it to continue;
- *   a pinned thread gets a notice instead.
+ *   busy one once its turn ends and nothing new has started;
+ * - the **hard-limit path**: an account-wide rejection (`five_hour`,
+ *   `seven_day`) marks the account exhausted and moves every Auto thread off
+ *   it as they start; a model-scoped one (`seven_day_opus`, …) moves only the
+ *   affected Auto thread. Pinned threads get a notice instead.
  *
  * The switcher is the only ranker. Nothing here reads credentials.
  */
@@ -28,6 +30,7 @@ import {
   ClaudeAccountsError,
   CommandId,
   MessageId,
+  type OrchestrationEvent,
   type ProviderRuntimeEvent,
   type ThreadClaudeAccount,
   type ThreadId,
@@ -36,12 +39,14 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -70,13 +75,20 @@ import {
 } from "./hardLimitHook.ts";
 import { computeShortLabels } from "./shortLabels.ts";
 
-export const STATUS_POLL_INTERVAL = "15 seconds";
+export const STATUS_POLL_INTERVAL_MS = 15_000;
+/** The poll is jittered by up to this much either way so several servers do not align. */
+export const STATUS_POLL_JITTER_MS = 3_000;
 /** A placement counts as pending — not yet visible in the switcher's session count — for this long. */
 const PENDING_PLACEMENT_WINDOW_MS = 90_000;
 /** How long an exhausted mark lasts when Claude did not say when the window resets. */
 const DEFAULT_EXHAUSTED_MS = 60 * 60 * 1000;
 const MAX_HANDLED_CONDITIONS = 256;
 const SNAPSHOT_CHANGE = "\u0000snapshot";
+/** Reported while the first `--status` answer is still on its way. */
+export const LOADING_REASON = "loading";
+
+/** The two account-wide windows. Every other type is scoped to a model or to overage. */
+const ACCOUNT_WIDE_LIMIT_TYPES: ReadonlySet<string> = new Set(["five_hour", "seven_day"]);
 
 export interface ClaudeAccountProfilesSettingsView {
   readonly enabled: boolean;
@@ -156,6 +168,17 @@ export function formatResetClock(iso: string | undefined): string {
   return `${hh}:${mm} UTC`;
 }
 
+/** Human name for a model- or overage-scoped limit type (`seven_day_opus` → `Opus weekly`). */
+export function scopedLimitLabel(rateLimitType: string): string {
+  if (rateLimitType === "overage") return "overage";
+  const scoped = /^seven_day_(.+)$/.exec(rateLimitType);
+  if (scoped?.[1]) {
+    const model = scoped[1].replace(/_/g, " ");
+    return `${model.charAt(0).toUpperCase()}${model.slice(1)} weekly`;
+  }
+  return rateLimitType.replace(/_/g, " ");
+}
+
 function windowFrom(
   raw: { readonly used?: number | null; readonly resets_at?: string | null } | null | undefined,
 ): ClaudeAccountWindow | undefined {
@@ -174,6 +197,13 @@ export function defaultProfileDir(path: Path.Path, profile: string): string {
 
 function activeLinkPath(path: Path.Path): string {
   return process.env.T3_CLAUDE_ACTIVE_LINK?.trim() || path.join(NodeOS.homedir(), ".claude-active");
+}
+
+/** The user-facing reason never carries the binary path or a traceback; the log does. */
+function shortUnavailableReason(failure: ClaudeAutoswitchFailure): string {
+  return failure.kind === "unavailable"
+    ? "claude-autoswitch is missing or too old for per-thread placement"
+    : "claude-autoswitch failed; see the server log";
 }
 
 export const make = Effect.gen(function* () {
@@ -208,6 +238,7 @@ export const make = Effect.gen(function* () {
   // since, and the accounts a hard limit took out of rotation.
   let lastStatus: SwitcherStatus | undefined;
   let lastStatusAtMs = 0;
+  let firstPollDone = false;
   let unavailableReason: string | undefined;
   const overlays = new Map<string, WindowOverlay>();
   const exhausted = new Map<string, ExhaustedMark>();
@@ -216,6 +247,14 @@ export const make = Effect.gen(function* () {
   const threadProfiles = new Map<ThreadId, string>();
   const notices = new Map<ThreadId, string>();
   const pendingRestart = new Set<ThreadId>();
+  /** Threads with a turn in flight, as seen on the provider event bus. */
+  const activeTurns = new Set<ThreadId>();
+  /**
+   * Threads a hard limit just moved, until their first turn starts on the new
+   * account. Rejections that arrive in between are stale copies from the old
+   * session: the new account has not been asked anything yet.
+   */
+  const movedAwaitingTurn = new Set<ThreadId>();
   const handledConditions = new Set<string>();
 
   const changes = yield* PubSub.unbounded<string>();
@@ -258,7 +297,7 @@ export const make = Effect.gen(function* () {
     raw: ClaudeAccountWindow | undefined,
   ): ClaudeAccountWindow | undefined => {
     const overlay = overlays.get(profile);
-    if (overlay !== undefined && overlay.atMs >= lastStatusAtMs && overlay[key] !== undefined) {
+    if (overlay !== undefined && overlay.atMs > lastStatusAtMs && overlay[key] !== undefined) {
       return overlay[key];
     }
     return raw;
@@ -271,6 +310,22 @@ export const make = Effect.gen(function* () {
     return (fiveHour?.usedPercent ?? 0) >= 100 || (weekly?.usedPercent ?? 0) >= 100;
   };
 
+  const profileDir = (profile: string): string => {
+    const known = knownProfile(profile);
+    return known?.dir ? known.dir : defaultProfileDir(path, profile);
+  };
+
+  /**
+   * Whether the account still exists: listed by the switcher (when it has
+   * answered) and backed by a config directory. A stale name must never reach
+   * `CLAUDE_CONFIG_DIR`, where the CLI would create an empty, signed-out home.
+   */
+  const profileExists = (profile: string): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      if (lastStatus !== undefined && knownProfile(profile) === undefined) return false;
+      return yield* fileSystem.exists(profileDir(profile)).pipe(Effect.orElseSucceed(() => false));
+    });
+
   /** Whether an existing thread may keep running on this account. Unknown accounts are trusted. */
   const usable = (profile: string): boolean => {
     if (exhausted.has(profile)) return false;
@@ -279,6 +334,9 @@ export const make = Effect.gen(function* () {
     if (known.auth?.state === "logged_out") return false;
     return !overHardLimit(profile);
   };
+
+  const usableAndPresent = (profile: string): Effect.Effect<boolean> =>
+    usable(profile) ? profileExists(profile) : Effect.succeed(false);
 
   const toStatus = (raw: SwitcherProfile, shortLabel: string): ClaudeAccountStatus => {
     const mark = exhausted.get(raw.name);
@@ -328,13 +386,23 @@ export const make = Effect.gen(function* () {
       }
       yield* pruneExhausted;
       if (lastStatus === undefined) {
-        return {
-          enabled: true,
-          available: false,
-          ...(unavailableReason ? { unavailableReason } : {}),
-          generatedAt,
-          profiles: [],
-        };
+        // Before the first answer the control is usable but empty; afterwards
+        // a missing status means the switcher could not be read.
+        return firstPollDone
+          ? {
+              enabled: true,
+              available: false,
+              ...(unavailableReason ? { unavailableReason } : {}),
+              generatedAt,
+              profiles: [],
+            }
+          : {
+              enabled: true,
+              available: true,
+              unavailableReason: LOADING_REASON,
+              generatedAt,
+              profiles: [],
+            };
       }
       const labels = computeShortLabels(
         lastStatus.profiles.map((profile) => profile.name),
@@ -356,20 +424,21 @@ export const make = Effect.gen(function* () {
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
-      // A fresher reading from the switcher supersedes older live overlays.
+      // A fresher reading from the switcher supersedes live overlays up to now.
       for (const [profile, overlay] of overlays) {
-        if (overlay.atMs < lastStatusAtMs) overlays.delete(profile);
+        if (overlay.atMs <= lastStatusAtMs) overlays.delete(profile);
       }
     });
 
   const noteFailure = (failure: ClaudeAutoswitchFailure) =>
     Effect.gen(function* () {
-      unavailableReason = failure.detail;
-      if (failure.kind === "unavailable") {
-        yield* Effect.logWarning("claude.account.switcher-unavailable", { detail: failure.detail });
-      } else {
-        yield* Effect.logWarning("claude.account.switcher-failed", { detail: failure.detail });
-      }
+      unavailableReason = shortUnavailableReason(failure);
+      yield* Effect.logWarning(
+        failure.kind === "unavailable"
+          ? "claude.account.switcher-unavailable"
+          : "claude.account.switcher-failed",
+        { detail: failure.detail },
+      );
     });
 
   const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
@@ -380,11 +449,13 @@ export const make = Effect.gen(function* () {
       } else {
         yield* noteFailure(outcome);
       }
+      firstPollDone = true;
       yield* announceSnapshot;
     });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
-  // one settings read per interval, so toggling it needs no restart.
+  // one settings read per interval, so toggling it needs no restart. The
+  // settings stream below wakes the loop as soon as the flag turns on.
   const pollLoop = Effect.gen(function* () {
     let wasEnabled: boolean | undefined;
     while (true) {
@@ -395,9 +466,19 @@ export const make = Effect.gen(function* () {
         yield* announceSnapshot;
       }
       wasEnabled = settings.enabled;
-      yield* Effect.sleep(STATUS_POLL_INTERVAL);
+      const jitter = yield* Random.nextIntBetween(
+        -STATUS_POLL_JITTER_MS,
+        STATUS_POLL_JITTER_MS + 1,
+      );
+      yield* Effect.sleep(Duration.millis(STATUS_POLL_INTERVAL_MS + jitter));
     }
   });
+
+  const refreshOnEnable = settingsService.streamChanges.pipe(
+    Stream.map((settings) => settings.experimental.claudeAccountProfiles.enabled),
+    Stream.changes,
+    Stream.runForEach((enabled) => (enabled ? refreshStatus() : announceSnapshot)),
+  );
 
   // ---------------------------------------------------------------- threads
 
@@ -423,11 +504,6 @@ export const make = Effect.gen(function* () {
       yield* repository.setResolved({ threadId, profile, resolvedAt });
       yield* announce(threadId);
     });
-
-  const profileDir = (profile: string): string => {
-    const known = knownProfile(profile);
-    return known?.dir ? known.dir : defaultProfileDir(path, profile);
-  };
 
   const pendingCounts = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -527,9 +603,17 @@ export const make = Effect.gen(function* () {
       }
       const row = rowResult.success;
       yield* pruneExhausted;
+      // A spawn is the restart a deferred mode change was waiting for.
+      if (pendingRestart.delete(threadId)) yield* announce(threadId);
 
       if (row.mode.kind === "profile") {
         const pinned = row.mode.profile;
+        if (!(yield* profileExists(pinned))) {
+          return yield* new ClaudeAccountPolicyError({
+            threadId,
+            detail: `Claude account ${pinned} no longer exists — switch this thread to Auto or another account.`,
+          });
+        }
         if (knownProfile(pinned)?.auth?.state === "logged_out") {
           return yield* new ClaudeAccountPolicyError({
             threadId,
@@ -554,9 +638,10 @@ export const make = Effect.gen(function* () {
       }
 
       // Sticky: an account the thread already ran on is kept until a hard
-      // limit, a sign-out or an exhausted mark takes it out. Nearing a limit
-      // never moves an existing thread; only new placements avoid it.
-      if (row.resolvedProfile !== null && usable(row.resolvedProfile)) {
+      // limit, a sign-out, an exhausted mark or its removal takes it out.
+      // Nearing a limit never moves an existing thread; only new placements
+      // avoid it.
+      if (row.resolvedProfile !== null && (yield* usableAndPresent(row.resolvedProfile))) {
         threadProfiles.set(threadId, row.resolvedProfile);
         return {
           profile: row.resolvedProfile,
@@ -592,6 +677,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Whether the thread is between turns on both views: the orchestration
+   * shell (which marks a turn active as soon as its command is accepted, before
+   * the provider has started it) and the provider session itself.
+   */
+  const threadIsIdle = (threadId: ThreadId): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      if (activeTurns.has(threadId)) return false;
+      const shell = yield* query
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(shell)) {
+        const session = shell.value.session;
+        if (
+          session !== null &&
+          (session.activeTurnId !== null ||
+            session.status === "running" ||
+            session.status === "starting")
+        ) {
+          return false;
+        }
+      }
+      const sessions = yield* providers.listSessions();
+      const live = sessions.find(
+        (session) => session.threadId === threadId && session.status !== "closed",
+      );
+      return live === undefined || (live.status !== "running" && live.activeTurnId === undefined);
+    });
+
   /** Restarts the thread's provider session so its next turn spawns on the new account. */
   const restartForNewAccount = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -600,7 +714,7 @@ export const make = Effect.gen(function* () {
         (session) => session.threadId === threadId && session.status !== "closed",
       );
       if (live === undefined) return;
-      if (live.status === "running" || live.activeTurnId !== undefined) {
+      if (!(yield* threadIsIdle(threadId))) {
         pendingRestart.add(threadId);
         yield* Effect.logInfo("claude.account.restart-deferred", { threadId });
         return;
@@ -608,20 +722,26 @@ export const make = Effect.gen(function* () {
       yield* stopSessionQuietly(threadId, "mode-changed");
     });
 
+  /**
+   * The turn a mode change waited for has ended. Stop only if nothing new has
+   * started since (a queued message may already be on its way); otherwise
+   * keep waiting for the next completion.
+   */
   const completePendingRestart = (threadId: ThreadId) =>
     Effect.gen(function* () {
-      if (!pendingRestart.delete(threadId)) return;
+      if (!pendingRestart.has(threadId)) return;
+      if (!(yield* threadIsIdle(threadId))) {
+        yield* Effect.logInfo("claude.account.restart-still-deferred", { threadId });
+        return;
+      }
+      pendingRestart.delete(threadId);
       yield* stopSessionQuietly(threadId, "mode-changed-after-turn");
       yield* announce(threadId);
     });
 
   const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({ threadId, mode }) =>
     Effect.gen(function* () {
-      if (
-        mode.kind === "profile" &&
-        lastStatus !== undefined &&
-        knownProfile(mode.profile) === undefined
-      ) {
+      if (mode.kind === "profile" && !(yield* profileExists(mode.profile))) {
         return yield* new ClaudeAccountsError({
           operation: "setThreadMode",
           reason: "invalid",
@@ -634,12 +754,13 @@ export const make = Effect.gen(function* () {
         .setMode({ threadId, mode, updatedAt })
         .pipe(Effect.mapError(internal("setThreadMode")));
       notices.delete(threadId);
+      movedAwaitingTurn.delete(threadId);
       yield* pruneExhausted;
 
       const wouldChange =
         mode.kind === "profile"
           ? row.resolvedProfile !== mode.profile
-          : row.resolvedProfile !== null && !usable(row.resolvedProfile);
+          : row.resolvedProfile !== null && !(yield* usableAndPresent(row.resolvedProfile));
       if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
         notices.set(
           threadId,
@@ -657,31 +778,43 @@ export const make = Effect.gen(function* () {
 
   // -------------------------------------------------------------- hard limit
 
-  const continueText = (from: string, to: string) =>
-    `Continue where you left off — this thread moved to Claude account ${to} because ${from} hit its usage limit.`;
+  const continueText = (from: string, to: string, scope: string | undefined) =>
+    scope === undefined
+      ? `Continue where you left off — this thread moved to Claude account ${to} because ${from} hit its usage limit.`
+      : `Continue where you left off — this thread moved to Claude account ${to} because ${from} has no ${scope} allowance left.`;
 
-  const dispatchContinueTurn = (threadId: ThreadId, from: string, to: string) =>
+  const dispatchContinueTurn = (
+    threadId: ThreadId,
+    from: string,
+    to: string,
+    scope: string | undefined,
+  ) =>
     Effect.gen(function* () {
       const shell = yield* query.getThreadShellById(threadId);
       if (Option.isNone(shell)) return;
       const commandUuid = yield* uuid;
       const messageUuid = yield* uuid;
       const createdAt = yield* nowIso;
-      yield* dispatcher.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make(`server:claude-account-move:${commandUuid}`),
-        threadId,
-        message: {
-          messageId: MessageId.make(`claude-account-move:${messageUuid}`),
-          role: "user",
-          text: continueText(from, to),
-          attachments: [],
+      // The thread's owner is the actor: this is the server finishing the
+      // owner's own turn on another account, not a message from someone else.
+      yield* dispatcher.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make(`server:claude-account-move:${commandUuid}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`claude-account-move:${messageUuid}`),
+            role: "user",
+            text: continueText(from, to, scope),
+            attachments: [],
+          },
+          modelSelection: shell.value.modelSelection,
+          runtimeMode: shell.value.runtimeMode,
+          interactionMode: shell.value.interactionMode,
+          createdAt,
         },
-        modelSelection: shell.value.modelSelection,
-        runtimeMode: shell.value.runtimeMode,
-        interactionMode: shell.value.interactionMode,
-        createdAt,
-      });
+        { actorUserId: shell.value.ownerUserId },
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("claude.account.continue-turn-failed", { threadId, cause }),
@@ -704,8 +837,16 @@ export const make = Effect.gen(function* () {
       if (!settings.enabled) return false;
       const { threadId, rateLimitType } = condition;
 
-      const row = yield* repository.get(threadId).pipe(Effect.orElseSucceed(() => undefined));
-      let profile = threadProfiles.get(threadId) ?? row?.resolvedProfile ?? undefined;
+      const rowResult = yield* repository.get(threadId).pipe(Effect.result);
+      if (rowResult._tag === "Failure") {
+        yield* Effect.logWarning("claude.account.hard-limit-row-read-failed", {
+          threadId,
+          cause: rowResult.failure.message,
+        });
+        return false;
+      }
+      const row = rowResult.success;
+      let profile = threadProfiles.get(threadId) ?? row.resolvedProfile ?? undefined;
       if (profile === undefined) {
         profile = (yield* currentProfileFromActiveLink)?.profile;
       }
@@ -714,17 +855,31 @@ export const make = Effect.gen(function* () {
           threadId,
           rateLimitType,
         });
-        return true;
+        return false;
       }
       const resetsAt =
         condition.resetAt !== undefined ? isoFromUnixSeconds(condition.resetAt) : undefined;
-      // Repeated copies of one rejection (same thread, limit and reset) are
-      // consumed once. The key leaves the account out on purpose: the first
-      // copy moves the thread, so a later copy would otherwise read as a new
-      // rejection against the account it just moved to.
-      if (!rememberCondition(`${threadId}\u0000${rateLimitType}\u0000${resetsAt ?? "unknown"}`)) {
+
+      // A thread this service just moved has not asked its new account for
+      // anything until a turn starts there, so a rejection before that is a
+      // stale copy from the session that was stopped.
+      if (movedAwaitingTurn.has(threadId)) {
+        yield* Effect.logInfo("claude.account.hard-limit-stale", { threadId, rateLimitType });
         return true;
       }
+      // Repeated copies of one rejection against one account are consumed
+      // once. Accounts often share a reset instant (5-hour windows are
+      // hour-aligned), so the account is part of the key. Without a reset time
+      // nothing identifies the rejection, so every copy is judged on its own.
+      if (
+        resetsAt !== undefined &&
+        !rememberCondition(`${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`)
+      ) {
+        return true;
+      }
+
+      const accountWide = ACCOUNT_WIDE_LIMIT_TYPES.has(rateLimitType);
+      const scope = accountWide ? undefined : scopedLimitLabel(rateLimitType);
 
       // Keep the host-wide symlink honest: the switcher moves it only when this
       // account is the elected one, and answers `no-op` otherwise.
@@ -734,15 +889,19 @@ export const make = Effect.gen(function* () {
         profile,
         rateLimitType,
         resetsAt,
+        accountWide,
         election: election.kind === "ok" ? election.value.status : election.kind,
       });
-      yield* markExhausted(profile, resetsAt);
+      // Only an account-wide window takes the account out of rotation; a
+      // model-scoped one leaves other models, and other threads, alone.
+      if (accountWide) yield* markExhausted(profile, resetsAt);
 
-      const mode = row?.mode ?? { kind: "auto" };
-      if (mode.kind === "profile") {
+      if (row.mode.kind === "profile") {
         notices.set(
           threadId,
-          `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`,
+          accountWide
+            ? `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`
+            : `${profile} has no ${scope} allowance left until ${formatResetClock(resetsAt)} — switch the model or account.`,
         );
         yield* announce(threadId);
         return true;
@@ -763,8 +922,9 @@ export const make = Effect.gen(function* () {
         return true;
       }
       notices.delete(threadId);
+      movedAwaitingTurn.add(threadId);
       yield* stopSessionQuietly(threadId, "hard-limit");
-      yield* dispatchContinueTurn(threadId, profile, moved.success.profile);
+      yield* dispatchContinueTurn(threadId, profile, moved.success.profile, scope);
       yield* announce(threadId);
       return true;
     });
@@ -800,12 +960,45 @@ export const make = Effect.gen(function* () {
   const onProviderEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       yield* overlayFromEvent(event);
-      if (
-        (event.type === "turn.completed" || event.type === "turn.aborted") &&
-        pendingRestart.has(event.threadId)
-      ) {
-        yield* completePendingRestart(event.threadId);
+      switch (event.type) {
+        case "turn.started": {
+          activeTurns.add(event.threadId);
+          // The first turn on the new account: from here a rejection is real.
+          if (movedAwaitingTurn.delete(event.threadId)) yield* announce(event.threadId);
+          return;
+        }
+        case "turn.completed":
+        case "turn.aborted": {
+          activeTurns.delete(event.threadId);
+          yield* completePendingRestart(event.threadId);
+          return;
+        }
+        case "session.exited": {
+          activeTurns.delete(event.threadId);
+          return;
+        }
+        default:
+          return;
       }
+    });
+
+  const onDomainEvent = (event: OrchestrationEvent) =>
+    Effect.gen(function* () {
+      if (event.type !== "thread.deleted") return;
+      const threadId = event.payload.threadId;
+      threadProfiles.delete(threadId);
+      notices.delete(threadId);
+      pendingRestart.delete(threadId);
+      activeTurns.delete(threadId);
+      movedAwaitingTurn.delete(threadId);
+      yield* repository
+        .delete(threadId)
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.account.row-delete-failed", { threadId, cause }),
+          ),
+        );
+      yield* announce(threadId);
     });
 
   // ----------------------------------------------------------------- streams
@@ -851,6 +1044,8 @@ export const make = Effect.gen(function* () {
     }),
   );
   yield* providers.streamEvents.pipe(Stream.runForEach(onProviderEvent), Effect.forkScoped);
+  yield* dispatcher.streamDomainEvents.pipe(Stream.runForEach(onDomainEvent), Effect.forkScoped);
+  yield* refreshOnEnable.pipe(Effect.forkScoped);
   yield* pollLoop.pipe(Effect.forkScoped);
 
   return ClaudeAccountsService.of({

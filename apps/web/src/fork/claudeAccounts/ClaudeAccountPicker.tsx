@@ -38,7 +38,11 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { barColor } from "../../components/usage/UsageLimits";
 import { cn } from "../../lib/utils";
-import { useClaudeAccountsSnapshot, useThreadClaudeAccount } from "./hooks";
+import {
+  useClaudeAccountsEnabled,
+  useClaudeAccountsSnapshot,
+  useThreadClaudeAccount,
+} from "./hooks";
 import {
   type AccountChipTone,
   type AccountRowView,
@@ -147,11 +151,20 @@ function AccountRow({ row }: { readonly row: AccountRowView }) {
           <span className="shrink-0 text-muted-foreground text-2xs">host default</span>
         ) : null}
         <span className="ms-auto flex shrink-0 items-center gap-1">
-          {row.chips.map((chip) => (
-            <Badge key={chip.id} variant={CHIP_VARIANT[chip.tone]} size="sm">
-              {chip.label}
-            </Badge>
-          ))}
+          {row.chips.map((chip) =>
+            chip.detail ? (
+              <Tooltip key={chip.id}>
+                <TooltipTrigger render={<Badge variant={CHIP_VARIANT[chip.tone]} size="sm" />}>
+                  {chip.label}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{chip.detail}</TooltipPopup>
+              </Tooltip>
+            ) : (
+              <Badge key={chip.id} variant={CHIP_VARIANT[chip.tone]} size="sm">
+                {chip.label}
+              </Badge>
+            ),
+          )}
           <MenuRadioItemIndicator />
         </span>
       </span>
@@ -175,7 +188,7 @@ function AccountRow({ row }: { readonly row: AccountRowView }) {
   );
 }
 
-function ClaudeAccountPicker(props: {
+function ClaudeAccountPickerMenu(props: {
   readonly threadRef: ScopedThreadRef;
   readonly snapshot: ClaudeAccountsSnapshot;
   readonly running: boolean;
@@ -331,8 +344,33 @@ function ClaudeAccountPicker(props: {
  * The picker for the composer toolbar, or null when it does not apply: the
  * selected instance is not Claude, several models are selected (each becomes
  * its own thread), or the server has the feature off or cannot answer. The
- * account stream is only opened while a Claude instance is selected.
+ * account stream is only opened while a Claude instance is selected, and the
+ * host reads nothing from it but the on/off answer.
  */
+/**
+ * Owns the snapshot and thread streams, so their frames re-render only the
+ * picker and never the composer that hosts it.
+ */
+function ClaudeAccountPicker(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly running: boolean;
+  readonly size: ComposerControlSize;
+  readonly hidden: boolean;
+}) {
+  const snapshot = useClaudeAccountsSnapshot(props.environmentId);
+  if (snapshot === null || !snapshot.enabled) return null;
+  return (
+    <ClaudeAccountPickerMenu
+      threadRef={props.threadRef}
+      snapshot={snapshot}
+      running={props.running}
+      size={props.size}
+      hidden={props.hidden}
+    />
+  );
+}
+
 export function useClaudeAccountPickerControl(input: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -343,12 +381,12 @@ export function useClaudeAccountPickerControl(input: {
   readonly hidden: boolean;
 }): ReactNode | null {
   const applies = input.driverKind === CLAUDE_DRIVER && !input.multipleModels;
-  const snapshot = useClaudeAccountsSnapshot(applies ? input.environmentId : null);
-  if (!applies || snapshot === null || !snapshot.enabled) return null;
+  const enabled = useClaudeAccountsEnabled(applies ? input.environmentId : null);
+  if (!applies || !enabled) return null;
   return (
     <ClaudeAccountPicker
+      environmentId={input.environmentId}
       threadRef={input.threadRef}
-      snapshot={snapshot}
       running={input.running}
       size={input.size}
       hidden={input.hidden}

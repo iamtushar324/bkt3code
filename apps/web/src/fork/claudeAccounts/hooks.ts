@@ -16,6 +16,9 @@ import type {
   ScopedThreadRef,
   ThreadClaudeAccount,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect } from "react";
 import { create } from "zustand";
 
@@ -71,6 +74,30 @@ export function useClaudeAccountsSnapshot(
       : claudeAccountsEnvironment.accounts({ environmentId, input: {} }),
   );
   return live.data;
+}
+
+type SnapshotResult = AsyncResult.AsyncResult<ClaudeAccountsSnapshot, unknown>;
+
+const NO_SNAPSHOT_ATOM: Atom.Atom<SnapshotResult> = Atom.make<SnapshotResult>(
+  AsyncResult.initial(false),
+).pipe(Atom.withLabel("claude-accounts:none"));
+
+/** Module-level, so the mapped atom `useAtomValue` builds stays stable. */
+function snapshotEnabled(result: SnapshotResult): boolean {
+  return Option.getOrNull(AsyncResult.value(result))?.enabled === true;
+}
+
+/**
+ * Whether the server has the feature on, as a plain boolean: the host
+ * component re-renders only when the answer flips, never on the snapshot
+ * frames themselves. `null` opens no stream.
+ */
+export function useClaudeAccountsEnabled(environmentId: EnvironmentId | null): boolean {
+  const atom: Atom.Atom<SnapshotResult> =
+    environmentId === null
+      ? NO_SNAPSHOT_ATOM
+      : claudeAccountsEnvironment.accounts({ environmentId, input: {} });
+  return useAtomValue(atom, snapshotEnabled);
 }
 
 /**
