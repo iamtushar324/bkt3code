@@ -7079,9 +7079,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {
-                    /* T3-CUSTOM(expbkt3): Claude account profiles per thread. */ claudeAccountControl
-                  }
+                  {claudeAccountControl /* T3-CUSTOM(expbkt3): Claude account picker */}
                   {showComposerAttachAction ? (
                     <>
                       <input
