@@ -187,6 +187,85 @@ describe("Claude authoritative hard-limit handling", () => {
     }),
   );
 
+  it.effect(
+    "hands the rejection to per-thread placement when it is on, and skips the global path",
+    () =>
+      Effect.gen(function* () {
+        const handledByHook: Array<{
+          threadId: ThreadId;
+          rateLimitType: string;
+          resetAt: number | undefined;
+        }> = [];
+        let electionRequests = 0;
+        yield* runClaudeHardLimitRotation(
+          Stream.make(
+            rateLimitEvent({
+              eventId: "hook-handled",
+              threadId: affectedThread,
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt: 1_776_725_705,
+            }),
+          ),
+          {
+            requestElection: () =>
+              Effect.sync(() => {
+                electionRequests += 1;
+                return { status: "switched" } as const;
+              }),
+            recycleSession: () => Effect.die("per-thread placement owns the recycle"),
+            accounts: () => ({
+              handle: (condition) =>
+                Effect.sync(() => {
+                  handledByHook.push(condition);
+                  return true;
+                }),
+            }),
+          },
+        );
+
+        assert.deepEqual(handledByHook, [
+          { threadId: affectedThread, rateLimitType: "five_hour", resetAt: 1_776_725_705 },
+        ]);
+        assert.equal(electionRequests, 0);
+      }),
+  );
+
+  it.effect("keeps today's machine-global path while per-thread placement is off", () =>
+    Effect.gen(function* () {
+      const electionRequests: Array<string> = [];
+      const recycledThreads: Array<ThreadId> = [];
+      const hardLimit = rateLimitEvent({
+        eventId: "hook-declined",
+        threadId: affectedThread,
+        status: "rejected",
+        rateLimitType: "five_hour",
+        resetsAt: 1_776_725_705,
+      });
+      yield* runClaudeHardLimitRotation(
+        Stream.fromIterable([
+          hardLimit,
+          { ...hardLimit, eventId: EventId.make("hook-declined-copy") },
+        ]),
+        {
+          requestElection: (rateLimitType) =>
+            Effect.sync(() => {
+              electionRequests.push(rateLimitType);
+              return { status: "switched" } as const;
+            }),
+          recycleSession: (threadId) =>
+            Effect.sync(() => {
+              recycledThreads.push(threadId);
+            }),
+          accounts: () => ({ handle: () => Effect.succeed(false) }),
+        },
+      );
+
+      assert.deepEqual(electionRequests, ["five_hour"]);
+      assert.deepEqual(recycledThreads, [affectedThread]);
+    }),
+  );
+
   it.effect("leaves the session running for every unconfirmed election outcome", () =>
     Effect.gen(function* () {
       const outcomes: ReadonlyArray<ClaudeAutoswitchElectionResult> = [

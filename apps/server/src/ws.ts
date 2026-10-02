@@ -156,6 +156,8 @@ import { PlanReviewService } from "./planreview/PlanReviewService.ts";
 import { AgentUiService } from "./agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import { ThreadCommentsService } from "./threadcomments/ThreadCommentsService.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import { ClaudeAccountsService } from "./claudeAccounts/ClaudeAccountsService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -727,6 +729,8 @@ const makeWsRpcLayer = (
       const agentUi = yield* AgentUiService;
       // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
       const threadComments = yield* ThreadCommentsService;
+      // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+      const claudeAccounts = yield* ClaudeAccountsService;
       // Resolved once per connection: it only labels this actor's own comments.
       const actorLabel =
         actorUserId === null
@@ -2314,6 +2318,7 @@ const makeWsRpcLayer = (
         observeRpcStream,
         requireThreadAccess,
         visibleAggregateIdsForActor,
+        claudeAccounts,
       });
       // T3-CUSTOM(expbkt3): END
 

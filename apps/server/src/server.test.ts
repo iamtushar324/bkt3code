@@ -174,6 +174,8 @@ import * as AgentUiServiceLayer from "./agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import * as ThreadComments from "./persistence/ThreadComments.ts";
 import * as ThreadCommentsServiceLayer from "./threadcomments/ThreadCommentsService.ts";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import * as ClaudeAccountsServiceLayer from "./claudeAccounts/ClaudeAccountsService.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -847,6 +849,26 @@ const buildAppUnderTest = (options?: {
         ThreadCommentsServiceLayer.layer.pipe(
           Layer.provide(ThreadComments.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
         ),
+      ),
+      // T3-CUSTOM(expbkt3): Claude account profiles are off in router tests; the
+      // snapshot stream still answers so the web can hide the control.
+      Layer.provide(
+        Layer.mock(ClaudeAccountsServiceLayer.ClaudeAccountsService)({
+          snapshot: () =>
+            Effect.succeed({
+              enabled: false,
+              available: false,
+              generatedAt: "2026-07-27T00:00:00.000Z",
+              profiles: [],
+            }),
+          watchSnapshot: () =>
+            Stream.make({
+              enabled: false,
+              available: false,
+              generatedAt: "2026-07-27T00:00:00.000Z",
+              profiles: [],
+            }),
+        }),
       ),
       Layer.provide(
         TurnStartBootstrap.layer.pipe(

@@ -27,6 +27,8 @@ import {
   ThreadCommentsError,
   // T3-CUSTOM(expbkt3): per-thread API-level cost.
   UsageReadError,
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  ClaudeAccountsError,
   type AuthSessionId,
   type OrchestrationEvent,
   type ThreadId,
@@ -57,6 +59,8 @@ import { sharedLinearIssueStatusCache } from "./linear/LinearIssueStatusCache.ts
 import { linearStatusBridgeToken, makeLinearStatusBridge } from "./linear/LinearStatusBridge.ts";
 import type { SessionArchiveServiceShape } from "./sessionArchive/SessionArchiveService.ts";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import type * as ClaudeAccountsService from "./claudeAccounts/ClaudeAccountsService.ts";
 // T3-CUSTOM(expbkt3): toolyard auto-connect
 import { connectToolyard } from "./mcp/ToolyardConnect.ts";
 
@@ -119,6 +123,8 @@ export interface ForkWsHandlerDeps {
     { readonly threadIds: ReadonlySet<string>; readonly projectIds: ReadonlySet<string> },
     ProjectionRepositoryError
   >;
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  readonly claudeAccounts: ClaudeAccountsService.ClaudeAccountsServiceShape;
 }
 
 export const makeForkWsHandlers = ({
@@ -144,6 +150,8 @@ export const makeForkWsHandlers = ({
   observeRpcStream,
   requireThreadAccess,
   visibleAggregateIdsForActor,
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+  claudeAccounts,
 }: ForkWsHandlerDeps) => {
   // T3-CUSTOM(expbkt3): review comments. Access denial reads as "not found" so
   // a caller cannot tell a hidden thread from a missing one.
@@ -192,6 +200,70 @@ export const makeForkWsHandlers = ({
 
   const guardedReview = (documentId: string) => guardDocument(documentId);
   // T3-CUSTOM(expbkt3): END native plan review helpers.
+
+  // T3-CUSTOM(expbkt3): BEGIN Claude account profiles per thread. The host
+  // snapshot is readable by any authenticated user of the environment. Thread
+  // calls run the normal per-thread access check once the thread exists; a
+  // draft thread (the web sets a mode before the first send, under the id the
+  // bootstrap will adopt) has no row to check yet, so the caller is trusted.
+  const guardClaudeAccountsThread = (operation: string, threadId: ThreadId) =>
+    projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ClaudeAccountsError({ operation, reason: "internal", detail: cause.message }),
+      ),
+      Effect.flatMap((shell) =>
+        Option.isNone(shell)
+          ? Effect.void
+          : requireThreadAccess(threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ClaudeAccountsError({
+                    operation,
+                    reason: "not-found",
+                    detail: cause.message,
+                  }),
+              ),
+            ),
+      ),
+    );
+  const claudeAccountsHandlers = {
+    [WS_FORK_METHODS.claudeAccountsGetThread]: (input) =>
+      observeRpcEffect(
+        WS_FORK_METHODS.claudeAccountsGetThread,
+        guardClaudeAccountsThread("getThread", input.threadId).pipe(
+          Effect.andThen(claudeAccounts.getThread(input.threadId)),
+        ),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
+    [WS_FORK_METHODS.claudeAccountsSetThreadMode]: (input) =>
+      observeRpcEffect(
+        WS_FORK_METHODS.claudeAccountsSetThreadMode,
+        guardClaudeAccountsThread("setThreadMode", input.threadId).pipe(
+          Effect.andThen(claudeAccounts.setThreadMode(input)),
+        ),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
+    [WS_FORK_METHODS.subscribeClaudeAccounts]: () =>
+      observeRpcStream(WS_FORK_METHODS.subscribeClaudeAccounts, claudeAccounts.watchSnapshot(), {
+        "rpc.aggregate": "claude-accounts",
+      }),
+    [WS_FORK_METHODS.subscribeThreadClaudeAccount]: (input) =>
+      observeRpcStream(
+        WS_FORK_METHODS.subscribeThreadClaudeAccount,
+        Stream.fromEffect(guardClaudeAccountsThread("watch", input.threadId)).pipe(
+          Stream.flatMap(() => claudeAccounts.watchThread(input.threadId)),
+        ),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
+  } satisfies Pick<
+    ForkWsHandlers,
+    | typeof WS_FORK_METHODS.claudeAccountsGetThread
+    | typeof WS_FORK_METHODS.claudeAccountsSetThreadMode
+    | typeof WS_FORK_METHODS.subscribeClaudeAccounts
+    | typeof WS_FORK_METHODS.subscribeThreadClaudeAccount
+  >;
+  // T3-CUSTOM(expbkt3): END Claude account profiles per thread.
 
   return {
     [WS_METHODS.personalMcpGetProfile]: (_input) =>
@@ -689,6 +761,8 @@ export const makeForkWsHandlers = ({
         { "rpc.aggregate": "thread-comments" },
       ),
     // T3-CUSTOM(expbkt3): END review comments.
+    // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+    ...claudeAccountsHandlers,
     // T3-CUSTOM(expbkt3): toolyard auto-connect. The Clerk token in the payload
     // is handed to toolyard once and is never logged or traced; the result
     // carries no credential either way. Bound to the connection's actor, never

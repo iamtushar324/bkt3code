@@ -15,6 +15,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import {
+  type ClaudeHardLimitAccountsHook,
+  readClaudeHardLimitAccountsHook,
+} from "../claudeAccounts/hardLimitHook.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as ProviderService from "./Services/ProviderService.ts";
 
@@ -78,6 +82,7 @@ interface ClaudeHardLimitCondition {
   readonly key: string;
   readonly rateLimitType: ClaudeRateLimitType;
   readonly threadId: ThreadId;
+  readonly resetAt: number | undefined;
 }
 
 export interface ClaudeHardLimitRotationDependencies {
@@ -85,6 +90,14 @@ export interface ClaudeHardLimitRotationDependencies {
     rateLimitType: ClaudeRateLimitType,
   ) => Effect.Effect<ClaudeAutoswitchElectionResult>;
   readonly recycleSession: (threadId: ThreadId) => Effect.Effect<void>;
+  /**
+   * Per-thread account placement (`claudeAccounts/`). When present and the
+   * feature is on, it owns the rejection: it marks the thread's own account
+   * exhausted, moves an Auto thread and asks it to continue, or leaves a
+   * pinned thread with a notice. It answers `false` while the feature is off,
+   * and the machine-global path below runs exactly as before.
+   */
+  readonly accounts?: () => ClaudeHardLimitAccountsHook | undefined;
 }
 
 function hardLimitCondition(event: ProviderRuntimeEvent): ClaudeHardLimitCondition | null {
@@ -108,6 +121,7 @@ function hardLimitCondition(event: ProviderRuntimeEvent): ClaudeHardLimitConditi
     key: `${String(event.providerInstanceId ?? event.provider)}\u0000${info.rateLimitType}\u0000${String(resetAt ?? "unknown")}`,
     rateLimitType: info.rateLimitType,
     threadId: event.threadId,
+    resetAt,
   };
 }
 
@@ -130,17 +144,33 @@ export const runClaudeHardLimitRotation = Effect.fn("ClaudeHardLimitRotation.run
   yield* events.pipe(
     Stream.runForEach((event) => {
       const condition = hardLimitCondition(event);
-      if (condition === null || !rememberCondition(handled, condition.key)) return Effect.void;
+      if (condition === null) return Effect.void;
 
-      return dependencies
-        .requestElection(condition.rateLimitType)
-        .pipe(
-          Effect.flatMap((result) =>
-            result.status === "switched"
-              ? dependencies.recycleSession(condition.threadId)
-              : Effect.void,
-          ),
-        );
+      // Per-thread placement, when installed and enabled, handles the
+      // rejection for the emitting thread's own account and dedups itself.
+      const accountsHook = dependencies.accounts?.();
+      const handledByAccounts = accountsHook
+        ? accountsHook.handle({
+            threadId: condition.threadId,
+            rateLimitType: condition.rateLimitType,
+            resetAt: condition.resetAt,
+          })
+        : Effect.succeed(false);
+
+      return handledByAccounts.pipe(
+        Effect.flatMap((handledPerThread) => {
+          if (handledPerThread || !rememberCondition(handled, condition.key)) return Effect.void;
+          return dependencies
+            .requestElection(condition.rateLimitType)
+            .pipe(
+              Effect.flatMap((result) =>
+                result.status === "switched"
+                  ? dependencies.recycleSession(condition.threadId)
+                  : Effect.void,
+              ),
+            );
+        }),
+      );
     }),
   );
 });
@@ -239,6 +269,7 @@ const makeLive = Effect.gen(function* () {
   yield* runClaudeHardLimitRotation(providers.streamEvents, {
     requestElection,
     recycleSession,
+    accounts: readClaudeHardLimitAccountsHook,
   }).pipe(Effect.forkScoped);
 });
 

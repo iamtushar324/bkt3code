@@ -94,6 +94,8 @@ import {
   useThreadCommentsEmptySendAllowed,
   withThreadCommentsSendable,
 } from "~/fork/threadComments/threadCommentsSurface";
+// T3-CUSTOM(expbkt3): Claude account profiles per thread.
+import { useClaudeAccountPickerControl } from "~/fork/claudeAccounts/ClaudeAccountPicker";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -5041,7 +5043,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     size: composerControlsInStrip ? "xs" : "sm",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
+  // T3-CUSTOM(expbkt3): Claude account profiles per thread. A resting block, so the
+  // strip's overflow measurement counts it; it sits first and so hides last.
+  const claudeAccountControl = useClaudeAccountPickerControl({
+    environmentId,
+    threadRef: routeThreadRef,
+    driverKind: selectedProviderEntry?.driverKind,
+    multipleModels: multipleModelSelections !== null,
+    running: phase === "running",
+    size: composerControlsInStrip ? "xs" : "sm",
+    hidden: composerControlsHidden || restingHiddenBlockCount > (providerTraitsPicker ? 2 : 1),
+  });
   const restingBlockDefs = [
+    // T3-CUSTOM(expbkt3): Claude account profiles per thread.
+    ...(claudeAccountControl ? [{ id: "claude-account", content: claudeAccountControl }] : []),
     ...(providerTraitsPicker
       ? [
           {
