@@ -6,12 +6,18 @@
  */
 import {
   BIFROST_GATEWAYS,
+  BIFROST_MCP_INTEGRATION_ID,
+  isToolyardGatewayUrl,
   PersonalMcpProfile,
   type PersonalMcpProfileUpdate,
   PersonalMcpSettingsError,
   PersonalMcpIntegration,
   type PersonalMcpIntegrationId,
+  type PersonalMcpIntegrationUpdate,
   resolveBifrostGateway,
+  TOOLYARD_MCP_INTEGRATION_ID,
+  TOOLYARD_MCP_INTEGRATION_NAME,
+  TOOLYARD_MCP_URL,
   UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -64,15 +70,56 @@ const secretName = (userId: UserId, integrationId: PersonalMcpIntegrationId): st
   `user-mcp-${hash(`${userId}\0${integrationId}`)}`;
 
 /**
- * Pins every `x-bf-vk` integration to an allowlisted Bifrost-compatible
- * gateway: an allowlisted URL is kept (in canonical form), anything else falls
- * back to Bifrost. Applied on write and on every read.
+ * The built-in toolyard integration every profile carries. Its credential is
+ * written only by the connect flow (`ToolyardConnect.ts`), never by a client.
+ */
+export const builtInToolyardIntegration = (): PersonalMcpIntegration => ({
+  id: TOOLYARD_MCP_INTEGRATION_ID,
+  name: TOOLYARD_MCP_INTEGRATION_NAME,
+  url: TOOLYARD_MCP_URL,
+  enabled: true,
+  authMode: "bearer",
+  customHeaderName: "",
+  credentialConfigured: false,
+  providerInstanceIds: [],
+  allowedTools: [],
+});
+
+/**
+ * The setup toolyard replaced: a `bifrost` integration pointed at toolyard,
+ * whose stored virtual key was a toolyard key. toolyard is its own integration
+ * now and the Bifrost allowlist no longer names it, so left alone this entry
+ * would canonicalize to bk-toolhub and send a toolyard key there. It is
+ * dropped on read and on write, secret included.
+ */
+export const isLegacyToolyardBifrostIntegration = (integration: {
+  readonly id: string;
+  readonly url: string;
+}): boolean =>
+  integration.id === BIFROST_MCP_INTEGRATION_ID && isToolyardGatewayUrl(integration.url);
+
+/**
+ * Pins what a client may not change. The built-in `toolyard` integration keeps
+ * its name, URL, bearer auth and enabled state; every `x-bf-vk` integration is
+ * pinned to an allowlisted Bifrost gateway (an allowlisted URL is kept in
+ * canonical form, anything else falls back to Bifrost). Applied on write and
+ * on every read.
  */
 export const canonicalizePersonalMcpIntegration = <
   T extends PersonalMcpProfileUpdate["integrations"][number] | PersonalMcpIntegration,
 >(
   integration: T,
 ): T => {
+  if (integration.id === TOOLYARD_MCP_INTEGRATION_ID) {
+    return {
+      ...integration,
+      name: TOOLYARD_MCP_INTEGRATION_NAME,
+      url: TOOLYARD_MCP_URL,
+      enabled: true,
+      authMode: "bearer",
+      customHeaderName: "",
+    };
+  }
   if (integration.authMode !== "x-bf-vk") return integration;
   const gateway = resolveBifrostGateway(integration.url) ?? BIFROST_GATEWAYS[0];
   return {
@@ -83,6 +130,39 @@ export const canonicalizePersonalMcpIntegration = <
     customHeaderName: "",
   };
 };
+
+/**
+ * The integrations a profile presents: the built-in toolyard entry first
+ * (the stored one, or a fresh unconnected one), then the user's own, with any
+ * legacy toolyard-via-Bifrost entry removed.
+ */
+const presentIntegrations = (
+  stored: ReadonlyArray<PersonalMcpIntegration>,
+): ReadonlyArray<PersonalMcpIntegration> => {
+  const canonical = stored
+    .filter((integration) => !isLegacyToolyardBifrostIntegration(integration))
+    .map(canonicalizePersonalMcpIntegration);
+  const toolyard =
+    canonical.find((integration) => integration.id === TOOLYARD_MCP_INTEGRATION_ID) ??
+    builtInToolyardIntegration();
+  return [
+    toolyard,
+    ...canonical.filter((integration) => integration.id !== TOOLYARD_MCP_INTEGRATION_ID),
+  ];
+};
+
+const toIntegrationUpdate = (
+  integration: PersonalMcpIntegration,
+): PersonalMcpIntegrationUpdate => ({
+  id: integration.id,
+  name: integration.name,
+  url: integration.url,
+  enabled: integration.enabled,
+  authMode: integration.authMode,
+  customHeaderName: integration.customHeaderName,
+  providerInstanceIds: integration.providerInstanceIds,
+  allowedTools: integration.allowedTools,
+});
 
 const parseStoredProfile = Effect.fn("UserMcpProfileStore.parseStoredProfile")(function* (
   profileJson: string,
@@ -112,6 +192,11 @@ export interface ResolvedPersonalMcpToken {
   readonly userId: UserId;
 }
 
+/** Who the server connected an integration as; stamped next to the credential. */
+export interface IntegrationConnection {
+  readonly email: string;
+}
+
 export class UserMcpProfileStore extends Context.Service<
   UserMcpProfileStore,
   {
@@ -136,6 +221,17 @@ export class UserMcpProfileStore extends Context.Service<
       userId: UserId,
       integrationId: PersonalMcpIntegrationId,
     ) => Effect.Effect<string | undefined, PersonalMcpSettingsError>;
+    /**
+     * Stores a credential the server obtained itself (the toolyard connect
+     * flow) for an integration the profile already carries, marks it
+     * configured, and records the connection when one is given.
+     */
+    readonly setIntegrationCredential: (
+      userId: UserId,
+      integrationId: PersonalMcpIntegrationId,
+      credential: string,
+      connection?: IntegrationConnection,
+    ) => Effect.Effect<PersonalMcpProfile, PersonalMcpSettingsError>;
   }
 >()("t3/mcp/UserMcpProfileStore") {}
 
@@ -176,13 +272,18 @@ export const layer = Layer.effect(
         externalTokenConfigured:
           row?.externalTokenHash !== null && row?.externalTokenHash !== undefined,
         externalTokenPrefix: row?.externalTokenPrefix ?? "",
-        integrations: stored.integrations.map(canonicalizePersonalMcpIntegration),
+        integrations: presentIntegrations(stored.integrations),
         updatedAt: row?.updatedAt ?? now,
       });
     });
 
-    const get = Effect.fn("UserMcpProfileStore.get")(function* (userId: UserId) {
-      return yield* materialize(userId, yield* readRow(userId));
+    const removeSecret = Effect.fn("UserMcpProfileStore.removeSecret")(function* (
+      userId: UserId,
+      integrationId: PersonalMcpIntegrationId,
+    ) {
+      yield* secrets
+        .remove(secretName(userId, integrationId))
+        .pipe(Effect.mapError((cause) => fail("remove-integration-secret", cause)));
     });
 
     const persistStored = Effect.fn("UserMcpProfileStore.persistStored")(function* (
@@ -202,12 +303,57 @@ export const layer = Layer.effect(
       `.pipe(Effect.mapError((cause) => fail("write-profile", cause)));
     });
 
+    /**
+     * A stored legacy toolyard-via-Bifrost entry is retired the first time the
+     * profile is read: its secret (a toolyard key filed under `bifrost`) goes
+     * with it, so no later write can send that key to bk-toolhub.
+     */
+    const retireLegacyToolyardBifrost = Effect.fn(
+      "UserMcpProfileStore.retireLegacyToolyardBifrost",
+    )(function* (userId: UserId, row: ProfileRow | undefined) {
+      if (row === undefined) return row;
+      const stored = yield* parseStoredProfile(row.profileJson);
+      if (!stored.integrations.some(isLegacyToolyardBifrostIntegration)) return row;
+      yield* removeSecret(userId, BIFROST_MCP_INTEGRATION_ID);
+      yield* persistStored(userId, {
+        externalAccessEnabled: stored.externalAccessEnabled,
+        integrations: stored.integrations.filter(
+          (integration) => !isLegacyToolyardBifrostIntegration(integration),
+        ),
+      });
+      return yield* readRow(userId);
+    });
+
+    const get = Effect.fn("UserMcpProfileStore.get")(function* (userId: UserId) {
+      const row = yield* retireLegacyToolyardBifrost(userId, yield* readRow(userId));
+      return yield* materialize(userId, row);
+    });
+
     const update = Effect.fn("UserMcpProfileStore.update")(function* (
       userId: UserId,
       input: PersonalMcpProfileUpdate,
     ) {
       const current = yield* get(userId);
-      const canonicalIntegrations = input.integrations.map(canonicalizePersonalMcpIntegration);
+      // The built-in toolyard integration can be neither removed nor given a
+      // credential by a client; a stale client still sending the legacy
+      // toolyard-via-Bifrost entry loses it here.
+      const requested = input.integrations
+        .filter((integration) => !isLegacyToolyardBifrostIntegration(integration))
+        .map((integration): PersonalMcpIntegrationUpdate => {
+          if (integration.id !== TOOLYARD_MCP_INTEGRATION_ID) return integration;
+          const { credential: _ignored, ...rest } = integration;
+          return rest;
+        });
+      const currentToolyard =
+        current.integrations.find(
+          (integration) => integration.id === TOOLYARD_MCP_INTEGRATION_ID,
+        ) ?? builtInToolyardIntegration();
+      const withToolyard = requested.some(
+        (integration) => integration.id === TOOLYARD_MCP_INTEGRATION_ID,
+      )
+        ? requested
+        : [...requested, toIntegrationUpdate(currentToolyard)];
+      const canonicalIntegrations = withToolyard.map(canonicalizePersonalMcpIntegration);
       yield* Effect.try({
         try: () => canonicalIntegrations.forEach(validateIntegration),
         catch: (cause) => fail("validate-integration", cause),
@@ -217,9 +363,7 @@ export const layer = Layer.effect(
 
       for (const removed of current.integrations) {
         if (!nextIds.has(removed.id)) {
-          yield* secrets
-            .remove(secretName(userId, removed.id))
-            .pipe(Effect.mapError((cause) => fail("remove-integration-secret", cause)));
+          yield* removeSecret(userId, removed.id);
         }
       }
 
@@ -229,9 +373,7 @@ export const layer = Layer.effect(
         let credentialConfigured = existing?.credentialConfigured ?? false;
         if (integration.credential !== undefined) {
           if (integration.credential.length === 0) {
-            yield* secrets
-              .remove(secretName(userId, integration.id))
-              .pipe(Effect.mapError((cause) => fail("remove-integration-secret", cause)));
+            yield* removeSecret(userId, integration.id);
             credentialConfigured = false;
           } else {
             yield* secrets
@@ -250,6 +392,11 @@ export const layer = Layer.effect(
           credentialConfigured,
           providerInstanceIds: integration.providerInstanceIds,
           allowedTools: integration.allowedTools,
+          // Connection metadata is the server's; a client update carries none.
+          ...(existing?.connectedEmail === undefined
+            ? {}
+            : { connectedEmail: existing.connectedEmail }),
+          ...(existing?.connectedAt === undefined ? {} : { connectedAt: existing.connectedAt }),
         });
       }
 
@@ -259,6 +406,49 @@ export const layer = Layer.effect(
       });
       return yield* get(userId);
     });
+
+    const setIntegrationCredential = Effect.fn("UserMcpProfileStore.setIntegrationCredential")(
+      function* (
+        userId: UserId,
+        integrationId: PersonalMcpIntegrationId,
+        credential: string,
+        connection?: IntegrationConnection,
+      ) {
+        const current = yield* get(userId);
+        const target = current.integrations.find((entry) => entry.id === integrationId);
+        if (target === undefined) {
+          return yield* fail(
+            "set-integration-credential",
+            new Error(`Integration '${integrationId}' is not configured.`),
+          );
+        }
+        if (credential.length === 0) {
+          return yield* fail(
+            "set-integration-credential",
+            new Error(`Integration '${integrationId}' was given an empty credential.`),
+          );
+        }
+        yield* secrets
+          .set(secretName(userId, integrationId), textEncoder.encode(credential))
+          .pipe(Effect.mapError((cause) => fail("write-integration-secret", cause)));
+        const connectedAt = yield* nowIso;
+        yield* persistStored(userId, {
+          externalAccessEnabled: current.externalAccessEnabled,
+          integrations: current.integrations.map((entry) =>
+            entry.id === integrationId
+              ? {
+                  ...entry,
+                  credentialConfigured: true,
+                  ...(connection === undefined
+                    ? {}
+                    : { connectedEmail: connection.email, connectedAt }),
+                }
+              : entry,
+          ),
+        });
+        return yield* get(userId);
+      },
+    );
 
     const rotateExternalToken = Effect.fn("UserMcpProfileStore.rotateExternalToken")(function* (
       userId: UserId,
@@ -354,6 +544,7 @@ export const layer = Layer.effect(
       revokeExternalToken,
       resolveExternalToken,
       getIntegrationCredential,
+      setIntegrationCredential,
     });
     // T3-CUSTOM(expbkt3): The HTTP proxy is deliberately bound to the same
     // process-scoped store instance as WS settings and token issuance.

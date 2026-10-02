@@ -3,9 +3,8 @@
  * credentials from the user bound to the active ACP generation.
  */
 import {
+  isToolyardGatewayUrl,
   PersonalMcpIntegrationId,
-  resolveBifrostGateway,
-  TOOLYARD_MCP_URL,
   type PersonalMcpAuthMode,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -72,9 +71,6 @@ interface ForwardedRequestOptions {
   readonly credential: string;
   readonly threadId: ThreadId;
 }
-
-const isToolyardGatewayUrl = (url: string): boolean =>
-  resolveBifrostGateway(url)?.url === TOOLYARD_MCP_URL;
 
 const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(function* (
   incoming: Request,

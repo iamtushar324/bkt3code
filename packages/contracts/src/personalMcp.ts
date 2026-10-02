@@ -23,17 +23,21 @@ export type PersonalMcpIntegrationId = typeof PersonalMcpIntegrationId.Type;
 
 export const BIFROST_MCP_INTEGRATION_ID = "bifrost" as const;
 export const BIFROST_MCP_URL = "https://bk-toolhub.beknown.live/mcp" as const;
-/** toolyard, the Bifrost-compatible replacement gateway. Opt-in per user. */
+/**
+ * toolyard, the built-in per-user gateway. Every signed-in user gets a
+ * `toolyard` integration that T3 connects on their behalf through the Clerk
+ * sign-in both apps share; nobody pastes a key.
+ */
+export const TOOLYARD_MCP_INTEGRATION_ID = "toolyard" as const;
 export const TOOLYARD_MCP_URL = "https://toolyard.dev.beknown.live/mcp" as const;
+/** Display name of the built-in integration; also its MCP server name (`mcp__toolyard__*`). */
+export const TOOLYARD_MCP_INTEGRATION_NAME = "toolyard" as const;
 
 /**
  * The only endpoints an `x-bf-vk` integration may target, so a stored virtual
  * key is never sent to an arbitrary URL. The first entry is the default.
  */
-export const BIFROST_GATEWAYS = [
-  { url: BIFROST_MCP_URL, integrationName: "Bifrost" },
-  { url: TOOLYARD_MCP_URL, integrationName: "Bifrost (toolyard)" },
-] as const;
+export const BIFROST_GATEWAYS = [{ url: BIFROST_MCP_URL, integrationName: "Bifrost" }] as const;
 export type BifrostGateway = (typeof BIFROST_GATEWAYS)[number];
 
 const normalizeGatewayUrl = (value: string): string | undefined => {
@@ -64,6 +68,20 @@ export const resolveBifrostGateway = (url: string): BifrostGateway | undefined =
 export const isAllowedBifrostGatewayUrl = (url: string): boolean =>
   resolveBifrostGateway(url) !== undefined;
 
+/** Whether `url` is the toolyard MCP endpoint, matched like the gateway allowlist. */
+export const isToolyardGatewayUrl = (url: string): boolean => {
+  const normalized = normalizeGatewayUrl(url);
+  return normalized !== undefined && normalized === normalizeGatewayUrl(TOOLYARD_MCP_URL);
+};
+
+/**
+ * The endpoint that exchanges a Clerk session token for a toolyard agent
+ * token: `POST <toolyard origin>/v1/connect/t3`. Each successful call rotates
+ * the person's toolyard token, so T3 calls it only when it has none.
+ */
+export const toolyardConnectUrl = (mcpUrl: string = TOOLYARD_MCP_URL): string =>
+  `${new URL(mcpUrl).origin}/v1/connect/t3`;
+
 export const PersonalMcpIntegration = Schema.Struct({
   id: PersonalMcpIntegrationId,
   name: TrimmedNonEmptyString,
@@ -74,6 +92,13 @@ export const PersonalMcpIntegration = Schema.Struct({
   credentialConfigured: Schema.Boolean,
   providerInstanceIds: Schema.Array(ProviderInstanceId),
   allowedTools: Schema.Array(TrimmedNonEmptyString),
+  /**
+   * Set by the server when it connected the integration itself (toolyard):
+   * the account it connected as and when. Credential-free; a client cannot
+   * write them.
+   */
+  connectedEmail: Schema.optional(TrimmedString),
+  connectedAt: Schema.optional(IsoDateTime),
 });
 export type PersonalMcpIntegration = typeof PersonalMcpIntegration.Type;
 
@@ -113,6 +138,42 @@ export const PersonalMcpTokenResult = Schema.Struct({
   token: Schema.optional(TrimmedNonEmptyString),
 });
 export type PersonalMcpTokenResult = typeof PersonalMcpTokenResult.Type;
+
+/** A fresh Clerk session JWT from the browser; consumed once, never stored. */
+export const PersonalMcpToolyardConnectInput = Schema.Struct({
+  clerkToken: TrimmedNonEmptyString,
+});
+export type PersonalMcpToolyardConnectInput = typeof PersonalMcpToolyardConnectInput.Type;
+
+/**
+ * Error codes of `personalMcp.connectToolyard`. The first eight are toolyard's
+ * own (`{"error": code}` responses; it also answers 500 `internal_error`); the
+ * rest name what T3 saw instead of an answer. Kept as a plain string on the
+ * wire so a code this list does not know still reaches the client unchanged.
+ */
+export const TOOLYARD_CONNECT_ERROR_CODES = [
+  "bad_request",
+  "invalid_token",
+  "not_org_member",
+  "user_disabled",
+  "agent_disabled",
+  "connect_disabled",
+  "rate_limited",
+  "clerk_unavailable",
+  "unreachable",
+  "timeout",
+  "unexpected_response",
+  "store_failed",
+] as const;
+export type ToolyardConnectErrorCode = (typeof TOOLYARD_CONNECT_ERROR_CODES)[number];
+
+/** Credential-free outcome: the toolyard agent token never leaves the server. */
+export const PersonalMcpToolyardConnectResult = Schema.Struct({
+  connected: Schema.Boolean,
+  email: Schema.optional(TrimmedString),
+  error: Schema.optional(TrimmedNonEmptyString),
+});
+export type PersonalMcpToolyardConnectResult = typeof PersonalMcpToolyardConnectResult.Type;
 
 export class PersonalMcpSettingsError extends Schema.TaggedError<PersonalMcpSettingsError>()(
   "PersonalMcpSettingsError",

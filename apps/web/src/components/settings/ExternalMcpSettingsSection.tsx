@@ -1,6 +1,10 @@
 /**
  * T3-CUSTOM(expbkt3): Per-user external T3 access and managed upstream MCP
  * integrations. Secret values are write-only and never returned by T3.
+ *
+ * The built-in toolyard integration is not managed here: it has no credential
+ * to paste and cannot be removed, so it has its own card
+ * (`ToolyardSettingsSection`).
  */
 import {
   BIFROST_MCP_INTEGRATION_ID,
@@ -9,7 +13,8 @@ import {
   type PersonalMcpAuthMode,
   type PersonalMcpIntegration,
   type PersonalMcpIntegrationUpdate,
-  TOOLYARD_MCP_URL,
+  type PersonalMcpProfile,
+  TOOLYARD_MCP_INTEGRATION_ID,
 } from "@t3tools/contracts";
 import { CopyIcon, KeyRoundIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -23,16 +28,20 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { ToolyardSettingsSection } from "./ToolyardSettingsSection";
 
 export function formatExternalMcpApiKey(bytes: Uint8Array): string {
   return `t3exp_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** The Bifrost-compatible gateways a user can route their `bifrost` tools through. */
-const bifrostGatewayOptions: ReadonlyArray<{ value: string; label: string }> = [
-  { value: BIFROST_MCP_URL, label: "Bifrost (bk-toolhub)" },
-  { value: TOOLYARD_MCP_URL, label: "toolyard (toolyard.dev.beknown.live)" },
-];
+/** The integrations this section manages: everything but the built-in toolyard one. */
+export function managedMcpIntegrations(
+  profile: PersonalMcpProfile | null | undefined,
+): ReadonlyArray<PersonalMcpIntegration> {
+  return (profile?.integrations ?? []).filter(
+    (integration) => integration.id !== TOOLYARD_MCP_INTEGRATION_ID,
+  );
+}
 
 export function buildBifrostIntegration(): PersonalMcpIntegration {
   return {
@@ -110,6 +119,10 @@ export function ExternalMcpSettingsSection() {
     });
   };
 
+  const managed = managedMcpIntegrations(profile);
+
+  // The server re-adds the built-in toolyard entry to whatever list it gets,
+  // so sending only the managed ones never removes it.
   const persistIntegrations = async (
     integrations: ReadonlyArray<PersonalMcpIntegration>,
     secretPatch?: { readonly id: string; readonly value: string },
@@ -130,14 +143,14 @@ export function ExternalMcpSettingsSection() {
     id: string,
     patch: Partial<PersonalMcpIntegration>,
   ): ReadonlyArray<PersonalMcpIntegration> =>
-    (profile?.integrations ?? []).map((integration) =>
+    managed.map((integration) =>
       integration.id === id ? { ...integration, ...patch } : integration,
     );
 
   const addBifrost = () => {
     if (!profile) return;
-    if (profile.integrations.some((entry) => entry.id === BIFROST_MCP_INTEGRATION_ID)) return;
-    void persistIntegrations([...profile.integrations, buildBifrostIntegration()]);
+    if (managed.some((entry) => entry.id === BIFROST_MCP_INTEGRATION_ID)) return;
+    void persistIntegrations([...managed, buildBifrostIntegration()]);
   };
 
   return (
@@ -273,6 +286,8 @@ export function ExternalMcpSettingsSection() {
         </SettingsRow>
       </SettingsSection>
 
+      <ToolyardSettingsSection />
+
       <SettingsSection title="My managed MCP integrations">
         <SettingsRow
           title="Credential routing"
@@ -293,7 +308,7 @@ export function ExternalMcpSettingsSection() {
           }
         />
 
-        {(profile?.integrations ?? []).map((integration) => (
+        {managed.map((integration) => (
           <SettingsRow
             key={integration.id}
             title={integration.name}
@@ -313,9 +328,7 @@ export function ExternalMcpSettingsSection() {
                   variant="ghost"
                   onClick={() =>
                     void persistIntegrations(
-                      (profile?.integrations ?? []).filter(
-                        (candidate) => candidate.id !== integration.id,
-                      ),
+                      managed.filter((candidate) => candidate.id !== integration.id),
                     )
                   }
                   aria-label={`Remove ${integration.name}`}
@@ -327,30 +340,10 @@ export function ExternalMcpSettingsSection() {
           >
             <div className="mt-3 mb-4 grid gap-2 md:grid-cols-2">
               {integration.id === BIFROST_MCP_INTEGRATION_ID ? (
-                <div className="grid gap-1.5 md:col-span-2">
-                  <Select
-                    items={bifrostGatewayOptions}
-                    value={integration.url}
-                    onValueChange={(url) => {
-                      if (url === null || url === integration.url) return;
-                      void persistIntegrations(patchIntegration(integration.id, { url }));
-                    }}
-                  >
-                    <SelectTrigger aria-label="Bifrost gateway">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {bifrostGatewayOptions.map(({ value, label }) => (
-                        <SelectItem key={value} value={value}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    toolyard uses your toolyard Beknown key (toolyard → Agents → Your Beknown key).
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground md:col-span-2">
+                  Bifrost (bk-toolhub) with your Bifrost virtual key. toolyard is built in and
+                  connects on its own; see the toolyard card.
+                </p>
               ) : (
                 <>
                   <Input
@@ -422,7 +415,7 @@ export function ExternalMcpSettingsSection() {
                   variant="outline"
                   disabled={!(credentialDrafts[integration.id] ?? "")}
                   onClick={() =>
-                    void persistIntegrations(profile?.integrations ?? [], {
+                    void persistIntegrations(managed, {
                       id: integration.id,
                       value: credentialDrafts[integration.id] ?? "",
                     })

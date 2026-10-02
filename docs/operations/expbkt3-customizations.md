@@ -236,21 +236,47 @@ fork's RPC handler map: that map is rebuilt per connection, so a cache created
 there would collapse one client's tabs and nothing else — which is not where the
 multiplication comes from.
 
-## Bifrost-compatible gateways
+## toolyard (built in, auto-connected)
 
-An `x-bf-vk` integration may only point at an allowlisted gateway
-(`BIFROST_GATEWAYS` in `packages/contracts/src/personalMcp.ts`): Bifrost
-(bk-toolhub, the default) or toolyard. `canonicalizePersonalMcpIntegration`
-runs on every write and every read, keeps an allowlisted URL in canonical form,
-and rewrites anything else to Bifrost, so a stored virtual key is never sent to
-an arbitrary URL. Matching is exact after URL normalisation; credentials, a
-port, a query, or a lookalike host disqualify the URL.
+Every signed-in user has a `toolyard` integration (`TOOLYARD_MCP_INTEGRATION_ID`
+in `packages/contracts/src/personalMcp.ts`): id and MCP server name `toolyard`,
+so agents see `mcp__toolyard__*`; URL `TOOLYARD_MCP_URL`; bearer auth; always
+enabled. `UserMcpProfileStore` presents it on every read and re-adds it to every
+write, and `canonicalizePersonalMcpIntegration` pins its name, URL, auth mode
+and enabled state, so a client can neither remove it nor point it elsewhere.
+Its credential is written only by the connect flow; a credential a client sends
+for it is ignored.
 
-Choosing toolyard changes only the URL and display name. The integration id
-stays `bifrost`, so provider sessions still expose `mcp__bifrost__*` and every
-skill keeps working. The Linear status fallback above is not routed: it always
-posts to bk-toolhub with the stored key, so a viewer on toolyard (whose stored
-key is a toolyard key) gets status from the bridge only.
+Connecting needs no pasted key. After sign-in the web app
+(`fork/toolyardAutoConnect.tsx`, mounted from `AppRoot` because the Clerk shell
+sits outside the atom registry) sees a profile whose toolyard entry has no
+credential and calls `personalMcp.connectToolyard` once per app load with a
+fresh Clerk session token from `state/teamIdentityToken`. The server
+(`mcp/ToolyardConnect.ts`) posts `{"token"}` to
+`POST <toolyard origin>/v1/connect/t3` and, on 200, stores the returned toolyard
+agent token through `UserMcpProfileStore.setIntegrationCredential` with the
+connected email and time. Neither token is logged or returned; the client gets
+`{connected, email?, error?}`. toolyard rotates the agent token on every
+successful call, which is why the client connects only while T3 holds none and
+why Settings → Experiments → toolyard offers an explicit Reconnect instead of
+reconnecting on its own. toolyard's refusals (`not_org_member`, `user_disabled`,
+`agent_disabled`, …) come back as codes and are worded in
+`fork/toolyardConnect.ts`; a code that list does not know still reaches the
+client unchanged.
+
+Provider sessions include the toolyard proxy exactly when the user is connected
+(`McpSessionRegistry` filters on `credentialConfigured`, like any integration);
+`McpUpstreamProxy` adds the bearer token and `x-t3-session-id` toward toolyard.
+Bifrost (bk-toolhub) stays alongside, always appended as `mcp__bifrost__*`, for
+side-by-side testing.
+
+`x-bf-vk` integrations are pinned to bk-toolhub alone (`BIFROST_GATEWAYS` has a
+single entry). The earlier opt-in — a `bifrost` integration pointed at toolyard
+with a toolyard key stored under `bifrost` — would now canonicalize to
+bk-toolhub and send that key to the wrong gateway, so the store retires any such
+stored entry on first read and drops it from any update, secret included. The
+Linear status fallback above is unchanged: it always posts to bk-toolhub with
+the Bifrost key.
 
 ## Row change-request badge and settle-on-merge
 
