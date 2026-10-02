@@ -159,7 +159,11 @@ import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+// T3-CUSTOM(expbkt3): connect-time discovery answered from the last result.
+import {
+  cachedExternalLauncherLayer,
+  cachedRemoteOpenTargetsLayer,
+} from "./environment/connectDiscoveryCache.expbkt3.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import { ClerkDirectoryLive } from "./auth/ClerkDirectory.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
@@ -736,8 +740,11 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
-  Layer.provideMerge(ExternalLauncher.layer),
-  Layer.provideMerge(RemoteOpenTargets.layer),
+  // T3-CUSTOM(expbkt3): BEGIN - reconnects reuse the last discovered editors and
+  // SSH targets instead of rescanning on the connection's 15 s setup budget.
+  Layer.provideMerge(cachedExternalLauncherLayer),
+  Layer.provideMerge(cachedRemoteOpenTargetsLayer),
+  // T3-CUSTOM(expbkt3): END
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
 );
