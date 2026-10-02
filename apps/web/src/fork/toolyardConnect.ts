@@ -135,10 +135,71 @@ export function toolyardConnectErrorMessage(code: string | undefined): string {
     case "store_failed":
       return "T3 could not save the toolyard connection. Try again.";
     case "no_clerk_token":
-      return "No sign-in token is available. Sign out and back in, then reconnect.";
+      return "This app can't sign in to toolyard by itself. Open the web app once to connect.";
     case undefined:
       return "toolyard could not be connected.";
     default:
       return `toolyard could not be connected (${code}).`;
+  }
+}
+
+/** What the toolyard settings card offers besides its status line. */
+export type ToolyardCardAction =
+  /** Connect again from this client (it can mint a Clerk token). */
+  | { readonly kind: "reconnect" }
+  /** Send the person to the web app, the only place a connect can happen. */
+  | { readonly kind: "open-web"; readonly url: string }
+  | { readonly kind: "none" };
+
+export interface ToolyardCardView {
+  readonly status: string;
+  readonly action: ToolyardCardAction;
+}
+
+/**
+ * The toolyard card, decided from server-side state and what this client can
+ * do. Connecting needs a Clerk session token, which only a client with a Clerk
+ * publishable key can mint — the web app. A keyless client (the managed BK
+ * desktop) therefore never offers Reconnect: it shows the connection the server
+ * holds and, when there is none, points at the web app's origin. The relative
+ * time is injected so the view is a pure function.
+ */
+export function resolveToolyardCardView(input: {
+  readonly toolyard: PersonalMcpIntegration | null;
+  /** Whether this client can mint a Clerk token (`hasClerkPublicConfig()`). */
+  readonly canSignIn: boolean;
+  /** The web app this environment is served from; where a keyless client sends the person. */
+  readonly webAppUrl: string | null;
+  readonly formatConnectedAt: (isoDate: string) => string;
+}): ToolyardCardView {
+  const { toolyard } = input;
+  if (toolyard === null) return { status: "Loading…", action: { kind: "none" } };
+  if (toolyard.credentialConfigured) {
+    const status = [
+      `Connected automatically${toolyard.connectedEmail ? ` as ${toolyard.connectedEmail}` : ""}`,
+      toolyard.connectedAt
+        ? `last connected ${input.formatConnectedAt(toolyard.connectedAt)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return { status, action: input.canSignIn ? { kind: "reconnect" } : { kind: "none" } };
+  }
+  if (input.canSignIn) return { status: "Not connected", action: { kind: "reconnect" } };
+  const webOrigin = toWebOrigin(input.webAppUrl);
+  return {
+    status: "Not connected · connect once from the web app",
+    action: webOrigin === null ? { kind: "none" } : { kind: "open-web", url: webOrigin },
+  };
+}
+
+/** The https origin of a web app URL, or null for anything that is not one. */
+function toWebOrigin(url: string | null): string | null {
+  if (url === null) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" ? parsed.origin : null;
+  } catch {
+    return null;
   }
 }

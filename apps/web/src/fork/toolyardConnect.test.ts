@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   createToolyardAutoConnectRunner,
+  resolveToolyardCardView,
   shouldAutoConnectToolyard,
   toolyardConnectErrorMessage,
   toolyardIntegrationOf,
@@ -184,10 +185,84 @@ describe("toolyardConnectErrorMessage", () => {
     );
   });
 
+  it("tells a client that cannot sign in to use the web app, on either platform", () => {
+    expect(toolyardConnectErrorMessage("no_clerk_token")).toBe(
+      "This app can't sign in to toolyard by itself. Open the web app once to connect.",
+    );
+  });
+
   it("falls back to a generic message that still names an unknown code", () => {
     expect(toolyardConnectErrorMessage("internal_error")).toBe(
       "toolyard could not be connected (internal_error).",
     );
     expect(toolyardConnectErrorMessage(undefined)).toBe("toolyard could not be connected.");
+  });
+});
+
+describe("resolveToolyardCardView", () => {
+  const connected: PersonalMcpIntegration = {
+    ...toolyard(true),
+    connectedEmail: "tushar.bhardwaj@beknown.work",
+    connectedAt: "2026-10-02T09:43:30.000Z",
+  };
+  const formatConnectedAt = () => "5m ago";
+  const web = { canSignIn: true, webAppUrl: null, formatConnectedAt };
+  const desktop = {
+    canSignIn: false,
+    webAppUrl: "https://stagebkt3.dev.beknown.live",
+    formatConnectedAt,
+  };
+
+  it("offers Reconnect on the web, connected or not", () => {
+    expect(resolveToolyardCardView({ ...web, toolyard: connected })).toEqual({
+      status: "Connected automatically as tushar.bhardwaj@beknown.work · last connected 5m ago",
+      action: { kind: "reconnect" },
+    });
+    expect(resolveToolyardCardView({ ...web, toolyard: toolyard(false) })).toEqual({
+      status: "Not connected",
+      action: { kind: "reconnect" },
+    });
+  });
+
+  it("shows the server-side connection on a keyless desktop without offering Reconnect", () => {
+    expect(resolveToolyardCardView({ ...desktop, toolyard: connected })).toEqual({
+      status: "Connected automatically as tushar.bhardwaj@beknown.work · last connected 5m ago",
+      action: { kind: "none" },
+    });
+  });
+
+  it("sends a keyless desktop to the web app's origin when nothing is connected", () => {
+    expect(resolveToolyardCardView({ ...desktop, toolyard: toolyard(false) })).toEqual({
+      status: "Not connected · connect once from the web app",
+      action: { kind: "open-web", url: "https://stagebkt3.dev.beknown.live" },
+    });
+    // The link is the origin, whatever path or slash the configured URL carries.
+    expect(
+      resolveToolyardCardView({
+        ...desktop,
+        webAppUrl: "https://bkt3.dev.beknown.live/some/path/",
+        toolyard: toolyard(false),
+      }).action,
+    ).toEqual({ kind: "open-web", url: "https://bkt3.dev.beknown.live" });
+  });
+
+  it("offers no link when there is no https web app to send the person to", () => {
+    expect(
+      resolveToolyardCardView({ ...desktop, webAppUrl: null, toolyard: toolyard(false) }).action,
+    ).toEqual({ kind: "none" });
+    expect(
+      resolveToolyardCardView({
+        ...desktop,
+        webAppUrl: "http://127.0.0.1:18086",
+        toolyard: toolyard(false),
+      }).action,
+    ).toEqual({ kind: "none" });
+  });
+
+  it("is quiet while the profile loads", () => {
+    expect(resolveToolyardCardView({ ...desktop, toolyard: null })).toEqual({
+      status: "Loading…",
+      action: { kind: "none" },
+    });
   });
 });
