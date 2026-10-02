@@ -267,7 +267,12 @@ describe("switching", () => {
   });
 
   it("explains missing account data, and says loading before the first poll", () => {
-    expect(unavailableLine(snapshot([]))).toBeNull();
+    expect(unavailableLine(snapshot([account({ name: "agent" })]))).toBeNull();
+    // Before the first poll the server sends available + "loading" with no profiles.
+    expect(unavailableLine({ ...snapshot([]), unavailableReason: "loading" })).toBe(
+      "Loading account data…",
+    );
+    expect(unavailableLine(snapshot([]))).toBe("Loading account data…");
     expect(unavailableLine({ ...snapshot([]), available: false })).toBe("Loading account data…");
     expect(
       unavailableLine({ ...snapshot([]), available: false, unavailableReason: "loading accounts" }),

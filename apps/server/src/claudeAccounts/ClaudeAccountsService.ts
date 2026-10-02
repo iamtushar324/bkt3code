@@ -31,6 +31,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationEvent,
+  type OrchestrationSession,
   type ProviderRuntimeEvent,
   type ThreadClaudeAccount,
   type ThreadId,
@@ -682,22 +683,28 @@ export const make = Effect.gen(function* () {
    * shell (which marks a turn active as soon as its command is accepted, before
    * the provider has started it) and the provider session itself.
    */
-  const threadIsIdle = (threadId: ThreadId): Effect.Effect<boolean> =>
+  const threadIsIdle = (
+    threadId: ThreadId,
+    settled?: OrchestrationSession,
+  ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       if (activeTurns.has(threadId)) return false;
-      const shell = yield* query
-        .getThreadShellById(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(shell)) {
-        const session = shell.value.session;
-        if (
-          session !== null &&
-          (session.activeTurnId !== null ||
-            session.status === "running" ||
-            session.status === "starting")
-        ) {
-          return false;
-        }
+      // A `thread.session-set` event carries the session as just applied; the
+      // shell projection may not have caught up with it yet.
+      let session: OrchestrationSession | null = settled ?? null;
+      if (settled === undefined) {
+        const shell = yield* query
+          .getThreadShellById(threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        session = Option.isSome(shell) ? shell.value.session : null;
+      }
+      if (
+        session !== null &&
+        (session.activeTurnId !== null ||
+          session.status === "running" ||
+          session.status === "starting")
+      ) {
+        return false;
       }
       const sessions = yield* providers.listSessions();
       const live = sessions.find(
@@ -727,10 +734,10 @@ export const make = Effect.gen(function* () {
    * started since (a queued message may already be on its way); otherwise
    * keep waiting for the next completion.
    */
-  const completePendingRestart = (threadId: ThreadId) =>
+  const completePendingRestart = (threadId: ThreadId, settled?: OrchestrationSession) =>
     Effect.gen(function* () {
       if (!pendingRestart.has(threadId)) return;
-      if (!(yield* threadIsIdle(threadId))) {
+      if (!(yield* threadIsIdle(threadId, settled))) {
         yield* Effect.logInfo("claude.account.restart-still-deferred", { threadId });
         return;
       }
@@ -984,6 +991,22 @@ export const make = Effect.gen(function* () {
 
   const onDomainEvent = (event: OrchestrationEvent) =>
     Effect.gen(function* () {
+      // Runtime ingestion applies a provider turn completion to the thread
+      // asynchronously, so the provider's own `turn.completed` usually arrives
+      // while the shell still reads "running". The settled session is the
+      // reliable moment to finish a deferred account change.
+      if (event.type === "thread.session-set") {
+        const session = event.payload.session;
+        if (
+          pendingRestart.has(event.payload.threadId) &&
+          session.activeTurnId === null &&
+          session.status !== "running" &&
+          session.status !== "starting"
+        ) {
+          yield* completePendingRestart(event.payload.threadId, session);
+        }
+        return;
+      }
       if (event.type !== "thread.deleted") return;
       const threadId = event.payload.threadId;
       threadProfiles.delete(threadId);

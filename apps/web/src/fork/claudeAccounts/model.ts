@@ -284,8 +284,11 @@ export const LOADING_ACCOUNTS_LINE = "Loading account data…";
  * one), or the host switcher cannot report them.
  */
 export function unavailableLine(snapshot: ClaudeAccountsSnapshot): string | null {
-  if (snapshot.available) return null;
   const reason = snapshot.unavailableReason?.trim();
-  if (!reason || /^loading/i.test(reason)) return LOADING_ACCOUNTS_LINE;
+  // The server reports the window before its first poll as available with a
+  // "loading" reason and no profiles yet.
+  if (reason !== undefined && /^loading/i.test(reason)) return LOADING_ACCOUNTS_LINE;
+  if (snapshot.available) return snapshot.profiles.length === 0 ? LOADING_ACCOUNTS_LINE : null;
+  if (!reason) return LOADING_ACCOUNTS_LINE;
   return `Account data unavailable (${reason}) — Auto uses the host's current account`;
 }

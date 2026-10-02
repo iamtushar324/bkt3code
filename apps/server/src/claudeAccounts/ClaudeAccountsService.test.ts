@@ -768,11 +768,12 @@ describe("ClaudeAccountsService mode changes on a live session", () => {
   );
 
   scenario(
-    "completes a deferred restart only when the turn ends with nothing new started",
+    "completes a deferred restart on the settled session, not on the provider's turn.completed",
     {},
     (harness, service) =>
       Effect.gen(function* () {
         const threadId = ThreadId.make("thread-deferred-restart");
+        const drainId = ThreadId.make("thread-deferred-drain");
         yield* Ref.set(harness.sessions, [liveSession(threadId, "running")]);
         yield* Ref.set(harness.shellSession, orchestrationSession(threadId, "running", "turn-1"));
         yield* service.refreshStatus();
@@ -781,16 +782,37 @@ describe("ClaudeAccountsService mode changes on a live session", () => {
         const { initial, seen } = yield* watchThreadInto(service, threadId);
         assert.equal(initial.pendingRestart, true);
 
-        // The turn ends on the provider, but the orchestration shell already
-        // holds the next queued turn: no stop yet.
-        yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
-        yield* Ref.set(harness.shellSession, orchestrationSession(threadId, "running", "turn-2"));
-        yield* PubSub.publish(harness.providerEvents, providerEvent("turn.completed", threadId));
-        yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+        // Domain events are handled in order on one fiber; deleting a watched
+        // drain thread shows when everything published before it was handled.
+        yield* service.setThreadMode({
+          threadId: drainId,
+          mode: { kind: "profile", profile: "agent" },
+        });
+        const drain = yield* watchThreadInto(service, drainId);
+        const sessionSet = (status: "ready" | "running", activeTurnId: string | null) =>
+          ({
+            type: "thread.session-set",
+            payload: { threadId, session: orchestrationSession(threadId, status, activeTurnId) },
+          }) as unknown as OrchestrationEvent;
 
-        // That turn ends too, and this time the thread is idle everywhere.
-        yield* Ref.set(harness.shellSession, orchestrationSession(threadId, "ready", null));
+        // Real ordering: the provider reports the turn finished while runtime
+        // ingestion has not applied it yet, so the shell still reads running.
         yield* PubSub.publish(harness.providerEvents, providerEvent("turn.completed", threadId));
+        // The settled session arrives while the provider already runs the next
+        // queued turn: still no stop.
+        yield* Ref.set(harness.sessions, [liveSession(threadId, "running")]);
+        yield* PubSub.publish(harness.domainEvents, sessionSet("ready", null));
+        yield* PubSub.publish(harness.domainEvents, {
+          type: "thread.deleted",
+          payload: { threadId: drainId, deletedAt: "2026-10-02T09:00:00.000Z" },
+        } as unknown as OrchestrationEvent);
+        yield* Queue.take(drain.seen);
+        assert.deepEqual(harness.stoppedThreads, []);
+
+        // That turn ends; the projection still lags (shell reads running) but
+        // the settled session is idle: now the session stops.
+        yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+        yield* PubSub.publish(harness.domainEvents, sessionSet("ready", null));
         const restarted = yield* Queue.take(seen);
         assert.notEqual(restarted.pendingRestart, true);
         assert.deepEqual(harness.stoppedThreads, [threadId]);
