@@ -18,7 +18,7 @@ import { formatDuration } from "@t3tools/shared/usageLimits";
 /** Distinct from the runtime "Auto" modes and Cursor's "auto" model. */
 export const AUTO_ACCOUNT_LABEL = "Auto (account)";
 export const AUTO_ACCOUNT_UNPLACED = "Picks an account on the first message";
-export const AUTO_ACCOUNT_RULE = "picks the least-busy account with room";
+export const AUTO_ACCOUNT_RULE = "new sessions go to the account with the most room";
 export const SWITCH_RESTARTS_SESSION_HINT =
   "Switching restarts this thread's session on the next message";
 export const PENDING_RESTART_HINT = "Applies after this turn";
@@ -57,7 +57,7 @@ function resetAt(win: UsageWindow | undefined): number | null {
 export function resetsIn(win: UsageWindow | undefined, now: number): string | null {
   const at = resetAt(win);
   if (at === null) return null;
-  return at <= now ? "resets now" : `resets ${formatDuration(at - now)}`;
+  return at <= now ? "resets now" : `resets in ${formatDuration(at - now)}`;
 }
 
 /**
@@ -117,6 +117,19 @@ export interface AccountTag {
 
 export const NOT_USED_BY_AUTO_LABEL = "not used by Auto";
 
+/**
+ * Which trip line an over-limit account is past, from the numbers (the
+ * switcher's `why` may name an exclusion first): `five_hour 94% ≥ 90%`.
+ */
+function overReason(status: ClaudeAccountStatus): string {
+  const fiveHour = used(status.fiveHour) ?? 0;
+  const weekly = used(status.weekly) ?? 0;
+  if (fiveHour >= FIVE_HOUR_TRIP_PERCENT) {
+    return `five_hour ${fiveHour}% ≥ ${FIVE_HOUR_TRIP_PERCENT}%`;
+  }
+  return `weekly ${weekly}% ≥ ${WEEKLY_TRIP_PERCENT}%`;
+}
+
 /** The switcher's reason in the dashboard's spelling: `≥`, not `>=`. */
 function prettyWhy(why: string): string {
   return why.trim().replaceAll(">=", "≥");
@@ -129,9 +142,8 @@ function prettyWhy(why: string): string {
 export function statusTag(status: ClaudeAccountStatus): AccountTag | null {
   if (status.auth === "logged_out") return { id: "logged-out", label: "logged out", tone: "bad" };
   if (isOverLimit(status)) {
-    const why = prettyWhy(status.why);
-    const label = why.startsWith("over ") ? `over: ${why.slice(5)}` : "at limit";
-    return { id: "over", label, tone: "bad" };
+    const label = `over: ${overReason(status)}`;
+    return { id: "over", label, tone: "bad", detail: label };
   }
   if (isNearLimit(status)) {
     return {

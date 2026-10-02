@@ -79,7 +79,7 @@ describe("used", () => {
 
   it("phrases the reset countdown", () => {
     expect(resetsIn({ usedPercent: 1, resetsAt: "2026-10-02T10:13:00.000Z" }, NOW)).toBe(
-      "resets 2h 13m",
+      "resets in 2h 13m",
     );
     expect(resetsIn({ usedPercent: 1, resetsAt: "2026-10-02T07:00:00.000Z" }, NOW)).toBe(
       "resets now",
@@ -173,7 +173,13 @@ describe("statusTag", () => {
     ).toMatchObject({ id: "over", label: "over: five_hour 94% ≥ 90%", tone: "bad" });
     expect(
       statusTag(account({ name: "x", eligible: false, fiveHour: { usedPercent: 100 } })),
-    ).toMatchObject({ id: "over", label: "at limit" });
+    ).toMatchObject({ id: "over", label: "over: five_hour 100% ≥ 90%" });
+    // An excluded account past a trip line names the line, not the exclusion.
+    expect(
+      statusTag(
+        account({ name: "x", eligible: false, why: "excluded", fiveHour: { usedPercent: 92 } }),
+      ),
+    ).toMatchObject({ id: "over", label: "over: five_hour 92% ≥ 90%" });
     expect(
       statusTag(
         account({
@@ -249,7 +255,7 @@ describe("account rows", () => {
     expect(rows.map((row) => row.name)).toEqual(["agent", "sam"]);
     expect(rows[0]).toMatchObject({ current: true, disabled: false, sessions: 2, tag: null });
     expect(rows[0]?.windows).toEqual([
-      { id: "fiveHour", label: "5-hour", used: 28, band: "ok", resetsIn: "resets 2h 13m" },
+      { id: "fiveHour", label: "5-hour", used: 28, band: "ok", resetsIn: "resets in 2h 13m" },
       { id: "weekly", label: "Week", used: 60, band: "warn", resetsIn: null },
     ]);
     expect(rows[1]).toMatchObject({ current: false, disabled: true });
@@ -259,7 +265,7 @@ describe("account rows", () => {
   it("describes the Auto row before and after placement", () => {
     expect(autoRowDetail(null)).toBe("Picks an account on the first message");
     expect(autoRowDetail(thread({ resolvedProfile: "audit" }))).toBe(
-      "On audit · picks the least-busy account with room",
+      "On audit · new sessions go to the account with the most room",
     );
   });
 });

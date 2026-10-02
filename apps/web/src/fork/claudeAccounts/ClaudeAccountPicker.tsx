@@ -144,51 +144,59 @@ function UsageBar(props: { readonly used: number; readonly band: UsageBand }) {
 }
 
 function TagPill({ tag }: { readonly tag: AccountTag }) {
-  const pill = (
-    <Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="max-w-40 truncate">
-      {tag.label}
-    </Badge>
-  );
-  if (!tag.detail) return pill;
+  const label = <span className="min-w-0 truncate">{tag.label}</span>;
+  if (!tag.detail) {
+    return (
+      <Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="min-w-0 max-w-full">
+        {label}
+      </Badge>
+    );
+  }
   return (
     <Tooltip>
       <TooltipTrigger
-        render={<Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="max-w-40 truncate" />}
+        render={<Badge variant={TAG_VARIANT[tag.tone]} size="sm" className="min-w-0 max-w-full" />}
       >
-        {tag.label}
+        {label}
       </TooltipTrigger>
       <TooltipPopup side="top">{tag.detail}</TooltipPopup>
     </Tooltip>
   );
 }
 
-/** One account, laid out like a dashboard card: head line, then three meters. */
+/**
+ * One account, laid out like a dashboard card: the name line, then its status
+ * line (tag and recovery) only when there is something to say, then the meters.
+ */
 function AccountRow({ row }: { readonly row: AccountRowView }) {
   return (
-    <span className="grid w-full gap-1.5 py-0.5">
+    <span className="grid w-full min-w-0 gap-1 py-0.5">
       <span className="flex min-w-0 items-center gap-1.5">
         <AccountMark label={row.shortLabel} auto={false} indicatorBackground="var(--popover)" />
         <span className="shrink-0 font-medium text-sm">{row.name}</span>
-        {row.recoversIn ? (
-          <span className="shrink-0 text-muted-foreground text-2xs tabular-nums">
-            {row.recoversIn}
-          </span>
-        ) : null}
+        {row.current ? <span className="sr-only">(this thread)</span> : null}
         {row.emailMasked ? (
           <span className="min-w-0 truncate text-muted-foreground/70 text-2xs">
             {row.emailMasked}
           </span>
         ) : null}
-        <span className="ms-auto flex min-w-0 shrink-0 items-center gap-1">
-          {row.tag ? <TagPill tag={row.tag} /> : null}
+        <span className="ms-auto flex shrink-0 items-center gap-1">
           {row.sessions > 0 ? (
-            <Badge variant="outline" size="sm" className="text-muted-foreground">
-              {`in use · ${row.sessions}`}
-            </Badge>
+            <span className="text-muted-foreground text-2xs tabular-nums">{`in use · ${row.sessions}`}</span>
           ) : null}
           <MenuRadioItemIndicator />
         </span>
       </span>
+      {row.tag || row.recoversIn ? (
+        <span className="flex min-w-0 items-center gap-1.5 ps-5.5">
+          {row.tag ? <TagPill tag={row.tag} /> : null}
+          {row.recoversIn ? (
+            <span className="shrink-0 text-muted-foreground text-2xs tabular-nums">
+              {row.recoversIn}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
       {row.windows.length > 0 ? (
         <span className="grid grid-cols-3 gap-3 ps-5.5">
           {row.windows.map((win) => (
