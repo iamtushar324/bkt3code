@@ -55,6 +55,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -93,6 +94,29 @@ const PENDING_PLACEMENT_WINDOW_MS = 90_000;
 const DEFAULT_EXHAUSTED_MS = 60 * 60 * 1000;
 const MAX_HANDLED_CONDITIONS = 256;
 const SNAPSHOT_CHANGE = "\u0000snapshot";
+/** The fields the CLI's `sessions/<pid>.json` carries that the live-session index needs. */
+const decodeSessionFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      pid: Schema.Number,
+      sessionId: Schema.String,
+      procStart: Schema.optionalKey(Schema.Unknown),
+    }),
+  ),
+);
+
+const sameThreadAccount = (left: ThreadClaudeAccount, right: ThreadClaudeAccount): boolean =>
+  left.threadId === right.threadId &&
+  left.mode.kind === right.mode.kind &&
+  (left.mode.kind === "auto" ||
+    (right.mode.kind === "profile" && left.mode.profile === right.mode.profile)) &&
+  left.resolvedProfile === right.resolvedProfile &&
+  left.resolvedAt === right.resolvedAt &&
+  left.notice === right.notice &&
+  left.pendingRestart === right.pendingRestart;
+
+/** Published after each status read: watched threads re-read their observed account. */
+const LIVE_SESSIONS_CHANGE = "\u0000live-sessions";
 /** Reported while the first `--status` answer is still on its way. */
 export const LOADING_REASON = "loading";
 
@@ -291,6 +315,13 @@ export const make = Effect.gen(function* () {
    */
   const movedAwaitingTurn = new Set<ThreadId>();
   const handledConditions = new Set<string>();
+  /**
+   * Live Claude session id -> the account it runs on, from each account's
+   * `sessions/<pid>.json` (the CLI writes one at start and never removes it).
+   * Lets a thread whose session started before placement, on the shared
+   * link, show the account it really runs on. Rebuilt on every status read.
+   */
+  let liveSessionProfiles = new Map<string, string>();
 
   const changes = yield* PubSub.unbounded<string>();
   const announce = (key: string) => PubSub.publish(changes, key).pipe(Effect.ignore);
@@ -588,6 +619,58 @@ export const make = Effect.gen(function* () {
       };
     });
 
+  /** Field 22 (start time) of /proc/<pid>/stat, or undefined off Linux or when gone. */
+  const procStartTime = (pid: number): Effect.Effect<string | undefined> =>
+    fileSystem.readFileString(`/proc/${pid}/stat`).pipe(
+      Effect.map(
+        (raw) =>
+          raw
+            .slice(raw.lastIndexOf(")") + 1)
+            .trim()
+            .split(/\s+/)[19],
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+
+  const pidAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  };
+
+  const indexLiveSessions = (status: SwitcherStatus): Effect.Effect<Map<string, string>> =>
+    Effect.gen(function* () {
+      const index = new Map<string, string>();
+      const hasProc = yield* fileSystem
+        .exists("/proc/self/stat")
+        .pipe(Effect.orElseSucceed(() => false));
+      for (const profile of status.profiles) {
+        if (!profile.dir) continue;
+        const dir = path.join(profile.dir, "sessions");
+        const entries = yield* fileSystem.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+        for (const entry of entries) {
+          const match = /^(\d+)\.json$/.exec(entry);
+          if (!match) continue;
+          const pid = Number(match[1]);
+          if (!pidAlive(pid)) continue;
+          const raw = yield* fileSystem
+            .readFileString(path.join(dir, entry))
+            .pipe(Effect.orElseSucceed(() => ""));
+          const decoded = yield* decodeSessionFile(raw).pipe(Effect.option);
+          if (Option.isNone(decoded)) continue;
+          const parsed = decoded.value;
+          if (parsed.pid !== pid) continue;
+          // A reused pid belongs to another process: on Linux, the start time must match.
+          if (hasProc && String(parsed.procStart) !== (yield* procStartTime(pid))) continue;
+          index.set(parsed.sessionId, profile.name);
+        }
+      }
+      return index;
+    });
+
   const adoptStatus = (status: SwitcherStatus) =>
     Effect.gen(function* () {
       lastStatus = status;
@@ -620,6 +703,12 @@ export const make = Effect.gen(function* () {
       }
       firstPollDone = true;
       yield* announceSnapshot;
+      // The live-session index reads files, so it runs after the snapshot is
+      // out and only tells thread views, which may now show an observed account.
+      if (outcome.kind === "ok") {
+        liveSessionProfiles = yield* indexLiveSessions(outcome.value);
+        yield* announce(LIVE_SESSIONS_CHANGE);
+      }
     });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
@@ -663,8 +752,28 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  /** The account a thread's live Claude session runs on, read from the session files. */
+  const observedProfile = (threadId: ThreadId): Effect.Effect<string | undefined> =>
+    Effect.gen(function* () {
+      if (liveSessionProfiles.size === 0) return undefined;
+      const shell = yield* query
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const sessionId = Option.isSome(shell) ? shell.value.session?.providerThreadId : undefined;
+      return sessionId ? liveSessionProfiles.get(sessionId) : undefined;
+    });
+
   const getThread: ClaudeAccountsServiceShape["getThread"] = (threadId) =>
-    repository.get(threadId).pipe(Effect.map(threadView), Effect.mapError(internal("getThread")));
+    Effect.gen(function* () {
+      const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("getThread")));
+      if (row.resolvedProfile || row.mode.kind !== "auto") return threadView(row);
+      // A session that started before placement (on the shared link) has no
+      // resolved account yet: show the one its live process really uses.
+      const observed = yield* observedProfile(threadId);
+      if (observed === undefined) return threadView(row);
+      threadProfiles.set(threadId, observed);
+      return threadView({ ...row, resolvedProfile: observed });
+    });
 
   const persistResolved = (threadId: ThreadId, profile: string) =>
     Effect.gen(function* () {
@@ -1393,11 +1502,26 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
         const initial = yield* getThread(threadId);
+        // Every change to this thread is sent, even an identical view (callers
+        // use it as a signal). A live-session re-read every status poll is sent
+        // only when it changed what the thread shows.
+        let last = initial;
         return Stream.concat(
           Stream.make(initial),
           Stream.fromSubscription(subscription).pipe(
-            Stream.filter((changed) => changed === threadId),
-            Stream.mapEffect(() => getThread(threadId)),
+            Stream.filter((changed) => changed === threadId || changed === LIVE_SESSIONS_CHANGE),
+            Stream.mapEffect((changed) =>
+              getThread(threadId).pipe(
+                Effect.map((view) => {
+                  const unchanged =
+                    changed === LIVE_SESSIONS_CHANGE && sameThreadAccount(last, view);
+                  last = view;
+                  return { view, unchanged };
+                }),
+              ),
+            ),
+            Stream.filter((frame) => !frame.unchanged),
+            Stream.map((frame) => frame.view),
           ),
         );
       }),

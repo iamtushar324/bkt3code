@@ -440,6 +440,49 @@ const takeUntil = <A>(seen: Queue.Queue<A>, predicate: (value: A) => boolean) =>
     }
   });
 
+describe("ClaudeAccountsService live sessions started before placement", () => {
+  scenario(
+    "shows the account a thread's live Claude session runs on when nothing placed it",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-older-session");
+        const fs = yield* FileSystem.FileSystem;
+        const stat = yield* fs.readFileString("/proc/self/stat");
+        const procStart = stat
+          .slice(stat.lastIndexOf(")") + 1)
+          .trim()
+          .split(/\s+/)[19];
+        yield* fs.makeDirectory(`${harness.dir("barsha")}/sessions`, { recursive: true });
+        yield* fs.writeFileString(
+          `${harness.dir("barsha")}/sessions/${process.pid}.json`,
+          `{"pid":${process.pid},"sessionId":"claude-older","procStart":"${procStart}"}`,
+        );
+        // A stale file for a pid that is gone does not count.
+        yield* fs
+          .writeFileString(
+            `${harness.dir("agent")}/sessions/999999.json`,
+            `{"pid":999999,"sessionId":"claude-older","procStart":"1"}`,
+          )
+          .pipe(Effect.ignore);
+        yield* Ref.set(harness.shellSession, {
+          ...orchestrationSession(threadId, "ready", null),
+          providerThreadId: "claude-older",
+        });
+
+        const before = yield* service.getThread(threadId);
+        assert.equal(before.resolvedProfile, undefined);
+
+        yield* service.refreshStatus();
+        const after = yield* service.getThread(threadId);
+        assert.equal(after.resolvedProfile, "barsha");
+        assert.deepEqual(after.mode, { kind: "auto" });
+        // An observation only: nothing was placed or persisted.
+        assert.equal(harness.placeCalls.length, 0);
+      }),
+  );
+});
+
 describe("ClaudeAccountsService placement", () => {
   scenario(
     "places a new Auto thread once and then sticks to that account",
