@@ -90,6 +90,8 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+// T3-CUSTOM(expbkt3): the saved new-thread defaults seed the pull-request checkout draft.
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -1999,12 +2001,7 @@ export default function ChatView(props: ChatViewProps) {
               settings,
               fallbackDraftProject?.id ?? null,
               fallbackDraftProject ?? undefined,
-              // T3-CUSTOM(expbkt3): continues into the fork's default-model fallback chain below.
-            ).settings.defaultModelSelection ??
-              // T3-CUSTOM(expbkt3): the fork's global default thread model is the
-              // last fallback before "no provider".
-              settings.defaultThreadModelSelection ??
-              NO_PROVIDER_MODEL_SELECTION,
+            ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
           )
         : undefined,
     [draftThread, fallbackDraftProject, settings, threadId],
@@ -2014,6 +2011,7 @@ export default function ChatView(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // T3-CUSTOM(expbkt3): a durably rejected send surfaces as the thread error until retried.
   const failedOutboxItem = durableOutboxItems.find(
     (item) => item.threadId === activeThread?.id && item.deliveryState === "failed",
   );
@@ -2043,24 +2041,18 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
+  // Implicit drafts follow their current project/environment, including retargets.
+  // Explicit composer choices and existing server threads retain their permissions.
+  const runtimeMode = composerRuntimeMode ?? activeServerThread?.runtimeMode ?? defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
-  // T3-CUSTOM(expbkt3): drafts start from the fork's global default thread runtime mode.
-  const runtimeMode =
-    composerRuntimeMode ??
-    (isLocalDraftThread
-      ? settings.defaultThreadRuntimeMode
-      : (activeThread?.runtimeMode ?? defaultRuntimeMode));
   // T3-CUSTOM(expbkt3): plan mode is on by default in the fork, so this normally
-  // resolves the stored/project/global mode. The guard is kept for the rare
-  // opt-out: with plan mode off the effective mode is forced to "default" — even
-  // for threads with a stored plan mode — so nobody is trapped in plan mode
-  // while its toggle is hidden. The next send persists "default" back.
-  // T3-CUSTOM(expbkt3): draft threads start from the global default interaction mode.
+  // resolves the stored mode (a draft's is seeded from the saved Starting mode).
+  // The guard is kept for the rare opt-out: with plan mode off the effective
+  // mode is forced to "default" — even for threads with a stored plan mode — so
+  // nobody is trapped in plan mode while its toggle is hidden. The next send
+  // persists "default" back.
   const requestedInteractionMode = settings.planModeAvailable
-    ? (composerInteractionMode ??
-      (isLocalDraftThread
-        ? settings.defaultThreadInteractionMode
-        : (activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)))
+    ? (composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
     : DEFAULT_INTERACTION_MODE;
   const sourceControlProfiles = sourceControlProfilesQuery.data?.profiles ?? [];
   const sourceControlIdentityMode = sourceControlProfilesQuery.data?.identityMode ?? "machine";
@@ -2755,14 +2747,19 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
+      // T3-CUSTOM(expbkt3): BEGIN — the saved defaults (project, then host) decide
+      // the permissions and the starting mode; Plan only while its toggle exists.
+      const newThreadDefaults = resolveNewThreadDefaults(settings, activeProject.id, activeProject);
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
-          .defaultRuntimeMode,
-        interactionMode: DEFAULT_INTERACTION_MODE,
+        runtimeMode: newThreadDefaults.runtimeMode,
+        interactionMode: settings.planModeAvailable
+          ? newThreadDefaults.interactionMode
+          : DEFAULT_INTERACTION_MODE,
         ...input,
       });
+      // T3-CUSTOM(expbkt3): END
       await navigate({
         to: "/draft/$draftId",
         params: buildDraftThreadRouteParams(nextDraftId),

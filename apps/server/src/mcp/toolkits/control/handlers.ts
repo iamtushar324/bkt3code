@@ -20,8 +20,19 @@ import {
   type OrchestrationCommand,
   type OrchestrationThread,
   type OrchestrationThreadShell,
+  // T3-CUSTOM(expbkt3): saved new-thread defaults for created sessions.
+  type ModelSelection,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { parseLinearIssueUrl } from "@t3tools/shared/linearIssue";
+// T3-CUSTOM(expbkt3): saved new-thread defaults for created sessions.
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
+import {
+  clearProjectSettingsOverrides,
+  type LegacyProjectSettingsFields,
+} from "@t3tools/shared/projectSettings";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -925,6 +936,18 @@ const handlers = {
         { actorUserId: ownerUserId },
       )
       .pipe(mapControlError(operation));
+    // T3-CUSTOM(expbkt3): clients read the project's override entry once the
+    // legacy column is folded, so a requested default model is written there too.
+    if (input.defaultModelSelection) {
+      const settingsService = yield* ServerSettingsService;
+      yield* settingsService
+        .updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { defaultModelSelection: input.defaultModelSelection },
+          },
+        })
+        .pipe(mapControlError(operation));
+    }
     return {
       created: true,
       project: {
@@ -976,17 +999,38 @@ const handlers = {
         ...(input.scripts !== undefined ? { scripts: input.scripts } : {}),
       })
       .pipe(mapControlError(operation));
+    // T3-CUSTOM(expbkt3): BEGIN — clients read the project's override entry
+    // once the server has folded the legacy column, so the default model is
+    // written there as well (the legacy column above keeps un-folded hosts in
+    // step). Null means inherit the host default: the override is removed.
+    const settingsService = yield* ServerSettingsService;
+    let settings = yield* settingsService.getSettings.pipe(mapControlError(operation));
+    if (input.defaultModelSelection !== undefined) {
+      const entry =
+        input.defaultModelSelection === null
+          ? clearProjectSettingsOverrides(settings, projectId, ["defaultModelSelection"])
+          : {
+              ...settings.projectSettingsOverrides[projectId],
+              defaultModelSelection: input.defaultModelSelection,
+            };
+      settings = yield* settingsService
+        .updateSettings({ projectSettingsOverrides: { [projectId]: entry } })
+        .pipe(mapControlError(operation));
+    }
     return {
       updated: true,
       projectId,
       sequence: result.sequence,
       defaults: {
-        defaultModelSelection:
-          input.defaultModelSelection === undefined
-            ? project.defaultModelSelection
-            : input.defaultModelSelection,
+        defaultModelSelection: resolveNewThreadDefaults(settings, projectId, {
+          ...project,
+          ...(input.defaultModelSelection !== undefined
+            ? { defaultModelSelection: input.defaultModelSelection }
+            : {}),
+        }).modelSelection,
       },
     };
+    // T3-CUSTOM(expbkt3): END
   }),
 
   // T3-CUSTOM(expbkt3): BEGIN — session lineage, editable after creation so an
@@ -1153,6 +1197,10 @@ const handlers = {
     const settings = yield* (yield* ServerSettingsService).getSettings.pipe(
       mapControlError(operation),
     );
+    // T3-CUSTOM(expbkt3): every field the caller omits takes the saved
+    // new-thread default — the project's override entry, then the host — the
+    // same way the web's new-thread paths do.
+    const defaults = resolveCreatedSessionDefaults({ settings, projectId, project, input });
     const workspace =
       explicitWorkspace ??
       (inheritance.kind === "parent-worktree"
@@ -1161,14 +1209,10 @@ const handlers = {
             path: inheritance.path,
             ...(inheritance.branch ? { branch: inheritance.branch } : {}),
           }
-        : inheritance.kind === "parent-checkout" ||
-            (project.defaultThreadEnvMode ?? settings.defaultThreadEnvMode) === "local"
+        : inheritance.kind === "parent-checkout" || defaults.envMode === "local"
           ? { mode: "local" as const }
           : { mode: "new-worktree" as const });
-    const modelSelection =
-      input.modelSelection ?? project.defaultModelSelection ?? settings.defaultThreadModelSelection;
-    const runtimeMode = input.runtimeMode ?? "full-access";
-    const interactionMode = input.interactionMode ?? "default";
+    const { modelSelection, runtimeMode, interactionMode } = defaults;
     // Upstream's bootstrap needs a concrete base branch; the caller's choice
     // wins, otherwise the branch checked out in the project root.
     const prepareWorktree =
@@ -1447,8 +1491,36 @@ const handlers = {
 export const T3ControlToolkitHandlersLive = T3ControlToolkit.toLayer(handlers);
 
 /** Exposed for focused authorization tests. */
+// T3-CUSTOM(expbkt3): what a created session starts with when the caller
+// leaves a field out: the project's override, then the host (shared resolver),
+// then — for the model only — the deprecated host-wide key's decoded default,
+// since a session needs some provider to start. The env mode stays null when
+// no tier sets it; the caller treats that as "new worktree", as before.
+function resolveCreatedSessionDefaults(options: {
+  readonly settings: ServerSettings;
+  readonly projectId: ProjectId;
+  readonly project: LegacyProjectSettingsFields;
+  readonly input: {
+    readonly modelSelection?: ModelSelection | undefined;
+    readonly runtimeMode?: RuntimeMode | undefined;
+    readonly interactionMode?: ProviderInteractionMode | undefined;
+  };
+}) {
+  const { settings, projectId, project, input } = options;
+  const defaults = resolveNewThreadDefaults(settings, projectId, project);
+  return {
+    modelSelection:
+      input.modelSelection ?? defaults.modelSelection ?? settings.defaultThreadModelSelection,
+    runtimeMode: input.runtimeMode ?? defaults.runtimeMode,
+    interactionMode: input.interactionMode ?? defaults.interactionMode,
+    envMode: defaults.envMode,
+  };
+}
+
 export const __testing = {
   resolveSessionId,
+  // T3-CUSTOM(expbkt3): saved new-thread defaults for created sessions.
+  resolveCreatedSessionDefaults,
   // T3-CUSTOM(expbkt3): caller-seam regression for bounded session list reads.
   listSessions: handlers.t3_list_sessions,
   // T3-CUSTOM(expbkt3): custom sidebar group on update and list.

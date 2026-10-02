@@ -58,12 +58,16 @@ const threadCommentsDependencies = [...dependencies, ThreadCommentsService];
 const userPresenceDependencies = [...dependencies, UserPresenceService];
 const configurationDependencies = [...dependencies, ProviderRegistry, ServerSettingsService];
 const ownershipDependencies = [ClerkDirectory, ServerConfig];
+// T3-CUSTOM(expbkt3): t3_create_project and t3_update_project write the
+// project's settings override entry.
 const projectDependencies = [
   ...dependencies,
   ...ownershipDependencies,
   Path.Path,
   WorkspacePaths.WorkspacePaths,
+  ServerSettingsService,
 ];
+const updateProjectDependencies = [...dependencies, ServerSettingsService];
 const sessionDependencies = [...dependencies, ...ownershipDependencies];
 const sessionCreationDependencies = [
   ...sessionDependencies,
@@ -399,7 +403,7 @@ export const T3UpdateProjectTool = mutatingTool(
       defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)).pipe(
         Schema.annotateKey({
           description:
-            "Optional project agent model/options override, or null to inherit the app default.",
+            "Optional project agent model/options override, written to the project's settings overrides; null removes it so new sessions inherit the host default.",
         }),
       ),
       scripts: Schema.optional(Schema.Array(ProjectScript)).pipe(
@@ -411,14 +415,14 @@ export const T3UpdateProjectTool = mutatingTool(
     }),
     success: Schema.Unknown,
     failure: T3ControlToolError,
-    dependencies,
+    dependencies: updateProjectDependencies,
   }).annotate(Tool.Title, "Update T3 project"),
 );
 
 export const T3CreateSessionTool = mutatingTool(
   Tool.make("t3_create_session", {
     description:
-      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags.",
+      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags. An omitted model, runtimeMode or interactionMode follows the project's saved new-thread defaults, then the host's — including the host's starting mode, which may be plan; pass interactionMode: \"default\" to force build mode.",
     parameters: Schema.Struct({
       projectId: described(Schema.String, "Target project ID obtained from t3_list_projects."),
       title: Schema.optional(
@@ -433,14 +437,20 @@ export const T3CreateSessionTool = mutatingTool(
       modelSelection: Schema.optional(ModelSelection).pipe(
         Schema.annotateKey({
           description:
-            "Initial provider instance, model slug, and model options. Discover valid values with t3_get_configuration.",
+            "Initial provider instance, model slug, and model options. Defaults to the project's saved default model and options, then the host's. Discover valid values with t3_get_configuration.",
         }),
       ),
       runtimeMode: Schema.optional(
-        described(RuntimeMode, "Initial execution/sandbox mode. Defaults to full-access."),
+        described(
+          RuntimeMode,
+          "Initial execution/sandbox mode. Defaults to the project's saved permissions default, then the host's.",
+        ),
       ),
       interactionMode: Schema.optional(
-        described(ProviderInteractionMode, "Initial plan or default interaction mode."),
+        described(
+          ProviderInteractionMode,
+          "Initial plan or default (build) interaction mode. Defaults to the project's saved starting mode, then the host's, which may be plan.",
+        ),
       ),
       branch: Schema.optional(
         described(Schema.NullOr(Schema.String), "Optional source-control branch metadata."),

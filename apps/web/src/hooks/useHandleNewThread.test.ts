@@ -34,6 +34,9 @@ const testState = vi.hoisted(() => {
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
+    // T3-CUSTOM(expbkt3): the fork clears a reused draft's composer mode overrides.
+    setRuntimeMode: vi.fn(),
+    setInteractionMode: vi.fn(),
   };
 
   return {

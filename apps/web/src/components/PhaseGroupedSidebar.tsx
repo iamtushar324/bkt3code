@@ -88,6 +88,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform, newThreadId, randomHex } from "../lib/utils";
 // T3-CUSTOM(expbkt3): temporary branch for a new-worktree tab started from a row.
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
 import {
   opensInIntegratedBrowser,
@@ -108,7 +109,11 @@ import type { ResolvedEnvironmentAppearance } from "../state/environmentAppearan
 import { EnvironmentBadgeView } from "./environment/EnvironmentBadge";
 // T3-CUSTOM(expbkt3): END
 import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
-import { primaryServerKeybindingsAtom, primaryServerSettingsAtom } from "../state/server";
+import {
+  environmentServerConfigsAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerSettingsAtom,
+} from "../state/server";
 import { allEnvironmentShellsLiveAtom } from "../state/shell";
 // T3-CUSTOM(expbkt3): running terminal subprocesses, shown on the row as upstream does.
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -2325,6 +2330,10 @@ export function PhaseGroupedSidebar() {
   // Auto-settle thresholds are server preferences (the server settles threads
   // with no client attached), so read the primary server's values.
   const serverSettings = useAtomValue(primaryServerSettingsAtom);
+  // A row's new thread starts with the saved defaults of the row's own
+  // environment and project, not the primary environment's.
+  const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
+  const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
   const autoSettleAfterDays = serverSettings.sidebarAutoSettleAfterDays;
   const autoSettleOnMerge = serverSettings.sidebarAutoSettleOnMerge;
   const currentUserId = useCurrentUserId();
@@ -3293,13 +3302,20 @@ export function PhaseGroupedSidebar() {
             worktreePath: worktreeResult.value.worktree.path,
           };
         }
+        // The saved defaults: the row's project override, then its host.
+        const newThreadDefaults = resolveNewThreadDefaults(
+          environmentServerConfigs.get(row.thread.environmentId)?.settings ?? serverSettings,
+          row.thread.projectId,
+        );
         const result = await createThread({
           environmentId: row.thread.environmentId,
           input: buildNewThreadFromRowCreateInput({
             parent: row.thread,
             threadId,
             workspace,
-            runtimeMode: serverSettings.defaultThreadRuntimeMode,
+            modelSelection: newThreadDefaults.modelSelection,
+            runtimeMode: newThreadDefaults.runtimeMode,
+            interactionMode: planModeAvailable ? newThreadDefaults.interactionMode : "default",
             createdAt: new Date().toISOString(),
           }),
         });
@@ -3335,9 +3351,11 @@ export function PhaseGroupedSidebar() {
     [
       createThread,
       createWorktree,
+      environmentServerConfigs,
       navigateToRow,
+      planModeAvailable,
       projectByKey,
-      serverSettings.defaultThreadRuntimeMode,
+      serverSettings,
       setTreeKeysExpanded,
     ],
   );
