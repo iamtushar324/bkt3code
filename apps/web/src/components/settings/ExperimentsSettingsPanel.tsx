@@ -14,6 +14,7 @@ import {
 } from "./settingsLayout";
 // T3-CUSTOM(expbkt3): native plan review (moved here from the removed Beta panel).
 import { searchableSetting } from "./settingsSearch";
+import { ExperimentsLogoutControl } from "../../fork/ExperimentsLogoutControl"; // T3-CUSTOM(expbkt3): log out (web and desktop).
 
 export function ExperimentsSettingsPanel() {
   const phaseGroupedSidebarEnabled = useClientSettings(
@@ -181,6 +182,9 @@ export function ExperimentsSettingsPanel() {
       {/* T3-CUSTOM(expbkt3): END */}
       {/* T3-CUSTOM(expbkt3): BEGIN — archived-session worktree reclaim. */}
       <SessionArchiveSettingsSection />
+      {/* T3-CUSTOM(expbkt3): END */}
+      {/* T3-CUSTOM(expbkt3): BEGIN — log out (web and desktop). */}
+      <ExperimentsLogoutControl />
       {/* T3-CUSTOM(expbkt3): END */}
     </SettingsPageContainer>
   );

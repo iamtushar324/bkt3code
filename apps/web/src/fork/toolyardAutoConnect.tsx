@@ -10,10 +10,15 @@
  * toolyard shows the state and offers Reconnect. The when/once rules live in
  * `createToolyardAutoConnectRunner`.
  *
+ * A client without a Clerk publishable key — the keyless managed BK desktop,
+ * which pairs by credential — can never mint the token, so it mounts nothing:
+ * connecting is the web app's job, and the settings card says so.
+ *
  * @module fork/toolyardAutoConnect
  */
 import { useEffect } from "react";
 
+import { hasClerkPublicConfig } from "../cloud/publicConfig";
 import { usePersonalMcpProfile } from "../hooks/usePersonalMcpProfile";
 import { useCurrentUserId } from "../state/identity";
 import { readTeamClerkToken } from "../state/teamIdentityToken";
@@ -28,7 +33,13 @@ export function resetToolyardAutoConnectForTests(): void {
   runner.reset();
 }
 
-export function ToolyardAutoConnect(): null {
+export function ToolyardAutoConnect(): React.ReactElement | null {
+  // Build-time constant, so the branch never changes between renders.
+  if (!hasClerkPublicConfig()) return null;
+  return <SignedInToolyardAutoConnect />;
+}
+
+function SignedInToolyardAutoConnect(): null {
   const userId = useCurrentUserId();
   const { profile, connectToolyard } = usePersonalMcpProfile();
 
