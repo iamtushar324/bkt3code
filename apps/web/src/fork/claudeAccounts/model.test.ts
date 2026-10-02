@@ -262,6 +262,19 @@ describe("account rows", () => {
     expect(rows[1]?.windows.map((win) => win.label)).toEqual(["Week", "Fable"]);
   });
 
+  it("hides accounts the viewer may not use, except the thread's own", () => {
+    const rows = accountRows(
+      snapshot([
+        account({ name: "agent", allowed: true }),
+        account({ name: "barsha", allowed: false }),
+        account({ name: "tushar", allowed: false }),
+      ]),
+      thread({ resolvedProfile: "tushar" }),
+      NOW,
+    );
+    expect(rows.map((row) => row.name)).toEqual(["agent", "tushar"]);
+  });
+
   it("describes the Auto row before and after placement", () => {
     expect(autoRowDetail(null)).toBe("Picks an account on the first message");
     expect(autoRowDetail(thread({ resolvedProfile: "audit" }))).toBe(
