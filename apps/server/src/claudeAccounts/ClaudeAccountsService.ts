@@ -673,8 +673,6 @@ export const make = Effect.gen(function* () {
 
   const adoptStatus = (status: SwitcherStatus) =>
     Effect.gen(function* () {
-      liveSessionProfiles = yield* indexLiveSessions(status);
-      yield* announce(LIVE_SESSIONS_CHANGE);
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
@@ -705,6 +703,12 @@ export const make = Effect.gen(function* () {
       }
       firstPollDone = true;
       yield* announceSnapshot;
+      // The live-session index reads files, so it runs after the snapshot is
+      // out and only tells thread views, which may now show an observed account.
+      if (outcome.kind === "ok") {
+        liveSessionProfiles = yield* indexLiveSessions(outcome.value);
+        yield* announce(LIVE_SESSIONS_CHANGE);
+      }
     });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
