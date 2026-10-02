@@ -324,7 +324,6 @@ function ClaudeAccountPickerMenu(props: {
                   size="icon-sm"
                   aria-label={`Claude account: ${tooltip}`}
                   data-claude-account-picker="true"
-                  onPointerDown={(event) => event.preventDefault()}
                 />
               }
             />
