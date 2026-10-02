@@ -4480,6 +4480,22 @@ pending_approval_requests AS (
     sql
       .withTransaction(
         Effect.gen(function* () {
+          // T3-CUSTOM(expbkt3): BEGIN - an archived or deleted thread comes back as
+          // none below only after every detail list has run (~150 ms of
+          // synchronous SQLite on bkt3), and the Linear bridge reads hundreds of
+          // them (TEC-1502). Check the same row first; the answer is unchanged.
+          const activeRow = yield* getActiveThreadRowById({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:activeThread:query",
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:activeThread:decodeRow",
+              ),
+            ),
+          );
+          if (Option.isNone(activeRow)) {
+            return Option.none<OrchestrationThreadDetailSnapshot>();
+          }
+          // T3-CUSTOM(expbkt3): END
           if (window?.turnLimit === undefined) {
             const thread = yield* getThreadDetailByIdBounded(threadId, undefined, {
               mode: "client",
