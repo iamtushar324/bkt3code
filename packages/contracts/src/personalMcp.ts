@@ -148,7 +148,9 @@ export type PersonalMcpToolyardConnectInput = typeof PersonalMcpToolyardConnectI
 /**
  * Error codes of `personalMcp.connectToolyard`. The first eight are toolyard's
  * own (`{"error": code}` responses; it also answers 500 `internal_error`); the
- * rest name what T3 saw instead of an answer. Kept as a plain string on the
+ * rest name what T3 saw instead of an answer, or why it refused to ask: an
+ * unbound connection (`not_signed_in`) or a token issued to someone other than
+ * the connection's user (`identity_mismatch`). Kept as a plain string on the
  * wire so a code this list does not know still reaches the client unchanged.
  */
 export const TOOLYARD_CONNECT_ERROR_CODES = [
@@ -164,6 +166,8 @@ export const TOOLYARD_CONNECT_ERROR_CODES = [
   "timeout",
   "unexpected_response",
   "store_failed",
+  "not_signed_in",
+  "identity_mismatch",
 ] as const;
 export type ToolyardConnectErrorCode = (typeof TOOLYARD_CONNECT_ERROR_CODES)[number];
 

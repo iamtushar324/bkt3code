@@ -7,7 +7,8 @@
  * waits until the operator is signed in and the personal MCP profile reports
  * no toolyard credential, then hands a fresh Clerk token to the server, which
  * does the exchange. Failures are quiet here; Settings → Experiments →
- * toolyard shows the state and offers Reconnect.
+ * toolyard shows the state and offers Reconnect. The when/once rules live in
+ * `createToolyardAutoConnectRunner`.
  *
  * @module fork/toolyardAutoConnect
  */
@@ -16,30 +17,30 @@ import { useEffect } from "react";
 import { usePersonalMcpProfile } from "../hooks/usePersonalMcpProfile";
 import { useCurrentUserId } from "../state/identity";
 import { readTeamClerkToken } from "../state/teamIdentityToken";
-import { shouldAutoConnectToolyard } from "./toolyardConnect";
+import { createToolyardAutoConnectRunner } from "./toolyardConnect";
 
 // Per app load, not per mount: StrictMode and route changes must not turn one
 // auto-connect into several, because every success rotates the token.
-let attempted = false;
+const runner = createToolyardAutoConnectRunner();
 
 /** Exposed for tests that drive several loads in one process. */
 export function resetToolyardAutoConnectForTests(): void {
-  attempted = false;
+  runner.reset();
 }
 
 export function ToolyardAutoConnect(): null {
-  const signedIn = useCurrentUserId() !== null;
+  const userId = useCurrentUserId();
   const { profile, connectToolyard } = usePersonalMcpProfile();
 
   useEffect(() => {
-    if (!shouldAutoConnectToolyard({ signedIn, profile, attempted })) return;
-    attempted = true;
-    void (async () => {
-      const token = await readTeamClerkToken();
-      if (token === null) return;
-      await connectToolyard(token);
-    })();
-  }, [connectToolyard, profile, signedIn]);
+    void runner.run({
+      signedIn: userId !== null,
+      userId,
+      profile,
+      readToken: readTeamClerkToken,
+      connect: connectToolyard,
+    });
+  }, [connectToolyard, profile, userId]);
 
   return null;
 }

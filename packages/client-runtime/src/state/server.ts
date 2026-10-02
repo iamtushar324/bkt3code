@@ -1136,7 +1136,13 @@ export function createServerEnvironmentAtoms<R, E>(
     connectToolyard: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:personal-mcp:connect-toolyard",
       tag: WS_METHODS.personalMcpConnectToolyard,
-      concurrency: configConcurrency,
+      // Its own lane: a slow toolyard (up to the server's 10 s timeout) must
+      // not hold up settings writes, and two overlapping connects collapse.
+      concurrency: {
+        mode: "singleFlight" as const,
+        key: ({ environmentId }: { readonly environmentId: string }) =>
+          `personal-mcp:connect-toolyard:${environmentId}`,
+      },
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

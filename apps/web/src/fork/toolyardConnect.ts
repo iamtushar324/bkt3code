@@ -41,6 +41,69 @@ export function shouldAutoConnectToolyard(input: {
   return toolyard !== null && !toolyard.credentialConfigured;
 }
 
+export type ToolyardAutoConnectOutcome =
+  /** Nothing to do: signed out, profile not loaded, already connected, or already tried. */
+  | "skipped"
+  /** A run for this user is still in flight. */
+  | "busy"
+  /** No Clerk token was available; the attempt is not used up. */
+  | "no-token"
+  /** The server was asked to connect; this load will not ask again for this user. */
+  | "attempted";
+
+export interface ToolyardAutoConnectRun {
+  readonly signedIn: boolean;
+  /** The signed-in operator; the once-per-load attempt is tracked per user. */
+  readonly userId: string | null;
+  readonly profile: PersonalMcpProfile | null | undefined;
+  readonly readToken: () => Promise<string | null>;
+  readonly connect: (clerkToken: string) => Promise<unknown>;
+}
+
+export interface ToolyardAutoConnectRunner {
+  readonly run: (input: ToolyardAutoConnectRun) => Promise<ToolyardAutoConnectOutcome>;
+  readonly reset: () => void;
+}
+
+/**
+ * The once-per-app-load auto-connect, as state plus one `run` to call whenever
+ * its inputs change. The attempt is used up only once a Clerk token was
+ * actually in hand (a missing token leaves it for the next change), it is
+ * tracked per signed-in user so a different account signing in without a
+ * reload gets its own, and overlapping runs collapse into one — every
+ * successful connect rotates the token, so two in flight would be one too
+ * many.
+ */
+export function createToolyardAutoConnectRunner(): ToolyardAutoConnectRunner {
+  let attemptedFor: string | null = null;
+  let inFlight = false;
+  return {
+    run: async (input) => {
+      if (inFlight) return "busy";
+      const attempted = input.userId !== null && attemptedFor === input.userId;
+      if (
+        !shouldAutoConnectToolyard({ signedIn: input.signedIn, profile: input.profile, attempted })
+      ) {
+        return "skipped";
+      }
+      inFlight = true;
+      try {
+        const token = await input.readToken();
+        if (token === null) return "no-token";
+        attemptedFor = input.userId;
+        await input.connect(token);
+        return "attempted";
+      } finally {
+        inFlight = false;
+      }
+    },
+    reset: () => {
+      attemptedFor = null;
+      inFlight = false;
+    },
+  };
+}
+
 /**
  * Plain-language reading of a `personalMcp.connectToolyard` error code. toolyard
  * may add codes; anything unknown reads as "could not connect" with the code
@@ -56,6 +119,10 @@ export function toolyardConnectErrorMessage(code: string | undefined): string {
       return "Your T3 Code agent is disabled in toolyard.";
     case "invalid_token":
       return "Your sign-in could not be verified. Sign out and back in, then reconnect.";
+    case "not_signed_in":
+      return "Sign in with your Beknown account to connect toolyard.";
+    case "identity_mismatch":
+      return "Your sign-in doesn't match this T3 session. Sign out and back in, then reconnect.";
     case "connect_disabled":
       return "toolyard is not accepting T3 Code connections right now.";
     case "rate_limited":

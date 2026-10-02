@@ -691,12 +691,13 @@ export const makeForkWsHandlers = ({
     // T3-CUSTOM(expbkt3): END review comments.
     // T3-CUSTOM(expbkt3): toolyard auto-connect. The Clerk token in the payload
     // is handed to toolyard once and is never logged or traced; the result
-    // carries no credential either way.
+    // carries no credential either way. Bound to the connection's actor, never
+    // the shared local fallback profile: an unbound session is refused.
     [WS_METHODS.personalMcpConnectToolyard]: (input) =>
       observeRpcEffect(
         WS_METHODS.personalMcpConnectToolyard,
         connectToolyard({
-          userId: personalMcpUserId,
+          actorUserId,
           clerkToken: input.clerkToken,
           profiles: personalMcpProfiles,
           httpClient,

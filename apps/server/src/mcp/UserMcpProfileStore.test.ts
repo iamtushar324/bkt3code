@@ -23,7 +23,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import createUserMcpProfilesTable from "../persistence/Migrations/042_UserMcpProfiles.ts";
 import {
   canonicalizePersonalMcpIntegration,
-  isLegacyToolyardBifrostIntegration,
+  isLegacyToolyardIntegration,
   UserMcpProfileStore,
   layer as userMcpProfileStoreLayer,
 } from "./UserMcpProfileStore.ts";
@@ -142,7 +142,7 @@ describe("the built-in toolyard integration", () => {
     "  https://toolyard.dev.beknown.live:443/mcp  ",
   ])("recognises %s as the toolyard endpoint", (url) => {
     expect(isToolyardGatewayUrl(url)).toBe(true);
-    expect(isLegacyToolyardBifrostIntegration({ id: "bifrost", url })).toBe(true);
+    expect(isLegacyToolyardIntegration({ url, authMode: "x-bf-vk" })).toBe(true);
   });
 
   it.each([
@@ -152,7 +152,15 @@ describe("the built-in toolyard integration", () => {
     BIFROST_MCP_URL,
   ])("does not mistake %s for the toolyard endpoint", (url) => {
     expect(isToolyardGatewayUrl(url)).toBe(false);
-    expect(isLegacyToolyardBifrostIntegration({ id: "bifrost", url })).toBe(false);
+    expect(isLegacyToolyardIntegration({ url, authMode: "x-bf-vk" })).toBe(false);
+  });
+
+  it("counts only a virtual-key entry at toolyard as legacy, whatever its id", () => {
+    expect(isLegacyToolyardIntegration({ url: TOOLYARD_MCP_URL, authMode: "x-bf-vk" })).toBe(true);
+    expect(isLegacyToolyardIntegration({ url: TOOLYARD_MCP_URL, authMode: "bearer" })).toBe(false);
+    expect(isLegacyToolyardIntegration({ url: TOOLYARD_MCP_URL, authMode: "x-api-key" })).toBe(
+      false,
+    );
   });
 });
 
@@ -221,6 +229,33 @@ const readStoredJson = (sql: SqlClient.SqlClient) =>
     ),
   );
 
+const seedStoredProfile = (
+  sql: SqlClient.SqlClient,
+  integrations: ReadonlyArray<PersonalMcpIntegration>,
+) =>
+  Effect.gen(function* () {
+    const json = yield* Schema.encodeEffect(StoredProfileJson)({
+      externalAccessEnabled: true,
+      integrations,
+    });
+    yield* sql`
+      INSERT INTO user_mcp_profiles (user_id, profile_json, updated_at)
+      VALUES (${userId}, ${json}, ${"2026-09-01T00:00:00.000Z"})
+    `;
+  });
+
+const notesIntegration: PersonalMcpIntegration = {
+  id: "notes",
+  name: "Notes",
+  url: "https://notes.example/mcp",
+  enabled: true,
+  authMode: "bearer",
+  customHeaderName: "",
+  credentialConfigured: false,
+  providerInstanceIds: [],
+  allowedTools: [],
+};
+
 describe("UserMcpProfileStore", () => {
   it.effect("presents an unconnected built-in toolyard integration on a fresh profile", () => {
     const { store: secrets } = makeSecrets();
@@ -283,6 +318,46 @@ describe("UserMcpProfileStore", () => {
           .pipe(Effect.flip);
         expect(error.operation).toBe("set-integration-credential");
         expect(entries.size).toBe(0);
+      }),
+    );
+  });
+
+  it.effect("retires a rejected credential so the client connects again", () => {
+    const { store: secrets, entries } = makeSecrets();
+    return withStore(secrets, (store, sql) =>
+      Effect.gen(function* () {
+        yield* store.setIntegrationCredential(userId, toolyardId, "ty_dead", { email: "a@b.c" });
+
+        const retired = yield* store.retireIntegrationCredential(userId, toolyardId);
+        expect(retired.integrations[0]).toEqual({
+          id: "toolyard",
+          name: "toolyard",
+          url: TOOLYARD_MCP_URL,
+          enabled: true,
+          authMode: "bearer",
+          customHeaderName: "",
+          credentialConfigured: false,
+          providerInstanceIds: [],
+          allowedTools: [],
+        });
+        expect(entries.has(secretNameFor("toolyard"))).toBe(false);
+        expect(yield* store.getIntegrationCredential(userId, toolyardId)).toBeUndefined();
+        const stored = yield* readStoredJson(sql);
+        expect(stored.integrations[0]).toMatchObject({
+          id: "toolyard",
+          credentialConfigured: false,
+        });
+        expect(stored.integrations[0]).not.toHaveProperty("connectedAt");
+
+        // And a fresh connect brings it back.
+        const reconnected = yield* store.setIntegrationCredential(userId, toolyardId, "ty_new", {
+          email: "a@b.c",
+        });
+        expect(reconnected.integrations[0]).toMatchObject({
+          credentialConfigured: true,
+          connectedEmail: "a@b.c",
+        });
+        expect(yield* store.getIntegrationCredential(userId, toolyardId)).toBe("ty_new");
       }),
     );
   });
@@ -362,37 +437,20 @@ describe("UserMcpProfileStore", () => {
     );
     return withStore(secrets, (store, sql) =>
       Effect.gen(function* () {
-        const legacyJson = yield* Schema.encodeEffect(StoredProfileJson)({
-          externalAccessEnabled: true,
-          integrations: [
-            {
-              id: "bifrost",
-              name: "Bifrost pointed at toolyard",
-              url: TOOLYARD_MCP_URL,
-              enabled: true,
-              authMode: "x-bf-vk",
-              customHeaderName: "",
-              credentialConfigured: true,
-              providerInstanceIds: [],
-              allowedTools: [],
-            },
-            {
-              id: "notes",
-              name: "Notes",
-              url: "https://notes.example/mcp",
-              enabled: true,
-              authMode: "bearer",
-              customHeaderName: "",
-              credentialConfigured: false,
-              providerInstanceIds: [],
-              allowedTools: [],
-            },
-          ],
-        });
-        yield* sql`
-          INSERT INTO user_mcp_profiles (user_id, profile_json, updated_at)
-          VALUES (${userId}, ${legacyJson}, ${"2026-09-01T00:00:00.000Z"})
-        `;
+        yield* seedStoredProfile(sql, [
+          {
+            id: "bifrost",
+            name: "Bifrost pointed at toolyard",
+            url: TOOLYARD_MCP_URL,
+            enabled: true,
+            authMode: "x-bf-vk",
+            customHeaderName: "",
+            credentialConfigured: true,
+            providerInstanceIds: [],
+            allowedTools: [],
+          },
+          notesIntegration,
+        ]);
 
         const profile = yield* store.get(userId);
         expect(profile.integrations.map((entry) => entry.id)).toEqual(["toolyard", "notes"]);
@@ -406,6 +464,83 @@ describe("UserMcpProfileStore", () => {
       }),
     );
   });
+
+  it.effect("retires a toolyard virtual-key entry under any id, with that id's secret", () => {
+    const { store: secrets, entries } = makeSecrets();
+    entries.set(secretNameFor("ty"), new TextEncoder().encode("toolyard-key-filed-as-ty"));
+    entries.set(secretNameFor("notes"), new TextEncoder().encode("notes-token"));
+    return withStore(secrets, (store, sql) =>
+      Effect.gen(function* () {
+        yield* seedStoredProfile(sql, [
+          {
+            id: "ty",
+            name: "toolyard via virtual key",
+            url: "https://toolyard.dev.beknown.live/mcp/",
+            enabled: true,
+            authMode: "x-bf-vk",
+            customHeaderName: "",
+            credentialConfigured: true,
+            providerInstanceIds: [],
+            allowedTools: [],
+          },
+          { ...notesIntegration, credentialConfigured: true },
+        ]);
+
+        const profile = yield* store.get(userId);
+        expect(profile.integrations.map((entry) => entry.id)).toEqual(["toolyard", "notes"]);
+        expect(entries.has(secretNameFor("ty"))).toBe(false);
+        // Unrelated secrets stay.
+        expect(
+          yield* store.getIntegrationCredential(userId, "notes" as PersonalMcpIntegrationId),
+        ).toBe("notes-token");
+        const stored = yield* readStoredJson(sql);
+        expect(stored.integrations.map((entry) => entry.id)).toEqual(["notes"]);
+      }),
+    );
+  });
+
+  it.effect(
+    "demotes a hand-made toolyard entry whose credential the connect flow never wrote",
+    () => {
+      const { store: secrets, entries } = makeSecrets();
+      entries.set(secretNameFor("toolyard"), new TextEncoder().encode("stale-bearer"));
+      return withStore(secrets, (store, sql) =>
+        Effect.gen(function* () {
+          yield* seedStoredProfile(sql, [
+            {
+              id: "toolyard",
+              name: "mine",
+              url: "https://old.example/mcp",
+              enabled: true,
+              authMode: "bearer",
+              customHeaderName: "",
+              credentialConfigured: true,
+              providerInstanceIds: [],
+              allowedTools: [],
+            },
+          ]);
+
+          const profile = yield* store.get(userId);
+          expect(profile.integrations).toHaveLength(1);
+          expect(profile.integrations[0]).toMatchObject({
+            id: "toolyard",
+            name: "toolyard",
+            url: TOOLYARD_MCP_URL,
+            authMode: "bearer",
+            credentialConfigured: false,
+          });
+          // The stale secret is gone and the row no longer claims a credential,
+          // so auto-connect runs on the next load and nothing sends the old bearer.
+          expect(entries.has(secretNameFor("toolyard"))).toBe(false);
+          const stored = yield* readStoredJson(sql);
+          expect(stored.integrations[0]).toMatchObject({
+            id: "toolyard",
+            credentialConfigured: false,
+          });
+        }),
+      );
+    },
+  );
 
   it.effect("drops a legacy toolyard-via-Bifrost entry a stale client still sends", () => {
     const { store: secrets, entries } = makeSecrets();
@@ -436,6 +571,48 @@ describe("UserMcpProfileStore", () => {
           url: BIFROST_MCP_URL,
           credentialConfigured: true,
         });
+      }),
+    );
+  });
+
+  it.effect("keeps one user's concurrent writes consistent", () => {
+    const { store: secrets, entries } = makeSecrets();
+    return withStore(secrets, (store) =>
+      Effect.gen(function* () {
+        const bifrostUpdate = (credential: string) =>
+          store.update(userId, {
+            externalAccessEnabled: true,
+            integrations: [{ ...bifrostIntegration(BIFROST_MCP_URL), credential }],
+          });
+        yield* Effect.all(
+          [
+            store.setIntegrationCredential(userId, toolyardId, "ty_a", { email: "a@b.c" }),
+            bifrostUpdate("vk_1"),
+            store.setIntegrationCredential(userId, toolyardId, "ty_b", { email: "a@b.c" }),
+            bifrostUpdate("vk_2"),
+            store.get(userId),
+            store.setIntegrationCredential(userId, toolyardId, "ty_c", { email: "a@b.c" }),
+            bifrostUpdate("vk_3"),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const profile = yield* store.get(userId);
+        // Every write landed on top of the previous one: nothing was lost or doubled.
+        expect(profile.integrations.map((entry) => entry.id)).toEqual(["toolyard", "bifrost"]);
+        expect(profile.integrations[0]).toMatchObject({
+          credentialConfigured: true,
+          connectedEmail: "a@b.c",
+        });
+        expect(profile.integrations[1]).toMatchObject({ credentialConfigured: true });
+        expect(profile.externalAccessEnabled).toBe(true);
+        expect(entries.size).toBe(2);
+        expect(["ty_a", "ty_b", "ty_c"]).toContain(
+          yield* store.getIntegrationCredential(userId, toolyardId),
+        );
+        expect(["vk_1", "vk_2", "vk_3"]).toContain(
+          yield* store.getIntegrationCredential(userId, bifrostId),
+        );
       }),
     );
   });

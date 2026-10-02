@@ -262,7 +262,25 @@ why Settings → Experiments → toolyard offers an explicit Reconnect instead o
 reconnecting on its own. toolyard's refusals (`not_org_member`, `user_disabled`,
 `agent_disabled`, …) come back as codes and are worded in
 `fork/toolyardConnect.ts`; a code that list does not know still reaches the
-client unchanged.
+client unchanged (the server accepts only `^[a-z_]{1,64}$` as a code).
+
+Only a user-bound connection may connect, and only for itself: the server
+refuses an unbound local/owner session (`not_signed_in`) and a token whose
+`sub` is not the connection's actor (`identity_mismatch`; read without
+verifying, toolyard verifies the signature), so a shared or paired session
+cannot rotate someone's token into the shared `local-user` profile. Connects
+for one user run one at a time (`mcp/PerUserLock.ts`), as do all profile
+read-modify-writes inside `UserMcpProfileStore`.
+
+A stored token can die outside T3: another T3 origin connecting through
+toolyard's allowlist, the agent rotated or disabled on toolyard's Agents page.
+When the proxy sees toolyard answer 401 it calls
+`retireIntegrationCredential`, which removes the secret and marks toolyard
+unconnected (`connectedAt` cleared), so the card reads "Not connected" and the
+next app load reconnects; the agent's call still gets that 401. toolyard counts
+as connected only while `connectedAt` is set, which only the connect flow
+writes: a pre-existing hand-made `toolyard` entry is demoted on first read and
+its stale secret removed.
 
 Provider sessions include the toolyard proxy exactly when the user is connected
 (`McpSessionRegistry` filters on `credentialConfigured`, like any integration);
@@ -271,10 +289,11 @@ Bifrost (bk-toolhub) stays alongside, always appended as `mcp__bifrost__*`, for
 side-by-side testing.
 
 `x-bf-vk` integrations are pinned to bk-toolhub alone (`BIFROST_GATEWAYS` has a
-single entry). The earlier opt-in — a `bifrost` integration pointed at toolyard
-with a toolyard key stored under `bifrost` — would now canonicalize to
-bk-toolhub and send that key to the wrong gateway, so the store retires any such
-stored entry on first read and drops it from any update, secret included. The
+single entry). The earlier opt-in — any `x-bf-vk` integration pointed at
+toolyard, whatever its id, with a toolyard key stored under that id — would now
+canonicalize to bk-toolhub and send that key to the wrong gateway, so the store
+retires any such stored entry on first read and drops it from any update,
+secret included. The
 Linear status fallback above is unchanged: it always posts to bk-toolhub with
 the Bifrost key.
 

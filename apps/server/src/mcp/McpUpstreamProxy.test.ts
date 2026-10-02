@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BIFROST_MCP_URL, ThreadId, TOOLYARD_MCP_URL } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -130,3 +130,13 @@ it.effect("sends the toolyard bearer token and names the T3 thread to toolyard",
     expect(outgoing.headers).not.toHaveProperty("x-bf-vk");
   }),
 );
+
+describe("shouldRetireUpstreamCredential", () => {
+  it("retires only toolyard's credential, and only on a 401", () => {
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 401)).toBe(true);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 403)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("toolyard", 502)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("bifrost", 401)).toBe(false);
+    expect(McpUpstreamProxy.shouldRetireUpstreamCredential("custom-tools", 401)).toBe(false);
+  });
+});

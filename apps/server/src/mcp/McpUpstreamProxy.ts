@@ -5,6 +5,7 @@
 import {
   isToolyardGatewayUrl,
   PersonalMcpIntegrationId,
+  TOOLYARD_MCP_INTEGRATION_ID,
   type PersonalMcpAuthMode,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -117,6 +118,17 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
   return outgoing;
 });
 
+/**
+ * Whether an upstream answer means the stored credential is dead. Only
+ * toolyard's: its agent token is rotated or revoked outside T3 (another T3
+ * origin connecting through toolyard's allowlist, the agent rotated or
+ * disabled on toolyard's Agents page, two connects stored out of order), and
+ * a 401 is how T3 finds out. Retiring it makes the client reconnect on its
+ * next load instead of sending a dead bearer forever.
+ */
+export const shouldRetireUpstreamCredential = (integrationId: string, status: number): boolean =>
+  integrationId === TOOLYARD_MCP_INTEGRATION_ID && status === 401;
+
 export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
   "*",
   "/mcp/upstream/*",
@@ -138,10 +150,11 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
     ) {
       return unauthorized("A user-bound T3 provider credential is required.");
     }
+    const actorUserId = invocation.actorUserId;
 
-    const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(
-      invocation.actorUserId,
-    ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+    const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(actorUserId).pipe(
+      Effect.catch(() => Effect.succeed(undefined)),
+    );
     const integration = profile?.integrations.find(
       (candidate) =>
         candidate.id === integrationId &&
@@ -209,8 +222,32 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       threadId: invocation.threadId,
     });
 
+    // The agent still gets toolyard's 401; T3 just stops trusting the token.
+    const retireRejectedCredential = (status: number) =>
+      shouldRetireUpstreamCredential(integrationId, status)
+        ? UserMcpProfileStore.retireActiveIntegrationCredential(
+            actorUserId,
+            PersonalMcpIntegrationId.make(integrationId),
+          ).pipe(
+            Effect.tap(() =>
+              Effect.logWarning("personal MCP credential retired after upstream 401", {
+                actorUserId,
+                integrationId,
+              }),
+            ),
+            Effect.catch((cause) =>
+              Effect.logWarning("personal MCP credential could not be retired", {
+                cause,
+                actorUserId,
+                integrationId,
+              }),
+            ),
+          )
+        : Effect.void;
+
     const client = yield* HttpClient.HttpClient;
     return yield* client.execute(outgoing).pipe(
+      Effect.tap((response) => retireRejectedCredential(response.status)),
       Effect.map((response) =>
         HttpServerResponse.stream(response.stream, {
           status: response.status,

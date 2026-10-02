@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createToolyardAutoConnectRunner,
   shouldAutoConnectToolyard,
   toolyardConnectErrorMessage,
   toolyardIntegrationOf,
@@ -72,6 +73,97 @@ describe("shouldAutoConnectToolyard", () => {
   });
 });
 
+describe("createToolyardAutoConnectRunner", () => {
+  const pending = profileWith([toolyard(false)]);
+
+  it("does not use up the attempt until a Clerk token is actually in hand", async () => {
+    const runner = createToolyardAutoConnectRunner();
+    const connects: string[] = [];
+    const base = {
+      signedIn: true,
+      userId: "user_1",
+      profile: pending,
+      connect: async (token: string) => {
+        connects.push(token);
+      },
+    };
+
+    // Clerk not ready yet: nothing sent, nothing burned.
+    expect(await runner.run({ ...base, readToken: async () => null })).toBe("no-token");
+    expect(connects).toEqual([]);
+
+    // Token available: one connect, and that is this load's attempt.
+    expect(await runner.run({ ...base, readToken: async () => "clerk-1" })).toBe("attempted");
+    expect(connects).toEqual(["clerk-1"]);
+
+    // The profile still says unconnected (the connect failed, say): no retry this load.
+    expect(await runner.run({ ...base, readToken: async () => "clerk-2" })).toBe("skipped");
+    expect(connects).toEqual(["clerk-1"]);
+  });
+
+  it("gives a different signed-in user their own attempt without a reload", async () => {
+    const runner = createToolyardAutoConnectRunner();
+    const connects: string[] = [];
+    const run = (userId: string, token: string) =>
+      runner.run({
+        signedIn: true,
+        userId,
+        profile: pending,
+        readToken: async () => token,
+        connect: async (clerkToken) => {
+          connects.push(clerkToken);
+        },
+      });
+
+    expect(await run("user_1", "clerk-user-1")).toBe("attempted");
+    expect(await run("user_1", "clerk-user-1-again")).toBe("skipped");
+    expect(await run("user_2", "clerk-user-2")).toBe("attempted");
+    expect(connects).toEqual(["clerk-user-1", "clerk-user-2"]);
+  });
+
+  it("collapses overlapping runs into one connect", async () => {
+    const runner = createToolyardAutoConnectRunner();
+    const connects: string[] = [];
+    let releaseToken: (token: string) => void = () => {};
+    const tokenGate = new Promise<string>((resolve) => {
+      releaseToken = resolve;
+    });
+    const input = {
+      signedIn: true,
+      userId: "user_1",
+      profile: pending,
+      connect: async (token: string) => {
+        connects.push(token);
+      },
+    };
+
+    const first = runner.run({ ...input, readToken: () => tokenGate });
+    // A StrictMode re-run or a profile refresh while the first is still reading its token.
+    expect(await runner.run({ ...input, readToken: async () => "clerk-late" })).toBe("busy");
+    releaseToken("clerk-first");
+    expect(await first).toBe("attempted");
+    expect(connects).toEqual(["clerk-first"]);
+  });
+
+  it("stays idle for a signed-out or already-connected operator", async () => {
+    const runner = createToolyardAutoConnectRunner();
+    const readToken = async () => "clerk";
+    const connect = async () => {};
+    expect(
+      await runner.run({ signedIn: false, userId: null, profile: pending, readToken, connect }),
+    ).toBe("skipped");
+    expect(
+      await runner.run({
+        signedIn: true,
+        userId: "user_1",
+        profile: profileWith([toolyard(true)]),
+        readToken,
+        connect,
+      }),
+    ).toBe("skipped");
+  });
+});
+
 describe("toolyardConnectErrorMessage", () => {
   it("words toolyard's refusals plainly", () => {
     expect(toolyardConnectErrorMessage("not_org_member")).toBe(
@@ -81,6 +173,15 @@ describe("toolyardConnectErrorMessage", () => {
       "Your T3 Code agent is disabled in toolyard.",
     );
     expect(toolyardConnectErrorMessage("user_disabled")).toBe("Your toolyard account is disabled.");
+  });
+
+  it("words T3's own refusals plainly", () => {
+    expect(toolyardConnectErrorMessage("not_signed_in")).toBe(
+      "Sign in with your Beknown account to connect toolyard.",
+    );
+    expect(toolyardConnectErrorMessage("identity_mismatch")).toBe(
+      "Your sign-in doesn't match this T3 session. Sign out and back in, then reconnect.",
+    );
   });
 
   it("falls back to a generic message that still names an unknown code", () => {
