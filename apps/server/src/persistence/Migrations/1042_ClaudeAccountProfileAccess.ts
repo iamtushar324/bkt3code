@@ -19,9 +19,4 @@ export default Effect.gen(function* () {
       PRIMARY KEY (profile, user_id)
     )
   `;
-
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_claude_account_profile_access_user
-    ON claude_account_profile_access(user_id)
-  `;
 });

@@ -234,9 +234,10 @@ usage, exits non-zero), the snapshot reports `available: false` with a short rea
 full detail goes to the server log) and Auto degrades to the
 account `~/.claude-active` resolves to (realpath; `default` for `~/.claude`), still sticky
 per thread. A switcher crash or 10 s timeout logs a warning and leaves the spawn
-environment unchanged; only the two policy outcomes above fail a start. When no account
-has headroom the start fails with "All Claude accounts are at their limit — first resets
-at HH:MM UTC." The binary path is the setting, else `~/.local/bin/claude-autoswitch`
+environment unchanged, except for an owner restricted by account access (below), who is
+never left on `~/.claude-active` blindly. When no account has headroom the start fails
+with "All Claude accounts are at their limit — first resets at HH:MM UTC." (without the
+time when the switcher gives none). The binary path is the setting, else `~/.local/bin/claude-autoswitch`
 (a leading `~` expands to the server user's home, so macOS hosts work too);
 `T3_CLAUDE_AUTOSWITCH_BIN` overrides it for tests. The hard-limit rotation runs the same
 resolved binary. Calls use an argv array, never a shell
@@ -256,17 +257,30 @@ operator (no Clerk) is unrestricted everywhere and the page is hidden.
 
 The rule follows the thread's **owner**, the user its sessions run for:
 
-- Auto passes every account the owner may not use to `--avoid`, alongside exhausted ones.
-  If the owner may use none of the accounts the switcher lists, the start fails with
-  "You don't have access to any Claude account — ask an admin to give you one."; if all
-  of theirs are at a limit, "Every Claude account you can use is at its limit — first
-  resets at HH:MM UTC."
+- Auto passes every account the owner may not use to `--avoid`, alongside exhausted ones,
+  and refuses a pick the switcher made from that list anyway. If the owner may use none of
+  the accounts, the start fails with "You don't have access to any Claude account — ask an
+  admin to give you one."; if all of theirs are at a limit, "Every Claude account you can
+  use is at its limit — first resets at HH:MM UTC." (the time only when one of theirs has
+  a known reset).
+- Placement fails closed for a restricted owner (one with any account they may not use).
+  When the switcher is missing, times out or crashes, the thread's row cannot be read, or
+  placement hits a defect, the start uses the account `~/.claude-active` points at only if
+  the owner may use it, and otherwise fails with "Claude account placement is unavailable
+  right now and the host's default account is not one you can use — try again shortly."
+  A failed read of the thread's owner or of the access list also fails the start; only a
+  thread with no shell yet (a draft) counts as unowned.
 - A pin is refused (`forbidden`) when the caller or the thread's owner may not use the
-  account; a draft has no owner yet, so the caller is checked. A pin that loses access
-  later fails its next start with "You don't have access to Claude account <x> — ask an
-  admin or switch to Auto."
-- A sticky Auto thread whose account is taken away is placed again at its next start, as
-  are hard-limit moves. A session already running keeps its account until then.
+  account; a draft has no owner yet, so the caller is checked. An identified caller gets
+  the same `forbidden` answer for an account that does not exist, so pins cannot probe for
+  hidden accounts. A pin that loses access later fails its next start with "You don't
+  have access to Claude account <x> — ask an admin or switch to Auto."
+- Taking an account away restarts every live Claude session on it whose owner lost access
+  (at once when idle, after the running turn otherwise). The next turn of an Auto thread
+  is placed again; a pinned thread gets the notice above. Hard-limit moves honour the
+  list too.
+- In team mode an admin can assign only members of the Clerk org (`invalid` otherwise);
+  local mode has no directory to check.
 - `subscribeClaudeAccounts` is filtered per connection: a member sees only the accounts
   they may use; an admin sees all, each with `allowed`, and the composer still offers
   only the allowed ones (plus the thread's current account). Changing access pushes a new

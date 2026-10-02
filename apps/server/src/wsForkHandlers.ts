@@ -40,6 +40,8 @@ import * as Stream from "effect/Stream";
 import type { HttpClient } from "effect/unstable/http";
 
 import type * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
+// T3-CUSTOM(expbkt3): Claude account access per user checks ids against the org.
+import type { ClerkDirectoryShape } from "./auth/ClerkDirectory.ts";
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import type * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import type * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -127,6 +129,8 @@ export interface ForkWsHandlerDeps {
   readonly claudeAccounts: ClaudeAccountsService.ClaudeAccountsServiceShape;
   /** Whether the connection's user is a Clerk org admin; false for the local operator. */
   readonly actorIsAdmin: boolean;
+  /** The org directory; assigned users must be in it when team mode is on. */
+  readonly clerkDirectory: Pick<ClerkDirectoryShape, "enabled" | "listOrgMembers">;
 }
 
 export const makeForkWsHandlers = ({
@@ -155,6 +159,7 @@ export const makeForkWsHandlers = ({
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   claudeAccounts,
   actorIsAdmin,
+  clerkDirectory,
 }: ForkWsHandlerDeps) => {
   // T3-CUSTOM(expbkt3): review comments. Access denial reads as "not found" so
   // a caller cannot tell a hidden thread from a missing one.
@@ -241,6 +246,33 @@ export const makeForkWsHandlers = ({
             detail: "Only workspace admins can manage Claude account access.",
           }),
         );
+  /** In team mode every assigned id must be an org member; local mode has no directory. */
+  const requireOrgMembers = (userIds: ReadonlyArray<UserId>) =>
+    !clerkDirectory.enabled || userIds.length === 0
+      ? Effect.void
+      : clerkDirectory.listOrgMembers().pipe(
+          Effect.mapError(
+            (cause) =>
+              new ClaudeAccountsError({
+                operation: "setAccess",
+                reason: "unavailable",
+                detail: `Could not read the workspace directory: ${cause.message}`,
+              }),
+          ),
+          Effect.flatMap((members) => {
+            const known = new Set<string>(members.map((member) => member.id));
+            const unknown = userIds.filter((id) => !known.has(id));
+            return unknown.length === 0
+              ? Effect.void
+              : Effect.fail(
+                  new ClaudeAccountsError({
+                    operation: "setAccess",
+                    reason: "invalid",
+                    detail: `Not workspace members: ${unknown.join(", ")}.`,
+                  }),
+                );
+          }),
+        );
   const claudeAccountsHandlers = {
     [WS_FORK_METHODS.claudeAccountsGetThread]: (input) =>
       observeRpcEffect(
@@ -276,6 +308,7 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_FORK_METHODS.claudeAccountsAccessSet,
         requireClaudeAccountsAdmin("setAccess").pipe(
+          Effect.andThen(requireOrgMembers(input.userIds)),
           Effect.andThen(claudeAccounts.setAccess({ ...input, actorUserId })),
         ),
         { "rpc.aggregate": "claude-accounts" },

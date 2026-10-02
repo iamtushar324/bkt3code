@@ -117,6 +117,7 @@ export function ClaudeAccountAccessSettingsPanel() {
           assigned={access.usersByProfile?.get(managing.name) ?? NO_USERS}
           users={users}
           resolveUser={resolveUser}
+          writeError={access.writeError}
           onSetUsers={(userIds) => access.setUsers(managing.name, userIds)}
           onClose={() => setManaging(null)}
         />
@@ -130,6 +131,7 @@ function ClaudeAccountAccessDialog(props: {
   readonly assigned: ReadonlyArray<UserId>;
   readonly users: ReadonlyArray<OrchestrationUser>;
   readonly resolveUser: (id: UserId) => OrchestrationUser;
+  readonly writeError: string | null;
   readonly onSetUsers: (userIds: ReadonlyArray<UserId>) => Promise<void>;
   readonly onClose: () => void;
 }) {
@@ -177,6 +179,9 @@ function ClaudeAccountAccessDialog(props: {
               ? "Nobody is assigned, so everyone can use this account. Check people to limit it to them."
               : "Only the people checked can use this account. Uncheck everyone to open it to all."}
           </DialogDescription>
+          {props.writeError !== null ? (
+            <p className="text-xs text-destructive">Not saved: {props.writeError}</p>
+          ) : null}
         </DialogHeader>
         <DialogPanel>
           <MemberPicker

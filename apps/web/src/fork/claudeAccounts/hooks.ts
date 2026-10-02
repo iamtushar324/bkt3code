@@ -25,7 +25,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { create } from "zustand";
 
 import { useThreadShell } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { claudeAccountsEnvironment } from "./state";
 
@@ -207,6 +207,8 @@ export interface ClaudeAccountAccessState {
   /** Allow lists by account; an account missing here is open to everyone. Null while loading. */
   readonly usersByProfile: ReadonlyMap<string, ReadonlyArray<UserId>> | null;
   readonly error: string | null;
+  /** Why the last change was refused, until the next one succeeds. */
+  readonly writeError: string | null;
   /** Replaces one account's list; an empty list opens it to everyone. */
   readonly setUsers: (profile: string, userIds: ReadonlyArray<UserId>) => Promise<void>;
 }
@@ -218,7 +220,9 @@ export function useClaudeAccountAccess(
   const query = useEnvironmentQuery(
     environmentId === null ? null : claudeAccountsEnvironment.access({ environmentId, input: {} }),
   );
-  const write = useAtomCommand(claudeAccountsEnvironment.setAccess);
+  // Failures show inline on the page, not as a toast.
+  const write = useAtomCommand(claudeAccountsEnvironment.setAccess, { reportFailure: false });
+  const [writeError, setWriteError] = useState<string | null>(null);
   // A write answers with every list, which is newer than the last read.
   const [written, setWritten] = useState<{
     readonly at: number;
@@ -229,8 +233,13 @@ export function useClaudeAccountAccess(
     async (profile: string, userIds: ReadonlyArray<UserId>) => {
       if (environmentId === null) return;
       const result = await write({ environmentId, input: { profile, userIds } });
-      if (result._tag === "Success") setWritten({ at: Date.now(), list: result.value });
-      else refresh();
+      if (result._tag === "Success") {
+        setWriteError(null);
+        setWritten({ at: Date.now(), list: result.value });
+      } else {
+        setWriteError(formatEnvironmentQueryError(result.cause));
+        refresh();
+      }
     },
     [environmentId, refresh, write],
   );
@@ -246,5 +255,5 @@ export function useClaudeAccountAccess(
         : new Map(entries.map((entry) => [entry.profile, entry.userIds] as const)),
     [entries],
   );
-  return { usersByProfile, error: query.error, setUsers };
+  return { usersByProfile, error: query.error, writeError, setUsers };
 }

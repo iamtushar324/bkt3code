@@ -11,8 +11,13 @@ import type * as ClaudeAccountsService from "./claudeAccounts/ClaudeAccountsServ
 import { makeForkWsHandlers, type ForkWsHandlerDeps } from "./wsForkHandlers.ts";
 
 const member = UserId.make("user-member");
+const outsider = UserId.make("user-outsider");
 
-function makeHandlers(actorUserId: UserId | null, actorIsAdmin: boolean) {
+function makeHandlers(
+  actorUserId: UserId | null,
+  actorIsAdmin: boolean,
+  directory: ReadonlyArray<UserId> | null = [member],
+) {
   const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
   const entries = { entries: [{ profile: "agent", userIds: [member] }] };
   const claudeAccounts = {
@@ -41,6 +46,20 @@ function makeHandlers(actorUserId: UserId | null, actorIsAdmin: boolean) {
     actorUserId,
     actorIsAdmin,
     claudeAccounts,
+    // `null` is local mode: no Clerk directory.
+    clerkDirectory: {
+      enabled: directory !== null,
+      listOrgMembers: () =>
+        Effect.succeed(
+          (directory ?? []).map((id) => ({
+            id,
+            name: null,
+            email: null,
+            imageUrl: null,
+            isAdmin: false,
+          })),
+        ),
+    },
     observeRpcEffect: (_method, effect) => effect,
     observeRpcStream: (_method, stream) => stream,
     projectionSnapshotQuery: {
@@ -82,6 +101,30 @@ describe("Claude account access websocket handlers", () => {
           input: { profile: "agent", userIds: [member], actorUserId: member },
         },
       ]);
+    }),
+  );
+
+  it.effect("refuses to assign someone outside the workspace directory", () =>
+    Effect.gen(function* () {
+      const { handlers, calls } = makeHandlers(member, true);
+      const error = yield* handlers[WS_FORK_METHODS.claudeAccountsAccessSet]({
+        profile: "agent",
+        userIds: [member, outsider],
+      }).pipe(Effect.flip);
+      expect(error._tag === "ClaudeAccountsError" ? error.reason : error._tag).toBe("invalid");
+      expect(error.message).toContain("user-outsider");
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect("skips the directory check in local mode", () =>
+    Effect.gen(function* () {
+      const { handlers, calls } = makeHandlers(null, false, null);
+      yield* handlers[WS_FORK_METHODS.claudeAccountsAccessSet]({
+        profile: "agent",
+        userIds: [outsider],
+      });
+      expect(calls.map((call) => call.method)).toEqual(["setAccess"]);
     }),
   );
 

@@ -250,7 +250,8 @@ export const make = Effect.gen(function* () {
 
   /** The account `~/.claude-active` points at today — the degraded answer when the switcher cannot place. */
   const currentProfileFromActiveLink: Effect.Effect<ClaudeAccountResolution | undefined> =
-    fileSystem.realPath(activeLinkPath(path)).pipe(
+    // Suspended so the link location (`T3_CLAUDE_ACTIVE_LINK`) is read per call.
+    Effect.suspend(() => fileSystem.realPath(activeLinkPath(path))).pipe(
       Effect.map((dir) => {
         const resolved = path.resolve(dir);
         const profile =
@@ -340,37 +341,61 @@ export const make = Effect.gen(function* () {
   const noAccessDetail = (profile: string) =>
     `You don't have access to Claude account ${profile} — ask an admin or switch to Auto.`;
 
-  /** The user a thread's sessions run for: its owner, or nobody (unrestricted) without a shell. */
-  const threadOwner = (threadId: ThreadId): Effect.Effect<UserId | null> =>
-    query.getThreadShellById(threadId).pipe(
-      Effect.map((shell) => (Option.isSome(shell) ? shell.value.ownerUserId : null)),
-      Effect.orElseSucceed(() => null),
-    );
+  /**
+   * The user a thread's sessions run for: its owner, or nobody (unrestricted)
+   * when the thread has no shell yet (a draft). A failed read is an error,
+   * never "nobody": that would wave a restricted owner through.
+   */
+  const threadOwner = (threadId: ThreadId) =>
+    query
+      .getThreadShellById(threadId)
+      .pipe(Effect.map((shell) => (Option.isSome(shell) ? shell.value.ownerUserId : null)));
 
-  /** The accounts the thread's owner may not use; empty when unrestricted. */
+  interface Restriction {
+    readonly owner: UserId | null;
+    /** The accounts the owner may not use; empty when unrestricted. */
+    readonly disallowed: ReadonlySet<string>;
+  }
+  const UNRESTRICTED: Restriction = { owner: null, disallowed: new Set() };
+  const isRestricted = (restriction: Restriction) =>
+    restriction.owner !== null && restriction.disallowed.size > 0;
+
+  /** Who the thread's sessions run for and what they may not use. Fails closed on any read error. */
   const disallowedFor = (
     threadId: ThreadId,
-  ): Effect.Effect<
-    { readonly owner: UserId | null; readonly disallowed: ReadonlySet<string> },
-    ClaudeAccountPolicyError
-  > =>
+  ): Effect.Effect<Restriction, ClaudeAccountPolicyError> =>
     Effect.gen(function* () {
+      const access = yield* accessMap;
+      // Nothing is restricted until an admin assigns someone, so skip the owner read.
+      if (access.size === 0) return UNRESTRICTED;
       const owner = yield* threadOwner(threadId);
-      if (owner === null) return { owner, disallowed: new Set<string>() };
-      const access = yield* accessMap.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ClaudeAccountPolicyError({
-              threadId,
-              detail: `Could not read Claude account access — try again. (${cause.message})`,
-            }),
-        ),
-      );
+      if (owner === null) return UNRESTRICTED;
       const disallowed = new Set<string>();
       for (const profile of access.keys()) {
         if (!mayUse(access, owner, profile)) disallowed.add(profile);
       }
       return { owner, disallowed };
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ClaudeAccountPolicyError({
+            threadId,
+            detail: `Could not check Claude account access — try again shortly. (${cause.message})`,
+          }),
+      ),
+    );
+
+  /** Whether every account the switcher lists is one the owner may not use. */
+  const mayUseNone = (restriction: Restriction): boolean =>
+    isRestricted(restriction) &&
+    lastStatus !== undefined &&
+    lastStatus.profiles.length > 0 &&
+    lastStatus.profiles.every((profile) => restriction.disallowed.has(profile.name));
+
+  const noAccountPolicyError = (threadId: ThreadId) =>
+    new ClaudeAccountPolicyError({
+      threadId,
+      detail: "You don't have access to any Claude account — ask an admin to give you one.",
     });
 
   const accessList: Effect.Effect<ClaudeAccountAccessList, ClaudeAccountsError> = accessMap.pipe(
@@ -662,15 +687,40 @@ export const make = Effect.gen(function* () {
 
   const exhaustedNames = Effect.map(pruneExhausted, () => [...exhausted.keys()]);
 
-  const firstRecovery = (): string | undefined => {
+  /** The earliest reset among exhausted accounts, skipping those the owner may not use. */
+  const firstRecovery = (disallowed: ReadonlySet<string>): string | undefined => {
     let earliest: string | undefined;
-    for (const mark of exhausted.values()) {
+    for (const [profile, mark] of exhausted) {
+      if (disallowed.has(profile)) continue;
       if (mark.resetsAt && (earliest === undefined || mark.resetsAt < earliest)) {
         earliest = mark.resetsAt;
       }
     }
     return earliest;
   };
+
+  const PLACEMENT_UNAVAILABLE_DETAIL =
+    "Claude account placement is unavailable right now and the host's default account is not one you can use — try again shortly.";
+
+  /**
+   * What a start gets when placement cannot answer. Unrestricted threads keep
+   * the old degraded behaviour (`undefined`: the spawn runs on
+   * `~/.claude-active`). A restricted owner never does that blindly: the
+   * active link is used only when it is an account they may use.
+   */
+  const restrictedFallback = (
+    threadId: ThreadId,
+    restriction: Restriction,
+  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
+    Effect.gen(function* () {
+      if (!isRestricted(restriction)) return undefined;
+      const fallback = yield* currentProfileFromActiveLink;
+      if (fallback !== undefined && !restriction.disallowed.has(fallback.profile)) return fallback;
+      return yield* new ClaudeAccountPolicyError({
+        threadId,
+        detail: PLACEMENT_UNAVAILABLE_DETAIL,
+      });
+    });
 
   /** Asks the switcher for an account. Must run under `placementLock`. */
   const placeWith = (
@@ -679,19 +729,11 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
     Effect.gen(function* () {
       const pending = yield* pendingCounts;
-      const { owner, disallowed } = yield* disallowedFor(threadId);
-      if (
-        owner !== null &&
-        lastStatus !== undefined &&
-        lastStatus.profiles.length > 0 &&
-        lastStatus.profiles.every((profile) => disallowed.has(profile.name))
-      ) {
-        return yield* new ClaudeAccountPolicyError({
-          threadId,
-          detail: "You don't have access to any Claude account — ask an admin to give you one.",
-        });
-      }
-      const avoidSet = new Set([...(yield* exhaustedNames), ...avoid, ...disallowed]);
+      const restriction = yield* disallowedFor(threadId);
+      const { disallowed } = restriction;
+      if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
+      const exhaustedNow = yield* exhaustedNames;
+      const avoidSet = new Set([...exhaustedNow, ...avoid, ...disallowed]);
       const outcome = yield* client.place({ pending, avoid: [...avoidSet] });
       if (outcome.kind !== "ok") {
         // `available` tracks `--status` alone; a failed `--place` only logs.
@@ -704,25 +746,51 @@ export const make = Effect.gen(function* () {
           const fallback = yield* currentProfileFromActiveLink;
           if (fallback !== undefined && !avoidSet.has(fallback.profile)) return fallback;
         }
-        return undefined;
+        // Leaving the environment alone runs `~/.claude-active`, which a
+        // restricted owner may not be allowed to use.
+        return yield* restrictedFallback(threadId, restriction);
       }
       const result = outcome.value;
       if (result.snapshot) yield* adoptStatus(result.snapshot);
-      if (result.status === "no_eligible_profile" || !result.chosen) {
-        const recoversAt = isoOrUndefined(result.recovers_at) ?? firstRecovery();
+      // The switcher is told what to avoid; never trust that it listened.
+      const chosen = result.chosen && !avoidSet.has(result.chosen) ? result.chosen : null;
+      if (result.chosen && chosen === null) {
+        yield* Effect.logWarning("claude.account.place-chose-avoided", {
+          threadId,
+          chosen: result.chosen,
+        });
+      }
+      if (result.status === "no_eligible_profile" || chosen === null) {
+        if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
+        const recoversAt = isoOrUndefined(result.recovers_at) ?? firstRecovery(disallowed);
+        // Nothing the owner may use is waiting on a reset, and whatever else
+        // is left is off limits: that is "no access", not "at its limit". The
+        // access list decides this; the host list, when known, only narrows it.
+        if (isRestricted(restriction) && recoversAt === undefined) {
+          const ownExhausted = exhaustedNow.some((profile) => !disallowed.has(profile));
+          const remaining = (lastStatus?.profiles ?? []).filter(
+            (profile) => !exhaustedNow.includes(profile.name),
+          );
+          if (!ownExhausted && remaining.every((profile) => disallowed.has(profile.name))) {
+            return yield* noAccountPolicyError(threadId);
+          }
+        }
+        const limitLine = isRestricted(restriction)
+          ? "Every Claude account you can use is at its limit"
+          : "All Claude accounts are at their limit";
         return yield* new ClaudeAccountPolicyError({
           threadId,
           detail:
-            disallowed.size > 0
-              ? `Every Claude account you can use is at its limit — first resets at ${formatResetClock(recoversAt)}.`
-              : `All Claude accounts are at their limit — first resets at ${formatResetClock(recoversAt)}.`,
+            recoversAt === undefined
+              ? `${limitLine}.`
+              : `${limitLine} — first resets at ${formatResetClock(recoversAt)}.`,
         });
       }
       const atMs = yield* Clock.currentTimeMillis;
-      pendingPlacements.push({ profile: result.chosen, atMs });
+      pendingPlacements.push({ profile: chosen, atMs });
       return {
-        profile: result.chosen,
-        dir: result.dir ? result.dir : profileDir(result.chosen),
+        profile: chosen,
+        dir: result.dir ? result.dir : profileDir(chosen),
         mode: "auto",
         reason: result.reason ?? result.status,
       } as const;
@@ -744,23 +812,26 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const resolveForSession: ClaudeAccountsServiceShape["resolveForSession"] = (threadId) =>
+  const resolveUnguarded = (
+    threadId: ThreadId,
+  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
     Effect.gen(function* () {
       const settings = yield* readSettings;
       if (!settings.enabled) return undefined;
+      const restriction = yield* disallowedFor(threadId);
+      const { disallowed } = restriction;
       const rowResult = yield* repository.get(threadId).pipe(Effect.result);
       if (rowResult._tag === "Failure") {
         yield* Effect.logWarning("claude.account.row-read-failed", {
           threadId,
           cause: rowResult.failure.message,
         });
-        return undefined;
+        return yield* restrictedFallback(threadId, restriction);
       }
       const row = rowResult.success;
       yield* pruneExhausted;
       // A spawn is the restart a deferred mode change was waiting for.
       if (pendingRestart.delete(threadId)) yield* announce(threadId);
-      const { disallowed } = yield* disallowedFor(threadId);
 
       if (row.mode.kind === "profile") {
         const pinned = row.mode.profile;
@@ -815,6 +886,25 @@ export const make = Effect.gen(function* () {
       }
       return yield* placeAndPersist(threadId, row.resolvedProfile ? [row.resolvedProfile] : []);
     });
+
+  /**
+   * A defect here would otherwise reach `applyClaudeAccountProfile`, which
+   * leaves the spawn on `~/.claude-active`. For a restricted owner that is a
+   * policy decision, so it goes through the same fallback as a failed placement.
+   */
+  const resolveForSession: ClaudeAccountsServiceShape["resolveForSession"] = (threadId) =>
+    resolveUnguarded(threadId).pipe(
+      Effect.catchDefect((defect) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("claude.account.resolve-defect", {
+            threadId,
+            defect: String(defect),
+          });
+          const restriction = yield* disallowedFor(threadId);
+          return yield* restrictedFallback(threadId, restriction);
+        }),
+      ),
+    );
 
   const reassign: ClaudeAccountsServiceShape["reassign"] = (threadId, input) =>
     placeAndPersist(threadId, input.avoid);
@@ -914,27 +1004,33 @@ export const make = Effect.gen(function* () {
     actorUserId = null,
   }) =>
     Effect.gen(function* () {
-      if (mode.kind === "profile" && !(yield* profileExists(mode.profile))) {
-        return yield* new ClaudeAccountsError({
-          operation: "setThreadMode",
-          reason: "invalid",
-          detail: `Unknown Claude account '${mode.profile}'.`,
-        });
-      }
-      // A draft has no owner yet; its first send makes the caller the owner.
-      const owner = (yield* threadOwner(threadId)) ?? actorUserId;
       const access = yield* accessMap.pipe(Effect.mapError(internal("setThreadMode")));
+      // A draft has no owner yet; its first send makes the caller the owner.
+      const owner =
+        (yield* threadOwner(threadId).pipe(Effect.mapError(internal("setThreadMode")))) ??
+        actorUserId;
       if (mode.kind === "profile") {
-        const refusal = !mayUse(access, actorUserId, mode.profile)
-          ? noAccessDetail(mode.profile)
-          : !mayUse(access, owner, mode.profile)
-            ? `This thread's owner doesn't have access to Claude account ${mode.profile} — pick another account or Auto.`
-            : undefined;
+        // Access is checked before existence, and an identified caller gets the
+        // same answer for both, so a pin cannot probe for hidden accounts.
+        const exists = yield* profileExists(mode.profile);
+        const refusal =
+          !mayUse(access, actorUserId, mode.profile) || (!exists && actorUserId !== null)
+            ? noAccessDetail(mode.profile)
+            : !mayUse(access, owner, mode.profile)
+              ? `This thread's owner doesn't have access to Claude account ${mode.profile} — pick another account or Auto.`
+              : undefined;
         if (refusal !== undefined) {
           return yield* new ClaudeAccountsError({
             operation: "setThreadMode",
             reason: "forbidden",
             detail: refusal,
+          });
+        }
+        if (!exists) {
+          return yield* new ClaudeAccountsError({
+            operation: "setThreadMode",
+            reason: "invalid",
+            detail: `Unknown Claude account '${mode.profile}'.`,
           });
         }
       }
@@ -1231,6 +1327,34 @@ export const make = Effect.gen(function* () {
 
   const listAccess: ClaudeAccountsServiceShape["listAccess"] = () => accessList;
 
+  /**
+   * After access changes, a live Claude session on an account its owner may
+   * no longer use is restarted (idle at once, busy once its turn ends), so the
+   * next turn is placed again (Auto) or refused (pinned) instead of carrying on.
+   */
+  const restartRevokedSessions = Effect.gen(function* () {
+    const access = yield* accessMap;
+    if (access.size === 0) return;
+    const sessions = yield* providers.listSessions();
+    for (const session of sessions) {
+      if (session.status === "closed" || session.provider !== "claudeAgent") continue;
+      const threadId = session.threadId;
+      const row = yield* repository.get(threadId);
+      const profile = row.mode.kind === "profile" ? row.mode.profile : row.resolvedProfile;
+      if (profile === null) continue;
+      const owner = yield* threadOwner(threadId);
+      if (mayUse(access, owner, profile)) continue;
+      if (row.mode.kind === "profile") notices.set(threadId, noAccessDetail(profile));
+      yield* Effect.logInfo("claude.account.access-revoked", { threadId, profile });
+      yield* restartForNewAccount(threadId);
+      yield* announce(threadId);
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("claude.account.revocation-restart-failed", { cause }),
+    ),
+  );
+
   const setAccess: ClaudeAccountsServiceShape["setAccess"] = ({ profile, userIds, actorUserId }) =>
     Effect.gen(function* () {
       // Clearing a list is allowed for an account that is gone, to tidy up.
@@ -1256,6 +1380,7 @@ export const make = Effect.gen(function* () {
       });
       // Snapshots are filtered per viewer, so every connection re-reads its view.
       yield* announceSnapshot;
+      yield* restartRevokedSessions;
       return yield* accessList;
     });
 

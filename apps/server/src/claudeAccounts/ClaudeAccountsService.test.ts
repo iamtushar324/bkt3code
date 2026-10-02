@@ -35,6 +35,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import * as ThreadClaudeAccountRepo from "../persistence/ThreadClaudeAccount.ts";
 import * as ClaudeAccountProfileAccessRepo from "../persistence/ClaudeAccountProfileAccess.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { ProviderAdapterValidationError } from "../provider/Errors.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -149,6 +150,12 @@ interface HarnessOptions {
   readonly place?: (input: PlaceInput) => SwitcherPlaceResult;
   readonly statusUnavailable?: boolean;
   readonly placeUnavailable?: boolean;
+  /** `--place` crashes or times out (`kind: "failed"`). */
+  readonly placeFailed?: boolean;
+  /** `--place` dies with a defect, as a bug in the client would. */
+  readonly placeDefect?: boolean;
+  /** Replaces the thread-account repository, e.g. with one whose reads fail. */
+  readonly threadRepository?: Layer.Layer<ThreadClaudeAccountRepo.ThreadClaudeAccountRepository>;
 }
 
 const settingsFor = (isEnabled: boolean) =>
@@ -180,6 +187,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const shellSession = yield* Ref.make<OrchestrationSession | null>(null);
     /** The thread shell's owner; `undefined` means no shell (a draft). */
     const shellOwner = yield* Ref.make<UserId | null | undefined>(owner);
+    /** When set, reading the thread shell fails, as a broken projection read would. */
+    const shellFails = yield* Ref.make(false);
 
     // Subscriptions are taken here, before the service exists, so an event
     // published at any point after harness creation reaches the service.
@@ -208,6 +217,10 @@ const makeHarness = (options: HarnessOptions = {}) =>
           if (options.placeUnavailable) {
             return { kind: "unavailable", detail: "old switcher" } as const;
           }
+          if (options.placeFailed) {
+            return { kind: "failed", detail: "timed out after 10s" } as const;
+          }
+          if (options.placeDefect) throw new Error("place exploded");
           return { kind: "ok", value: place(input) } as const;
         }),
       hardLimit: (input) =>
@@ -231,7 +244,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
     );
 
     const layer = ClaudeAccountsServiceLayer.layer.pipe(
-      Layer.provide(ThreadClaudeAccountRepo.layer),
+      Layer.provide(options.threadRepository ?? ThreadClaudeAccountRepo.layer),
       Layer.provide(ClaudeAccountProfileAccessRepo.layer),
       Layer.provide(MigrationsLive),
       Layer.provide(SqlitePersistenceMemory),
@@ -265,13 +278,17 @@ const makeHarness = (options: HarnessOptions = {}) =>
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
           getThreadShellById: () =>
-            Effect.flatMap(shell, (value) =>
-              Ref.get(shellOwner).pipe(
-                Effect.map((ownerUserId) =>
-                  ownerUserId === undefined ? Option.none() : Option.some(value),
-                ),
-              ),
-            ),
+            Effect.gen(function* () {
+              if (yield* Ref.get(shellFails)) {
+                return yield* new PersistenceSqlError({
+                  operation: "test:getThreadShellById",
+                  cause: "boom",
+                });
+              }
+              const value = yield* shell;
+              const ownerUserId = yield* Ref.get(shellOwner);
+              return ownerUserId === undefined ? Option.none() : Option.some(value);
+            }),
         }),
       ),
       Layer.provide(NodeServices.layer),
@@ -289,6 +306,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       sessions,
       shellSession,
       shellOwner,
+      shellFails,
       providerEvents,
       domainEvents,
       settingsChanges,
@@ -1460,5 +1478,312 @@ describe("ClaudeAccountsService access per user", () => {
       assert.equal(unknown._tag, "Failure");
       if (unknown._tag === "Failure") assert.equal(unknown.failure.reason, "invalid");
     }),
+  );
+});
+
+describe("ClaudeAccountsService access per user: fallbacks fail closed", () => {
+  const colleague = UserId.make("user-colleague");
+  const UNAVAILABLE =
+    "Claude account placement is unavailable right now and the host's default account is not one you can use — try again shortly.";
+
+  /** Points `~/.claude-active` at a directory for the body; its basename is the account. */
+  const withActiveLink = <A, E, R>(link: string, body: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.T3_CLAUDE_ACTIVE_LINK;
+        process.env.T3_CLAUDE_ACTIVE_LINK = link;
+        return previous;
+      }),
+      () => body,
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.T3_CLAUDE_ACTIVE_LINK;
+          else process.env.T3_CLAUDE_ACTIVE_LINK = previous;
+        }),
+    );
+
+  const expectPolicy = (
+    result: { readonly _tag: "Success" | "Failure"; readonly failure?: unknown },
+    detail: string,
+  ) => {
+    assert.equal(result._tag, "Failure");
+    assert.instanceOf(result.failure, ClaudeAccountPolicyError);
+    assert.equal((result.failure as ClaudeAccountPolicyError).detail, detail);
+  };
+
+  for (const [label, options] of [
+    ["the switcher is unavailable", { placeUnavailable: true }],
+    ["the switcher times out", { placeFailed: true }],
+    ["placement hits a defect", { placeDefect: true }],
+  ] as const) {
+    scenario(
+      `refuses when ${label} and the active link is off limits`,
+      options,
+      (harness, service) =>
+        withActiveLink(
+          harness.dir("tushar"),
+          Effect.gen(function* () {
+            yield* service.refreshStatus();
+            yield* service.setAccess({
+              profile: "tushar",
+              userIds: [colleague],
+              actorUserId: null,
+            });
+            const result = yield* service
+              .resolveForSession(ThreadId.make(`thread-closed-${label}`))
+              .pipe(Effect.result);
+            expectPolicy(result as never, UNAVAILABLE);
+          }),
+        ),
+    );
+
+    scenario(
+      `uses the active link explicitly when ${label} and the owner may use it`,
+      options,
+      (harness, service) =>
+        withActiveLink(
+          harness.dir("agent"),
+          Effect.gen(function* () {
+            yield* service.refreshStatus();
+            yield* service.setAccess({
+              profile: "tushar",
+              userIds: [colleague],
+              actorUserId: null,
+            });
+            const resolution = yield* service.resolveForSession(
+              ThreadId.make(`thread-link-${label}`),
+            );
+            assert.equal(resolution?.profile, "agent");
+            assert.equal(resolution?.reason, "active-link");
+          }),
+        ),
+    );
+  }
+
+  scenario(
+    "still leaves an unrestricted owner on the host default when the switcher times out",
+    { placeFailed: true },
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const resolution = yield* service.resolveForSession(ThreadId.make("thread-open-timeout"));
+        assert.isUndefined(resolution);
+      }),
+  );
+
+  scenario(
+    "refuses when the thread's row cannot be read and the active link is off limits",
+    {
+      threadRepository: Layer.mock(ThreadClaudeAccountRepo.ThreadClaudeAccountRepository)({
+        get: () =>
+          Effect.fail(new PersistenceSqlError({ operation: "test:get", cause: "disk gone" })),
+      }),
+    },
+    (harness, service) =>
+      withActiveLink(
+        harness.dir("tushar"),
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+          const result = yield* service
+            .resolveForSession(ThreadId.make("thread-row-broken"))
+            .pipe(Effect.result);
+          expectPolicy(result as never, UNAVAILABLE);
+        }),
+      ),
+  );
+
+  scenario(
+    "fails closed when the owner cannot be read, instead of treating the thread as unowned",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+        yield* Ref.set(harness.shellFails, true);
+        const result = yield* service
+          .resolveForSession(ThreadId.make("thread-shell-broken"))
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.instanceOf(result.failure, ClaudeAccountPolicyError);
+          assert.match(result.failure.detail, /Could not check Claude account access/);
+        }
+        assert.equal(harness.placeCalls.length, 0);
+      }),
+  );
+
+  scenario(
+    "refuses an account the switcher picked despite --avoid",
+    {
+      place: () => ({ status: "placed", chosen: "tushar", dir: null, reason: "ignored avoid" }),
+    },
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+        const result = yield* service
+          .resolveForSession(ThreadId.make("thread-bad-pick"))
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.notEqual(result.failure.detail, "");
+          assert.notInclude(result.failure.detail, "tushar");
+        }
+      }),
+  );
+
+  scenario(
+    "says 'no access' rather than inventing a reset when nothing usable is left",
+    {
+      statusUnavailable: true,
+      place: () => ({
+        status: "no_eligible_profile",
+        chosen: null,
+        dir: null,
+        reason: "everything avoided",
+        recovers_at: null,
+      }),
+    },
+    (_harness, service) =>
+      Effect.gen(function* () {
+        // `--status` cannot be read, so only the access list and the switcher speak.
+        yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+        const result = yield* service
+          .resolveForSession(ThreadId.make("thread-nothing-left"))
+          .pipe(Effect.result);
+        expectPolicy(
+          result as never,
+          "You don't have access to any Claude account — ask an admin to give you one.",
+        );
+      }),
+  );
+
+  scenario(
+    "reports an unknown reset without a made-up time for an unrestricted owner",
+    {
+      place: () => ({
+        status: "no_eligible_profile",
+        chosen: null,
+        dir: null,
+        reason: "every profile is over its limit",
+        recovers_at: null,
+      }),
+    },
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const result = yield* service
+          .resolveForSession(ThreadId.make("thread-unknown-reset"))
+          .pipe(Effect.result);
+        expectPolicy(result as never, "All Claude accounts are at their limit.");
+      }),
+  );
+});
+
+describe("ClaudeAccountsService access per user: owners, probing, hard limits, revocation", () => {
+  const colleague = UserId.make("user-colleague");
+
+  scenario("refuses a pin the caller may use but the thread's owner may not", {}, (_h, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      yield* service.setAccess({ profile: "agent", userIds: [colleague], actorUserId: null });
+      const result = yield* service
+        .setThreadMode({
+          threadId: ThreadId.make("thread-shared"),
+          mode: { kind: "profile", profile: "agent" },
+          actorUserId: colleague,
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure.reason, "forbidden");
+        assert.match(result.failure.detail, /thread's owner doesn't have access/);
+      }
+    }),
+  );
+
+  scenario(
+    "answers a hidden and a missing account the same way, so pins cannot probe",
+    {},
+    (_harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        yield* service.setAccess({ profile: "agent", userIds: [colleague], actorUserId: null });
+        const attempt = (profile: string) =>
+          service
+            .setThreadMode({
+              threadId: ThreadId.make(`thread-probe-${profile}`),
+              mode: { kind: "profile", profile },
+              actorUserId: owner,
+            })
+            .pipe(Effect.flip);
+        const hidden = yield* attempt("agent");
+        const missing = yield* attempt("nobody");
+        assert.equal(hidden.reason, "forbidden");
+        assert.equal(missing.reason, "forbidden");
+        assert.equal(hidden.detail.replace("agent", "X"), missing.detail.replace("nobody", "X"));
+      }),
+  );
+
+  scenario(
+    "moves an Auto thread on a hard limit only to an account its owner may use",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        yield* service.setAccess({ profile: "agent", userIds: [colleague], actorUserId: null });
+        const threadId = ThreadId.make("thread-hard-limit-access");
+        assert.equal((yield* service.resolveForSession(threadId))?.profile, "tushar");
+
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: 1_790_000_000,
+        });
+        assert.equal((yield* service.getThread(threadId)).resolvedProfile, "barsha");
+        const avoid = harness.placeCalls.at(-1)!.avoid;
+        assert.include(avoid, "agent");
+        assert.include(avoid, "tushar");
+      }),
+  );
+
+  scenario(
+    "restarts a live session whose account was just taken from its owner",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const idle = ThreadId.make("thread-revoked-idle");
+        const busy = ThreadId.make("thread-revoked-busy");
+        const untouched = ThreadId.make("thread-revoke-untouched");
+        assert.equal((yield* service.resolveForSession(idle))?.profile, "tushar");
+        yield* service.setThreadMode({
+          threadId: busy,
+          mode: { kind: "profile", profile: "tushar" },
+          actorUserId: owner,
+        });
+        yield* service.resolveForSession(busy);
+        yield* service.setThreadMode({
+          threadId: untouched,
+          mode: { kind: "profile", profile: "agent" },
+          actorUserId: owner,
+        });
+        yield* service.resolveForSession(untouched);
+        yield* Ref.set(harness.sessions, [
+          liveSession(idle, "ready"),
+          liveSession(busy, "running"),
+          liveSession(untouched, "ready"),
+        ]);
+
+        yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
+        assert.deepEqual(harness.stoppedThreads, [idle]);
+        const busyView = yield* service.getThread(busy);
+        assert.isTrue(busyView.pendingRestart);
+        assert.equal(
+          busyView.notice,
+          "You don't have access to Claude account tushar — ask an admin or switch to Auto.",
+        );
+      }),
   );
 });
