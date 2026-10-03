@@ -15,7 +15,7 @@ These changes are structured to keep upstream merges predictable:
 
 ## Stage merge (2026-10-03)
 
-`stage` merges upstream `main` (`6108ef3d`) into the existing BK stage history.
+`stage` merges upstream `main` (`56914128`) into the existing BK stage history.
 It adopts upstream's V2 engine and retains the fork features below; see
 [Beknown deployments](./deployments.md). Every section below describes the stage line.
 
