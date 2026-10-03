@@ -51,7 +51,7 @@ scripts still use it). Upstream is `pingdotgg/t3code`; only
   experiments, so it never disappears from `origin` (a deleted trigger branch
   used to make the deployment timer fail every minute).
 - **`stage`** — the validation branch for upstream merges with the retained BK
-  features. The 2026-10-03 merge integrates upstream `main` (`fed41fa88`) and
+  features. The 2026-10-03 merge integrates upstream `main` (`6108ef3d`) and
   its V2 engine. It deploys `stagebkt3.dev` and takes upstream merges directly.
   Promotion to `bkmain` remains a separate change after stage validation.
 
