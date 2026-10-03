@@ -108,7 +108,7 @@ const stores = Layer.mergeAll(
   EffectOutbox.layer,
   OrchestrationEventStoreLive,
 ).pipe(Layer.provide(database));
-const services = Layer.mergeAll(native, stores, registryLayer, Profiles.layer).pipe(
+const services = Layer.mergeAll(native, stores, registryLayer).pipe(
   Layer.provideMerge(stores),
   Layer.provideMerge(Profiles.layer),
   Layer.provide(Layer.succeed(ServerSecretStore.ServerSecretStore, secretStore)),
@@ -475,9 +475,11 @@ it.effect(
       }),
     ).pipe(
       Effect.provide(
-        Recovery.layer.pipe(Layer.provideMerge(services), Layer.provide(IdAllocator.layer)),
+        Layer.mergeAll(
+          NodeHttpServer.layerTest,
+          Recovery.layer.pipe(Layer.provideMerge(services), Layer.provide(IdAllocator.layer)),
+        ),
       ),
-      Effect.provide(NodeHttpServer.layerTest),
     ),
 );
 
@@ -548,8 +550,9 @@ it.effect(
         expect(active?.autoSettleDisabledAt).not.toBeNull();
       }),
     ).pipe(
-      Effect.provide(Manager.layer.pipe(Layer.provideMerge(services))),
-      Effect.provide(NodeHttpServer.layerTest),
+      Effect.provide(
+        Layer.mergeAll(NodeHttpServer.layerTest, Manager.layer.pipe(Layer.provideMerge(services))),
+      ),
     ),
 );
 
@@ -603,7 +606,8 @@ it.effect("binds concurrent first bootstraps to exactly one authorized project",
       ).toBe(winner.projectId);
     }),
   ).pipe(
-    Effect.provide(Manager.layer.pipe(Layer.provideMerge(services))),
-    Effect.provide(NodeHttpServer.layerTest),
+    Effect.provide(
+      Layer.mergeAll(NodeHttpServer.layerTest, Manager.layer.pipe(Layer.provideMerge(services))),
+    ),
   ),
 );
