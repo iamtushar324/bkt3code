@@ -214,8 +214,9 @@ function fixture() {
   };
 }
 
-for (const change of ["grant", "stop"] as const) {
-  it.effect(`does not open a process after ${change} changes during MCP preparation`, () => {
+it.effect.each(["grant", "stop"] as const)(
+  "does not open a process after %s changes during MCP preparation",
+  (change) => {
     const f = fixture();
     f.state.onIssue = () => {
       if (change === "grant") f.state.grantActive = false;
@@ -229,8 +230,8 @@ for (const change of ["grant", "stop"] as const) {
       expect(f.state.opened).toBe(0);
       expect(McpProviderSession.readMcpProviderSession(f.threadId)).toBeUndefined();
     }).pipe(Effect.provide(f.layer));
-  });
-}
+  },
+);
 
 it.effect(
   "reuses only the original member's granted process and refuses reuse after revocation",
