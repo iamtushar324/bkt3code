@@ -357,6 +357,10 @@ export function getCustomModelOptionsByInstance(
  * mode is off: another device may have chosen it, and this device's filter
  * only applies to picks made here.
  */
+export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
+  return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
+}
+
 // T3-CUSTOM(expbkt3): BEGIN — compatibility healing for persisted plan-agent options.
 export function withoutPlanAgentSelection(
   selection: ModelSelection | null | undefined,
@@ -443,7 +447,7 @@ export function resolveAppModelSelectionState(
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
       // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
-      planModeAvailable: settings.planModeAvailable,
+      planModeAvailable: settings.planModeAvailable || selectsPlanAgent(selection.options),
     });
 
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);

@@ -10,7 +10,7 @@ const row = (overrides: Partial<PhaseSidebarRow> = {}): PhaseSidebarRow =>
   ({
     thread: {
       id: "t1",
-      session: null,
+      runtime: null,
       snoozedUntil: null,
       settledOverride: null,
       settledAt: null,
@@ -67,16 +67,16 @@ describe("buildPhaseSidebarRowActions", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("offers force stop only while a session exists", () => {
+  it("offers force stop only while a runtime exists", () => {
     expect(ids(row())).not.toContain("force-stop");
-    expect(ids(row({ thread: { session: { status: "running" } } as never }))).toContain(
+    expect(ids(row({ thread: { runtime: { status: "running" } } as never }))).toContain(
       "force-stop",
     );
   });
 
   it("keeps the destructive actions last", () => {
     const actions = buildPhaseSidebarRowActions({
-      row: row({ thread: { session: { status: "running" } } as never }),
+      row: row({ thread: { runtime: { status: "running" } } as never }),
       now: NOW,
     });
     expect(actions.at(-1)?.id).toBe("delete");

@@ -1320,7 +1320,8 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
       runtimeMode: "full-access",
-      interactionMode: "default",
+      // T3-CUSTOM(expbkt3): new draft sessions use the fork's Plan default.
+      interactionMode: "plan",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
@@ -1331,7 +1332,8 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
       runtimeMode: "full-access",
-      interactionMode: "default",
+      // T3-CUSTOM(expbkt3): both project and draft lookups preserve the Plan default.
+      interactionMode: "plan",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
   });
