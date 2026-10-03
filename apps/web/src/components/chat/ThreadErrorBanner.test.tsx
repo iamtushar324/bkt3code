@@ -21,7 +21,7 @@ describe("ThreadErrorBanner", () => {
     );
 
     expect(markup).toContain(">Retry<");
-    expect(markup).toContain(">Dismiss<");
+    expect(markup).toContain('aria-label="Dismiss error"');
   });
 
   it("stays hidden after its current error is dismissed", () => {

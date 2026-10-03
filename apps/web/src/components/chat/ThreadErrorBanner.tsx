@@ -41,7 +41,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onRetry,
   onDismiss,
-  dismissLabel = "Dismiss",
+  dismissLabel = "Dismiss error",
   errorClass,
   chatGptUsageLimit = false,
 }: {
