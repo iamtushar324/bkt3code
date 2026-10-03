@@ -21,7 +21,13 @@ export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
     dispatchMode: message.dispatchMode === "start" ? "auto" : message.dispatchMode,
     attachments: message.attachments.map((attachment): DraftComposerAttachment => {
       if (attachment.type === "file") {
-        return { ...attachment, type: "file", fileUri: attachment.fileUri ?? "" };
+        const { source, ...file } = attachment;
+        return {
+          ...file,
+          type: "file",
+          fileUri: attachment.fileUri ?? "",
+          ...(source !== undefined && "_tag" in source ? { source } : {}),
+        };
       }
       if (attachment.type !== "image") {
         throw new Error(`Unsupported queued attachment type: ${attachment.type}`);
