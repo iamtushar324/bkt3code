@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto"; // T3-CUSTOM(expbkt3): credential fingerprints must participate in query identity.
 
 import type {
   Query as ClaudeQuery,
@@ -466,12 +467,16 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
+  // T3-CUSTOM(expbkt3): actual credentials live only in the spawned environment.
+  const credentialFingerprint = NodeCrypto.createHash("sha256")
+    .update("Bearer secret-claude-token")
+    .digest("hex");
   const T3_MCP_SERVERS = {
     "t3-code": {
       type: "http",
       url: "http://127.0.0.1:43123/mcp",
       headers: {
-        Authorization: "Bearer secret-claude-token",
+        Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}", // T3-CUSTOM(expbkt3): no raw secret in CLI configuration.
       },
       timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
     },
@@ -527,6 +532,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides, {
         allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
         mcpServers: T3_MCP_SERVERS,
+        mcpCredentialFingerprint: credentialFingerprint, // T3-CUSTOM(expbkt3): pin the process credential identity.
       });
     });
   });
@@ -543,6 +549,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides, {
         allowedTools: ["Read", "mcp__t3-code__*"],
         mcpServers: T3_MCP_SERVERS,
+        mcpCredentialFingerprint: credentialFingerprint, // T3-CUSTOM(expbkt3): pin the process credential identity.
       });
     });
   });
@@ -562,6 +569,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
           ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
         ],
         mcpServers: T3_MCP_SERVERS,
+        mcpCredentialFingerprint: credentialFingerprint, // T3-CUSTOM(expbkt3): pin the process credential identity.
       });
       assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
     });
@@ -646,6 +654,9 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         ClaudeAdapterV2.claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
       );
       assert.notEqual(rotatedKey, initialKey);
+      // T3-CUSTOM(expbkt3): a cache identity must never carry either raw token.
+      assert.notInclude(initialKey, "secret-claude-token");
+      assert.notInclude(rotatedKey, "rotated-claude-token");
     });
   });
 
@@ -693,12 +704,15 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       });
       assert.deepEqual(overrides, {
         allowedTools: ["Read", "mcp__t3-code__*"],
+        mcpCredentialFingerprint: NodeCrypto.createHash("sha256")
+          .update("Bearer secret-claude-token")
+          .digest("hex"), // T3-CUSTOM(expbkt3): query cache uses a fingerprint.
         mcpServers: {
           "t3-code": {
             type: "http",
             url: "http://127.0.0.1:43123/mcp",
             headers: {
-              Authorization: "Bearer secret-claude-token",
+              Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}", // T3-CUSTOM(expbkt3): env interpolation keeps argv secret-free.
             },
             timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
           },
@@ -1994,6 +2008,125 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ? {}
         : { terminal_reason: input.terminalReason ?? "completed" }),
     });
+  // T3-CUSTOM(expbkt3): exercise the real query replacement path, not only its policy-key helper.
+  it.effect("replaces a settled live query with the rotated MCP token in its environment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const threadId = ThreadId.make("thread-claude-live-mcp-rotation");
+        const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
+        let closeCount = 0;
+        let promptCount = 0;
+        const terminal = yield* Queue.unbounded<void>();
+        const config = {
+          actorUserId: null,
+          upstreamServers: [],
+          environmentId: EnvironmentId.make("environment-claude-live-mcp-rotation"),
+          threadId,
+          providerSessionId: "mcp-live-rotation",
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer first-live-token",
+          browserToolsAvailable: true,
+        };
+        McpProviderSession.setMcpProviderSession(config);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: { T3_MCP_BEARER_TOKEN: "stale-inherited-token" },
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-mcp-rotation-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: ({ options }) =>
+              Effect.gen(function* () {
+                opened.push(options);
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                return {
+                  messages: Stream.fromQueue(messages),
+                  offer: (message: SDKUserMessage) =>
+                    Effect.gen(function* () {
+                      promptCount += 1;
+                      yield* Queue.offer(messages, { ...message, session_id: WAKE_NATIVE_SESSION });
+                      yield* Queue.offer(
+                        messages,
+                        makeResultFrame({
+                          uuid: `00000000-0000-4000-8000-${String(promptCount).padStart(12, "0")}`,
+                          result: "done",
+                        }),
+                      );
+                    }),
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.sync(() => {
+                    closeCount += 1;
+                  }).pipe(Effect.andThen(Queue.shutdown(messages))),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-claude-live-mcp-rotation"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal"
+              ? Queue.offer(terminal, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        for (let index = 0; index < 2; index += 1) {
+          if (index === 1)
+            McpProviderSession.setMcpProviderSession({
+              ...config,
+              authorizationHeader: "Bearer second-live-token",
+            });
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-live-mcp-${index}`),
+              providerTurnOrdinal: index + 1,
+              text: "Use the current MCP credential.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.take(terminal);
+        }
+        assert.equal(opened.length, 2);
+        assert.equal(closeCount, 1);
+        assert.equal(opened[0]?.env?.T3_MCP_BEARER_TOKEN, "first-live-token");
+        assert.equal(opened[1]?.env?.T3_MCP_BEARER_TOKEN, "second-live-token");
+        assert.equal(opened[1]?.resume, WAKE_NATIVE_SESSION);
+        for (const options of opened) {
+          assert.notInclude(encodeJsonString(options.mcpServers), "first-live-token");
+          assert.notInclude(encodeJsonString(options.mcpServers), "second-live-token");
+        }
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+  );
+
   const turnOneResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000102",
     result: "Kicked off the build in the background.",

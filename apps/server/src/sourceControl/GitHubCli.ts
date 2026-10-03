@@ -25,6 +25,8 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+// T3-CUSTOM(expbkt3): the batched lookup keeps the same readiness data as gh CLI reads.
+import { withGitHubHeadReadiness } from "./gitHubHeadReadiness.ts";
 import {
   decodeGitHubPullRequestEntries,
   decodeGitHubPullRequestJson,
@@ -426,10 +428,12 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
 const PULL_REQUEST_LIST_JSON_FIELDS =
-  "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner";
+  // T3-CUSTOM(expbkt3): merge, review, checks, and auto-merge fields for status badges.
+  "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner";
 /** The `gh pr list --json` fields above, as GraphQL selects them. */
 const PULL_REQUEST_NODE_SELECTION =
-  "number title url baseRefName headRefName state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
+  // T3-CUSTOM(expbkt3): one head-commit verdict preserves upstream's cheap batched reads.
+  "number title url baseRefName headRefName state isDraft mergedAt closedAt updatedAt mergeable mergeStateStatus reviewDecision autoMergeRequest { enabledAt } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
 const GRAPHQL_STATES: Record<PullRequestListState, ReadonlyArray<string>> = {
   open: ["OPEN"],
   closed: ["CLOSED"],
@@ -896,7 +900,12 @@ export const make = Effect.gen(function* () {
             (entry, index) => {
               const alias = aliases[`h${index}`];
               if (alias == null) return readCli(entry);
-              entry.completeUnsafe(Exit.succeed(decodeGitHubPullRequestEntries(alias.nodes)));
+              // T3-CUSTOM(expbkt3): the GraphQL rollup reaches the shared fork badge decoder.
+              entry.completeUnsafe(
+                Exit.succeed(
+                  decodeGitHubPullRequestEntries(alias.nodes.map(withGitHubHeadReadiness)),
+                ),
+              );
               return Effect.void;
             },
             { discard: true },

@@ -19,6 +19,15 @@ const legacyReaders = ["orchestration-v2/legacy/", "persistence/Migrations/"] as
 const legacyReaderFiles: Record<string, string> = {
   // Provider history for settings migration reads V1 thread sessions once at load.
   "serverSettings.ts": "one-time provider history for settings migration",
+  // T3-CUSTOM(expbkt3): narrow read adapters retain saved fork data during cutover.
+  "orchestration-v2/ForkLegacyHistory.expbkt3.ts": "historical runs, tools, plans and checkpoints",
+  "orchestration-v2/ForkLegacyProviderImport.expbkt3.ts": "legacy provider resume cursors",
+  "orchestration-v2/Layers/ProjectionSnapshotQuery.ts": "legacy HTTP projection compatibility",
+  "orchestration-v2/legacyProjection.expbkt3.ts": "legacy HTTP response conversion",
+  "orchestration-v2/ownershipBackfill.ts": "one-time owner and membership backfill",
+  "persistence/Layers/ProjectionMemberships.ts":
+    "legacy memberships retained for native access checks",
+  "presence/presenceMessages.ts": "legacy activity presence compatibility",
 };
 const retiredPaths = [
   "orchestration",
@@ -83,8 +92,11 @@ it("keeps the legacy importer out of reach of new code", () => {
   // Startup imports pending transcripts, the V2 runtime wires the importer, and
   // thread and project services hydrate a V1 transcript before they act on it.
   assert.deepEqual(importers, [
+    // T3-CUSTOM(expbkt3): old HTTP routes hydrate saved history through the importer.
+    "orchestration-v2/Layers/ProjectionSnapshotQuery.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
+    "orchestration-v2/testkit/ForkCompatibility.expbkt3.ts",
     "project/ProjectService.ts",
     "serverRuntimeStartup.ts",
   ]);

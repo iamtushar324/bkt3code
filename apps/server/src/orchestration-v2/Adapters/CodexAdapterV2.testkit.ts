@@ -19,6 +19,8 @@ import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+// T3-CUSTOM(expbkt3): shared-process recordings must retain the fork's per-thread credential isolation.
+import { isolatedCodexReplayTranscripts } from "../testkit/IsolatedCodexReplay.expbkt3.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
@@ -186,10 +188,31 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
     input.driver === undefined
       ? CodexReplay.layerReplay(input.transcript)
       : CodexReplay.layerReplayWithDriver(input.driver);
+  // T3-CUSTOM(expbkt3): each isolated runtime owns its recorded handshake, responses and native thread history.
+  const isolated = isolatedCodexReplayTranscripts(input.transcript);
+  const isolatedLayers = new Map<string, typeof replayLayer>();
+  let nextIsolatedRuntime = 0;
   const replayClientFactoryLayer = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
     open: (openInput) =>
       Effect.gen(function* () {
-        const context = yield* Layer.build(replayLayer).pipe(
+        // T3-CUSTOM(expbkt3): assign the recording at first open, then retain that app thread's cursor.
+        let runtimeReplayLayer = isolatedLayers.get(openInput.threadId);
+        if (runtimeReplayLayer === undefined) {
+          const recording = isolated?.[nextIsolatedRuntime];
+          if (recording === undefined) runtimeReplayLayer = replayLayer;
+          else {
+            const driver = yield* CodexReplay.makeReplayDriver(
+              recording,
+              input.driver?.beforeEmitInbound === undefined
+                ? {}
+                : { beforeEmitInbound: input.driver.beforeEmitInbound },
+            );
+            runtimeReplayLayer = CodexReplay.layerReplayWithDriver(driver);
+            nextIsolatedRuntime += 1;
+          }
+          isolatedLayers.set(openInput.threadId, runtimeReplayLayer);
+        }
+        const context = yield* Layer.build(runtimeReplayLayer).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({

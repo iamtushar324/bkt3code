@@ -261,7 +261,22 @@ describe("GitHubCli.listPullRequestsByHead", () => {
           documents.push(decodeRequest(input.stdin ?? ""));
           return jsonOutput({
             data: {
-              repository: { h0: { nodes: [node(7, "feature/a")] }, h1: { nodes: [] } },
+              // T3-CUSTOM(expbkt3): native GraphQL head-commit verdicts feed the retained badges.
+              repository: {
+                h0: {
+                  nodes: [
+                    {
+                      ...node(7, "feature/a"),
+                      mergeable: "CONFLICTING",
+                      mergeStateStatus: "DIRTY",
+                      reviewDecision: "CHANGES_REQUESTED",
+                      autoMergeRequest: null,
+                      commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+                    },
+                  ],
+                },
+                h1: { nodes: [] },
+              },
               rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2099-01-01T00:00:00Z" },
             },
           });
@@ -287,8 +302,25 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         [[7, "merged", "acme/web"]],
       );
       assert.deepStrictEqual(second, []);
+      // T3-CUSTOM(expbkt3): readiness survives the actual batched service read and decoder.
+      expect(first?.[0]).toMatchObject({
+        mergeability: "conflicting",
+        mergeStateStatus: "DIRTY",
+        reviewDecision: "changes-requested",
+        checksStatus: "fail",
+        autoMergeEnabled: false,
+      });
       assert.strictEqual(documents.length, 1);
       assert.include(documents[0]!.query, "rateLimit");
+      // T3-CUSTOM(expbkt3): keep one compact commit verdict rather than a separate detail request.
+      assert.include(
+        documents[0]!.query,
+        "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }",
+      );
+      assert.include(
+        documents[0]!.query,
+        "mergeable mergeStateStatus reviewDecision autoMergeRequest { enabledAt }",
+      );
       assert.deepStrictEqual(documents[0]!.variables, {
         owner: "acme",
         name: "web",
@@ -315,7 +347,17 @@ describe("GitHubCli.listPullRequestsByHead", () => {
           }
           return input.args[3] === "feature/empty"
             ? processOutput("")
-            : jsonOutput([node(8, "feature/a")]);
+            : // T3-CUSTOM(expbkt3): gh CLI fallbacks retain the same readiness information.
+              jsonOutput([
+                {
+                  ...node(8, "feature/a"),
+                  mergeable: "MERGEABLE",
+                  mergeStateStatus: "BLOCKED",
+                  reviewDecision: "APPROVED",
+                  statusCheckRollup: [{ status: "IN_PROGRESS" }],
+                  autoMergeRequest: { enabledAt: "2026-01-02T00:00:00Z" },
+                },
+              ]);
         }),
       );
       const gh = yield* GitHubCli.GitHubCli;
@@ -330,6 +372,14 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         pullRequests.map((pr) => pr.number),
         [8],
       );
+      // T3-CUSTOM(expbkt3): readiness also survives the real CLI fallback decoder.
+      expect(pullRequests[0]).toMatchObject({
+        mergeability: "mergeable",
+        mergeStateStatus: "BLOCKED",
+        reviewDecision: "approved",
+        checksStatus: "pending",
+        autoMergeEnabled: true,
+      });
       assert.deepStrictEqual(commands.at(-1), [
         "gh",
         "pr",
@@ -341,7 +391,8 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         "--limit",
         "100",
         "--json",
-        "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        // T3-CUSTOM(expbkt3): PR readiness must be fetched on fallback as well as batching.
+        "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
       ]);
       const empty = yield* gh.listPullRequestsByHead({
         cwd: "/repo",

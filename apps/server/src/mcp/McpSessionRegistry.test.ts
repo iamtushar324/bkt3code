@@ -63,7 +63,16 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const resolved = yield* registry.resolve(token);
     expect(resolved?.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(
-      new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+      // T3-CUSTOM(expbkt3): assert the complete authorized scope set, including retained fork capabilities.
+      new Set([
+        "preview",
+        "orchestration",
+        "worktree",
+        "pull-requests",
+        "t3.read",
+        "t3.plan",
+        "t3.control",
+      ]),
     );
 
     yield* registry.revokeThread(threadId);

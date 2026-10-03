@@ -612,9 +612,32 @@ describe("OpenCode 2 through the orchestrator", () => {
       );
       // The recording scrubbed its directory to `<work>`; the fork it answers
       // runs where its source does, which is this test's workspace.
-      const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
-        withDirectory(recorded, cwd),
+      // T3-CUSTOM(expbkt3): BEGIN — an independent runtime reads its catalog and checks the source is idle.
+      const forkSubscription = recorded.entries.findIndex(
+        (entry) =>
+          entry.type === "expect_outbound" &&
+          typeof entry.frame === "object" &&
+          entry.frame !== null &&
+          "type" in entry.frame &&
+          entry.frame.type === "message.list",
       );
+      const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
+        withDirectory(
+          {
+            ...recorded,
+            entries: [
+              ...recorded.entries.slice(0, forkSubscription),
+              { type: "expect_outbound", frame: { type: "event.subscribe" } },
+              ...recorded.entries.slice(1, 3),
+              out("session.active"),
+              reply("session.active", { data: {} }),
+              ...recorded.entries.slice(forkSubscription),
+            ],
+          },
+          cwd,
+        ),
+      );
+      // T3-CUSTOM(expbkt3): END
       const source = threadCommands({ name, worktreePath: cwd });
       const target = ThreadId.make(`thread:${name}:target`);
       const [one, two] = [source.message("one"), source.message("two")];

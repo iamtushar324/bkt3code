@@ -823,6 +823,11 @@ const make = Effect.gen(function* () {
           }
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
+        // T3-CUSTOM(expbkt3): a projection rebuild only restores hydrated slots.
+        // Reserve the remaining historical slots again before lazy hydration.
+        yield* reserveLegacyTimelinePositions(threadId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         const messages = yield* listMessages(threadId);
         const existingRows = yield* sql<{ readonly event_id: string }>`
           SELECT event_id

@@ -19,14 +19,20 @@ Transcript import reads user and assistant rows from `projection_thread_messages
 message identifiers, text, supported attachments, timestamps, role, and ordering. A message that was
 still streaming becomes an interrupted turn item.
 
-The importer does not translate provider session identity, native provider runs, checkpoints and
-diffs, activities and tool calls, approvals, or proposed plans. V2 therefore must not present those
-records as migrated history.
+<!-- T3-CUSTOM(expbkt3): BEGIN — retained fork history and frozen migration ledger. -->
+
+BK also imports saved runs, checkpoints and diffs, reasoning, tool activity, proposed plans, and
+pending questions through its legacy adapters. The original tables retain all source records.
+Ownership, memberships, credential profiles, manual titles, tags and lineage remain available to
+the native engine. Historical provider operations require native SDK boundaries; saved chat message
+identifiers do not provide those boundaries. See
+[BK customizations](../operations/expbkt3-customizations.md) for those limits.
 
 ## First continuation
 
-A migrated thread has no active provider thread. Its first continuation creates a fresh provider
-session and sends a legacy handoff built only from user and assistant messages. The handoff selects
+BK retains an available provider resume cursor and uses it on the first continuation. When no
+usable cursor exists, it creates a fresh provider session and sends a legacy handoff from user and
+assistant messages. The handoff selects
 the newest transcript suffix within a 32,000-character budget, including section labels and the
 import notice. This budget is separate from portable provider handoffs.
 
@@ -47,9 +53,12 @@ running half-upgraded. See `packages/client-runtime/src/connection/compatibility
 rows at or below the recorded maximum are skipped without checking names. A database that ran a
 local or fork migration under an id this build later assigns to a different migration therefore
 never receives this build's migration at that id. `runMigrations` logs each recorded id whose name
-differs from the manifest so the skipped schema change is diagnosable. There is no safe id range
-for a fork inside this ledger: any id at or below a future upstream id masks it forever, so fork
-schema changes belong in a separate migration table or outside the migrator entirely.
+differs from the manifest so the skipped schema change is diagnosable. BK freezes its shipped ids
+1–45 and 1000–1042. Incoming upstream migrations receive the next free ids: V2 is 1043, and index
+cleanup is 1044. Allocate each later migration above the recorded maximum. Never replace an applied
+id or use upstream's preview ledger rewrite on the fork database.
+
+<!-- T3-CUSTOM(expbkt3): END -->
 
 ## Recovery
 

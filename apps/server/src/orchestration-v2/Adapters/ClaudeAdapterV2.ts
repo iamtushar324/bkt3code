@@ -960,6 +960,7 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly mcpCredentialFingerprint?: string; // T3-CUSTOM(expbkt3): process reuse tracks credentials without secret arguments.
 } {
   const session = McpProviderSession.readMcpProviderSession(input.threadId);
   if (session === undefined) {
@@ -969,6 +970,10 @@ export function claudeMcpQueryOverrides(input: {
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
+    // T3-CUSTOM(expbkt3): environment placeholders stay constant when the actual actor token rotates.
+    mcpCredentialFingerprint: NodeCrypto.createHash("sha256")
+      .update(session.authorizationHeader)
+      .digest("hex"),
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
       "t3-code": {
@@ -1566,6 +1571,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly mcpCredentialFingerprint?: string; // T3-CUSTOM(expbkt3): query identity includes the actor credential.
   },
 ): string {
   return JSON.stringify({
@@ -1576,6 +1582,7 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    mcpCredentialFingerprint: mcpOverrides.mcpCredentialFingerprint, // T3-CUSTOM(expbkt3): invalidate the old CLI after token rotation.
   });
 }
 
@@ -2986,16 +2993,6 @@ export function makeClaudeAdapterV2(
               )
             : adapterOptions.environment,
         );
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const providerEnvironment = {
-          ...McpProviderSession.withAgentDeviceEnvironment(sessionEnvironment, mcpSession),
-          ...(mcpSession
-            ? {
-                T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
-                ...presenceEnvironmentFor(mcpSession),
-              }
-            : {}),
-        };
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -6905,6 +6902,18 @@ export function makeClaudeAdapterV2(
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
+          // T3-CUSTOM(expbkt3): snapshot the credential environment with the policy key before any asynchronous query close.
+          const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
+          const { T3_MCP_BEARER_TOKEN: _staleMcpToken, ...baseEnvironment } = sessionEnvironment;
+          const providerEnvironment = {
+            ...McpProviderSession.withAgentDeviceEnvironment(baseEnvironment, mcpSession),
+            ...(mcpSession === undefined
+              ? {}
+              : {
+                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...presenceEnvironmentFor(mcpSession),
+                }),
+          };
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
@@ -6972,7 +6981,7 @@ export function makeClaudeAdapterV2(
                 cwd: turnInput.runtimePolicy.cwd,
                 attachmentsDir,
                 settings: adapterOptions.settings,
-                environment: providerEnvironment, // T3-CUSTOM(expbkt3): isolated identity/account/MCP environment.
+                environment: providerEnvironment, // T3-CUSTOM(expbkt3): replacement queries receive the current credential.
                 tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
                 ...mcpOverrides,
                 permissionMode: queryPolicy.permissionMode,

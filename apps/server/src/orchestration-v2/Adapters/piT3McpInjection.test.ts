@@ -164,7 +164,9 @@ describe("pi T3 MCP injection", () => {
       assert.include(mcpSource, "Allow ${event.toolName}?");
       assert.include(mcpSource, '"mcp-protocol-version"');
       assert.include(mcpSource, '"tools/call"');
-      assert.include(mcpSource, "mcp__t3-code__");
+      // T3-CUSTOM(expbkt3): the materialized bridge derives namespaces for native and personal servers.
+      assert.include(mcpSource, 'name: "t3-code"');
+      assert.include(mcpSource, "mcp__${integration.name}__${name}");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

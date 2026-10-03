@@ -58,7 +58,7 @@ it.layer(projectionLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
         const attachments = [
           {
             type: "image" as const,
-            id: "attachment:metadata",
+            id: "attachment_metadata",
             name: "image.png",
             mimeType: "image/png",
             sizeBytes: 8,

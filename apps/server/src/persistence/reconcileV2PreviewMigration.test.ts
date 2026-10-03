@@ -1,45 +1,31 @@
+// T3-CUSTOM(expbkt3): BEGIN — BK never shipped upstream's V2 previews at IDs 53/54.
+// Its released V1 ledger is frozen; V2 must append at 1043 without rewriting it.
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
-import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
-import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
 
-// The V2 schema is unchanged from the published September 15–16 previews.
-const seedPreview = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 52 });
-  yield* Migrator.make({})({
-    loader: Migrator.fromRecord({ "53_OrchestrationV2": OrchestrationV2 }),
-  });
-  yield* sql`
-    INSERT INTO orchestration_v2_legacy_imports
-      (thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count)
-    VALUES ('preview-thread', '2026-09-15', '2026-09-15', '2026-09-16', 42)
-  `;
-  yield* sql`
-    UPDATE effect_sql_migrations SET created_at = '2026-09-15 00:00:00' WHERE migration_id = 53
-  `;
-});
+const database = NodeSqliteClient.layer({ filename: ":memory:" });
+const pendingV2Migrations = [
+  [1043, "OrchestrationV2"],
+  [1044, "RemoveRedundantProjectionIndexes"],
+] as const;
 
-describe("V2 preview upgrade", () => {
-  it.effect("upgrades a published preview without replaying V2 or losing import progress", () =>
+describe("fork V2 ledger upgrade", () => {
+  it.effect("appends V2 without changing the released V1 ledger", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* seedPreview;
-      const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [53, "PullRequestFilesViewed"],
-        [54, "ProjectionThreadsAutoSettleDisabledAt"],
-        [56, "RemoveRedundantProjectionIndexes"],
-      ]);
+      yield* runMigrations({ toMigrationInclusive: 1042 });
+      const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
       assert.deepStrictEqual(yield* runMigrations(), []);
-      assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 1042 ORDER BY migration_id`,
+        original,
+      );
       const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
       `;
@@ -47,90 +33,52 @@ describe("V2 preview upgrade", () => {
         history.map((row) => [row.migration_id, row.name] as const),
         migrationManifest,
       );
-      assert.deepStrictEqual(
-        yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 55`,
-        [{ created_at: "2026-09-15 00:00:00" }],
-      );
-      yield* sql`
-        INSERT INTO pull_request_files_viewed
-          (provider, host, repository, number, viewer, path, revision, viewed_at)
-        VALUES ('github', 'github.com', 'owner/repo', 1, 'viewer', 'file.ts', 'revision', '2026-09-17')
-      `;
-      assert.strictEqual((yield* sql`SELECT * FROM pull_request_files_viewed`).length, 1);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+    }).pipe(Effect.provide(database)),
   );
 
-  it.effect.each([false, true])(
-    "upgrades preview migration 54 with index cleanup %s",
-    (withIndexes) =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 52 });
-        yield* Migrator.make({})({
-          loader: Migrator.fromRecord({
-            "53_PullRequestFilesViewed": PullRequestFilesViewed,
-            "54_OrchestrationV2": OrchestrationV2,
-            ...(withIndexes
-              ? { "55_RemoveRedundantProjectionIndexes": RemoveRedundantProjectionIndexes }
-              : {}),
-          }),
-        });
-        yield* runMigrations();
-        assert.deepStrictEqual(yield* runMigrations(), []);
-        const history = yield* sql<{
-          readonly migration_id: number;
-          readonly name: string;
-        }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
-        assert.deepStrictEqual(
-          history.map((row) => [row.migration_id, row.name] as const),
-          migrationManifest,
-        );
-        const columns = yield* sql<{
-          readonly name: string;
-        }>`PRAGMA table_info(projection_threads)`;
-        assert.ok(columns.some((column) => column.name === "auto_settle_disabled_at"));
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  it.effect("keeps existing V2 import progress when applying index cleanup", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 1043 });
+      yield* sql`
+        INSERT INTO orchestration_v2_legacy_imports
+          (thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count)
+        VALUES ('imported-thread', '2026-09-15', '2026-09-15', '2026-09-16', 42)
+      `;
+      const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
+      const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(yield* runMigrations(), [pendingV2Migrations[1]]);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 1043 ORDER BY migration_id`,
+        original,
+      );
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* seedPreview;
+      yield* runMigrations({ toMigrationInclusive: 1042 });
+      const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
       yield* sql`
-        CREATE TRIGGER fail_preview_upgrade BEFORE INSERT ON effect_sql_migrations
-        WHEN NEW.name = 'PullRequestFilesViewed'
+        CREATE TRIGGER fail_v2_upgrade BEFORE INSERT ON effect_sql_migrations
+        WHEN NEW.name = 'OrchestrationV2'
         BEGIN SELECT RAISE(ABORT, 'injected failure'); END
       `;
       assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
       assert.deepStrictEqual(
-        yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 53`,
-        [{ migration_id: 53, name: "OrchestrationV2" }],
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        original,
       );
       assert.deepStrictEqual(
-        yield* sql`SELECT name FROM sqlite_master WHERE name = 'pull_request_files_viewed'`,
+        yield* sql`SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_legacy_imports'`,
         [],
       );
-      assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
-      yield* sql`DROP TRIGGER fail_preview_upgrade`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [53, "PullRequestFilesViewed"],
-        [54, "ProjectionThreadsAutoSettleDisabledAt"],
-        [56, "RemoveRedundantProjectionIndexes"],
-      ]);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-  );
-
-  it.effect("refuses unexpected later migrations without modifying their history", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* seedPreview;
-      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (54, 'UnknownFork')`;
-      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
-        history,
-      );
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+      yield* sql`DROP TRIGGER fail_v2_upgrade`;
+      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+    }).pipe(Effect.provide(database)),
   );
 });
+// T3-CUSTOM(expbkt3): END

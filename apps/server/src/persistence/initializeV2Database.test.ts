@@ -30,7 +30,8 @@ it.effect(
     const threadId = ThreadId.make("legacy-thread");
     const seed = Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 52 });
+      // T3-CUSTOM(expbkt3): the released fork V1 ledger ends at 1042.
+      yield* runMigrations({ toMigrationInclusive: 1042 });
       yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
       VALUES ('project', 'Project', '/tmp/project', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
       yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
@@ -87,7 +88,7 @@ it.effect(
       try {
         assert.equal(
           v1.prepare("SELECT MAX(migration_id) AS id FROM effect_sql_migrations").get()?.id,
-          52,
+          1042, // T3-CUSTOM(expbkt3): frozen V1 fork ledger.
         );
         assert.equal(
           v1

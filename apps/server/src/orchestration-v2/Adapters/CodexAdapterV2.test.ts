@@ -646,9 +646,7 @@ describe("CodexAdapterV2 process spawning", () => {
             mcp_servers: {
               "t3-code": {
                 url: "http://127.0.0.1:43123/mcp",
-                http_headers: {
-                  Authorization: "Bearer secret-codex-token",
-                },
+                bearer_token_env_var: "T3_MCP_BEARER_TOKEN", // T3-CUSTOM(expbkt3): preserve secret-free process arguments.
               },
             },
           },

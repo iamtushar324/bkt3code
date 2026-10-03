@@ -535,7 +535,8 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--limit",
             String(input.limit),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            // T3-CUSTOM(expbkt3): the fake uses the fork fields required by status badges.
+            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
           Effect.map((result) => {
@@ -2111,6 +2112,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   headRefName: "statemachine",
                   state: "OPEN",
                   updatedAt: "2026-03-10T07:00:00Z",
+                  // T3-CUSTOM(expbkt3): fork-head discovery retains readiness badges.
+                  mergeable: "CONFLICTING",
+                  mergeStateStatus: "DIRTY",
+                  reviewDecision: "CHANGES_REQUESTED",
+                  statusCheckRollup: [{ conclusion: "FAILURE" }],
+                  autoMergeRequest: null,
                   isCrossRepository: true,
                   headRepository: {
                     nameWithOwner: "jasonLaster/codething-mvp",
@@ -2134,6 +2141,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           headRef: "statemachine",
           state: "open",
           updatedAt: "2026-03-10T07:00:00.000Z",
+          // T3-CUSTOM(expbkt3): review and checks remain available on the matched fork PR.
+          mergeability: "conflicting",
+          mergeStateStatus: "DIRTY",
+          reviewDecision: "changes-requested",
+          checksStatus: "fail",
+          autoMergeEnabled: false,
         });
         expect(ghCalls).toContain(
           // T3-CUSTOM(expbkt3): PR badge fields in the --json list.

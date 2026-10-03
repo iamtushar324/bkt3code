@@ -26,6 +26,8 @@ import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+// T3-CUSTOM(expbkt3): isolated app runtimes each receive the server's broadcast events.
+import { openCodeReplayEventStream } from "../testkit/OpenCodeReplayBroadcast.expbkt3.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -169,16 +171,8 @@ const replayHttpClient = (
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           controller.exited = false;
-          const encoder = new TextEncoder();
-          const events = controller.events(undefined, replayGate?.beforeEmit);
-          const frames = events[Symbol.asyncIterator]();
-          const body = new ReadableStream<Uint8Array>({
-            async pull(stream) {
-              const next = await frames.next();
-              if (next.done === true) stream.close();
-              else stream.enqueue(encoder.encode(`data: ${encodeJson(next.value)}\n\n`));
-            },
-          });
+          // T3-CUSTOM(expbkt3): one recorded event belongs to every independent SSE connection.
+          const body = openCodeReplayEventStream(controller, replayGate?.beforeEmit);
           return new Response(body, { headers: { "content-type": "text/event-stream" } });
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.

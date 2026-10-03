@@ -49,10 +49,11 @@ const readSettings = Effect.gen(function* () {
   return rows[0];
 });
 
-/** A released V1 database at migration 54 whose project carries all four settings. */
+/** T3-CUSTOM(expbkt3): released V1 uses the frozen fork ledger through 1042. */
 const seedV1Database = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 54 });
+  // T3-CUSTOM(expbkt3): upstream V1 migration 54 is remapped below this fork cutoff.
+  yield* runMigrations({ toMigrationInclusive: 1042 });
   const events = [
     {
       type: "project.created",
@@ -182,7 +183,7 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-project-upgrade-" });
       const dbPath = path.join(stateDir, "statev2.sqlite");
 
-      // Seed the released V1 schema, then boot the V2 runtime, which runs 055+, on the same file.
+      // T3-CUSTOM(expbkt3): seed released fork V1, then boot V2 at migration 1043.
       yield* seedV1Database.pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
       yield* Effect.gen(function* () {
         yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).reconcileShells;
