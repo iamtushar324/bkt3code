@@ -182,12 +182,12 @@ const make = Effect.gen(function* () {
         threads,
         (thread) =>
           Effect.gen(function* () {
-            // A held queue can coexist with a completed visible run in the shell.
-            const records = yield* projections.getThreadRecords(thread.id, ["runs"]);
             const restartCancelled = yield* managerThreadRestartCancelled(thread, events);
+            // Only potentially idle threads need history: a held queue can
+            // coexist with a completed shell. Archived histories stay unread.
             const idle =
               managerThreadIsIdle(thread, restartCancelled) &&
-              !records.runs.some((run) =>
+              !(yield* projections.getThreadRecords(thread.id, ["runs"])).runs.some((run) =>
                 ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
               );
             const legacy = legacyThreadShell(thread);
