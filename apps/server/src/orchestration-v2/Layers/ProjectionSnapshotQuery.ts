@@ -35,6 +35,7 @@ import {
   legacyThreadDetail,
   legacyStoredHistory,
   legacyActivities,
+  withRetainedActivitySequence,
 } from "../legacyProjection.expbkt3.ts";
 import { makeForkProviderNameResolver } from "../forkProviderName.expbkt3.ts";
 
@@ -154,15 +155,16 @@ const make = Effect.gen(function* () {
         summary: string;
         payload: string;
         turnId: string | null;
-        sequence: number;
+        sequence: number | null;
         createdAt: string;
       }>`
-    SELECT activity_id AS id, tone, kind, summary, payload_json AS payload, turn_id AS turnId, sequence, created_at AS createdAt FROM projection_thread_activities activity INNER JOIN orchestration_v2_projection_threads thread ON thread.thread_id = activity.thread_id WHERE activity.kind = ${kind} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL ORDER BY sequence ASC
+    SELECT activity.activity_id AS id, activity.tone, activity.kind, activity.summary, activity.payload_json AS payload, activity.turn_id AS turnId, activity.sequence, activity.created_at AS createdAt FROM projection_thread_activities activity INNER JOIN orchestration_v2_projection_threads thread ON thread.thread_id = activity.thread_id WHERE activity.kind = ${kind} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL ORDER BY activity.sequence ASC
   `.pipe(
         Effect.map((rows) =>
           rows.map((row) =>
             Schema.decodeUnknownSync(OrchestrationThreadActivity)({
               ...row,
+              sequence: row.sequence ?? undefined,
               payload: JSON.parse(row.payload),
             }),
           ),
@@ -230,7 +232,10 @@ const make = Effect.gen(function* () {
             row.payload_json,
           ),
         );
-        const native = legacyActivities({ turnItems: items });
+        const retainedById = new Map(retained.map((activity) => [activity.id, activity]));
+        const native = legacyActivities({ turnItems: items }).map((activity) =>
+          withRetainedActivitySequence(activity, retainedById.get(activity.id)),
+        );
         return [
           ...retained.filter((item) => !native.some((activity) => activity.id === item.id)),
           ...native,

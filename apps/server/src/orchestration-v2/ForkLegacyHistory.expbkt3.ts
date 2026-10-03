@@ -292,10 +292,11 @@ export const forkLegacyHistoryEvents = (thread: OrchestrationV2AppThread) =>
       summary: string;
       payload_json: string;
       turn_id: string | null;
+      sequence: number | null;
       created_at: string;
       ordinal: number;
     }>`
-    SELECT activity.activity_id, activity.tone, activity.kind, activity.summary, activity.payload_json, activity.turn_id, activity.created_at, position.ordinal
+    SELECT activity.activity_id, activity.tone, activity.kind, activity.summary, activity.payload_json, activity.turn_id, activity.sequence, activity.created_at, position.ordinal
     FROM projection_thread_activities activity INNER JOIN orchestration_v2_turn_item_positions position ON position.thread_id=activity.thread_id AND position.turn_item_id='migration:v1:activity:' || activity.activity_id
     WHERE activity.thread_id = ${thread.id} ORDER BY activity.created_at ASC, activity.activity_id ASC
   `;
@@ -310,6 +311,7 @@ export const forkLegacyHistoryEvents = (thread: OrchestrationV2AppThread) =>
         summary: row.summary,
         payload,
         turnId: row.turn_id,
+        sequence: row.sequence ?? undefined,
         createdAt: row.created_at,
       });
       const item = legacyActivityItem(thread.id, activity, row.ordinal);

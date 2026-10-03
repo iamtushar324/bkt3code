@@ -131,6 +131,16 @@ export function legacyActivities(
     );
 }
 
+/** Imports written before cursor preservation can still recover the original V1 cursor. */
+export function withRetainedActivitySequence(
+  activity: OrchestrationThreadActivity,
+  retained?: OrchestrationThreadActivity,
+): OrchestrationThreadActivity {
+  return activity.sequence === undefined && retained?.sequence !== undefined
+    ? { ...activity, sequence: retained.sequence }
+    : activity;
+}
+
 /** V1 detail tables are immutable history after the cutover, never a second engine. */
 export const legacyStoredHistory = (threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -142,7 +152,7 @@ export const legacyStoredHistory = (threadId: ThreadId) =>
       summary: string;
       payload: string;
       turnId: string | null;
-      sequence: number;
+      sequence: number | null;
       createdAt: string;
     }>`
     SELECT activity_id AS id, tone, kind, summary, payload_json AS payload, turn_id AS turnId, sequence, created_at AS createdAt FROM projection_thread_activities WHERE thread_id = ${threadId} ORDER BY sequence ASC, created_at ASC, activity_id ASC
@@ -173,6 +183,8 @@ export const legacyStoredHistory = (threadId: ThreadId) =>
       activities: activities.map((row) =>
         Schema.decodeUnknownSync(OrchestrationThreadActivity)({
           ...row,
+          // V1 rows predating sequence attribution have no cursor, rather than cursor zero.
+          sequence: row.sequence ?? undefined,
           payload: JSON.parse(row.payload),
         }),
       ),
@@ -195,7 +207,10 @@ export function legacyThreadDetail(
   );
   const shell = legacyThreadShell(threadShellFromProjection(projection), providerThread?.driver);
   const nativeId = providerThread?.nativeThreadRef?.nativeId ?? null;
-  const activities = legacyActivities(projection);
+  const retainedActivities = new Map(history.activities.map((activity) => [activity.id, activity]));
+  const activities = legacyActivities(projection).map((activity) =>
+    withRetainedActivitySequence(activity, retainedActivities.get(activity.id)),
+  );
   const activityIds = new Set(activities.map((activity) => activity.id));
   const planIds = new Set(projection.plans.map((plan) => String(plan.id)));
   const checkpointRefs = new Set(
