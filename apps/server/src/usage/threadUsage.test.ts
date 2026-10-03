@@ -3,7 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { aggregateThreadUsage } from "./threadUsage.ts";
-import type { RateTable } from "./usagePricing.ts";
+import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 const rates: RateTable = new Map([
@@ -14,7 +14,8 @@ const rates: RateTable = new Map([
       outputCostPerToken: 0.00005,
       cacheReadCostPerToken: 0.000001,
       cacheCreationCostPerToken: 0.0000125,
-      fastMultiplier: 1,
+      fast: null,
+      ultrafast: null,
     },
   ],
 ]);
@@ -33,7 +34,7 @@ function record(overrides: Partial<UsageRecord>): UsageRecord {
       reasoningTokens: 0,
     },
     reportedCostUsd: null,
-    fast: false,
+    speed: "standard",
     dedupeKey: null,
     ...overrides,
   };
@@ -43,6 +44,39 @@ const pricing = { status: "fresh" as const, source: "test", fetchedAt: null, kno
 const threadId = ThreadId.make("thread-1");
 
 describe("aggregateThreadUsage", () => {
+  it("uses billed speed rates only for the selected thread's sessions", () => {
+    const usage = aggregateThreadUsage({
+      threadId,
+      sessionIds: ["session-a"],
+      records: [
+        record({ provider: "codex", model: "gpt-codex", speed: "fast" }),
+        record({ provider: "codex", model: "gpt-codex", speed: "ultrafast" }),
+        record({
+          provider: "codex",
+          model: "gpt-codex",
+          speed: "ultrafast",
+          sessionId: "another-thread",
+        }),
+      ],
+      rates: parseRateTable({
+        "gpt-codex": {
+          input_cost_per_token: 0.00001,
+          output_cost_per_token: 0.00005,
+          input_cost_per_token_priority: 0.00002,
+          output_cost_per_token_priority: 0.0001,
+          input_cost_per_token_ultrafast: 0.00003,
+          output_cost_per_token_ultrafast: 0.00015,
+        },
+      }),
+      timeZone: "UTC",
+      readAt: "2026-09-03T12:00:00.000Z",
+      pricing,
+    });
+    expect(usage.records).toBe(2);
+    expect(usage.costUsd).toBeCloseTo(0.075, 6);
+    expect(usage.models[0]?.costUsd).toBeCloseTo(0.075, 6);
+    expect(usage.days[0]?.costUsd).toBeCloseTo(0.075, 6);
+  });
   it("keeps only the thread's sessions and prices them per model and per day", () => {
     const usage = aggregateThreadUsage({
       threadId,

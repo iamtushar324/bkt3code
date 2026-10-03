@@ -21,6 +21,7 @@ import {
   THREAD_USAGE_PERSIST_INTERVAL_MS,
 } from "./threadTranscriptFiles.expbkt3.ts";
 import * as UsageService from "./UsageService.ts";
+import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 const claudeLine = (id: number, sessionId: string, outputTokens: number) =>
   `${JSON.stringify({
@@ -95,7 +96,7 @@ const serviceLayer = (home: string, prefix: string) =>
 const scanCacheText = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   return yield* Effect.promise(() =>
-    NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8").catch(
+    NodeFSP.readFile(NodePath.join(config.stateDir, SCAN_CACHE_FILE_NAME), "utf8").catch(
       () => null,
     ),
   );
