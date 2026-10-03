@@ -125,6 +125,8 @@ export const layer: Layer.Layer<
       readonly inheritedBackgroundTurnItems: ReturnType<
         typeof RunExecutionService.selectInheritedBackgroundTurnItems
       >;
+      // T3-CUSTOM(expbkt3): this effect captures only services and the original actor/grant/run IDs.
+      readonly grantCheck: ReturnType<typeof checkBackgroundGrant>;
     }) => {
       // Guards and background routing need live execution state, not a fresh
       // allocation of every completed message and tool output in the thread.
@@ -152,7 +154,16 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
-        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        // T3-CUSTOM(expbkt3): keep the guarded callback outside the startup history scope too.
+        shouldStartProviderTurn: () =>
+          input.grantCheck.pipe(
+            Effect.andThen(isCurrentAttemptInStatus("running")),
+            Effect.mapError((cause) =>
+              cause._tag === "BackgroundTurnDenied"
+                ? new ProjectionStore.ProjectionStoreReadError({ threadId: input.threadId, cause })
+                : cause,
+            ),
+          ),
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {
@@ -559,6 +570,7 @@ export const layer: Layer.Layer<
         providerThreadId: providerThread.id,
         runOrdinal: run.ordinal,
         inheritedBackgroundTurnItems,
+        grantCheck, // T3-CUSTOM(expbkt3): do not create a retained callback in this scope.
       });
       const { isCurrentAttemptInStatus } = runControls;
 
@@ -1300,16 +1312,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        // T3-CUSTOM(expbkt3): root preparation fails durably if authority changes.
-        shouldStartProviderTurn: () =>
-          grantCheck.pipe(
-            Effect.andThen(runControls.shouldStartProviderTurn()),
-            Effect.mapError((cause) =>
-              cause._tag === "BackgroundTurnDenied"
-                ? new ProjectionStore.ProjectionStoreReadError({ threadId: input.threadId, cause })
-                : cause,
-            ),
-          ),
+        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {
