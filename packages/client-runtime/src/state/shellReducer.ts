@@ -100,8 +100,16 @@ export function applyShellStreamEvent(
     { readonly kind: "snapshot" } | { readonly kind: "synchronized" }
   >,
 ): OrchestrationV2ShellSnapshot {
-  // T3-CUSTOM(expbkt3): visibility updates can emit project and thread frames at one durable sequence.
+  // T3-CUSTOM(expbkt3): BEGIN — a new member receives the parent project before its new thread at the same sequence.
   if (event.sequence < snapshot.snapshotSequence) return snapshot;
+  if (
+    event.sequence === snapshot.snapshotSequence &&
+    (event.kind !== "thread.updated" ||
+      snapshot.threads.some((thread) => thread.id === event.thread.id) ||
+      snapshot.archivedThreads.some((thread) => thread.id === event.thread.id))
+  )
+    return snapshot;
+  // T3-CUSTOM(expbkt3): END
 
   switch (event.kind) {
     case "project.updated": {

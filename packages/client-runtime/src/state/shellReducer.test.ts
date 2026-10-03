@@ -23,6 +23,37 @@ const otherIdentity = {
 };
 
 describe("applyShellStreamEvent", () => {
+  // T3-CUSTOM(expbkt3): paired visibility frames must show the newly shared thread without accepting stale updates.
+  it("adds a newly shared thread after its parent project at the same sequence", () => {
+    const snapshot = {
+      ...v2ShellSnapshot,
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      archivedThreads: [],
+    };
+    const withProject = applyShellStreamEvent(snapshot, {
+      kind: "project.updated",
+      sequence: 1,
+      project: v2Project,
+    });
+    const withThread = applyShellStreamEvent(withProject, {
+      kind: "thread.updated",
+      sequence: 1,
+      location: "active",
+      thread: v2ThreadShell,
+    });
+    expect(withThread.projects).toEqual([v2Project]);
+    expect(withThread.threads).toEqual([v2ThreadShell]);
+    expect(
+      applyShellStreamEvent(withThread, {
+        kind: "thread.updated",
+        sequence: 1,
+        location: "active",
+        thread: { ...v2ThreadShell, title: "Stale title" },
+      }),
+    ).toBe(withThread);
+  });
   it("updates a thread in place without moving its siblings", () => {
     const threads = ["a", "b", "c"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) }));
     const updated = { ...threads[1]!, title: "Streaming" };
