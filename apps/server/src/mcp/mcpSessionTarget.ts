@@ -14,7 +14,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export class McpSessionTargetError extends Schema.TaggedError<McpSessionTargetError>()(

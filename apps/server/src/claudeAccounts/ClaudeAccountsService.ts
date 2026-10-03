@@ -59,14 +59,14 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { ClaudeAccountProfileAccessRepository } from "../persistence/ClaudeAccountProfileAccess.ts";
 import {
   type ThreadClaudeAccountRow,
   ThreadClaudeAccountRepository,
 } from "../persistence/ThreadClaudeAccount.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { ForkProviderSessions as ProviderService } from "../provider/ForkProviderSessions.expbkt3.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   ClaudeAccountPolicyError,
@@ -1391,6 +1391,14 @@ export const make = Effect.gen(function* () {
       // reliable moment to finish a deferred account change.
       if (event.type === "thread.session-set") {
         const session = event.payload.session;
+        // T3-CUSTOM(expbkt3): native run/session projections drive account lifecycle.
+        if (session.status === "running" && session.activeTurnId !== null) {
+          activeTurns.add(event.payload.threadId);
+          if (movedAwaitingTurn.delete(event.payload.threadId))
+            yield* announce(event.payload.threadId);
+        } else if (session.status !== "starting") {
+          activeTurns.delete(event.payload.threadId);
+        }
         if (
           pendingRestart.has(event.payload.threadId) &&
           session.activeTurnId === null &&

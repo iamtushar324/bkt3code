@@ -9,12 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
-import {
-  ClientPresentation,
-  // T3-CUSTOM(expbkt3): team-mode identity for remote pairing.
-  EnvironmentIdentity,
-  SshEnvironmentGateway,
-} from "../platform/capabilities.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
@@ -24,8 +19,8 @@ import {
 } from "./onboarding.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
-  ClientPresentation,
-  ClientPresentation.of({
+  ClientCapabilities.ClientPresentation,
+  ClientCapabilities.ClientPresentation.of({
     metadata: {
       label: "T3 Code Test",
       deviceType: "desktop",
@@ -35,16 +30,13 @@ const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   }),
 );
 
-// T3-CUSTOM(expbkt3): stand in for the web app's Clerk token provider.
-const environmentIdentityLayer = (token: Option.Option<string>) =>
-  Layer.succeed(
-    EnvironmentIdentity,
-    EnvironmentIdentity.of({ identityToken: Effect.succeed(token) }),
-  );
-
 function pairingHttpLayer(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
-  options?: { readonly failDescriptor?: boolean; readonly protocolVersion?: number },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly protocolVersion?: number;
+    readonly selfUpdate?: boolean;
+  },
 ) {
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
@@ -68,6 +60,7 @@ function pairingHttpLayer(
           orchestrationProtocolVersion: options?.protocolVersion ?? ORCHESTRATION_PROTOCOL_VERSION,
           capabilities: {
             repositoryIdentity: true,
+            ...(options?.selfUpdate === true ? { serverSelfUpdate: "boot-service" } : {}),
           },
         }),
       );
@@ -132,66 +125,8 @@ describe("connection onboarding", () => {
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
       expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
-      // T3-CUSTOM(expbkt3): no EnvironmentIdentity provided here, so pairing must
-      // still work and must not invent an identity claim.
-      expect(tokenParams.get("identity_token")).toBeNull();
     }),
   );
-
-  // T3-CUSTOM(expbkt3): BEGIN — a team-mode client presents the operator's Clerk
-  // token at pairing, which is the only point the environment can bind a user to
-  // the session it mints.
-  it.effect("presents the operator's Clerk identity when the client has one", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      yield* preparePairingRegistration({
-        host: "remote.example.test",
-        pairingCode: "pairing-token",
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            CLIENT_PRESENTATION_LAYER,
-            environmentIdentityLayer(Option.some("clerk-session-token")),
-            pairingHttpLayer(calls),
-          ),
-        ),
-      );
-
-      const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
-      const tokenBody =
-        tokenRequest?.init.body instanceof Uint8Array
-          ? new TextDecoder().decode(tokenRequest.init.body)
-          : String(tokenRequest?.init.body);
-      expect(new URLSearchParams(tokenBody).get("identity_token")).toBe("clerk-session-token");
-    }),
-  );
-
-  it.effect("pairs without an identity claim when the operator is signed out", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const registration = yield* preparePairingRegistration({
-        host: "remote.example.test",
-        pairingCode: "pairing-token",
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            CLIENT_PRESENTATION_LAYER,
-            environmentIdentityLayer(Option.none()),
-            pairingHttpLayer(calls),
-          ),
-        ),
-      );
-
-      expect(registration.credential.token).toBe("bearer-token");
-      const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
-      const tokenBody =
-        tokenRequest?.init.body instanceof Uint8Array
-          ? new TextDecoder().decode(tokenRequest.init.body)
-          : String(tokenRequest?.init.body);
-      expect(new URLSearchParams(tokenBody).get("identity_token")).toBeNull();
-    }),
-  );
-  // T3-CUSTOM(expbkt3): END
 
   it.effect("rejects an incompatible server without consuming the pairing credential", () =>
     Effect.gen(function* () {
@@ -209,6 +144,51 @@ describe("connection onboarding", () => {
         Effect.flip,
       );
       expect(error).toMatchObject({ reason: "unsupported" });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+      ]);
+    }),
+  );
+
+  it.effect("pairs an outdated server so it can be updated from this client", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, {
+              protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
+              selfUpdate: true,
+            }),
+          ),
+        ),
+      );
+      expect(registration.target.environmentId).toBe("environment-paired");
+      expect(calls.map((call) => call.url)).toContain("https://remote.example.test/oauth/token");
+    }),
+  );
+
+  it.effect("refuses an outdated server that cannot update itself", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ reason: "unsupported" });
+      expect(error).not.toHaveProperty("serverUpdateRequired");
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);
@@ -316,8 +296,8 @@ describe("connection onboarding", () => {
         target,
       }).pipe(
         Effect.provideService(
-          SshEnvironmentGateway,
-          SshEnvironmentGateway.of({
+          ClientCapabilities.SshEnvironmentGateway,
+          ClientCapabilities.SshEnvironmentGateway.of({
             provision: () =>
               Effect.succeed({
                 environmentId: EnvironmentId.make("environment-ssh"),

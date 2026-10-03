@@ -18,7 +18,7 @@ import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { PRESENCE_ROUTE_PATH, presenceRouteLayer } from "./presenceHttp.expbkt3.ts";
 import type { PresenceReport } from "./presenceModel.ts";
 import { PresenceError, UserPresenceService, type PresenceQuery } from "./UserPresenceService.ts";

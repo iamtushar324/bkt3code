@@ -30,6 +30,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { operatorUserIdFromSessionState } from "@t3tools/client-runtime/state/session";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { fetchSessionState } from "../environments/primary/auth";
 
 /**
@@ -54,4 +55,11 @@ const environmentOperatorSessionAtom = Atom.make(Effect.promise(fetchSessionStat
 export function useEnvironmentOperatorUserId(): UserId | null {
   const result = useAtomValue(environmentOperatorSessionAtom);
   return operatorUserIdFromSessionState(Option.getOrNull(AsyncResult.value(result)));
+}
+
+/** The same operator identity for non-hook command producers. */
+export function readEnvironmentOperatorUserId(): UserId | null {
+  return operatorUserIdFromSessionState(
+    Option.getOrNull(AsyncResult.value(appAtomRegistry.get(environmentOperatorSessionAtom))),
+  );
 }

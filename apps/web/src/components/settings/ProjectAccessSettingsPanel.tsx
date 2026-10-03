@@ -86,8 +86,10 @@ export function ProjectAccessSettingsPanel() {
         ) : (
           sortedProjects.map((project) => {
             const memberUsers: ReadonlyArray<OrchestrationUser> = [
-              ...(project.ownerUserId !== null ? [project.ownerUserId] : []),
-              ...project.memberUserIds.filter((id): id is UserId => id !== project.ownerUserId),
+              ...(project.ownerUserId != null ? [project.ownerUserId] : []),
+              ...(project.memberUserIds ?? []).filter(
+                (id): id is UserId => id !== project.ownerUserId,
+              ),
             ].map((id) => resolveUser(id));
             return (
               <SettingsRow

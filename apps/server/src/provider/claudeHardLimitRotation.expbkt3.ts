@@ -22,7 +22,7 @@ import {
 } from "../claudeAccounts/hardLimitHook.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
-import * as ProviderService from "./Services/ProviderService.ts";
+import { ForkProviderSessions } from "./ForkProviderSessions.expbkt3.ts";
 
 const CLAUDE_AUTOSWITCH_TIMEOUT = "10 seconds";
 const MAX_AUTOSWITCH_OUTPUT_BYTES = 4_096;
@@ -237,7 +237,7 @@ const makeLive = Effect.gen(function* () {
     return;
   }
 
-  const providers = yield* ProviderService.ProviderService;
+  const providers = yield* ForkProviderSessions;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // Settings decide which switcher binary runs, as they do for placement.
   const settings = yield* ServerSettingsService;

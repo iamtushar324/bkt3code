@@ -18,9 +18,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { TurnStartBootstrap } from "../../../orchestration/turnStartBootstrap.expbkt3.ts";
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
+import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { T3ControlToolError } from "./tools.ts";
 import { __testing } from "./handlers.ts";

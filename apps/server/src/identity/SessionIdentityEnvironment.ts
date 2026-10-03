@@ -16,7 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
-import type { ProviderSessionExecutionOptions } from "../provider/Services/ProviderAdapter.ts";
+import type { ProviderSessionExecutionOptions } from "../provider/sessionExecutionOptions.expbkt3.ts";
 
 export const SESSION_IDENTITY_RUNTIME_KEY = "BK_IDENTITY_RUNTIME";
 export const SESSION_OWNER_EMAIL_KEY = "BK_SESSION_OWNER_EMAIL";
@@ -83,6 +83,12 @@ export function sessionIdentityFingerprint(environment: NodeJS.ProcessEnv): stri
  * wins over whatever the machine exported, and the identity markers ride along
  * whether or not a profile is in play.
  */
+export function withSessionIdentityEnvironment(
+  options: ProviderSessionExecutionOptions,
+): ProviderSessionExecutionOptions;
+export function withSessionIdentityEnvironment(
+  options: ProviderSessionExecutionOptions | undefined,
+): ProviderSessionExecutionOptions | undefined;
 export function withSessionIdentityEnvironment(
   options: ProviderSessionExecutionOptions | undefined,
 ): ProviderSessionExecutionOptions | undefined {

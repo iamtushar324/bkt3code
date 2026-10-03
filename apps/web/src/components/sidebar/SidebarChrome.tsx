@@ -1,3 +1,7 @@
+// T3-CUSTOM(expbkt3): inputs for fork lifecycle counters and host notices.
+import { useEnvironments } from "../../state/environments";
+import { useThreadShells, useServerConfigs } from "../../state/entities";
+import { Alert, AlertTitle, AlertDescription } from "../ui/alert";
 // T3-CUSTOM(expbkt3): import reformatted to multi-line to fit the fork's added icons below.
 import {
   ArrowLeftIcon,
@@ -17,11 +21,7 @@ import { useDesktopLocalBootstraps } from "../../connection/useDesktopLocalBoots
 import { EXPERIMENTAL_CONTROL_CENTER_ENABLED } from "../../experimentalFeatures";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-// T3-CUSTOM(expbkt3): lifecycle counters.
-import { useServerConfigs, useThreadShells } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
-// T3-CUSTOM(expbkt3): environment-connection notices.
-import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -293,12 +293,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const { environments } = useEnvironments();
-  // The page reads every connected server, so one of them offering pull requests is enough for
-  // the link to lead somewhere.
-  const pullRequestsSupported = environments.some(
-    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-  );
+  const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);

@@ -52,17 +52,27 @@ function makeThread(id: string, overrides: Partial<ThreadShell> = {}): ThreadShe
     branch: null,
     worktreePath: null,
     sourceControlProfileId: null,
-    latestTurn: null,
+    latestRun: null,
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
+    runtime: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    priority: null,
+    customGroup: null,
+    linearIssueUrl: null,
+    mattermostThreadUrl: null,
+    parentThreadId: null,
+    parentEnvironmentId: null,
+    hasPendingAsyncUserInput: false,
+    backgroundLiveness: null,
+    activeProviderThreadId: null,
+    source: {} as ThreadShell["source"],
     ...overrides,
   } as ThreadShell;
 }
@@ -419,10 +429,10 @@ describe("sanitizePhaseSidebarGrouping", () => {
 describe("summarizeSidebarSessions unread", () => {
   it("counts sessions whose last turn finished after the viewer last opened them", () => {
     const seen = makeThread("seen", {
-      latestTurn: { completedAt: "2026-07-16T09:00:00.000Z" } as ThreadShell["latestTurn"],
+      latestRun: { completedAt: "2026-07-16T09:00:00.000Z" } as ThreadShell["latestRun"],
     });
     const unseen = makeThread("unseen", {
-      latestTurn: { completedAt: "2026-07-16T09:30:00.000Z" } as ThreadShell["latestTurn"],
+      latestRun: { completedAt: "2026-07-16T09:30:00.000Z" } as ThreadShell["latestRun"],
     });
     const counts = summarizeSidebarSessions([seen, unseen], {
       now,

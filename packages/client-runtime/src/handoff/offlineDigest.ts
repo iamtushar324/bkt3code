@@ -20,9 +20,11 @@ import {
 } from "@t3tools/shared/sessionDigest";
 import type {
   OrchestrationProjectShell,
-  OrchestrationThread,
+  OrchestrationV2ThreadProjection,
   ThreadContextExportResult,
 } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@t3tools/contracts/orchestration";
+import * as DateTime from "effect/DateTime";
 
 export const OFFLINE_DIGEST_PROVENANCE_NOTE =
   "Built from a local cache while the host that owns this session was unreachable: " +
@@ -30,7 +32,7 @@ export const OFFLINE_DIGEST_PROVENANCE_NOTE =
   "Re-read the worktree before acting on anything here.";
 
 export interface CachedThreadDigestInput {
-  readonly thread: OrchestrationThread;
+  readonly thread: OrchestrationThread | OrchestrationV2ThreadProjection;
   /** Names the workspace in the digest; absent when the shell cache lacks it. */
   readonly project: OrchestrationProjectShell | null;
   /** True when older turns exist on the host but not in the cached window. */
@@ -42,8 +44,26 @@ export interface CachedThreadDigest extends ThreadContextExportResult {
   readonly source: "cache";
 }
 
+function cachedTranscript(thread: CachedThreadDigestInput["thread"]) {
+  return "visibleTurnItems" in thread
+    ? thread.visibleTurnItems.flatMap(({ item }) =>
+        item.type === "user_message" || item.type === "assistant_message"
+          ? [
+              {
+                role: item.type === "user_message" ? "user" : "assistant",
+                text: item.text,
+                createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+              },
+            ]
+          : [],
+      )
+    : thread.messages.map(({ role, text, createdAt }) => ({ role, text, createdAt }));
+}
+
 export function cachedThreadDigestInput(input: CachedThreadDigestInput): ThreadContextDigestInput {
-  const { thread, project, hasMoreHistory } = input;
+  const { project, hasMoreHistory } = input;
+  const native = "thread" in input.thread;
+  const thread = native ? input.thread.thread : input.thread;
   return {
     threadId: thread.id,
     title: thread.title,
@@ -53,15 +73,14 @@ export function cachedThreadDigestInput(input: CachedThreadDigestInput): ThreadC
     branch: thread.branch,
     providerInstanceId: thread.modelSelection.instanceId,
     model: thread.modelSelection.model,
-    createdAt: thread.createdAt,
+    createdAt:
+      typeof thread.createdAt === "string"
+        ? thread.createdAt
+        : DateTime.formatIso(thread.createdAt),
     // Git facts are read from the host's filesystem, which is the thing that is
     // unreachable. Rendering "no git information" is honest; guessing is not.
     git: null,
-    messages: thread.messages.map((message) => ({
-      role: message.role,
-      text: message.text,
-      createdAt: message.createdAt,
-    })),
+    messages: cachedTranscript(input.thread),
     provenanceNote: OFFLINE_DIGEST_PROVENANCE_NOTE,
     historyIncomplete: hasMoreHistory,
   };
@@ -69,12 +88,13 @@ export function cachedThreadDigestInput(input: CachedThreadDigestInput): ThreadC
 
 export function renderCachedThreadDigest(input: CachedThreadDigestInput): CachedThreadDigest {
   const digest = renderThreadContextDigest(cachedThreadDigestInput(input));
+  const thread = "thread" in input.thread ? input.thread.thread : input.thread;
   return {
-    threadId: input.thread.id,
-    projectId: input.thread.projectId,
-    title: input.thread.title,
+    threadId: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
     markdown: digest.markdown,
-    messageCount: input.thread.messages.length,
+    messageCount: cachedTranscript(input.thread).length,
     // The cached window itself elides history, so a handoff built from it is
     // truncated whenever either the renderer or the cache dropped something.
     truncated: digest.truncated || input.hasMoreHistory,

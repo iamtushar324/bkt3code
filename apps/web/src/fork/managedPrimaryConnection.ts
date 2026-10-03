@@ -18,7 +18,8 @@
  * @module fork/managedPrimaryConnection
  */
 import { ConnectionBlockedError } from "@t3tools/client-runtime/connection";
-import type { PrimaryDpopAuthorization } from "@t3tools/client-runtime/platform";
+import type { ClientCapabilities } from "@t3tools/client-runtime/platform";
+type PrimaryDpopAuthorization = ClientCapabilities.PrimaryDpopAuthorization;
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 

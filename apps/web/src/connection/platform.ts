@@ -1,13 +1,7 @@
 import {
-  ClientPresentation,
-  CloudSession,
-  // T3-CUSTOM(expbkt3): team-mode identity for remote pairing.
-  EnvironmentIdentity,
-  EnvironmentOwnedDataCleanup,
+  ClientCapabilities,
   PlatformConnectionSource,
-  PrimaryEnvironmentAuth,
-  RelayDeviceIdentity,
-  SshEnvironmentGateway,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import {
   BearerConnectionCredential,
@@ -198,18 +192,19 @@ export const provisionDesktopSshEnvironment = Effect.fn(
 // present", and the environment's own identity mode decides whether that is
 // acceptable. Exported so the wiring from Clerk through to pairing is testable —
 // a silently-null token here is exactly the failure this feature has to avoid.
-export const teamEnvironmentIdentity: typeof EnvironmentIdentity.Service = EnvironmentIdentity.of({
-  identityToken: Effect.promise(readTeamClerkToken).pipe(Effect.map(Option.fromNullishOr)),
-});
+export const teamEnvironmentIdentity: typeof ClientCapabilities.EnvironmentIdentity.Service =
+  ClientCapabilities.EnvironmentIdentity.of({
+    identityToken: Effect.promise(readTeamClerkToken).pipe(Effect.map(Option.fromNullishOr)),
+  });
 // T3-CUSTOM(expbkt3): END
 
 const capabilitiesLayer = Layer.effectContext(
   Effect.sync(() => {
-    const presentation = ClientPresentation.of({
+    const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: clientMetadata(),
       scopes: AuthStandardClientScopes,
     });
-    const cloudSession = CloudSession.of({
+    const cloudSession = ClientCapabilities.CloudSession.of({
       identity: Effect.sync(() =>
         Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
       ),
@@ -239,12 +234,10 @@ const capabilitiesLayer = Layer.effectContext(
         return token;
       }),
     });
-    const identity = RelayDeviceIdentity.of({
+    const identity = ClientCapabilities.RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,
     });
-    // T3-CUSTOM(expbkt3): the operator's Clerk identity, for remote pairing.
-    const environmentIdentity = teamEnvironmentIdentity;
-    const primaryAuth = PrimaryEnvironmentAuth.of({
+    const primaryAuth = ClientCapabilities.PrimaryEnvironmentAuth.of({
       bearerToken: Effect.tryPromise({
         try: readDesktopPrimaryBearerToken,
         catch: (cause) =>
@@ -258,7 +251,7 @@ const capabilitiesLayer = Layer.effectContext(
       dpopAuthorization: readManagedPrimaryDpopAuthorization,
       // T3-CUSTOM(expbkt3): END
     });
-    const ssh = SshEnvironmentGateway.of({
+    const ssh = ClientCapabilities.SshEnvironmentGateway.of({
       provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target) {
         const bridge = window.desktopBridge;
         if (bridge === undefined) {
@@ -316,13 +309,13 @@ const capabilitiesLayer = Layer.effectContext(
       }),
     });
 
-    return Context.make(CloudSession, cloudSession).pipe(
-      Context.add(PrimaryEnvironmentAuth, primaryAuth),
-      Context.add(RelayDeviceIdentity, identity),
-      // T3-CUSTOM(expbkt3): team-mode identity for remote pairing.
-      Context.add(EnvironmentIdentity, environmentIdentity),
-      Context.add(ClientPresentation, presentation),
-      Context.add(SshEnvironmentGateway, ssh),
+    return Context.make(ClientCapabilities.CloudSession, cloudSession).pipe(
+      // T3-CUSTOM(expbkt3): team pairing identity is distinct from relay identity.
+      Context.add(ClientCapabilities.EnvironmentIdentity, teamEnvironmentIdentity),
+      Context.add(ClientCapabilities.PrimaryEnvironmentAuth, primaryAuth),
+      Context.add(ClientCapabilities.RelayDeviceIdentity, identity),
+      Context.add(ClientCapabilities.ClientPresentation, presentation),
+      Context.add(ClientCapabilities.SshEnvironmentGateway, ssh),
     );
   }),
 );
@@ -506,10 +499,10 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
 }
 
 const platformConnectionSourceLayer = Layer.effect(
-  PlatformConnectionSource,
+  PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
-      return PlatformConnectionSource.of({
+      return PlatformConnectionSource.PlatformConnectionSource.of({
         registrations: Stream.empty,
       });
     }
@@ -633,7 +626,7 @@ const platformConnectionSourceLayer = Layer.effect(
       return registrations as ReadonlyArray<PlatformConnectionRegistration>;
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
-    return PlatformConnectionSource.of({
+    return PlatformConnectionSource.PlatformConnectionSource.of({
       registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
         Stream.mapEffect(() => buildPlatformRegistrations),
       ),
@@ -642,8 +635,8 @@ const platformConnectionSourceLayer = Layer.effect(
 );
 
 const environmentOwnedDataCleanupLayer = Layer.succeed(
-  EnvironmentOwnedDataCleanup,
-  EnvironmentOwnedDataCleanup.of({
+  Persistence.EnvironmentOwnedDataCleanup,
+  Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
       Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);

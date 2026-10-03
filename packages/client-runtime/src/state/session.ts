@@ -7,12 +7,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/unstable/http";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
@@ -44,8 +44,10 @@ export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
 )(function* (input: {
   readonly prepared: PreparedConnection;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly timeoutMs?: number;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -73,8 +75,10 @@ export const fetchEnvironmentSessionState = Effect.fn(
 export const fetchOrchestrationUsers = Effect.fn("clientRuntime.state.fetchOrchestrationUsers")(
   function* (input: {
     readonly prepared: PreparedConnection;
-    readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-    readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+    readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+    readonly remoteAuthorization?: Option.Option<
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+    >;
     readonly timeoutMs?: number;
   }) {
     return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -112,14 +116,14 @@ export function operatorUserIdFromSessionState(
 // T3-CUSTOM(expbkt3): END
 
 export function createEnvironmentSessionAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient | R, E>,
 ) {
   const initialConfigAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
-          EnvironmentSupervisor.pipe(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
               SubscriptionRef.changes(supervisor.session).pipe(
                 Stream.mapEffect(
@@ -155,7 +159,7 @@ export function createEnvironmentSessionAtoms<R, E>(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
-          EnvironmentSupervisor.pipe(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) => SubscriptionRef.changes(supervisor.prepared)),
           ),
         ),
@@ -183,8 +187,10 @@ export function createEnvironmentSessionAtoms<R, E>(
           return Effect.never;
         }
         return Effect.gen(function* () {
-          const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-          const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+          const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+          const remoteAuthorization = yield* Effect.serviceOption(
+            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+          );
           return yield* fetchEnvironmentSessionState({ prepared, signer, remoteAuthorization });
         });
       })
@@ -211,8 +217,10 @@ export function createEnvironmentSessionAtoms<R, E>(
           return Effect.never;
         }
         return Effect.gen(function* () {
-          const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-          const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+          const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+          const remoteAuthorization = yield* Effect.serviceOption(
+            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+          );
           return yield* fetchOrchestrationUsers({ prepared, signer, remoteAuthorization });
         });
       })

@@ -16,7 +16,12 @@
  *
  * @module state/cachedThreadSearch
  */
-import type { OrchestrationThread, OrchestrationThreadSearchMatch } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@t3tools/contracts/orchestration";
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationThreadSearchMatch,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /** Mirrors the host's snippet cap, so a cached match cannot render differently. */
 const SNIPPET_MAX_LENGTH = 240;
@@ -39,7 +44,7 @@ export function cachedSearchSnippet(text: string, needle: string): string {
  * conversation cannot crowd out every other result.
  */
 export function searchCachedThreads(
-  threads: ReadonlyArray<OrchestrationThread>,
+  threads: ReadonlyArray<OrchestrationThread | OrchestrationV2ThreadProjection>,
   query: string,
   limit: number = CACHED_THREAD_SEARCH_MATCH_LIMIT,
 ): ReadonlyArray<OrchestrationThreadSearchMatch> {
@@ -49,9 +54,24 @@ export function searchCachedThreads(
   }
 
   const matches: Array<OrchestrationThreadSearchMatch> = [];
-  for (const thread of threads) {
-    for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-      const message = thread.messages[index];
+  for (const cached of threads) {
+    const thread = "thread" in cached ? cached.thread : cached;
+    const messages =
+      "visibleTurnItems" in cached
+        ? cached.visibleTurnItems.flatMap(({ item }) =>
+            item.type === "user_message" || item.type === "assistant_message"
+              ? [
+                  {
+                    role: item.type === "user_message" ? "user" : "assistant",
+                    text: item.text,
+                    createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+                  },
+                ]
+              : [],
+          )
+        : cached.messages;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
       if (message === undefined) continue;
       if (message.role !== "user" && message.role !== "assistant") continue;
       if (!message.text.toLowerCase().includes(needle)) continue;

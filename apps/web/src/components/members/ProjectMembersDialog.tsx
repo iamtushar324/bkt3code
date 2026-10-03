@@ -73,7 +73,7 @@ export function ProjectMembersDialog({
     project?.ownerUserId === currentUserId ||
     (project?.ownerUserId === null &&
       currentUserId !== null &&
-      project.memberUserIds.includes(currentUserId));
+      (project.memberUserIds ?? []).includes(currentUserId));
   const onTransferOwnership = useCallback(
     (userId: UserId) => {
       const user = resolveUser(userId);

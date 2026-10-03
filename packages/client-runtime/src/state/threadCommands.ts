@@ -1,34 +1,53 @@
-import * as Crypto from "effect/Crypto";
-// T3-CUSTOM(expbkt3): BEGIN — durable outbox: persist a turn locally before it is sent.
+// T3-CUSTOM(expbkt3): persisted V2 sends keep one command id across reconnects.
+import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import type { AtomRegistry } from "effect/unstable/reactivity";
+import { createRuntimeCommand } from "./runtime.ts";
 import {
-  // T3-CUSTOM(expbkt3): END
-  CommandId,
+  addThreadMember,
+  removeThreadMember,
+  transferThreadOwnership,
+  restartThreadSession,
+  type AddThreadMemberInput,
+  type RemoveThreadMemberInput,
+  type TransferThreadOwnershipInput,
+  type RestartThreadSessionInput,
+} from "../operations/commandsFork.ts";
+import type { ThreadId } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { Atom } from "effect/unstable/reactivity";
+import {
   WS_METHODS,
   type EnvironmentId,
-  type OrchestrationShellSnapshot,
+  type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
-import { canSnooze } from "./threadSettled.ts";
+import * as DateTime from "effect/DateTime";
 
 import {
+  // T3-CUSTOM(expbkt3): dispatch follows local durable persistence.
+  runInEnvironment,
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
-  // T3-CUSTOM(expbkt3): durable outbox commands run against the raw runtime, not an environment.
-  createRuntimeCommand,
 } from "./runtime.ts";
 import {
+  type ThreadCommandInput,
   type ArchiveThreadInput,
+  type CancelQueuedRunInput,
   type CreateThreadInput,
-  // T3-CUSTOM(expbkt3): durable bootstrap command atoms.
   type DeleteThreadInput,
+  type EditQueuedRunInput,
   type InterruptThreadTurnInput,
+  type MarkThreadUnreadInput,
+  type ForkThreadFromRunInput,
+  type MergeThreadBackInput,
+  type PromoteQueuedRunInput,
+  type ReorderQueuedRunInput,
   type LinkThreadPullRequestInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
@@ -50,10 +69,19 @@ import {
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
+  type VisitThreadInput,
   archiveThread,
+  cancelQueuedRun,
   createThread,
   deleteThread,
+  editQueuedRun,
   interruptThreadTurn,
+  forkThreadFromRun,
+  markThreadUnread,
+  mergeThreadBack,
+  promoteQueuedRun,
+  reorderQueuedRun,
+  resumeThreadQueue,
   linkThreadPullRequest,
   respondToThreadApproval,
   respondToThreadUserInput,
@@ -75,20 +103,12 @@ import {
   unsettleThread,
   unsnoozeThread,
   updateThreadMetadata,
+  visitThread,
 } from "../operations/commands.ts";
-// T3-CUSTOM(expbkt3): BEGIN fork command creators
-import {
-  type AddThreadMemberInput,
-  type RemoveThreadMemberInput,
-  type RestartThreadSessionInput,
-  type TransferThreadOwnershipInput,
-  addThreadMember,
-  removeThreadMember,
-  restartThreadSession,
-  transferThreadOwnership,
-} from "../operations/commandsFork.ts";
-// T3-CUSTOM(expbkt3): END
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
+
 // T3-CUSTOM(expbkt3): every client persists the exact turn before dispatch.
 import {
   ANONYMOUS_OUTBOX_IDENTITY,
@@ -120,7 +140,8 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
   registry: AtomRegistry.AtomRegistry,
 ) {
   const { outboxIdentityKey = ANONYMOUS_OUTBOX_IDENTITY, ...serverInput } = input;
-  const cache = yield* EnvironmentCacheStore;
+  const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+  const cache = Option.getOrUndefined(cacheOption);
   const commandId =
     serverInput.commandId ??
     (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie, Effect.map(CommandId.make)));
@@ -133,27 +154,43 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
     messageId: serverInput.message.messageId,
     commandId,
     text: serverInput.message.text,
+    // T3-CUSTOM(expbkt3): retain citation, comment, and context payloads on replay.
+    ...(serverInput.message.context === undefined ? {} : { context: serverInput.message.context }),
+    ...(serverInput.manualContinuationOfRunId === undefined
+      ? {}
+      : { manualContinuationOfRunId: serverInput.manualContinuationOfRunId }),
+    ...(serverInput.creationSource === undefined
+      ? {}
+      : { creationSource: serverInput.creationSource }),
     // T3-CUSTOM(expbkt3): an uploaded attachment already has its asset id and no
     // inline data url; a locally-held one supplies the data url and its preview.
-    attachments: serverInput.message.attachments.map((attachment, index) => {
-      const dataUrl = "dataUrl" in attachment ? attachment.dataUrl : undefined;
-      // T3-CUSTOM(expbkt3): upstream's attachment `id` is optional, so `"id" in
-      // attachment` no longer proves it is a string. A queued attachment always
-      // needs a definite id, hence the explicit undefined check and the fallback.
-      const uploadedId =
-        "id" in attachment && attachment.id !== undefined ? attachment.id : undefined;
-      return {
-        type: attachment.type,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.sizeBytes,
-        id: uploadedId ?? `${serverInput.message.messageId}-${index}`,
-        ...(dataUrl === undefined ? {} : { dataUrl, previewUri: dataUrl }),
-        ...(uploadedId === undefined
-          ? {}
-          : { uploadedAttachmentId: uploadedId, uploadEnvironmentId: environmentId }),
-      };
-    }),
+    attachments: serverInput.message.attachments.map(
+      (attachment, index): QueuedThreadMessage["attachments"][number] => {
+        const dataUrl = "dataUrl" in attachment ? attachment.dataUrl : undefined;
+        // T3-CUSTOM(expbkt3): upstream's attachment `id` is optional, so `"id" in
+        // attachment` no longer proves it is a string. A queued attachment always
+        // needs a definite id, hence the explicit undefined check and the fallback.
+        const uploadedId =
+          "id" in attachment && attachment.id !== undefined ? attachment.id : undefined;
+        const persisted = {
+          type: attachment.type,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          id: uploadedId ?? `${serverInput.message.messageId}-${index}`,
+          ...(dataUrl === undefined ? {} : { dataUrl, previewUri: dataUrl }),
+          ...(uploadedId === undefined
+            ? {}
+            : { uploadedAttachmentId: uploadedId, uploadEnvironmentId: environmentId }),
+        };
+        const source = "source" in attachment ? attachment.source : undefined;
+        if (attachment.type === "image")
+          return { ...persisted, type: "image", ...(source && "kind" in source ? { source } : {}) };
+        if (attachment.type === "file")
+          return { ...persisted, type: "file", ...(source && "_tag" in source ? { source } : {}) };
+        return persisted;
+      },
+    ),
     ...(serverInput.modelSelection === undefined
       ? {}
       : { modelSelection: serverInput.modelSelection }),
@@ -167,11 +204,22 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
       : { sourceProposedPlan: serverInput.sourceProposedPlan }),
     ...(serverInput.titleSeed === undefined ? {} : { titleSeed: serverInput.titleSeed }),
     deliveryState: "pending",
+    // T3-CUSTOM(expbkt3): preserve upstream queue/steer/restart intent across reloads.
+    ...(serverInput.dispatchMode === undefined ? {} : { dispatchMode: serverInput.dispatchMode }),
+    ...(serverInput.manualContinuationOfRunId === undefined
+      ? {}
+      : { manualContinuationOfRunId: serverInput.manualContinuationOfRunId }),
+    ...(serverInput.creationSource === undefined
+      ? {}
+      : { creationSource: serverInput.creationSource }),
     createdAt,
   };
-  const dispatch = startThreadTurn({ ...serverInput, commandId, createdAt });
+  const dispatch = runInEnvironment(
+    environmentId,
+    startThreadTurn({ ...serverInput, commandId, createdAt }),
+  );
 
-  if (cache.saveOutbox === undefined || cache.removeOutbox === undefined) {
+  if (cache?.saveOutbox === undefined || cache.removeOutbox === undefined) {
     return yield* dispatch;
   }
   yield* cache.saveOutbox(queuedMessage).pipe(
@@ -232,8 +280,10 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
             }),
           ),
         );
-      bumpOutboxRevision(registry, environmentId, outboxIdentityKey);
     }
+    // T3-CUSTOM(expbkt3): direct-send failures must wake route-independent replay,
+    // including transport failures that keep the saved payload unchanged.
+    bumpOutboxRevision(registry, environmentId, outboxIdentityKey);
     return yield* Effect.failCause(dispatched.cause);
   }
   yield* cache.removeOutbox(queuedMessage).pipe(
@@ -251,13 +301,22 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
   return dispatched.value;
 });
 
-// T3-CUSTOM(expbkt3): acknowledgement timeout error
+export type LoadEarlierThreadHistoryInput = {
+  readonly threadId: ThreadId;
+};
 
 export type {
   ArchiveThreadInput,
+  CancelQueuedRunInput,
   CreateThreadInput,
   DeleteThreadInput,
+  EditQueuedRunInput,
   InterruptThreadTurnInput,
+  MarkThreadUnreadInput,
+  ForkThreadFromRunInput,
+  MergeThreadBackInput,
+  PromoteQueuedRunInput,
+  ReorderQueuedRunInput,
   LinkThreadPullRequestInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
@@ -273,25 +332,19 @@ export type {
   SnoozeThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
+  ThreadCommandInput,
   UnarchiveThreadInput,
   UnlinkThreadPullRequestInput,
   UnpinThreadInput,
   UnsettleThreadInput,
   UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
+  VisitThreadInput,
 } from "../operations/commands.ts";
-// T3-CUSTOM(expbkt3): BEGIN fork command input types
-export type {
-  AddThreadMemberInput,
-  RemoveThreadMemberInput,
-  RestartThreadSessionInput,
-  TransferThreadOwnershipInput,
-} from "../operations/commandsFork.ts";
-// T3-CUSTOM(expbkt3): END
 
 export function createThreadEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | Crypto.Crypto | R, E>,
-  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -302,13 +355,34 @@ export function createThreadEnvironmentAtoms<R, E>(
   const commands = {
     // T3-CUSTOM(expbkt3): BEGIN — durable outbox: let a client drop a pending turn
     // that was persisted before send (see startThreadTurnDurably above).
+    queueOutbox: createRuntimeCommand(runtime, {
+      label: "environment-data:commands:thread:queue-outbox",
+      execute: (message: QueuedThreadMessage, registry) =>
+        Effect.gen(function* () {
+          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+          if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
+            return yield* Effect.fail(
+              new ThreadOutboxPersistenceError({
+                operation: "save-before-send",
+                cause: "Outbox storage unavailable",
+              }),
+            );
+          }
+          yield* cacheOption.value.saveOutbox(message);
+          bumpOutboxRevision(
+            registry,
+            message.environmentId,
+            message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+          );
+        }),
+    }),
     discardOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:discard-outbox",
       execute: (message: DiscardDurableOutboxInput, registry) =>
         Effect.gen(function* () {
-          const cache = yield* EnvironmentCacheStore;
-          if (cache.removeOutbox === undefined) return;
-          yield* cache.removeOutbox(message);
+          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+          if (Option.isNone(cacheOption) || cacheOption.value.removeOutbox === undefined) return;
+          yield* cacheOption.value.removeOutbox(message);
           bumpOutboxRevision(
             registry,
             message.environmentId,
@@ -323,7 +397,6 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    // T3-CUSTOM(expbkt3): expose durable bootstrap controls to every client runtime.
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:delete",
       execute: (input: DeleteThreadInput) => deleteThread(input),
@@ -396,6 +469,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    visit: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:visit",
+      execute: (input: VisitThreadInput) => visitThread(input),
+      scheduler,
+      concurrency,
+    }),
+    markUnread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:mark-unread",
+      execute: (input: MarkThreadUnreadInput) => markThreadUnread(input),
+      scheduler,
+      concurrency,
+    }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: (input: UpdateThreadMetadataInput) => updateThreadMetadata(input),
@@ -426,11 +511,17 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    startTurn: createEnvironmentCommand(runtime, {
+    // T3-CUSTOM(expbkt3): persist before the environment connection gate.
+    startTurn: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:start-turn",
-      // T3-CUSTOM(expbkt3): the environment id namespaces persisted pending work.
-      execute: (input: DurableStartThreadTurnInput, registry, environmentId) =>
-        startThreadTurnDurably(environmentId, input, registry),
+      // T3-CUSTOM(expbkt3): durable offline delivery wraps native V2 message dispatch.
+      execute: (
+        target: {
+          readonly environmentId: EnvironmentId;
+          readonly input: DurableStartThreadTurnInput;
+        },
+        registry,
+      ) => startThreadTurnDurably(target.environmentId, target.input, registry),
       scheduler,
       concurrency,
     }),
@@ -496,6 +587,79 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
     // T3-CUSTOM(expbkt3): END
+    forkFromRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork-from-run",
+      execute: (input: ForkThreadFromRunInput) => forkThreadFromRun(input),
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    mergeBack: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:merge-back",
+      execute: (input: MergeThreadBackInput) => mergeThreadBack(input),
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.sourceThreadId, input.targetThreadId]),
+      },
+    }),
+    resumeThreadQueue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:resume-queue",
+      execute: (input: ThreadCommandInput) => resumeThreadQueue(input),
+      scheduler,
+      concurrency,
+    }),
+    reorderQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:reorder-queued-run",
+      execute: (input: ReorderQueuedRunInput) => reorderQueuedRun(input),
+      scheduler,
+      concurrency,
+    }),
+    promoteQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:promote-queued-run",
+      execute: (input: PromoteQueuedRunInput) => promoteQueuedRun(input),
+      scheduler,
+      concurrency,
+    }),
+    cancelQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:cancel-queued-run",
+      execute: (input: CancelQueuedRunInput) => cancelQueuedRun(input),
+      scheduler,
+      concurrency,
+    }),
+    editQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:edit-queued-run",
+      execute: (input: EditQueuedRunInput) => editQueuedRun(input),
+      scheduler,
+      concurrency,
+    }),
+    loadEarlierHistory: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:load-earlier-history",
+      execute: (input: LoadEarlierThreadHistoryInput) =>
+        Effect.gen(function* () {
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const controller = yield* Effect.serviceOption(
+            ThreadHistoryController.ThreadHistoryController,
+          );
+          if (Option.isNone(controller)) {
+            return {
+              _tag: "noop",
+            } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
+          }
+          return yield* controller.value.loadEarlier(
+            supervisor.target.environmentId,
+            input.threadId,
+          );
+        }),
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
+    }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:upload-feedback",
       tag: WS_METHODS.providerUploadFeedback,
@@ -509,14 +673,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     snapshotAtom: optimistic.snapshotAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
-      (!canSnooze(thread, { now }) ||
-        thread.session?.status === "starting" ||
-        thread.session?.status === "running")
+      (thread.pendingRuntimeRequest !== null ||
+        ["preparing", "queued", "starting", "running", "waiting"].includes(thread.status))
         ? thread
         : {
             ...thread,
-            hasPendingApprovals: false,
-            hasPendingUserInput: false,
+            pendingRuntimeRequest: null,
             settledOverride: "settled",
             settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
             unsettledAt: null,
@@ -534,21 +696,30 @@ export function createThreadEnvironmentAtoms<R, E>(
       unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
     })),
     snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
-      (!accepted && !canSnooze(thread, { now })) ||
-      !(Date.parse(input.snoozedUntil) > Date.parse(now))
+      (!accepted &&
+        (thread.pendingRuntimeRequest !== null ||
+          ["preparing", "queued", "starting"].includes(thread.status))) ||
+      !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
         ? thread
         : {
             ...thread,
-            hasPendingApprovals: false,
-            hasPendingUserInput: false,
-            snoozedUntil: input.snoozedUntil,
-            snoozedAt: thread.snoozedUntil === input.snoozedUntil ? (thread.snoozedAt ?? now) : now,
+            pendingRuntimeRequest: null,
+            snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
+            snoozedAt:
+              thread.snoozedUntil != null &&
+              DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
+                ? (thread.snoozedAt ?? now)
+                : now,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
       snoozedUntil: null,
       snoozedAt: null,
+    })),
+    setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
+      ...thread,
+      autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

@@ -13,11 +13,11 @@ These changes are structured to keep upstream merges predictable:
 - Web entry points are gated by `VITE_T3_EXPERIMENTAL_CONTROL_CENTER` through
   `apps/web/src/experimentalFeatures.ts`.
 
-## Stage cut (2026-09-27)
+## Stage merge (2026-10-03)
 
-`stage` is a fresh cut of upstream `main` (`de251fc29`) that re-applies only the
-fork features still in use; see [Beknown deployments](./deployments.md). Every
-section below describes the stage line.
+`stage` merges upstream `main` (`fed41fa88`) into the existing BK stage history.
+It adopts upstream's V2 engine and retains the fork features below; see
+[Beknown deployments](./deployments.md). Every section below describes the stage line.
 
 **Kept:** team mode (Clerk sign-in, environment users, ownership, per-user
 visibility, project and thread members); member device pairing with
@@ -27,7 +27,7 @@ personal MCP identity and the external MCP endpoint; MCP control tools and web U
 tools (`t3_*`, `t3_ui_*`); admin pages (users, project access, Active Projects);
 event feed and external PR sync endpoints for the Linear bridge; Claude
 hard-limit account rotation; city codename worktrees; child sessions and lineage,
-including cross-environment parents; shared workspace groups for sibling
+including cross-environment parents; manual-title ownership; shared workspace groups for sibling
 sessions; session archive; the phase-grouped sidebar on web and mobile, with
 per-thread custom groups; shared host appearance (name, icon, colour stored in the host's server settings); the smart git button (header asks the agent to commit / push / create PR, flag `smartGitPromptsEnabled`); thread priority; Linear tags; Mattermost links; the
 row PR badge; native plan review; comments on agent messages (`chatCommentsEnabled`); plan mode on by default; agent views
@@ -45,9 +45,8 @@ continue turn; [claude-account-switching.md](./claude-account-switching.md#per-t
 
 | Fork feature                                                                                                             | What stage uses instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Durable execution, session recovery, provider reaper additions                                                           | Upstream's session handling and `ProviderSessionReaper`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Durable thread bootstrap                                                                                                 | Upstream's turn-start bootstrap. `ws.ts` keeps upstream's inline `dispatchBootstrapTurnStart`; the HTTP dispatch route and `t3_create_session` use `orchestration/turnStartBootstrap.expbkt3.ts`, which mirrors it step for step plus the workspace-group join. Diff the two on every merge.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Title ownership (`titleManuallySet` / `titleOrigin`)                                                                     | Upstream's `titleState`. Migration 1013's column stays, unused.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Durable execution, session recovery, provider reaper additions                                                           | Upstream V2 execution, durable effects, and provider-session recovery.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Durable thread bootstrap                                                                                                 | Upstream V2 launch workflows and turn-start bootstrap. Retained HTTP and MCP entry points translate their bootstrap requests into the native engine.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Provider usage-limit bars                                                                                                | Upstream's `ProviderUsageLimits` (**Usage → Limits**).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Host-wide new-thread defaults (`defaultThreadModelSelection`, `defaultThreadRuntimeMode`, the "Projects & threads" rows) | Upstream's scoped settings: `defaultModelSelection` (with effort and context options), `defaultRuntimeMode` and `defaultThreadEnvMode`, per host or per project through `projectSettingsOverrides`, plus the fork's project-scoped `defaultThreadInteractionMode` as a **Starting mode** (Plan / Build) row beside Permissions. `packages/shared/src/newThreadDefaults.expbkt3.ts` resolves them (project override, then host, then built-in) for the web's new-thread paths, the sidebar's side-by-side rows and `t3_create_session`, and the saved default always wins for a new thread — over the last composer pick too. The two old keys stay decodable; `serverSettings.ts` folds them into the upstream keys on load. |
 
@@ -60,12 +59,25 @@ command palette additions, client reconnect and resync fixes, server performance
 hardening (SQLite tuning, payload cap, event-log bounds, replay batching, shell
 projection barrier), and the mobile VoiceOver fixes.
 
-**Migrations.** Fork ids 1-45 and 1000-1035 are frozen: live databases have
-applied them, and `effect_sql_migrations` keys on `${id}_${name}`. Upstream's
-052-054 register at 1036-1038 under their upstream file names, and the custom
-group column is 1039. The next free id is **1040**. The allocation rule sits
-above the registry in `apps/server/src/persistence/Migrations.ts`. Tables of
-dropped features stay in the database; nothing reads them.
+**Migrations.** Every shipped migration ID is frozen. Upstream migrations
+052-054 register at 1036-1038. Fork migrations through 1042 retain their
+original IDs. Upstream V2 migrations 055-056 register at 1043-1044; the next
+free ID is **1045**. The allocation rule sits above the registry in
+`apps/server/src/persistence/Migrations.ts`.
+
+The V2 cutover uses `statev2.sqlite` and leaves `state.sqlite` intact. The
+importer retains BK ownership, membership, credential profiles and thread
+metadata, then imports messages, provider resume cursors, tool history, plans
+and checkpoints into the native projection. Existing plan documents and
+comments remain in their fork tables. Retained fork APIs translate commands
+into the native orchestrator and read a compatibility projection; they do not
+run a second execution engine.
+
+Imported checkpoint diffs retain their original Git refs and workspace paths.
+Historical rewind follows upstream V2 provider limits: Codex rejects legacy
+history rollback, and older Claude turns do not have the SDK message boundaries
+that native rewind requires. The importer preserves the actual current Claude
+resume cursor; it does not infer historical SDK IDs from T3 message IDs.
 
 **Retired event types.** The event log is append-only, so fork databases still
 hold events of removed features. `persistence/retiredOrchestrationEvents.expbkt3.ts`

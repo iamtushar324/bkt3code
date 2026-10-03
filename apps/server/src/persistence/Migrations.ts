@@ -10,6 +10,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 // T3-CUSTOM(expbkt3): compatibility for fork service test layers.
 import * as Layer from "effect/Layer";
 
@@ -155,6 +156,10 @@ import Migration1041 from "./Migrations/1041_ThreadClaudeAccount.ts";
 // T3-CUSTOM(expbkt3): Claude account access per user.
 import Migration1042 from "./Migrations/1042_ClaudeAccountProfileAccess.ts";
 
+// T3-CUSTOM(expbkt3): upstream V2 starts above the frozen fork migration ledger.
+import Migration1043 from "./Migrations/055_OrchestrationV2.ts";
+import Migration1044 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
+
 /**
  * Migration loader with all migrations defined inline.
  *
@@ -297,6 +302,9 @@ const migrationEntries = [
   [1041, "ThreadClaudeAccount", Migration1041],
   // T3-CUSTOM(expbkt3): Claude account access per user.
   [1042, "ClaudeAccountProfileAccess", Migration1042],
+  // T3-CUSTOM(expbkt3): preserve every applied ID and allocate V2 monotonically.
+  [1043, "OrchestrationV2", Migration1043],
+  [1044, "RemoveRedundantProjectionIndexes", Migration1044],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -333,11 +341,37 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  // T3-CUSTOM(expbkt3): fork V1 ids are frozen; upstream preview ledger rewrites do not apply.
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+
+  // The migrator keys on migration_id: a database that recorded a different
+  // migration under a shared id (local or fork builds) keeps that id and
+  // silently skips this build's migration at it. Surface the divergence so the
+  // skipped schema change is diagnosable.
+  const sql = yield* SqlClient.SqlClient;
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations`;
+  const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
+  const divergent = recorded.flatMap((row) => {
+    const expected = manifestNames.get(row.migration_id);
+    if (expected === undefined) {
+      return [`${row.migration_id}:${row.name} (unknown to this build)`];
+    }
+    return expected === row.name
+      ? []
+      : [`${row.migration_id}:${row.name} (this build: ${expected})`];
+  });
+  if (divergent.length > 0) {
+    yield* Effect.logWarning(
+      "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
+    ).pipe(Effect.annotateLogs({ divergent }));
+  }
   return executedMigrations;
 });
 

@@ -20,8 +20,8 @@ export interface ActiveProjectThreadSource {
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly hasActionableProposedPlan: boolean;
-  readonly latestTurn: { readonly state: string } | null;
-  readonly session: { readonly status: string } | null;
+  readonly latestRun: { readonly status: string } | null;
+  readonly runtime: { readonly status: string } | null;
   readonly execution?: { readonly activity: string } | null;
 }
 
@@ -62,8 +62,8 @@ function threadNeedsAttention(thread: ActiveProjectThreadSource): boolean {
 function threadIsRunning(thread: ActiveProjectThreadSource): boolean {
   return (
     thread.execution?.activity === "active" ||
-    thread.session?.status === "running" ||
-    thread.latestTurn?.state === "running"
+    thread.runtime?.status === "running" ||
+    thread.latestRun?.status === "running"
   );
 }
 

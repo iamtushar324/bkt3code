@@ -11,6 +11,8 @@
  */
 import {
   CommandId,
+  OrchestrationV2AppThreadJson,
+  type ProviderDriverKind,
   SessionArchiveError,
   type ModelSelection,
   type ProjectId,
@@ -38,20 +40,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { expandHomePath } from "../pathExpansion.ts";
-import { ProviderSessionRuntimeRepository } from "../persistence/ProviderSessionRuntime.ts";
-import { ProjectionThreadActivityRepository } from "../persistence/Services/ProjectionThreadActivities.ts";
-import { ProjectionThreadMessageRepository } from "../persistence/Services/ProjectionThreadMessages.ts";
-import {
-  ProjectionThreadRepository,
-  type ProjectionThread,
-} from "../persistence/Services/ProjectionThreads.ts";
+
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -185,18 +184,18 @@ function shellToExportSource(thread: OrchestrationThreadShell): ArchiveExportSou
   };
 }
 
-function rowToExportSource(row: ProjectionThread): ArchiveExportSource {
+function rowToExportSource(row: OrchestrationV2AppThreadJson): ArchiveExportSource {
   return {
-    id: row.threadId,
+    id: row.id,
     projectId: row.projectId,
     title: row.title,
     branch: row.branch,
     worktreePath: row.worktreePath,
     modelSelection: row.modelSelection,
-    ownerUserId: row.ownerUserId,
-    createdAt: row.createdAt,
-    archivedAt: row.archivedAt,
-    deletedAt: row.deletedAt,
+    ownerUserId: row.ownerUserId ?? null,
+    createdAt: DateTime.formatIso(row.createdAt),
+    archivedAt: row.archivedAt === null ? null : DateTime.formatIso(row.archivedAt),
+    deletedAt: row.deletedAt === null ? null : DateTime.formatIso(row.deletedAt),
     linearIssueUrl: row.linearIssueUrl ?? null,
     parentThreadId: row.parentThreadId ?? null,
   };
@@ -220,10 +219,65 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettingsService;
   const snapshots = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
-  const messages = yield* ProjectionThreadMessageRepository;
-  const activities = yield* ProjectionThreadActivityRepository;
-  const threadRows = yield* ProjectionThreadRepository;
-  const providerRuntime = yield* ProviderSessionRuntimeRepository;
+  const nativeProjection = yield* ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const decodeNativeThread = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(OrchestrationV2AppThreadJson),
+  );
+  const messages = {
+    listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+      snapshots
+        .getThreadDetailById(threadId)
+        .pipe(Effect.map((detail) => (Option.isSome(detail) ? detail.value.messages : []))),
+  };
+  const activities = {
+    listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+      snapshots
+        .getThreadDetailById(threadId)
+        .pipe(Effect.map((detail) => (Option.isSome(detail) ? detail.value.activities : []))),
+  };
+  const threadRows = {
+    listArchivedOrDeleted: () =>
+      sql<{
+        readonly payload_json: string;
+      }>`SELECT payload_json FROM orchestration_v2_projection_threads`.pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) => decodeNativeThread(row.payload_json)),
+        ),
+        Effect.map((threads) =>
+          threads.filter((thread) => thread.archivedAt !== null || thread.deletedAt !== null),
+        ),
+      ),
+  };
+  const providerRuntime = {
+    getByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+      nativeProjection.getThreadRecords(threadId, ["providerThreads", "providerSessions"]).pipe(
+        Effect.map((records) => {
+          const nativeThread =
+            records.providerThreads.findLast((thread) => thread.ownerNodeId === null) ??
+            records.providerThreads.at(-1);
+          if (
+            nativeThread === undefined ||
+            nativeThread.nativeThreadRef === null ||
+            nativeThread.nativeThreadRef.nativeId === null
+          )
+            return Option.none();
+          const session = records.providerSessions.find(
+            (session) => session.id === nativeThread.providerSessionId,
+          );
+          const providerName: ProviderDriverKind = nativeThread.driver;
+          return Option.some({
+            providerName,
+            resumeCursor: {
+              threadId: nativeThread.nativeThreadRef.nativeId,
+              resume: nativeThread.nativeThreadRef.nativeId,
+              sessionId: nativeThread.nativeThreadRef.nativeId,
+            },
+            runtimePayload: { cwd: session?.cwd ?? null },
+          });
+        }),
+      ),
+  };
   const gitWorkflow = yield* GitWorkflowService;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -619,7 +673,7 @@ export const make = Effect.gen(function* () {
         const transcript = threadMessages
           .map((message) =>
             JSON.stringify({
-              messageId: message.messageId,
+              messageId: message.id,
               turnId: message.turnId,
               role: message.role,
               text: message.text,
@@ -639,7 +693,7 @@ export const make = Effect.gen(function* () {
         const activityLines = threadActivities
           .map((activity) =>
             JSON.stringify({
-              activityId: activity.activityId,
+              activityId: activity.id,
               turnId: activity.turnId,
               kind: activity.kind,
               tone: activity.tone,

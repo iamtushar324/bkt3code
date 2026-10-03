@@ -18,10 +18,8 @@ import {
   getCloneDirectoryName,
   getDefaultCloneUrl,
   normalizePastedCloneUrl,
-  normalizeProjectNickname,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
-  suggestProjectNickname,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
@@ -240,8 +238,6 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         scripts: [],
-        ownerUserId: null,
-        memberUserIds: [],
       },
       {
         environmentId: env,
@@ -253,8 +249,6 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         scripts: [],
-        ownerUserId: null,
-        memberUserIds: [],
       },
     ];
 
@@ -263,59 +257,21 @@ describe("add project shared logic", () => {
     );
   });
 
-  it("normalizes and validates project nicknames", () => {
-    expect(normalizeProjectNickname("  My repo  ")).toBe("My repo");
-    expect(normalizeProjectNickname("   ")).toBeNull();
-  });
-
-  it("suggests project nicknames from local paths", () => {
-    expect(suggestProjectNickname({ workspaceRoot: "/work/t3-code/" })).toBe("t3-code");
-    expect(suggestProjectNickname({ workspaceRoot: "C:\\work\\desktop-app\\" })).toBe(
-      "desktop-app",
-    );
-    expect(
-      suggestProjectNickname({ workspaceRoot: "\\\\server\\share\\repositories\\client" }),
-    ).toBe("client");
-  });
-
-  it("suggests project nicknames from repository names and clone URLs", () => {
-    expect(suggestProjectNickname({ repositoryName: "openai/codex" })).toBe("codex");
-    expect(suggestProjectNickname({ remoteUrl: "https://github.com/openai/codex.git" })).toBe(
-      "codex",
-    );
-    expect(suggestProjectNickname({ remoteUrl: "git@github.com:openai/codex.git" })).toBe("codex");
-    expect(suggestProjectNickname({ remoteUrl: "   " })).toBe("Repository");
-  });
-
-  it("builds the existing project.create command shape", () => {
+  it("builds the V2 project.create mutation", () => {
     expect(
       buildProjectCreateCommand({
         commandId: CommandId.make("command"),
         projectId: ProjectId.make("project"),
-        title: "  My repository  ",
         workspaceRoot: "/work/repo",
-        createdAt: "2026-01-01T00:00:00.000Z",
       }),
     ).toMatchObject({
       type: "project.create",
       commandId: "command",
       projectId: "project",
-      title: "My repository",
+      title: "repo",
       workspaceRoot: "/work/repo",
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: null,
     });
-  });
-
-  it("rejects an empty explicit project nickname", () => {
-    expect(() =>
-      buildProjectCreateCommand({
-        commandId: CommandId.make("command"),
-        projectId: ProjectId.make("project"),
-        title: "   ",
-        workspaceRoot: "/work/repo",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      }),
-    ).toThrow("Project nickname must not be empty");
   });
 });

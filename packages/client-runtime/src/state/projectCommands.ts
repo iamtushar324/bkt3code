@@ -111,26 +111,39 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
-    // T3-CUSTOM(expbkt3): BEGIN — team mode: membership and ownership commands for a project.
+    // Finds or creates the environment's Scratch project and returns its id.
+    // T3-CUSTOM(expbkt3): project membership uses the native project service.
     addMember: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:project:add-member",
+      label: "fork-project:add-member",
       execute: (input: AddProjectMemberInput) => addProjectMember(input),
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     removeMember: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:project:remove-member",
+      label: "fork-project:remove-member",
       execute: (input: RemoveProjectMemberInput) => removeProjectMember(input),
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     transferOwnership: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:project:transfer-ownership",
+      label: "fork-project:transfer-owner",
       execute: (input: TransferProjectOwnershipInput) => transferProjectOwnership(input),
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
-    // T3-CUSTOM(expbkt3): END
+    ensureScratch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:ensure-scratch",
+      tag: WS_METHODS.projectsEnsureScratch,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    // Makes a new folder and repository from just a name, then the project.
+    createNew: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-new",
+      tag: WS_METHODS.projectsCreateNew,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

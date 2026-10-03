@@ -55,17 +55,27 @@ function makeThread(overrides: Partial<EnvironmentThreadShell> = {}): Environmen
     branch: null,
     worktreePath: null,
     sourceControlProfileId: null,
-    latestTurn: null,
+    latestRun: null,
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
+    runtime: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    priority: null,
+    customGroup: null,
+    linearIssueUrl: null,
+    mattermostThreadUrl: null,
+    parentThreadId: null,
+    parentEnvironmentId: null,
+    hasPendingAsyncUserInput: false,
+    backgroundLiveness: null,
+    activeProviderThreadId: null,
+    source: {} as EnvironmentThreadShell["source"],
     ...overrides,
   } as EnvironmentThreadShell;
 }
@@ -119,12 +129,11 @@ describe("Hermes compatibility", () => {
       makeThread({
         id: ThreadId.make("thread-2"),
         title: "Beta",
-        session: {
-          threadId: ThreadId.make("thread-2"),
+        runtime: {
+          activeRunId: null,
+          providerInstanceId: ProviderInstanceId.make("codex"),
           status: "running",
           providerName: "codex",
-          runtimeMode: "full-access",
-          activeTurnId: null,
           lastError: null,
           updatedAt: now,
         },
@@ -267,12 +276,11 @@ describe("lifecycle counters", () => {
       [
         makeThread({
           id: ThreadId.make("a"),
-          session: {
-            threadId: ThreadId.make("a"),
+          runtime: {
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("codex"),
             status: "running",
             providerName: "codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
             lastError: null,
             updatedAt: now,
           },
@@ -545,19 +553,19 @@ describe("custom group filter facet", () => {
 
 describe("hasUnseenCompletion", () => {
   it("is false when the turn never completed", () => {
-    expect(hasUnseenCompletion({ latestTurn: null, lastVisitedAt: now })).toBe(false);
+    expect(hasUnseenCompletion({ latestRun: null, lastVisitedAt: now })).toBe(false);
   });
 
   it("is false when the thread was never visited", () => {
     expect(
-      hasUnseenCompletion({ latestTurn: { completedAt: now } as never, lastVisitedAt: undefined }),
+      hasUnseenCompletion({ latestRun: { completedAt: now } as never, lastVisitedAt: undefined }),
     ).toBe(false);
   });
 
   it("is true when the turn finished after the last visit", () => {
     expect(
       hasUnseenCompletion({
-        latestTurn: { completedAt: "2026-08-31T12:00:00.000Z" } as never,
+        latestRun: { completedAt: "2026-08-31T12:00:00.000Z" } as never,
         lastVisitedAt: "2026-08-31T11:00:00.000Z",
       }),
     ).toBe(true);
@@ -566,7 +574,7 @@ describe("hasUnseenCompletion", () => {
   it("treats an unparseable visit timestamp as unread", () => {
     expect(
       hasUnseenCompletion({
-        latestTurn: { completedAt: "2026-08-31T12:00:00.000Z" } as never,
+        latestRun: { completedAt: "2026-08-31T12:00:00.000Z" } as never,
         lastVisitedAt: "not-a-date",
       }),
     ).toBe(true);

@@ -7,7 +7,7 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import type { PresenceQuery } from "../../../presence/UserPresenceService.ts";
 import { PresenceError, UserPresenceService } from "../../../presence/UserPresenceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

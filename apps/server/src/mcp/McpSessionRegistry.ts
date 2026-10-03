@@ -47,6 +47,12 @@ export interface McpCredentialRequest {
    */
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   // T3-CUSTOM(expbkt3): END
+  /**
+   * When false, the credential is minted without the "preview" capability so
+   * the user's choice to withhold agent browser access holds everywhere the
+   * token is honored (#7083). Defaults to full access.
+   */
+  readonly browserToolsAvailable?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -258,8 +264,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           ? undefined
           : yield* options.loadPersonalProfile(actorUserId);
       const capabilities = new Set<McpInvocationContext.McpCapability>([
+        "orchestration",
+        "worktree",
         "pull-requests",
-        ...(request.capabilities ?? ["preview"]),
+        ...(request.capabilities ??
+          ((request.browserToolsAvailable ?? true) ? (["preview"] as const) : [])),
         // T3-CUSTOM(expbkt3): the fork's control-plane capabilities ride on every
         // provider session; browser/device stay gated by `request.capabilities`.
         "t3.read",
@@ -337,6 +346,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
           upstreamServers,
+          browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
         },
         expiresAt,
@@ -555,10 +565,10 @@ export const issueActiveMcpCredential = (
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
-export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
+const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
 
-export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
+const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
 // T3-CUSTOM(expbkt3): HTTP routes and provider startup must use the exact same

@@ -38,8 +38,8 @@ function thread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    latestTurn: null,
-    session: null,
+    latestRun: null,
+    runtime: null,
     execution: null,
     ...overrides,
   };
@@ -61,7 +61,7 @@ describe("ActiveProjectsSettingsPanel logic", () => {
     const rows = buildActiveProjectSettingsRows({
       projects,
       threads: [
-        thread({ id: "alpha-running", projectId: "alpha", session: { status: "running" } }),
+        thread({ id: "alpha-running", projectId: "alpha", runtime: { status: "running" } }),
         thread({
           id: "beta-review",
           projectId: "beta",

@@ -3,7 +3,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/co
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { T3ControlToolError } from "./tools.ts";
 import { __testing } from "./handlers.ts";

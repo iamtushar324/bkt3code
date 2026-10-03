@@ -14,8 +14,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { derivePlanTitle, PlanReviewService } from "./PlanReviewService.ts";
 import { withoutLegacyReviewMarker } from "./planFormat.ts";
 

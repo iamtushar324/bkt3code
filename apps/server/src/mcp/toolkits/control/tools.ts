@@ -24,9 +24,9 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
-import { TurnStartBootstrap } from "../../../orchestration/turnStartBootstrap.expbkt3.ts";
-import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.

@@ -29,15 +29,15 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import * as ThreadClaudeAccountRepo from "../persistence/ThreadClaudeAccount.ts";
 import * as ClaudeAccountProfileAccessRepo from "../persistence/ClaudeAccountProfileAccess.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { ProviderAdapterValidationError } from "../provider/Errors.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { ForkProviderSessions as ProviderService } from "../provider/ForkProviderSessions.expbkt3.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   applyClaudeAccountProfile,

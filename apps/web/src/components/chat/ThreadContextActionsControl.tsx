@@ -23,7 +23,6 @@ import type { EnvironmentId, ThreadContextExportResult, ThreadId } from "@t3tool
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { renderCachedThreadDigest } from "@t3tools/client-runtime/handoff";
 import { connectionProjectionPhase } from "@t3tools/client-runtime/connection";
-import { threadHasOlderTurns } from "@t3tools/client-runtime/state/threads";
 import {
   ClipboardCopyIcon,
   DownloadIcon,
@@ -39,7 +38,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { pinThreadCacheForHandoff } from "../../connection/storage";
 // T3-CUSTOM(expbkt3): the same writer the plan export uses.
 import { downloadPlanAsTextFile } from "../../proposedPlan";
-import { useProject, useThread, useThreadShell } from "../../state/entities";
+import { useProject, useThreadProjection, useThreadShell } from "../../state/entities";
 import { useEnvironmentConnectionState } from "../../state/environments";
 import { useEnvironmentThread } from "../../state/threads";
 import { sessionArchiveEnvironment } from "../../state/sessionArchive";
@@ -63,7 +62,7 @@ export function ThreadContextActionsControl({
   const handleNewThread = useNewThreadHandler();
   // T3-CUSTOM(expbkt3): BEGIN — inputs for a digest built without the host.
   const connectionState = useEnvironmentConnectionState(activeThreadEnvironmentId);
-  const cachedThread = useThread(threadRef);
+  const cachedThread = useThreadProjection(threadRef);
   const cachedThreadState = useEnvironmentThread(activeThreadEnvironmentId, activeThreadId);
   const project = useProject(
     shell === null ? null : scopeProjectRef(activeThreadEnvironmentId, shell.projectId),
@@ -102,9 +101,9 @@ export function ThreadContextActionsControl({
       return null;
     }
     return renderCachedThreadDigest({
-      thread: cachedThread,
+      thread: cachedThread.projection,
       project,
-      hasMoreHistory: threadHasOlderTurns(cachedThreadState),
+      hasMoreHistory: cachedThreadState.history.hasMoreHistory,
     });
   };
   // T3-CUSTOM(expbkt3): END

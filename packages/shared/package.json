@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./sessionDigest": {
-      "types": "./src/sessionDigest.ts",
-      "import": "./src/sessionDigest.ts"
+    "./orchestrationV2ThreadError": {
+      "types": "./src/orchestrationV2ThreadError.ts",
+      "import": "./src/orchestrationV2ThreadError.ts"
     },
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
@@ -46,10 +46,6 @@
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
-    },
-    "./worktreeCodename": {
-      "types": "./src/worktreeCodename.ts",
-      "import": "./src/worktreeCodename.ts"
     },
     "./githubMedia": {
       "types": "./src/githubMedia.ts",
@@ -111,6 +107,10 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
+    "./toolOutput": {
+      "types": "./src/toolOutput.ts",
+      "import": "./src/toolOutput.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
@@ -139,10 +139,6 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
-    "./newThreadDefaults.expbkt3": {
-      "types": "./src/newThreadDefaults.expbkt3.ts",
-      "import": "./src/newThreadDefaults.expbkt3.ts"
-    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"
@@ -150,10 +146,6 @@
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
-    },
-    "./threadExecution": {
-      "types": "./src/threadExecution.ts",
-      "import": "./src/threadExecution.ts"
     },
     "./remote": {
       "types": "./src/remote.ts",
@@ -174,10 +166,6 @@
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
-    },
-    "./clerkIdentity": {
-      "types": "./src/clerkIdentity.ts",
-      "import": "./src/clerkIdentity.ts"
     },
     "./relayUrl": {
       "types": "./src/relayUrl.ts",
@@ -218,10 +206,6 @@
     "./threadReference": {
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
-    },
-    "./linearIssue": {
-      "types": "./src/linearIssue.ts",
-      "import": "./src/linearIssue.ts"
     },
     "./threadPullRequests": {
       "types": "./src/threadPullRequests.ts",
@@ -319,10 +303,6 @@
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
     },
-    "./planReview": {
-      "types": "./src/planReview.ts",
-      "import": "./src/planReview.ts"
-    },
     "./devHome": {
       "types": "./src/devHome.ts",
       "import": "./src/devHome.ts"
@@ -359,6 +339,22 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./orchestrationV2Timeline": {
+      "types": "./src/orchestrationV2Timeline.ts",
+      "import": "./src/orchestrationV2Timeline.ts"
+    },
+    "./t3McpToolPresentation": {
+      "types": "./src/t3McpToolPresentation.ts",
+      "import": "./src/t3McpToolPresentation.ts"
+    },
+    "./Array": {
+      "types": "./src/Array.ts",
+      "import": "./src/Array.ts"
+    },
+    "./orchestrationV2PendingBackgroundWork": {
+      "types": "./src/orchestrationV2PendingBackgroundWork.ts",
+      "import": "./src/orchestrationV2PendingBackgroundWork.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
@@ -374,11 +370,51 @@
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
+    },
+    "./providerAuthReturnUrl": {
+      "types": "./src/providerAuthReturnUrl.ts",
+      "import": "./src/providerAuthReturnUrl.ts"
+    },
+    "./codexAuthCallback": {
+      "types": "./src/codexAuthCallback.ts",
+      "import": "./src/codexAuthCallback.ts"
+    },
+    "./codexAuthHandoff": {
+      "types": "./src/codexAuthHandoff.ts",
+      "import": "./src/codexAuthHandoff.ts"
+    },
+    "./sessionDigest": {
+      "types": "./src/sessionDigest.ts",
+      "import": "./src/sessionDigest.ts"
+    },
+    "./worktreeCodename": {
+      "types": "./src/worktreeCodename.ts",
+      "import": "./src/worktreeCodename.ts"
+    },
+    "./newThreadDefaults.expbkt3": {
+      "types": "./src/newThreadDefaults.expbkt3.ts",
+      "import": "./src/newThreadDefaults.expbkt3.ts"
+    },
+    "./threadExecution": {
+      "types": "./src/threadExecution.ts",
+      "import": "./src/threadExecution.ts"
+    },
+    "./clerkIdentity": {
+      "types": "./src/clerkIdentity.ts",
+      "import": "./src/clerkIdentity.ts"
+    },
+    "./linearIssue": {
+      "types": "./src/linearIssue.ts",
+      "import": "./src/linearIssue.ts"
+    },
+    "./planReview": {
+      "types": "./src/planReview.ts",
+      "import": "./src/planReview.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@noble/curves": "catalog:",

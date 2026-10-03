@@ -91,7 +91,7 @@ function firstValidTimestamp(
  * firstValidTimestamp above for why this is a copy.
  */
 export function resolveSettledTimestamp(
-  thread: Pick<ThreadShell, "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt">,
+  thread: Pick<ThreadShell, "settledAt" | "latestUserMessageAt" | "latestRun" | "updatedAt">,
 ): string | null {
   const settledAt = firstValidTimestamp(thread.settledAt);
   if (settledAt !== null) return settledAt;
@@ -99,9 +99,9 @@ export function resolveSettledTimestamp(
   let latestMs = Number.NEGATIVE_INFINITY;
   for (const candidate of [
     thread.latestUserMessageAt,
-    thread.latestTurn?.requestedAt,
-    thread.latestTurn?.startedAt,
-    thread.latestTurn?.completedAt,
+    thread.latestRun?.requestedAt,
+    thread.latestRun?.startedAt,
+    thread.latestRun?.completedAt,
   ]) {
     if (candidate == null) continue;
     const parsed = Date.parse(candidate);
@@ -890,7 +890,7 @@ export function partitionPhaseSidebarRows(
 }
 
 /** A stopped projection can still hide a live provider, so any recorded session remains stoppable. */
-export function phaseSidebarCanForceStopAgent(session: ThreadShell["session"]): boolean {
+export function phaseSidebarCanForceStopAgent(session: ThreadShell["runtime"]): boolean {
   return session !== null;
 }
 
@@ -929,7 +929,7 @@ export function resolvePhaseSidebarAttentionPriority(
 ): number {
   if (phaseSidebarNeedsUserInput(thread)) return 0;
   if (thread.hasPendingApprovals) return 1;
-  if (thread.session?.status === "error") return 2;
+  if (thread.runtime?.status === "failed") return 2;
   if (
     status?.pr?.state === "open" &&
     (status.pr.mergeability === "conflicting" ||
@@ -938,7 +938,7 @@ export function resolvePhaseSidebarAttentionPriority(
   ) {
     return 3;
   }
-  if (thread.session === null) return 4;
+  if (thread.runtime === null) return 4;
   return 5;
 }
 
@@ -972,8 +972,12 @@ export function phaseSidebarHasAsyncQuestion(
  * settled, and the Ask phase now outranks Plan Ready in the grouping, so the
  * phase id alone can no longer carry that distinction.
  */
-export function phaseSidebarIsExecutionActive(thread: Pick<ThreadShell, "session">): boolean {
-  return thread.session?.status === "starting" || thread.session?.status === "running";
+export function phaseSidebarIsExecutionActive(thread: Pick<ThreadShell, "runtime">): boolean {
+  return (
+    thread.runtime?.status === "preparing" ||
+    thread.runtime?.status === "starting" ||
+    thread.runtime?.status === "running"
+  );
 }
 
 // T3-CUSTOM(expbkt3): "ask" and "plan" are attention too — both wait on a human.
@@ -988,7 +992,7 @@ export function resolvePhaseSidebarAttentionKind(
     // T3-CUSTOM(expbkt3): an async question is attention that leaves the agent running.
     | "hasPendingAsyncUserInput"
     // T3-CUSTOM(expbkt3): a session error is a failure the badge has to show.
-    | "session"
+    | "runtime"
   >,
 ): PhaseSidebarAttentionKind | null {
   if (phaseSidebarNeedsUserInput(thread)) return "input";
@@ -996,10 +1000,10 @@ export function resolvePhaseSidebarAttentionKind(
     return "approval";
   }
   // T3-CUSTOM(expbkt3): a session error counts as a failure here too.
-  // `resolvePhaseSidebarPhase` already treats `session.status === "error"` as a
+  // `resolvePhaseSidebarPhase` already treats `session.status === "failed"` as a
   // failure for grouping, so badging only on execution activity meant a row
   // could be grouped as failed while flying no badge at all.
-  if (thread.session?.status === "error") {
+  if (thread.runtime?.status === "failed") {
     return "error";
   }
   // T3-CUSTOM(expbkt3): ranked below the blocking kinds but above a plan. An
@@ -1029,7 +1033,7 @@ export function resolvePhaseSidebarPhase(
 
   // A failed provider is actionable even if a stale durable intent or
   // background-liveness projection has not cleared yet.
-  const hasFailure = thread.session?.status === "error";
+  const hasFailure = thread.runtime?.status === "failed";
 
   // T3-CUSTOM(expbkt3): group from the same durable intent as the badge.
   const isActive = phaseSidebarIsExecutionActive(thread);
@@ -1479,14 +1483,15 @@ export function threadNeedsHumanAttention(thread: ThreadShell): boolean {
     // leaves the agent running.
     phaseSidebarHasAsyncQuestion(thread) ||
     thread.hasActionableProposedPlan ||
-    thread.session?.status === "error"
+    thread.runtime?.status === "failed"
   );
 }
 
 export function threadIsRunning(thread: ThreadShell): boolean {
   return (
-    thread.session?.status === "starting" ||
-    thread.session?.status === "running" ||
+    thread.runtime?.status === "preparing" ||
+    thread.runtime?.status === "starting" ||
+    thread.runtime?.status === "running" ||
     thread.backgroundLiveness === "working" ||
     thread.backgroundLiveness === "monitoring"
   );
@@ -1507,11 +1512,13 @@ export function summarizeSidebarSessions(
     if (
       options.lastVisitedAtByThreadKey !== undefined &&
       hasUnseenCompletion({
-        latestTurn: thread.latestTurn,
+        latestRun: thread.latestRun,
         lastVisitedAt:
-          options.lastVisitedAtByThreadKey[
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-          ],
+          thread.lastVisitedAt === undefined
+            ? options.lastVisitedAtByThreadKey[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ]
+            : thread.lastVisitedAt,
       })
     ) {
       unread += 1;
@@ -1730,14 +1737,14 @@ export function resolveThreadVisitTimestamp(input: ThreadVisitTimestampInput): s
  * unread, and that difference is load-bearing for the row's dot.
  */
 export function hasUnseenCompletion(
-  thread: Pick<ThreadShell, "latestTurn"> & {
+  thread: Pick<ThreadShell, "latestRun"> & {
     readonly lastVisitedAt?: string | null | undefined;
     /** Callers pass whole thread shells; extra facts are simply unread here. */
     readonly [extra: string]: unknown;
   },
 ): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
+  if (!thread.latestRun?.completedAt) return false;
+  const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;
 
@@ -1816,7 +1823,7 @@ export function buildPhaseSidebarRows(
       ? derivePhaseSidebarRepositoryKey(project)
       : scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
     const serverConfig = input.serverConfigs.get(thread.environmentId);
-    const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+    const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
     const provider = serverConfig?.providers.find(
       (candidate) => candidate.instanceId === instanceId,
     );
@@ -1838,7 +1845,7 @@ export function buildPhaseSidebarRows(
       repositoryLabel:
         project?.title ?? repositoryLabels.get(repositoryKey) ?? "Unknown repository",
       providerKind,
-      providerName: provider?.displayName ?? thread.session?.providerName ?? String(instanceId),
+      providerName: provider?.displayName ?? thread.runtime?.providerName ?? String(instanceId),
       isAssignedToMe:
         input.currentUserId !== null && isThreadAssignedToUser(thread, input.currentUserId),
       isOwnedByMe: input.currentUserId !== null && thread.ownerUserId === input.currentUserId,
@@ -1846,7 +1853,10 @@ export function buildPhaseSidebarRows(
       attentionPriority: resolvePhaseSidebarAttentionPriority(thread, vcsStatus),
       isUnreadCompletion: hasUnseenCompletion({
         ...thread,
-        lastVisitedAt: input.lastVisitedAtByThreadKey[threadKey],
+        lastVisitedAt:
+          thread.lastVisitedAt === undefined
+            ? input.lastVisitedAtByThreadKey[threadKey]
+            : thread.lastVisitedAt,
       }),
       settlementSupported: capabilities?.threadSettlement === true,
       snoozeSupported: capabilities?.threadSnooze === true,

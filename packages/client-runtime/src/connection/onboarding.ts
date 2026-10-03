@@ -93,17 +93,15 @@ export const preparePairingRegistration = Effect.fn(
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
-  if (compatibilityError !== null) return yield* compatibilityError;
-  // T3-CUSTOM(expbkt3): BEGIN — pair with the operator's Clerk identity when this
-  // client has one. A team-mode environment with `environmentUserIdentityMode:
-  // "required"` rejects an unidentified exchange; one set to "optional" would
-  // accept it as an unrestricted operator, which is worse. Optional service, so
-  // single-user clients and non-web platforms are unaffected.
-  const identity = yield* Effect.serviceOption(ClientCapabilities.EnvironmentIdentity);
-  const identityToken = Option.isSome(identity)
-    ? yield* identity.value.identityToken
+  // An outdated server is still saved so it can be updated from this client.
+  if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
+    return yield* compatibilityError;
+  }
+  // T3-CUSTOM(expbkt3): Clerk identity binds member-device pairing to the operator.
+  const identityCapability = yield* Effect.serviceOption(ClientCapabilities.EnvironmentIdentity);
+  const identityToken = Option.isSome(identityCapability)
+    ? yield* identityCapability.value.identityToken
     : Option.none<string>();
-  // T3-CUSTOM(expbkt3): END
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,

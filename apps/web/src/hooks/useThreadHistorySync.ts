@@ -16,7 +16,8 @@
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { countUserTurns, shouldRequestOlderPage } from "@t3tools/client-runtime/historySync";
-import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
+import { threadEnvironment } from "../state/threads";
+import { useAtomCommand } from "../state/use-atom-command";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
@@ -43,15 +44,22 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
   const threadId = ref?.threadId ?? null;
   const state = useEnvironmentThread(environmentId, threadId);
 
-  const page = Option.getOrNull(state.page);
+  const page = state.history;
+  const loadEarlier = useAtomCommand(threadEnvironment.loadEarlierHistory, {
+    reportFailure: false,
+  });
   const thread = Option.getOrNull(state.data);
   const status = state.status;
-  const hasMore = page?.hasMore ?? false;
-  const loadingOlder = page?.loadingOlder ?? false;
-  const beforeCursor = page?.beforeCursor ?? null;
-  const loadedUserTurns = countUserTurns(thread?.messages ?? []);
-  const sessionStatus = thread?.session?.status;
-  const sessionRunning = sessionStatus === "running" || sessionStatus === "starting";
+  const hasMore = page.hasMoreHistory;
+  const loadingOlder = page.loading;
+  const beforeCursor = page.historyCursor;
+  const loadedUserTurns = countUserTurns(
+    (thread?.visibleTurnItems ?? []).map(({ item }) => ({
+      role: item.type === "user_message" ? "user" : "assistant",
+    })),
+  );
+  const sessionRunning =
+    thread?.runs.some((run) => ["preparing", "starting", "running"].includes(run.status)) ?? false;
   const visible = useSyncExternalStore(subscribeVisibility, documentVisible, () => true);
   // When this thread last became live (or was switched to); the first page
   // waits out the settle period.
@@ -83,7 +91,7 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
         : since.at + HISTORY_SYNC_SETTLE_MS - Date.now();
     const timer = setTimeout(
       () => {
-        requestOlderThreadTurns(environmentId, threadId);
+        void loadEarlier({ environmentId, input: { threadId } });
       },
       Math.max(HISTORY_SYNC_PAGE_SPACING_MS, settleRemainingMs),
     );
@@ -98,5 +106,6 @@ export function useThreadHistorySync(ref: ScopedThreadRef | null): void {
     loadedUserTurns,
     sessionRunning,
     visible,
+    loadEarlier,
   ]);
 }

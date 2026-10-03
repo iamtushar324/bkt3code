@@ -19,7 +19,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
@@ -27,53 +27,18 @@ const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => (
   id: ProjectId.make("project-1"),
   title: "Imported",
   workspaceRoot,
-  // T3-CUSTOM(expbkt3): explicit project ownership for local import fixtures.
-  ownerUserId: null,
-  memberUserIds: [],
   defaultModelSelection: null,
   scripts: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
 
-/** Only `getShellSnapshot` is exercised; the rest must not be called. */
-const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<string>) =>
-  Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-    // T3-CUSTOM(expbkt3): fork query additions are unused in scanner fixtures.
-    listLatestProposedPlansForActiveThreads: () => Effect.die("unused"),
-    getThreadAccessById: () => Effect.die("unused"),
-    listThreadShellsByProjectId: () => Effect.die("unused"),
-    getCommandReadModel: () => Effect.die("unused"),
-    getUserInputActivity: () => Effect.die("unused"),
-    listActivitiesByKind: () => Effect.die("unused"),
-    getSnapshot: () => Effect.die("unused"),
-    getShellSnapshot: () =>
-      Effect.succeed({
-        snapshotSequence: 0,
-        projects: importedWorkspaceRoots.map((workspaceRoot) => makeProjectShell(workspaceRoot)),
-        threads: [],
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }),
-    getDeletedWorktreeThreads: () => Effect.die("unused"),
-    listThreadsWithPullRequests: () => Effect.die("unused"),
-    getArchivedShellSnapshot: () => Effect.die("unused"),
-    getSnapshotSequence: () => Effect.die("unused"),
-    getCounts: () => Effect.die("unused"),
-    getEventReplayStats: () => Effect.die("unused"),
-    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
-    getProjectShells: () => Effect.die("unused"),
-    getProjectShellById: () => Effect.die("unused"),
-    getImportedAgentSessionSources: () => Effect.succeed([]),
-    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-    getThreadCheckpointContext: () => Effect.die("unused"),
-    getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadShellById: () => Effect.die("unused"),
-    getThreadRuntimeContext: () => Effect.die("unused"),
-    getTurnStartMessage: () => Effect.die("unused"),
-    countThreadUserMessages: () => Effect.die("unused"), // T3-CUSTOM(expbkt3): fork query stub.
-    getThreadDetailById: () => Effect.die("unused"),
-    getThreadDetailSnapshot: () => Effect.die("unused"),
-    searchThreads: () => Effect.die("unused"),
+const makeProjectStoreLayer = (importedWorkspaceRoots: ReadonlyArray<string>) =>
+  Layer.mock(ProjectStore.ProjectStoreV2)({
+    listShells: () =>
+      Effect.succeed(
+        importedWorkspaceRoots.map((workspaceRoot) => makeProjectShell(workspaceRoot)),
+      ),
   });
 
 /**
@@ -106,7 +71,7 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
           input.claudeHomePath,
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
-        makeProjectionSnapshotQueryLayer(input.importedWorkspaceRoots ?? []),
+        makeProjectStoreLayer(input.importedWorkspaceRoots ?? []),
       ),
     ),
   );

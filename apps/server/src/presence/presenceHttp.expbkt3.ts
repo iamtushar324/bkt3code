@@ -22,7 +22,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { PRESENCE_ROUTE_PATH } from "./presenceEnvironment.expbkt3.ts";
 import { resolvePresenceTarget } from "./presenceTarget.ts";
 import { UserPresenceService } from "./UserPresenceService.ts";

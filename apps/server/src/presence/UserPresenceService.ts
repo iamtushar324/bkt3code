@@ -38,8 +38,8 @@ import * as Stream from "effect/Stream";
 
 import * as SessionStore from "../auth/SessionStore.ts";
 import { BackgroundPolicy } from "../background/BackgroundPolicy.ts";
-import { OrchestrationAccessControl } from "../orchestration/Services/AccessControl.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
+import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
 import { PresenceMessageQuery } from "./presenceMessages.ts";
 import {

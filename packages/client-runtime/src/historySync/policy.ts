@@ -19,7 +19,7 @@
  *
  * @module historySync/policy
  */
-import type { EnvironmentThreadPageState, EnvironmentThreadStatus } from "../state/threadState.ts";
+import type { EnvironmentThreadStatus } from "../state/threadState.ts";
 
 /**
  * How many user turns are worth keeping cached per thread.
@@ -33,7 +33,11 @@ export const DEFAULT_HISTORY_SYNC_BUDGET_USER_TURNS = 200;
 export interface HistorySyncDecisionInput {
   /** Only a live thread is synchronized: a cached one has no host to ask. */
   readonly status: EnvironmentThreadStatus;
-  readonly page: EnvironmentThreadPageState | null;
+  readonly page: {
+    readonly beforeCursor: string | null;
+    readonly hasMore: boolean;
+    readonly loadingOlder: boolean;
+  } | null;
   readonly loadedUserTurns: number;
   readonly budgetUserTurns?: number;
   /**

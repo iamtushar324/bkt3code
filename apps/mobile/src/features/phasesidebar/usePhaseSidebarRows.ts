@@ -86,7 +86,7 @@ export function usePhaseSidebarRows(input: {
         // The phone's stricter read/unread rule; see resolveMobileUnread.
         const unread = resolveMobileUnread({
           sharedUnread: row.isUnreadCompletion,
-          lastTurnCompletedAt: row.thread.latestTurn?.completedAt,
+          lastTurnCompletedAt: row.thread.latestRun?.completedAt,
           lastVisitedAt: visitTimestamps[`${row.thread.environmentId}:${row.thread.id}`],
         });
         return unread === row.isUnreadCompletion ? row : { ...row, isUnreadCompletion: unread };

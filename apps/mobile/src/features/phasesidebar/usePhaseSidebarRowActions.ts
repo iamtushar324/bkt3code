@@ -76,7 +76,7 @@ export function buildPhaseSidebarRowActions(input: {
   const actions: PhaseSidebarRowAction[] = [{ id: "people", title: "People", image: "person.2" }];
 
   // Read state is per device, so it is the user's to flip either way.
-  if (thread.latestTurn?.completedAt) {
+  if (thread.latestRun?.completedAt) {
     actions.push(
       row.isUnreadCompletion
         ? { id: "mark-read", title: "Mark read", image: "envelope.open" }
@@ -161,7 +161,7 @@ export function buildPhaseSidebarRowActions(input: {
     }
   }
 
-  if (phaseSidebarCanForceStopAgent(thread.session)) {
+  if (phaseSidebarCanForceStopAgent(thread.runtime)) {
     actions.push({
       id: "force-stop",
       title: "Force stop agent",

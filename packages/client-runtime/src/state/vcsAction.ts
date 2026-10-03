@@ -6,9 +6,9 @@ import {
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
-  // T3-CUSTOM(expbkt3): source-control identity — thread id joins the vcs action target key.
+  // T3-CUSTOM(expbkt3): construct the owner-scoped thread id for Git actions.
   ThreadId,
-  type ThreadId as ThreadIdType,
+  type ProjectId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -19,7 +19,7 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { runStream } from "../rpc/client.ts";
 import {
   createRuntimeCommand,
@@ -61,14 +61,14 @@ export interface VcsActionTarget {
   readonly environmentId: EnvironmentIdType | null;
   readonly cwd: string | null;
   // T3-CUSTOM(expbkt3): source-control identity — which thread a vcs action targets.
-  readonly threadId?: ThreadIdType | null;
+  readonly threadId?: ThreadId | null;
 }
 
 export interface ResolvedVcsActionTarget {
   readonly environmentId: EnvironmentIdType;
   readonly cwd: string;
   // T3-CUSTOM(expbkt3): source-control identity — which thread a resolved vcs action belongs to.
-  readonly threadId: ThreadIdType | null;
+  readonly threadId: ThreadId | null;
 }
 
 export interface BeginVcsActionInput {
@@ -85,6 +85,7 @@ export interface RunVcsStackedActionInput {
   readonly filePaths?: ReadonlyArray<string>;
   /** The thread the action runs beside; the server links a pull request it creates to it. */
   readonly threadId?: ThreadId;
+  readonly projectId?: ProjectId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
 }
 
@@ -401,14 +402,17 @@ export function applyVcsActionProgressEvent(
       };
     case "action_finished":
       return {
-        ...EMPTY_VCS_ACTION_STATE,
+        ...current,
+        isRunning: true,
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
+        error: null,
       };
     case "action_failed":
       return {
-        ...EMPTY_VCS_ACTION_STATE,
+        ...current,
+        isRunning: true,
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
@@ -418,7 +422,7 @@ export function applyVcsActionProgressEvent(
 }
 
 export function createVcsActionManager<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
   const runStackedActionCommands = new Map<
     string,
@@ -440,7 +444,7 @@ export function createVcsActionManager<R, E>(
     const target = targetKey === null ? null : parseVcsActionTargetKey(targetKey);
     const stateAtom = targetKey === null ? EMPTY_VCS_ACTION_ATOM : vcsActionStateAtom(targetKey);
     const command = createRuntimeCommand<
-      EnvironmentRegistry | EnvironmentCacheStore | R,
+      EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
       E,
       RunVcsStackedActionInput,
       GitRunStackedActionResult,
@@ -479,7 +483,14 @@ export function createVcsActionManager<R, E>(
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+          ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         };
+        const clearOwnedState = Effect.sync(() => {
+          const current = registry.get(stateAtom);
+          if (current.actionId === input.actionId) {
+            registry.set(stateAtom, EMPTY_VCS_ACTION_STATE);
+          }
+        });
         return consumeVcsActionProgress(
           runStreamInEnvironment(
             target.environmentId,
@@ -508,6 +519,7 @@ export function createVcsActionManager<R, E>(
           },
         ).pipe(
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
+          Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
             Effect.sync(() => {
               const current = registry.get(stateAtom);
@@ -519,6 +531,7 @@ export function createVcsActionManager<R, E>(
               }
             }),
           ),
+          Effect.onInterrupt(() => clearOwnedState),
         );
       },
     });

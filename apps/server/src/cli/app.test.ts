@@ -23,7 +23,7 @@ import { afterEach, describe, expect, vi } from "vite-plus/test";
 // T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
 // which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
 import { ForgejoCliSelfContainedLive } from "../sourceControl/forgejoCliRuntime.expbkt3.ts";
-import { makeCli } from "../bin.ts";
+import { makeCli } from "../binCli.ts";
 
 vi.mock("node:os", async (importOriginal) => {
   const os = await importOriginal<typeof import("node:os")>();
@@ -260,8 +260,9 @@ describe("t3 app", () => {
     ),
   );
 
-  for (const responseKind of ["failure", "invalid"] as const) {
-    it.effect(`never falls back after the default desktop sends a ${responseKind} response`, () =>
+  it.effect.each(["failure", "invalid"] as const)(
+    "never falls back after the default desktop sends a %s response",
+    (responseKind) =>
       withTempDirectory("t3-app-response-test-", (root) =>
         Effect.gen(function* () {
           vi.mocked(NodeOS.homedir).mockReturnValue(root);
@@ -306,6 +307,5 @@ describe("t3 app", () => {
           }
         }).pipe(Effect.scoped),
       ),
-    );
-  }
+  );
 });

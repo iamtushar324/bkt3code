@@ -39,7 +39,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { userDisplayName } from "../../components/ui/avatar";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
 import { cn } from "../../lib/utils";
-import { useThread } from "../../state/entities";
+import { useThreadVisibleTurnItems } from "../../state/entities";
 import { useCurrentUserId } from "../../state/identity";
 import { useOrgMembers } from "../../state/orgMembers";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -130,7 +130,7 @@ const FOCUS_RING_MS = 1_600;
 export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const enabled = useThreadCommentsEnabled(threadRef.environmentId);
   const snapshot = useThreadCommentsSnapshot(threadRef, enabled);
-  const thread = useThread(threadRef);
+  const turnItems = useThreadVisibleTurnItems(threadRef);
   const commands = useThreadCommentsCommands();
   const [filter, setFilter] = useState<ThreadCommentsFilter>("open");
   const [busy, setBusy] = useState(false);
@@ -139,7 +139,15 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
 
   const comments = snapshot?.comments ?? [];
   const counts = useMemo(() => countComments(comments), [comments]);
-  const messages = thread?.messages;
+  const messages = useMemo(
+    () =>
+      turnItems.flatMap(({ item }) =>
+        item.type === "user_message" || item.type === "assistant_message"
+          ? [{ id: item.messageId, role: item.type === "user_message" ? "user" : "assistant" }]
+          : [],
+      ),
+    [turnItems],
+  );
   const groups = useMemo(
     () => groupCommentsByMessage(filterComments(comments, filter), messages ?? []),
     [comments, filter, messages],

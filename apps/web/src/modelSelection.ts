@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): patch type for compatibility preference healing.
+import type { ServerSettingsPatch } from "@t3tools/contracts/settings";
 // T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -8,7 +10,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
   type CustomModelDefinition,
@@ -351,10 +352,12 @@ export function getCustomModelOptionsByInstance(
 }
 
 /**
- * Drop the opencode "plan" agent option from a stored model selection.
- * Used when legacy plan mode is turned off so server-side text-generation
- * tasks (title, branch, PR) cannot keep dispatching the plan agent.
+ * Whether stored model options pick the opencode "plan" agent. Shared settings
+ * pickers keep and show such a value even while this device's legacy plan
+ * mode is off: another device may have chosen it, and this device's filter
+ * only applies to picks made here.
  */
+// T3-CUSTOM(expbkt3): BEGIN — compatibility healing for persisted plan-agent options.
 export function withoutPlanAgentSelection(
   selection: ModelSelection | null | undefined,
 ): ModelSelection | null | undefined {
@@ -369,6 +372,8 @@ export function withoutPlanAgentSelection(
   }
   return createModelSelection(selection.instanceId, selection.model, options);
 }
+
+// T3-CUSTOM(expbkt3): END
 
 // The dropdown hides the opencode "plan" agent while legacy plan mode is off,
 // but the persisted text-generation selections are only healed when the toggle

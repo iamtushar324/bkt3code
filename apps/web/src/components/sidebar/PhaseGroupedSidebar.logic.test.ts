@@ -5,7 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
+  RunId,
   UserId,
   type OrchestrationSessionStatus,
   type VcsStatusResult,
@@ -232,13 +232,10 @@ describe("phase sidebar work badge", () => {
 describe("phase sidebar running controls", () => {
   it("keeps force stop available for a recorded session even when it looks stopped", () => {
     const stoppedSession = {
-      threadId,
-      status: "stopped" as const,
+      activeRunId: null,
+      status: "idle" as const,
       providerName: "codex",
       providerInstanceId: ProviderInstanceId.make("codex"),
-      providerThreadId: null,
-      runtimeMode: DEFAULT_RUNTIME_MODE,
-      activeTurnId: null,
       lastError: null,
       updatedAt: now,
     };
@@ -599,13 +596,17 @@ describe("phaseSidebarWorktreeRowProps", () => {
 });
 // T3-CUSTOM(expbkt3): END
 
-function makeSession(status: OrchestrationSessionStatus): NonNullable<ThreadShell["session"]> {
+function makeSession(status: OrchestrationSessionStatus): NonNullable<ThreadShell["runtime"]> {
   return {
-    threadId,
-    status,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    status:
+      status === "error"
+        ? "failed"
+        : status === "ready" || status === "idle" || status === "stopped"
+          ? "idle"
+          : status,
     providerName: "codex",
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    activeTurnId: status === "running" ? TurnId.make("turn-1") : null,
     lastError: status === "error" ? "Provider crashed" : null,
     updatedAt: now,
   };
@@ -613,6 +614,20 @@ function makeSession(status: OrchestrationSessionStatus): NonNullable<ThreadShel
 
 function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
   return {
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
+    pendingBackgroundTasks: [],
+    providerInstanceHistory: [],
+    itemCount: 0,
+    visibleItemCount: 0,
+    unsettledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    deletedAt: null,
     id: threadId,
     environmentId,
     projectId,
@@ -625,18 +640,28 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     branch: null,
     worktreePath: null,
     sourceControlProfileId: null,
-    latestTurn: null,
+    latestRun: null,
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
+    runtime: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     pullRequests: [],
+    priority: null,
+    customGroup: null,
+    linearIssueUrl: null,
+    mattermostThreadUrl: null,
+    parentThreadId: null,
+    parentEnvironmentId: null,
+    hasPendingAsyncUserInput: false,
+    backgroundLiveness: null,
+    activeProviderThreadId: null,
+    source: {} as ThreadShell["source"],
     ...overrides,
   };
 }
@@ -668,28 +693,27 @@ function makeRow(overrides: Partial<PhaseSidebarRow> = {}): PhaseSidebarRow {
 describe("phase sidebar lifecycle", () => {
   it("keeps active execution in agent-work groups except urgent structured questions", () => {
     const settledTurn = {
-      turnId: TurnId.make("turn-1"),
-      state: "completed" as const,
+      runId: RunId.make("turn-1"),
+      status: "completed" as const,
       requestedAt: now,
       startedAt: now,
       completedAt: now,
       assistantMessageId: null,
-      durationMs: null,
     };
 
-    expect(resolvePhaseSidebarPhase(makeThread({ session: makeSession("running") }))).toBe(
+    expect(resolvePhaseSidebarPhase(makeThread({ runtime: makeSession("running") }))).toBe(
       "implementing",
     );
     expect(
       resolvePhaseSidebarPhase(
         makeThread({
           interactionMode: "plan",
-          session: makeSession("starting"),
+          runtime: makeSession("starting"),
         }),
       ),
     ).toBe("planning");
     expect(
-      resolvePhaseSidebarPhase(makeThread({ session: makeSession("running") }), {
+      resolvePhaseSidebarPhase(makeThread({ runtime: makeSession("running") }), {
         pr: {
           number: 1,
           title: "Review",
@@ -705,7 +729,7 @@ describe("phase sidebar lifecycle", () => {
       resolvePhaseSidebarPhase(
         makeThread({
           interactionMode: "plan",
-          latestTurn: settledTurn,
+          latestRun: settledTurn,
           hasActionableProposedPlan: true,
         }),
       ),
@@ -718,7 +742,7 @@ describe("phase sidebar lifecycle", () => {
       resolvePhaseSidebarPhase(
         makeThread({
           interactionMode: "plan",
-          session: makeSession("running"),
+          runtime: makeSession("running"),
           hasPendingUserInput: true,
         }),
       ),
@@ -743,7 +767,7 @@ describe("phase sidebar lifecycle", () => {
     expect(
       resolvePhaseSidebarPhase(
         makeThread({
-          session: makeSession("error"),
+          runtime: makeSession("error"),
           backgroundLiveness: "working",
         }),
       ),
@@ -766,7 +790,7 @@ describe("phase sidebar lifecycle", () => {
     });
     const liveInput = makeThread({
       id: ThreadId.make("thread-live-input"),
-      session: makeSession("running"),
+      runtime: makeSession("running"),
       hasPendingUserInput: true,
     });
     const ready = makeThread({ id: ThreadId.make("thread-ready") });
@@ -808,7 +832,7 @@ describe("phase sidebar lifecycle", () => {
         makeThread({
           interactionMode: "default",
           hasActionableProposedPlan: true,
-          session: makeSession("running"),
+          runtime: makeSession("running"),
         }),
       ),
     ).toBe("implementing");
@@ -817,7 +841,7 @@ describe("phase sidebar lifecycle", () => {
         makeThread({
           interactionMode: "plan",
           hasActionableProposedPlan: true,
-          session: makeSession("running"),
+          runtime: makeSession("running"),
         }),
       ),
     ).toBe("planning");
@@ -830,7 +854,7 @@ describe("phase sidebar lifecycle", () => {
       resolvePhaseSidebarPhase(
         makeThread({
           interactionMode: "plan",
-          session: makeSession("error"),
+          runtime: makeSession("error"),
         }),
       ),
     ).toBe("ready");
@@ -842,7 +866,7 @@ describe("phase sidebar lifecycle", () => {
         makeThread({
           interactionMode: "plan",
           hasActionableProposedPlan: true,
-          session: makeSession("error"),
+          runtime: makeSession("error"),
         }),
       ),
     ).toBe("plan_ready");
@@ -856,10 +880,10 @@ describe("phase sidebar lifecycle", () => {
     expect(resolvePhaseSidebarPhase(makeThread({ interactionMode: "default" }))).toBe("ready");
     expect(
       resolvePhaseSidebarPhase(
-        makeThread({ interactionMode: "plan", session: makeSession("running") }),
+        makeThread({ interactionMode: "plan", runtime: makeSession("running") }),
       ),
     ).toBe("planning");
-    expect(resolvePhaseSidebarPhase(makeThread({ session: makeSession("running") }))).toBe(
+    expect(resolvePhaseSidebarPhase(makeThread({ runtime: makeSession("running") }))).toBe(
       "implementing",
     );
   });
@@ -903,7 +927,7 @@ describe("phase sidebar lifecycle", () => {
     // this under Implementing, where nobody would see the question.
     expect(
       resolvePhaseSidebarPhase(
-        makeThread({ session: makeSession("running"), hasPendingAsyncUserInput: true }),
+        makeThread({ runtime: makeSession("running"), hasPendingAsyncUserInput: true }),
       ),
     ).toBe("ask");
     expect(resolvePhaseSidebarPhase(makeThread({ hasPendingAsyncUserInput: true }))).toBe("ask");
@@ -975,10 +999,10 @@ describe("phase sidebar lifecycle", () => {
 
   it("uses ready only as the non-running fallback", () => {
     expect(resolvePhaseSidebarPhase(makeThread())).toBe("ready");
-    expect(resolvePhaseSidebarPhase(makeThread({ session: makeSession("running") }))).not.toBe(
+    expect(resolvePhaseSidebarPhase(makeThread({ runtime: makeSession("running") }))).not.toBe(
       "ready",
     );
-    expect(resolvePhaseSidebarPhase(makeThread({ session: null }))).toBe("ready");
+    expect(resolvePhaseSidebarPhase(makeThread({ runtime: null }))).toBe("ready");
   });
 
   it("does not invent a reconnect-only lifecycle group", () => {
@@ -991,7 +1015,7 @@ describe("phase sidebar attention badges", () => {
     const thread = makeThread({
       hasPendingApprovals: true,
       hasPendingUserInput: true,
-      session: makeSession("error"),
+      runtime: makeSession("error"),
     });
 
     expect(resolvePhaseSidebarAttentionKind(thread)).toBe("input");
@@ -1003,13 +1027,13 @@ describe("phase sidebar attention badges", () => {
     );
     expect(
       resolvePhaseSidebarAttentionKind(
-        makeThread({ session: makeSession("running"), hasPendingApprovals: true }),
+        makeThread({ runtime: makeSession("running"), hasPendingApprovals: true }),
       ),
     ).toBe("approval");
   });
 
   it("recognizes failed execution after user-blocking states", () => {
-    expect(resolvePhaseSidebarAttentionKind(makeThread({ session: makeSession("error") }))).toBe(
+    expect(resolvePhaseSidebarAttentionKind(makeThread({ runtime: makeSession("error") }))).toBe(
       "error",
     );
   });
@@ -1034,7 +1058,7 @@ describe("phase sidebar attention badges", () => {
       resolvePhaseSidebarAttentionKind(
         makeThread({
           hasActionableProposedPlan: true,
-          session: makeSession("error"),
+          runtime: makeSession("error"),
         }),
       ),
     ).toBe("error");
@@ -1044,7 +1068,7 @@ describe("phase sidebar attention badges", () => {
     // The row stays in Implementing, but it still has to say a plan is there.
     expect(
       resolvePhaseSidebarAttentionKind(
-        makeThread({ hasActionableProposedPlan: true, session: makeSession("running") }),
+        makeThread({ hasActionableProposedPlan: true, runtime: makeSession("running") }),
       ),
     ).toBe("plan");
   });
@@ -1052,12 +1076,12 @@ describe("phase sidebar attention badges", () => {
 
   it("does not add attention badges to ordinary lifecycle states", () => {
     expect(resolvePhaseSidebarAttentionKind(makeThread())).toBeNull();
-    expect(resolvePhaseSidebarAttentionKind(makeThread({ session: makeSession("running") }))).toBe(
+    expect(resolvePhaseSidebarAttentionKind(makeThread({ runtime: makeSession("running") }))).toBe(
       null,
     );
     expect(
       resolvePhaseSidebarAttentionKind(
-        makeThread({ interactionMode: "plan", session: makeSession("running") }),
+        makeThread({ interactionMode: "plan", runtime: makeSession("running") }),
       ),
     ).toBeNull();
   });
@@ -1343,7 +1367,7 @@ describe("phase sidebar metadata and filters", () => {
   // turning it on changed nothing.
   it("keeps only sessions this operator started when ownedByMe is on", () => {
     const mine = makeRow({ isOwnedByMe: true, isAssignedToMe: true });
-    // Tagged into someone else's session: visible, assigned, but not mine.
+    // Tagged into someone else's runtime: visible, assigned, but not mine.
     const theirs = makeRow({ isOwnedByMe: false, isAssignedToMe: true });
     const ownedFilters = { ...EMPTY_PHASE_SIDEBAR_FILTERS, ownedByMe: true };
 
@@ -1889,7 +1913,7 @@ describe("phase sidebar session errors", () => {
     // resolvePhaseSidebarPhase already treats this as a failure, so badging on
     // execution activity alone left a row grouped as failed with no badge.
     expect(
-      resolvePhaseSidebarAttentionKind(makeThread({ session: { status: "error" } as never })),
+      resolvePhaseSidebarAttentionKind(makeThread({ runtime: { status: "failed" } as never })),
     ).toBe("error");
   });
 });

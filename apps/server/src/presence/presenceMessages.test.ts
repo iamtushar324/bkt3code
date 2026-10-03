@@ -40,3 +40,16 @@ it.effect("returns the newest user message per sender for the thread only", () =
     expect(yield* query.latestUserMessageBySender(ThreadId.make("thread-empty"))).toEqual([]);
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("combines historical V1 senders with live native V2 messages", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, turn_id, role, text, is_streaming, sent_by_user_id, created_at, updated_at) VALUES ('v1', ${threadId}, NULL, 'user', 'old', 0, 'user-a', '2026-09-29T11:00:00.000Z', '2026-09-29T11:00:00.000Z')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json) VALUES ('v2', ${threadId}, NULL, NULL, 'user', 0, '2026-10-03T12:00:00.000Z', '2026-10-03T12:00:00.000Z', '{"sentByUserId":"user-a"}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json) VALUES ('other', 'other-thread', NULL, NULL, 'user', 0, '2026-10-03T12:00:00.000Z', '2026-10-03T12:00:00.000Z', '{"sentByUserId":"user-b"}')`;
+    const query = yield* PresenceMessages.PresenceMessageQuery;
+    expect(yield* query.latestUserMessageBySender(threadId)).toEqual([
+      { userId: "user-a", createdAt: "2026-10-03T12:00:00.000Z" },
+    ]);
+  }).pipe(Effect.provide(layer)),
+);

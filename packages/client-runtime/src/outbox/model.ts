@@ -11,17 +11,20 @@ import {
   EnvironmentId,
   IsoDateTime,
   MessageId,
+  PlanId,
   ModelSelection,
   OrchestrationMessageContext,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  RunId,
+  OrchestrationV2CreationSource,
   SourceControlProfileId,
-  SourceProposedPlanReference,
+  SnapShotSource,
+  PastedTextAttachmentSource,
   ThreadId,
   ThreadTurnStartBootstrap,
   type EnvironmentId as EnvironmentIdType,
-  type ClientOrchestrationCommand,
   type MessageId as MessageIdType,
   type ModelSelection as ModelSelectionType,
   type OrchestrationMessageContext as OrchestrationMessageContextType,
@@ -50,10 +53,7 @@ export class ThreadOutboxPersistenceError extends Schema.TaggedError<ThreadOutbo
   }
 }
 
-type ClientTurnStartCommand = Extract<
-  ClientOrchestrationCommand,
-  { readonly type: "thread.turn.start" }
->;
+type ClientTurnStartCommand = import("../operations/commands.ts").StartThreadTurnInput;
 
 const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
@@ -72,6 +72,7 @@ export const QueuedThreadImageAttachmentSchema = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
+  source: Schema.optional(SnapShotSource),
   // T3-CUSTOM(expbkt3): BEGIN — upstream (#8048) uploads images before send, so a
   // queued attachment may carry only the uploaded asset id. The inline data url
   // (and the preview derived from it) stays optional for locally-held images and
@@ -90,6 +91,8 @@ export const QueuedThreadFileAttachmentSchema = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
+  source: Schema.optional(PastedTextAttachmentSource),
+  dataUrl: Schema.optional(Schema.String),
   fileUri: Schema.optional(Schema.String),
   uploadedAttachmentId: Schema.optional(Schema.String),
   uploadEnvironmentId: Schema.optional(EnvironmentId),
@@ -116,12 +119,15 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   commandId: CommandId,
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
+  manualContinuationOfRunId: Schema.optional(RunId),
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
   attachments: Schema.Array(QueuedThreadAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "start"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
-  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  sourceProposedPlan: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
   titleSeed: Schema.optional(Schema.String),
   creation: Schema.optional(QueuedThreadCreationSchema),
   deliveryState: Schema.optional(Schema.Literals(["pending", "failed"])),
@@ -152,6 +158,7 @@ export interface QueuedThreadImageAttachment {
   readonly name: string;
   readonly mimeType: string;
   readonly sizeBytes: number;
+  readonly source?: typeof SnapShotSource.Type | undefined;
   readonly dataUrl?: string | undefined;
   readonly previewUri?: string | undefined;
   readonly fileUri?: string | undefined;
@@ -174,8 +181,13 @@ export interface QueuedThreadMessage {
   readonly commandId: CommandId;
   readonly text: string;
   readonly context?: OrchestrationMessageContextType | undefined;
+  readonly manualContinuationOfRunId?:
+    | ClientTurnStartCommand["manualContinuationOfRunId"]
+    | undefined;
+  readonly creationSource?: ClientTurnStartCommand["creationSource"] | undefined;
   readonly attachments: ReadonlyArray<QueuedThreadAttachment>;
   readonly modelSelection?: ModelSelectionType | undefined;
+  readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start" | undefined;
   readonly runtimeMode?: RuntimeModeType | undefined;
   readonly interactionMode?: ProviderInteractionModeType | undefined;
   readonly bootstrap?: ClientTurnStartCommand["bootstrap"] | undefined;

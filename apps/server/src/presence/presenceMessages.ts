@@ -46,8 +46,15 @@ export const make = Effect.gen(function* () {
     Result: Row,
     execute: (threadId) => sql`
       SELECT sent_by_user_id AS "userId", MAX(created_at) AS "createdAt"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId} AND role = 'user' AND sent_by_user_id IS NOT NULL
+      FROM (
+        SELECT sent_by_user_id, created_at
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND role = 'user' AND sent_by_user_id IS NOT NULL
+        UNION ALL
+        SELECT json_extract(payload_json, '$.sentByUserId') AS sent_by_user_id, created_at
+        FROM orchestration_v2_projection_messages
+        WHERE thread_id = ${threadId} AND role = 'user' AND json_extract(payload_json, '$.sentByUserId') IS NOT NULL
+      )
       GROUP BY sent_by_user_id
       ORDER BY "createdAt" DESC
       LIMIT ${MAX_SENDERS}

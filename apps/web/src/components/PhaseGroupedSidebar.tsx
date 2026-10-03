@@ -1092,6 +1092,8 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   const setAnchor = useThreadSelectionStore((state) => state.setAnchor);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  // T3-CUSTOM(expbkt3): the native visit watermark converges across devices.
+  const markUnreadOnServer = useAtomCommand(threadEnvironment.markUnread);
   // T3-CUSTOM(expbkt3): preserve the stock sidebar's unsent-draft signal and
   // discard action when the lifecycle sidebar is selected.
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !active;
@@ -1476,14 +1478,14 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
         {
           id: "force-stop-agent",
           label: "Force stop agent",
-          disabled: !phaseSidebarCanForceStopAgent(row.thread.session),
+          disabled: !phaseSidebarCanForceStopAgent(row.thread.runtime),
           destructive: true,
         },
         { id: "copy-path", label: "Copy Path", disabled: workspacePath === null },
         {
           id: "copy-session-id",
           label: "Copy session ID",
-          disabled: !row.thread.session?.providerThreadId,
+          disabled: !row.thread.activeProviderThreadId,
         },
         { id: "copy-id", label: "Copy thread ID" },
         { id: "archive", label: "Archive" },
@@ -1492,7 +1494,13 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       position,
     );
     if (action === "rename") onStartRename(row);
-    if (action === "mark-unread") markThreadUnread(threadKey, row.thread.latestTurn?.completedAt);
+    if (action === "mark-unread") {
+      markThreadUnread(threadKey, row.thread.latestRun?.completedAt);
+      void markUnreadOnServer({
+        environmentId: row.thread.environmentId,
+        input: { threadId: row.thread.id },
+      });
+    }
     if (action === "discard-draft") {
       releaseComposerDraftUploads(threadRef);
       clearComposerContent(threadRef);
@@ -1530,8 +1538,8 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     if (action === "copy-path" && workspacePath) {
       await navigator.clipboard.writeText(workspacePath);
     }
-    if (action === "copy-session-id" && row.thread.session?.providerThreadId) {
-      await navigator.clipboard.writeText(row.thread.session.providerThreadId);
+    if (action === "copy-session-id" && row.thread.activeProviderThreadId) {
+      await navigator.clipboard.writeText(row.thread.activeProviderThreadId);
     }
     if (action === "copy-id") await navigator.clipboard.writeText(row.thread.id);
     if (action === "archive") onArchive(row);
@@ -2413,7 +2421,7 @@ export function PhaseGroupedSidebar() {
       }
     }
     for (const thread of threads) {
-      const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+      const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
       const provider = serverConfigs
         .get(thread.environmentId)
         ?.providers.find((candidate) => candidate.instanceId === instanceId);
@@ -2421,7 +2429,7 @@ export function PhaseGroupedSidebar() {
       if (!options.has(kind)) {
         options.set(kind, {
           kind,
-          name: provider?.displayName ?? thread.session?.providerName ?? String(instanceId),
+          name: provider?.displayName ?? thread.runtime?.providerName ?? String(instanceId),
           code: resolvePhaseSidebarProviderCode(kind),
         });
       }

@@ -88,7 +88,7 @@ if [[ "$LOCK_HASH" != "$(cat "$LOCK_HASH_FILE" 2>/dev/null || true)" ]]; then
       exit 1
       ;;
   esac
-  corepack "$PACKAGE_MANAGER" --dir "$REPO_DIR" install --frozen-lockfile
+  corepack "$PACKAGE_MANAGER" --dir "$REPO_DIR" install --frozen-lockfile --child-concurrency=2
   install -d -m 0700 "$(dirname "$LOCK_HASH_FILE")"
   printf '%s\n' "$LOCK_HASH" >"$LOCK_HASH_FILE"
 else
@@ -129,7 +129,9 @@ echo "==> Restarting $SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
 
 echo -n "==> Waiting for stage"
-for _ in $(seq 1 60); do
+# The first V2 start snapshots the existing database and creates its new indexes.
+# Stage's 7.4 GiB database needs a wider startup window than a routine restart.
+for _ in $(seq 1 300); do
   if curl --connect-timeout 1 --max-time 3 -fsS "$HEALTH_URL" >/dev/null 2>&1; then
     echo " OK"
     break

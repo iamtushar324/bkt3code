@@ -1,3 +1,4 @@
+export * from "../handoff.ts";
 // T3-CUSTOM(expbkt3): handoff digests the client can build without its host.
 export {
   cachedThreadDigestInput,

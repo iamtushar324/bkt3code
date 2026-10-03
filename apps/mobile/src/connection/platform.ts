@@ -1,11 +1,7 @@
 import {
-  ClientPresentation,
-  CloudSession,
-  EnvironmentOwnedDataCleanup,
+  ClientCapabilities,
   PlatformConnectionSource,
-  PrimaryEnvironmentAuth,
-  RelayDeviceIdentity,
-  SshEnvironmentGateway,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
@@ -116,8 +112,8 @@ const capabilitiesLayer = Layer.effectContext(
   Effect.gen(function* () {
     const storage = yield* MobileStorage.MobileStorage;
     return Context.make(
-      CloudSession,
-      CloudSession.of({
+      ClientCapabilities.CloudSession,
+      ClientCapabilities.CloudSession.of({
         identity: Effect.sync(() =>
           Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
         ),
@@ -149,19 +145,16 @@ const capabilitiesLayer = Layer.effectContext(
       }),
     ).pipe(
       Context.add(
-        PrimaryEnvironmentAuth,
-        // T3-CUSTOM(expbkt3): BEGIN - `dpopAuthorization` is the seam a managed BK
-        // desktop build uses for its device-bound primary token. Mobile has no primary
-        // environment at all, so it stays none and the bearer path is unchanged.
-        PrimaryEnvironmentAuth.of({
+        ClientCapabilities.PrimaryEnvironmentAuth,
+        ClientCapabilities.PrimaryEnvironmentAuth.of({
           bearerToken: Effect.succeed(Option.none()),
+          // T3-CUSTOM(expbkt3): mobile does not provide a managed primary credential.
           dpopAuthorization: Effect.succeed(Option.none()),
         }),
-        // T3-CUSTOM(expbkt3): END
       ),
       Context.add(
-        RelayDeviceIdentity,
-        RelayDeviceIdentity.of({
+        ClientCapabilities.RelayDeviceIdentity,
+        ClientCapabilities.RelayDeviceIdentity.of({
           deviceId: storage.loadOrCreateAgentAwarenessDeviceId.pipe(
             Effect.mapError(
               (cause) =>
@@ -175,15 +168,15 @@ const capabilitiesLayer = Layer.effectContext(
         }),
       ),
       Context.add(
-        ClientPresentation,
-        ClientPresentation.of({
+        ClientCapabilities.ClientPresentation,
+        ClientCapabilities.ClientPresentation.of({
           metadata: authClientMetadata(Constants.expoConfig?.version),
           scopes: AuthStandardClientScopes,
         }),
       ),
       Context.add(
-        SshEnvironmentGateway,
-        SshEnvironmentGateway.of({
+        ClientCapabilities.SshEnvironmentGateway,
+        ClientCapabilities.SshEnvironmentGateway.of({
           provision: () =>
             Effect.fail(
               new ConnectionBlockedError({
@@ -206,8 +199,8 @@ const capabilitiesLayer = Layer.effectContext(
 );
 
 const platformConnectionSourceLayer = Layer.succeed(
-  PlatformConnectionSource,
-  PlatformConnectionSource.of({
+  PlatformConnectionSource.PlatformConnectionSource,
+  PlatformConnectionSource.PlatformConnectionSource.of({
     registrations: Stream.empty,
   }),
 );
@@ -220,8 +213,8 @@ const providedCapabilitiesLayer = capabilitiesLayer.pipe(
 );
 
 const environmentOwnedDataCleanupLayer = Layer.succeed(
-  EnvironmentOwnedDataCleanup,
-  EnvironmentOwnedDataCleanup.of({
+  Persistence.EnvironmentOwnedDataCleanup,
+  Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
       Effect.all(
         [

@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): experimental preferences.
+import { FlaskConicalIcon } from "lucide-react";
 import {
   lazy,
   Suspense,
@@ -18,8 +20,7 @@ import {
   BlocksIcon,
   BotIcon,
   createLucideIcon,
-  // T3-CUSTOM(expbkt3): fork-only Experiments settings section.
-  FlaskConicalIcon,
+  CalendarClockIcon,
   GitBranchIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
@@ -94,6 +95,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
+  "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
   // T3-CUSTOM(expbkt3): fork-only Users section.
   "/settings/users": UsersIcon,

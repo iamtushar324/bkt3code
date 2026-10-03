@@ -1,94 +1,72 @@
-// T3-CUSTOM(expbkt3): smart git prompts ride upstream's queued-message store.
+// T3-CUSTOM(expbkt3): smart git prompts retain settings and native queue intent.
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   shell: null as Record<string, unknown> | null,
+  commands: [] as Array<{ input: Record<string, unknown> }>,
 }));
-
-vi.mock("~/state/entities", () => ({
-  readThreadShell: () => testState.shell,
-  readThread: () => ({ activities: [] }),
+vi.mock("~/state/entities", () => ({ readThreadShell: () => testState.shell }));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => null } }));
+vi.mock("~/state/threads", () => ({
+  environmentThreadDetails: { threadAtom: () => ({}) },
+  threadEnvironment: { startTurn: {} },
 }));
-
-import { useQueuedMessageStore } from "~/queuedMessageStore";
+vi.mock("~/state/identity", () => ({ currentClerkUserAtom: {} }));
+vi.mock("../environmentOperatorIdentity", () => ({
+  readEnvironmentOperatorUserId: () => "user-fixture",
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  runAtomCommand: (
+    _registry: unknown,
+    _command: unknown,
+    target: { input: Record<string, unknown> },
+  ) => {
+    testState.commands.push(target);
+    return new Promise(() => {});
+  },
+}));
 import { sendThreadPrompt } from "./sendThreadPrompt";
-
 const THREAD_REF = {
   environmentId: EnvironmentId.make("environment-fixture"),
   threadId: ThreadId.make("thread-fixture"),
 };
-const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const MODEL = { instanceId: "codex", model: "gpt-5" };
-
-function shell(status: string | null, overrides: Record<string, unknown> = {}) {
+function shell(status: string | null, extra: Record<string, unknown> = {}) {
   return {
     modelSelection: MODEL,
     runtimeMode: "full-access",
-    interactionMode: "default",
-    session: status === null ? null : { status },
+    interactionMode: "plan",
+    runtime: status === null ? null : { status },
     hasPendingApprovals: false,
     hasPendingUserInput: false,
-    ...overrides,
+    ...extra,
   };
 }
-
-function queue() {
-  return useQueuedMessageStore.getState().queuesByThreadKey[THREAD_KEY] ?? [];
-}
-
-beforeEach(() => {
-  useQueuedMessageStore.setState({ queuesByThreadKey: {}, lastDispatchByThreadKey: {} });
-  testState.shell = null;
-});
-
 describe("sendThreadPrompt", () => {
-  it("does nothing for a thread the server does not know yet", () => {
-    expect(sendThreadPrompt(THREAD_REF, "Commit")).toBe("unavailable");
-    expect(queue()).toEqual([]);
+  it("does nothing for a thread the server does not know", () => {
+    testState.shell = null;
+    expect(sendThreadPrompt(THREAD_REF, "Unknown")).toBe("unavailable");
   });
-
-  it("sends at once on an idle thread, with the thread's own settings", () => {
-    testState.shell = shell("ready");
-    expect(sendThreadPrompt(THREAD_REF, "Commit")).toBe("send");
-    expect(queue()).toHaveLength(1);
-    expect(queue()[0]).toMatchObject({
-      prompt: "Commit",
-      images: [],
-      files: [],
-      sendSettings: {
-        modelSelection: MODEL,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        promptEffort: null,
-      },
+  it("sends an action in build mode without access to the composer draft", () => {
+    testState.shell = shell("idle");
+    expect(sendThreadPrompt(THREAD_REF, "Commit idle")).toBe("send");
+    expect(testState.commands.at(-1)?.input).toMatchObject({
+      message: { text: "Commit idle", role: "user", attachments: [] },
+      modelSelection: MODEL,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      outboxIdentityKey: "user-fixture",
+      dispatchMode: "auto",
     });
-    expect(queue()[0]?.holdUntilUserAction).toBeUndefined();
   });
-
-  it.each([
-    { name: "running turn", thread: shell("running") },
-    { name: "starting session", thread: shell("starting") },
-    { name: "pending approval", thread: shell("ready", { hasPendingApprovals: true }) },
-    { name: "pending question", thread: shell("ready", { hasPendingUserInput: true }) },
-  ])("queues behind a $name", ({ thread }) => {
-    testState.shell = thread;
-    expect(sendThreadPrompt(THREAD_REF, "Commit")).toBe("queue");
-    expect(queue()).toHaveLength(1);
+  it.each(["running", "starting", "preparing"])("queues behind a %s runtime", (status) => {
+    testState.shell = shell(status);
+    expect(sendThreadPrompt(THREAD_REF, `Commit ${status}`)).toBe("queue");
+    expect(testState.commands.at(-1)?.input).toMatchObject({ dispatchMode: "queue" });
   });
-
-  it("queues behind a message that will still leave on its own", () => {
-    testState.shell = shell("ready");
-    sendThreadPrompt(THREAD_REF, "First");
-    expect(sendThreadPrompt(THREAD_REF, "Commit")).toBe("queue");
-    expect(queue().map((message) => message.prompt)).toEqual(["First", "Commit"]);
-  });
-
-  it("does not queue the same request twice", () => {
+  it("does not duplicate a command that is still on the wire", () => {
     testState.shell = shell("running");
-    sendThreadPrompt(THREAD_REF, "Commit");
-    expect(sendThreadPrompt(THREAD_REF, "Commit")).toBe("duplicate");
-    expect(queue()).toHaveLength(1);
+    expect(sendThreadPrompt(THREAD_REF, "Unique duplicate")).toBe("queue");
+    expect(sendThreadPrompt(THREAD_REF, "Unique duplicate")).toBe("duplicate");
   });
 });

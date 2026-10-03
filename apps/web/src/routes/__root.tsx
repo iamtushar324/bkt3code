@@ -28,10 +28,16 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
-import { QueuedMessageSender } from "../components/QueuedMessageSender";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
+import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
+// T3-CUSTOM(expbkt3): the fork still exposes the Plan/Build availability preference.
+import { PlanAgentSelectionHeal } from "../fork/PlanAgentSelectionHeal";
+// T3-CUSTOM(expbkt3): delivery runs independently of the selected thread or draft.
+import { DurableOutboxCoordinator } from "../fork/DurableOutboxCoordinator";
+import { ProviderAuthCallbackCoordinator } from "../components/settings/ProviderAuthCallbackCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
@@ -49,7 +55,6 @@ import { isElectron } from "../env";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
-import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -176,6 +181,7 @@ function RootRouteView() {
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
           <FontAppearanceSync />
+          <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
@@ -216,6 +222,10 @@ function RootRouteView() {
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <ProviderAuthCallbackCoordinator />
+        <ChatGptWelcomeCoordinator />
+        {/* T3-CUSTOM(expbkt3): heal saved plan-agent options after authenticated settings load. */}
+        {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
           hostedStatic={authGateState.status === "hosted-static"}
@@ -228,16 +238,17 @@ function RootRouteView() {
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
-          <QueuedMessageSender />
+          {/* T3-CUSTOM(expbkt3): auth-scoped queues stay mounted across all workspace routes. */}
+          <DurableOutboxCoordinator />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
+          {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
           <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
           ) : null}
-          {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the

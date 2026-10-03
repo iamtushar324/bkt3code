@@ -19,10 +19,10 @@ function toolEntry(id: string, at: string) {
     entry: {
       id,
       createdAt: at,
-      turnId: "turn-1" as never,
+      runId: "run-1" as never,
       label: "Ran a tool",
       tone: "tool" as const,
-      itemType: "mcp_tool_call" as const,
+      itemType: "dynamic_tool" as const,
       toolLifecycleStatus: "completed" as const,
     },
   };

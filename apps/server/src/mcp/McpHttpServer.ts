@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): native MCP commands carry the authenticated sender.
+import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.expbkt3.ts";
 // T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane: authenticated external operators alongside
 // scoped native agent sessions.
 /**
@@ -26,8 +28,22 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
+import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers.ts";
+import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
+import { EnvironmentHandlersLive } from "./toolkits/environment/handlers.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
+import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
+import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -43,6 +59,9 @@ import {
 } from "./toolkits/preview/tools.ts";
 // T3-CUSTOM(expbkt3): compact parity bridge for the authenticated web UI RPCs.
 import { WebUiRpcRegistrationLive } from "./toolkits/webUi/registration.ts";
+import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
+import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -119,6 +138,8 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
       }
       return yield* httpEffect.pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
+        Effect.provideService(CurrentOrchestrationActorUserId, invocation.actorUserId),
         Effect.map(normalizeMcpHttpResponse),
       );
     }),
@@ -421,6 +442,8 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Effect.flatMap(Effect.fromOption),
           Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
+          Effect.provideService(CurrentOrchestrationActorUserId, invocation.actorUserId),
           Effect.flatMap(({ encodedResult }) =>
             Effect.gen(function* () {
               const snapshot = encodedResult as SnapshotMetadata & {
@@ -591,6 +614,8 @@ const registerImageTool = <T extends Tool.Any, E, R>(
           );
           return provide(handle(payload as Tool.Parameters<T>)).pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
+            Effect.provideService(CurrentOrchestrationActorUserId, invocation.actorUserId),
             Effect.matchCauseEffect({
               onFailure: imageToolFailure(tool.name, operation, failureText),
               onSuccess: ({ encodedResult }) => {
@@ -664,6 +689,38 @@ export const T3ControlToolkitRegistrationLive = McpServer.toolkit(T3ControlToolk
   Layer.provide(T3ControlToolkitHandlersLive),
 );
 
+export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
+  Layer.provide(OrchestratorToolkitHandlersLive),
+  Layer.provide(OrchestratorMcpService.layer),
+  Layer.provide(ThreadMetadataMcpService.layer),
+);
+
+export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pipe(
+  Layer.provide(ThreadToolkitHandlersLive),
+);
+
+// T3-CUSTOM(expbkt3): expose the production registration for focused HTTP verification.
+export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
+  Layer.provide(WorktreeToolkitHandlersLive),
+  Layer.provide(WorktreeMcpService.layer),
+);
+
+const PreviewControlsRegistrationLive = McpServer.toolkit(PreviewControlsToolkit).pipe(
+  Layer.provide(PreviewControlsHandlersLive),
+);
+
+const EnvironmentRegistrationLive = McpServer.toolkit(EnvironmentToolkit).pipe(
+  Layer.provide(EnvironmentHandlersLive),
+);
+
+const ProjectRegistrationLive = McpServer.toolkit(ProjectToolkit).pipe(
+  Layer.provide(ProjectHandlersLive),
+);
+
+const AttachmentRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
+  Layer.provide(AttachmentHandlersLive),
+);
+
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -681,7 +738,8 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
+// T3-CUSTOM(expbkt3): focused registrations reuse the production transport and auth.
+export const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
@@ -692,6 +750,13 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   T3ControlToolkitRegistrationLive, // T3-CUSTOM(expbkt3): T3 MCP control plane toolkit.
   WebUiRpcRegistrationLive, // T3-CUSTOM(expbkt3): web UI RPC parity bridge.
+  OrchestratorToolkitRegistrationLive,
+  ThreadToolkitRegistrationLive,
+  AttachmentRegistrationLive,
+  ProjectRegistrationLive,
+  EnvironmentRegistrationLive,
+  PreviewControlsRegistrationLive,
+  WorktreeToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

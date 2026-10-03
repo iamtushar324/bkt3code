@@ -7,12 +7,12 @@ them safely.
 
 ## Environments
 
-| Environment            | Branch      | Worktree                            | Domain                                          | Port  | Service              | State dir                      |
-| ---------------------- | ----------- | ----------------------------------- | ----------------------------------------------- | ----- | -------------------- | ------------------------------ |
-| t3 (upstream-style)    | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`                           | 18082 | `t3-beknown.service` | `/home/ubuntu/.t3/beknown-dev` |
-| bkt3 (fork production) | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`                         | 18083 | `t3-bkmain.service`  | `/home/ubuntu/.t3/bkt3-dev`    |
-| expbkt3 (fork staging) | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live` (apex `expbkt3.dev`) | 18085 | `t3-expbkt3.service` | `/home/ubuntu/.t3/expbkt3-dev` |
-| stage (fresh-cut fork) | `stage`     | `/home/ubuntu/repos/t3code-stage`   | `stagebkt3.dev.beknown.live`                    | 18086 | `t3-stage.service`   | `/home/ubuntu/.t3/stage-dev`   |
+| Environment             | Branch      | Worktree                            | Domain                                          | Port  | Service              | State dir                      |
+| ----------------------- | ----------- | ----------------------------------- | ----------------------------------------------- | ----- | -------------------- | ------------------------------ |
+| t3 (upstream-style)     | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`                           | 18082 | `t3-beknown.service` | `/home/ubuntu/.t3/beknown-dev` |
+| bkt3 (fork production)  | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`                         | 18083 | `t3-bkmain.service`  | `/home/ubuntu/.t3/bkt3-dev`    |
+| expbkt3 (fork staging)  | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live` (apex `expbkt3.dev`) | 18085 | `t3-expbkt3.service` | `/home/ubuntu/.t3/expbkt3-dev` |
+| stage (fork validation) | `stage`     | `/home/ubuntu/repos/t3code-stage`   | `stagebkt3.dev.beknown.live`                    | 18086 | `t3-stage.service`   | `/home/ubuntu/.t3/stage-dev`   |
 
 Per-environment detail lives next to the scripts: [`deploy/t3/README.md`](../../deploy/t3/README.md),
 [`deploy/bkt3/README.md`](../../deploy/bkt3/README.md),
@@ -50,10 +50,10 @@ scripts still use it). Upstream is `pingdotgg/t3code`; only
   upstream merges. Deploys `expbkt3.dev`. Reset from `bkmain` between
   experiments, so it never disappears from `origin` (a deleted trigger branch
   used to make the deployment timer fail every minute).
-- **`stage`** — a fresh cut of upstream `main` (`de251fc29`, 2026-09-27) that
-  carries only the fork features still in use. Deploys `stagebkt3.dev`. It is
-  meant to replace `bkmain` once verified; until then it is independent of the
-  `bkmain`/`expbkmain` lineage and takes upstream merges directly.
+- **`stage`** — the validation branch for upstream merges with the retained BK
+  features. The 2026-10-03 merge integrates upstream `main` (`fed41fa88`) and
+  its V2 engine. It deploys `stagebkt3.dev` and takes upstream merges directly.
+  Promotion to `bkmain` remains a separate change after stage validation.
 
 ## How code reaches a server
 

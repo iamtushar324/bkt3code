@@ -1,3 +1,10 @@
+// T3-CUSTOM(expbkt3): shared host appearance across all connection modes.
+import {
+  environmentAppearanceFromSettings,
+  resolveEnvironmentAppearance,
+  type ResolvedEnvironmentAppearance,
+} from "./environmentAppearance";
+import { localEnvironmentAppearanceDefaults } from "../fork/localEnvironmentAppearance";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
@@ -9,15 +16,11 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-// T3-CUSTOM(expbkt3): per-environment nickname, icon and colour, from the host's settings.
 import {
-  environmentAppearanceFromSettings,
-  resolveEnvironmentAppearance,
-  type ResolvedEnvironmentAppearance,
-} from "./environmentAppearance";
-// T3-CUSTOM(expbkt3): this computer's backend starts as "local".
-import { localEnvironmentAppearanceDefaults } from "../fork/localEnvironmentAppearance";
-import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
+  environmentPresentations,
+  environmentSummaries,
+  useEnvironmentPresentation,
+} from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 // T3-CUSTOM(expbkt3): retained for useEnvironmentConnectionState below.
 import { useEnvironmentQuery } from "./query";
@@ -109,6 +112,26 @@ export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): 
 
 export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscoveryState {
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
+}
+
+export function useEnvironmentIds() {
+  return useAtomValue(environmentSummaries.environmentIdsAtom);
+}
+
+export function useEnvironmentIdentities() {
+  return useAtomValue(environmentSummaries.identitiesAtom);
+}
+
+export function usePullRequestsSupported() {
+  return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
+}
+
+export function useEnvironmentMachines() {
+  return useAtomValue(environmentSummaries.machineByIdAtom);
+}
+
+export function useConnectedEnvironmentIds() {
+  return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
 
 // T3-CUSTOM(expbkt3): upstream removed this as unused (#10225); the fork's

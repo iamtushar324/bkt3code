@@ -15,18 +15,21 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-// T3-CUSTOM(expbkt3): union grows with the control-plane capabilities below.
-export type McpCapability =
-  | "preview"
-  | "device"
-  | "pull-requests"
-  // T3-CUSTOM(expbkt3): capabilities for the fork's T3 MCP control plane.
-  | "t3.read"
-  | "t3.control"
-  | "t3.plan"
-  | "t3.session.create"
-  | "t3.project.create"
-  | "t3.settings.manage";
+const ALL_MCP_CAPABILITIES = [
+  "preview",
+  "orchestration",
+  "worktree",
+  "device",
+  "pull-requests",
+  // T3-CUSTOM(expbkt3): fork control-plane capabilities.
+  "t3.read",
+  "t3.control",
+  "t3.plan",
+  "t3.session.create",
+  "t3.project.create",
+  "t3.settings.manage",
+] as const;
+export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
 export interface McpInvocationScope {
   readonly principal: "provider-session" | "external-user" | "external-operator";

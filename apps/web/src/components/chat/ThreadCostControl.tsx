@@ -69,15 +69,15 @@ export function ThreadCostControl({
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const supported = config?.environment.capabilities.threadUsage === true;
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
-  const hasSession = shell?.session?.providerThreadId != null;
+  const hasSession = shell?.activeProviderThreadId != null;
   const { data, isPending, refresh } = useEnvironmentQuery<ThreadUsage, unknown>(
     supported && hasSession
       ? threadUsageEnvironment.usage({ environmentId, input: { threadId, timeZone } })
       : null,
   );
   // A finished turn changes the figure; refetch on that cadence rather than
-  // polling. `latestTurn.completedAt` moves once per turn.
-  const completedAt = shell?.latestTurn?.completedAt ?? null;
+  // polling. `latestRun.completedAt` moves once per turn.
+  const completedAt = shell?.latestRun?.completedAt ?? null;
   useEffect(() => {
     if (completedAt !== null) refresh();
   }, [completedAt, refresh]);

@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): `planModeEnabled` is `planModeAvailable` in the fork (fresh key, default on).
 import {
   type ModelCapabilities,
+  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
@@ -50,6 +51,7 @@ type TraitsRenderInput = {
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  reportedModelSelection?: ModelSelection | null | undefined;
   prompt: string;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   onPromptChange: (prompt: string) => void;
@@ -180,6 +182,7 @@ function renderTraitsControl(
     // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     models,
     modelOptions,
+    reportedModelSelection,
     prompt,
     onPromptChange,
     planModeAvailable,
@@ -220,6 +223,7 @@ function renderTraitsControl(
       {...(draftId ? { draftId } : {})}
       model={model}
       modelOptions={resolvedModelOptions}
+      reportedModelSelection={reportedModelSelection}
       prompt={prompt}
       onPromptChange={onPromptChange}
       planModeAvailable={planModeAvailable}

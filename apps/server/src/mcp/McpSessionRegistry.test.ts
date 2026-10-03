@@ -62,6 +62,9 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
 
     const resolved = yield* registry.resolve(token);
     expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(
+      new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+    );
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -102,9 +105,19 @@ it.effect("always grants pull-requests and gates browser and device access indep
         Effect.map((capabilities) => capabilities.filter((name) => !name.startsWith("t3."))),
       );
 
-    expect(yield* gatedOf(withPreview)).toEqual(["preview", "pull-requests"]);
-    expect(yield* gatedOf(withoutPreview)).toEqual(["pull-requests"]);
-    expect(yield* gatedOf(withDevice)).toEqual(["device", "pull-requests"]);
+    expect(yield* gatedOf(withPreview)).toEqual([
+      "orchestration",
+      "preview",
+      "pull-requests",
+      "worktree",
+    ]);
+    expect(yield* gatedOf(withoutPreview)).toEqual(["orchestration", "pull-requests", "worktree"]);
+    expect(yield* gatedOf(withDevice)).toEqual([
+      "device",
+      "orchestration",
+      "pull-requests",
+      "worktree",
+    ]);
     // T3-CUSTOM(expbkt3): gating browser/device must never drop the fork's control plane.
     expect(yield* capabilitiesOf(withoutPreview)).toContain("t3.read");
   }),

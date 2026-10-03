@@ -56,8 +56,8 @@ export function resolvePhaseSidebarRowGlyph(row: PhaseSidebarRow): Glyph | null 
     backgroundLiveness: thread.backgroundLiveness ?? null,
     // The agent is working while its provider session runs a turn.
     executionPresentation: {
-      active: thread.session?.status === "running" || thread.session?.status === "starting",
-      label: thread.session?.status === "starting" ? "Starting" : "Running",
+      active: thread.runtime?.status === "running" || thread.runtime?.status === "starting",
+      label: thread.runtime?.status === "starting" ? "Starting" : "Running",
     },
   });
   if (workBadge !== null) {

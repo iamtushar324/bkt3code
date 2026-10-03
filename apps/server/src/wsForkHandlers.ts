@@ -44,13 +44,13 @@ import type * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
 import type { ClerkDirectoryShape } from "./auth/ClerkDirectory.ts";
 import type * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import type * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
-import type * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import type * as OrchestrationEngine from "./orchestration-v2/Services/OrchestrationEngine.ts";
 import type * as PlanReviewService from "./planreview/PlanReviewService.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
 import type * as AgentUiService from "./agentui/AgentUiService.ts";
 // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
 import type * as ThreadCommentsService from "./threadcomments/ThreadCommentsService.ts";
-import type * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import type * as ProjectionSnapshotQuery from "./orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): per-thread API-level cost.
 import type * as UsageService from "./usage/UsageService.ts";
 import type { ProjectionRepositoryError } from "./persistence/Errors.ts";

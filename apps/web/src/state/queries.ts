@@ -11,7 +11,6 @@ import {
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
-  OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
   VcsListRefsInput, // T3-CUSTOM(expbkt3): exact remote-ref query input.
@@ -59,14 +58,6 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   labelPrefix: "web:thread-search",
 });
 
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
-
-/** Shared with the pull requests page, which debounces its search the same way. */
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
@@ -110,7 +101,7 @@ function useCachedThreadSearch(
       environmentIds.map(async (environmentId) => {
         const snapshots = await readCachedThreadsForEnvironment(environmentId);
         return searchCachedThreads(
-          snapshots.map((snapshot) => snapshot.thread),
+          snapshots.map((snapshot) => snapshot.projection),
           query,
         ).map((match) => ({ ...match, environmentId }));
       }),

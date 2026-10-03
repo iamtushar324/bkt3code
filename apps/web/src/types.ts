@@ -3,20 +3,26 @@ import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointSummary,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
+  MessageId,
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2UserMessageInputIntent,
+  PlanId,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
+  RunId,
   RuntimeMode,
+  ScheduledTaskId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
-  EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { videoMimeType } from "@t3tools/shared/video";
 
 export { videoMimeType } from "@t3tools/shared/video";
@@ -24,7 +30,8 @@ export { videoMimeType } from "@t3tools/shared/video";
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
-export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
+// T3-CUSTOM(expbkt3): new sessions start with a plan.
+export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "plan";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "term-1";
 export const MAX_TERMINALS_PER_GROUP = 4;
@@ -73,17 +80,48 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
 }
 
-export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
-  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
 }
 
-export type ProposedPlan = OrchestrationProposedPlan;
-export type TurnDiffFileChange = OrchestrationCheckpointFile;
-export type TurnDiffSummary = OrchestrationCheckpointSummary;
+export interface ChatMessage {
+  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  readonly id: MessageId;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly runId: RunId | null;
+  readonly streaming: boolean;
+  // T3-CUSTOM(expbkt3): identify the person on shared threads.
+  readonly sentByUserId?: import("@t3tools/contracts").UserId | null;
+  readonly createdBy?: OrchestrationV2Actor;
+  readonly creationSource?: OrchestrationV2CreationSource;
+  readonly scheduledTaskId?: ScheduledTaskId;
+  readonly senderThreadId?: ThreadId;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
+}
+
+export interface ProposedPlan {
+  readonly id: PlanId;
+  readonly runId: RunId | null;
+  readonly planMarkdown: string;
+  readonly status: OrchestrationV2PlanArtifact["status"];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export type TurnDiffFileChange = ThreadCheckpointSummary["files"][number];
+export type TurnDiffSummary = ThreadCheckpointSummary;
 
 export type Project = EnvironmentProject;
-export type Thread = EnvironmentThread;
+export type Thread = EnvironmentThreadShell;
 export type ThreadShell = EnvironmentThreadShell;
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
-export type ThreadSession = OrchestrationSession;
+export type ThreadSession = ThreadRuntimeSummary;

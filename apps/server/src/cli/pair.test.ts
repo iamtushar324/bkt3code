@@ -16,7 +16,7 @@ import { Command } from "effect/unstable/cli";
 // T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
 // which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
 import { ForgejoCliSelfContainedLive } from "../sourceControl/forgejoCliRuntime.expbkt3.ts";
-import { cli } from "../bin.ts";
+import { cli } from "../binCli.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,

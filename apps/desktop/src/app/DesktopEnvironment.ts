@@ -89,14 +89,15 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpHeaders: Option.Option<Record<string, string>>;
     readonly otlpProtocol: OtlpProtocol;
     readonly branding: DesktopAppBranding;
+    // T3-CUSTOM(expbkt3): fork Electron profile names.
+    readonly userDataDirName: string;
+    readonly legacyUserDataDirName: string;
     readonly displayName: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly appImagePath: Option.Option<string>;
-    readonly userDataDirName: string;
-    readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -233,7 +234,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     ? runtimeBrand.userDataDirName
     : isDevelopment
       ? "t3code-dev"
-      : "t3code";
+      : "t3code-v2";
   const legacyUserDataDirName = runtimeBrand
     ? runtimeBrand.legacyUserDataDirName
     : isDevelopment
@@ -292,6 +293,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpProtocol: config.otlpProtocol,
     branding,
     displayName,
+    // T3-CUSTOM(expbkt3): preserve BK profile isolation in upstream V2 user-data initialization.
+    userDataDirName,
+    legacyUserDataDirName,
     // T3-CUSTOM(expbkt3): BEGIN - fork window-class and app-id identity. The
     // explicit appUserModelIdOverride still wins, as upstream intends.
     appUserModelId: Option.getOrElse(
@@ -306,8 +310,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     // T3-CUSTOM(expbkt3): END
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
-    userDataDirName,
-    legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,

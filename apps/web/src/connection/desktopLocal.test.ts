@@ -2,15 +2,12 @@ import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "vite-plus/test";
-
-// T3-CUSTOM(expbkt3): managed desktop builds surface the bundled backend as an
-// ordinary secondary bootstrap; only the primary id stays filtered.
 import {
-  __resetBkManagedEnvironmentForTests,
-  __setBkManagedEnvironmentForTests,
-} from "../fork/managedEnvironment";
+  type DesktopEnvironmentBootstrap,
+  EnvironmentId,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   createDesktopSecondaryBootstrapsReader,
@@ -58,8 +55,61 @@ describe("desktop local connection identity", () => {
 });
 
 describe("desktop local topology reads", () => {
-  afterEach(() => {
-    __resetBkManagedEnvironmentForTests();
+  it("reuses snapshots when polling returns fresh objects for the same topology", () => {
+    const secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
+    };
+    let entries = [secondary];
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => entries.map((entry) => ({ ...entry })),
+    }));
+
+    const connected = reader.readSnapshot();
+    expect(reader.readSnapshot()).toBe(connected);
+    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: connected });
+    expect(reader.readSnapshot()).toBe(connected);
+
+    entries = [];
+    const empty = reader.readSnapshot();
+    expect(empty).toEqual([]);
+    expect(reader.readSnapshot()).toBe(empty);
+  });
+
+  it.each<Partial<DesktopEnvironmentBootstrap>>([
+    { id: "wsl:Debian" },
+    { label: "Renamed backend" },
+    { runningDistro: "Debian" },
+    { httpBaseUrl: "http://127.0.0.1:4001" },
+    { wsBaseUrl: "ws://127.0.0.1:4001" },
+    { bootstrapToken: "bootstrap-2" },
+  ])("publishes bootstrap changes: %j", (change) => {
+    let secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
+    };
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [{ ...secondary }],
+    }));
+    const before = reader.readSnapshot();
+    secondary = { ...secondary, ...change };
+    const after = reader.readSnapshot();
+    expect(after).not.toBe(before);
+    expect(after).toEqual([secondary]);
+    expect(reader.readSnapshot()).toBe(after);
+  });
+
+  it("keeps the empty snapshot stable without a desktop bridge", () => {
+    const reader = createDesktopSecondaryBootstrapsReader(() => undefined);
+    expect(reader.readSnapshot()).toBe(reader.readSnapshot());
   });
 
   it("distinguishes a successful empty topology from a read failure", () => {
@@ -97,37 +147,6 @@ describe("desktop local topology reads", () => {
     }));
 
     expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [secondary] });
-  });
-
-  // T3-CUSTOM(expbkt3): a managed build carries the bundled backend as the
-  // "bk-local" secondary; only the pool-primary id (a client-only legacy
-  // leftover) stays filtered.
-  it("surfaces the bundled backend in a managed build while filtering the primary id", () => {
-    __setBkManagedEnvironmentForTests({
-      channel: "staging",
-      httpBaseUrl: "https://expbkt3.dev.beknown.live",
-      wsBaseUrl: "wss://expbkt3.dev.beknown.live",
-    });
-    const bundled = {
-      id: "bk-local",
-      label: "Local environment",
-      httpBaseUrl: "http://127.0.0.1:3773",
-      wsBaseUrl: "ws://127.0.0.1:3773",
-      bootstrapToken: "token",
-    };
-    const reader = createDesktopSecondaryBootstrapsReader(() => ({
-      getLocalEnvironmentBootstraps: () => [
-        {
-          id: PRIMARY_LOCAL_ENVIRONMENT_ID,
-          label: "Legacy local backend",
-          httpBaseUrl: "http://127.0.0.1:3773",
-          wsBaseUrl: "ws://127.0.0.1:3773",
-        },
-        bundled,
-      ],
-    }));
-
-    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [bundled] });
   });
 
   it("retains the last successful snapshot only until another read succeeds", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { CommandId, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 
 import {
   decodeQueuedThreadMessage,
@@ -41,6 +41,26 @@ describe("shared durable thread outbox", () => {
 
   it("round-trips exact ids, identity, and attachment bytes", () => {
     const message = queued("user_123");
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
+  });
+
+  it("preserves local file bytes and native continuation intent through reload", () => {
+    const message: QueuedThreadMessage = {
+      ...queued("user_123"),
+      creationSource: "web",
+      manualContinuationOfRunId: RunId.make("previous-run"),
+      dispatchMode: "queue",
+      attachments: [
+        {
+          id: "file-1",
+          type: "file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+          dataUrl: "data:text/plain;base64,QQ==",
+        },
+      ],
+    };
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
   });
 

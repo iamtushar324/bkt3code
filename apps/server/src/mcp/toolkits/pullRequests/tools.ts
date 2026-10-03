@@ -12,16 +12,17 @@ import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-// T3-CUSTOM(expbkt3): a named session is authorized before it is tagged.
-import { OrchestrationAccessControl } from "../../../orchestration/Services/AccessControl.ts";
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+
+// T3-CUSTOM(expbkt3): authorization for external named-session targets.
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngine.OrchestrationEngineService,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-  // T3-CUSTOM(expbkt3): a named session is authorized before it is tagged.
+  Orchestrator.OrchestratorV2,
+  ProjectService.ProjectService,
+  // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
   OrchestrationAccessControl,
 ];
 
