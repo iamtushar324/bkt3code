@@ -43,7 +43,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { type SidebarThreadSortOrder, type UserId } from "@t3tools/contracts";
 import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
-import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+} from "react";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { runOnJS } from "react-native-reanimated";
@@ -64,12 +71,20 @@ import {
   phaseSidebarRowActionsToMenu,
 } from "./usePhaseSidebarRowActions";
 import { usePhaseSidebarDrag } from "./usePhaseSidebarDrag";
+import type { PendingDraftTask } from "../../state/pending-new-tasks-model";
+import { PhaseSidebarDraftHeader } from "./PhaseSidebarDraftHeader";
+import {
+  buildPhaseSidebarDraftItems,
+  PHASE_SIDEBAR_DRAFTS_SECTION_KEY,
+  type PhaseSidebarDraftListItem,
+} from "./phaseSidebarDrafts";
 
 /** Which shelf a row sits on, if any. Drives its swipe and its time label. */
 type PhaseSidebarRowShelf = "active" | "snoozed" | "settled";
 
-/** A flattened list entry: either a section header or a thread row. */
+/** A flattened list entry: a section header, a thread row, or a local draft. */
 type PhaseSidebarListItem =
+  | PhaseSidebarDraftListItem
   | {
       readonly kind: "section";
       readonly key: string;
@@ -88,6 +103,8 @@ export type PhaseSidebarSectionActionId = "rename" | "delete" | "move-up" | "mov
 
 export interface PhaseSidebarListProps {
   readonly rows: ReadonlyArray<PhaseSidebarRow>;
+  readonly drafts: ReadonlyArray<PendingDraftTask>;
+  readonly renderDraftRow: (draft: PendingDraftTask) => ReactElement;
   readonly viewerUserId: UserId | null;
   readonly activeThreadKey: string | null;
   readonly filters?: PhaseSidebarFilters;
@@ -239,7 +256,9 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
   );
 
   const items = useMemo<ReadonlyArray<PhaseSidebarListItem>>(() => {
-    const flat: PhaseSidebarListItem[] = [];
+    const flat: PhaseSidebarListItem[] = [
+      ...buildPhaseSidebarDraftItems(props.drafts, collapsedSectionKeys),
+    ];
     for (const section of sections) {
       // Lifecycle and project sections exist only because they have rows; an
       // empty custom group still renders so it can be found and filled.
@@ -254,7 +273,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
       }
     }
     return flat;
-  }, [collapsedSectionKeys, isExpanded, sections]);
+  }, [collapsedSectionKeys, isExpanded, props.drafts, sections]);
 
   const snoozePresets = useMemo<ReadonlyArray<SnoozePreset>>(
     () => resolveSnoozePresets(new Date(nowIso)),
@@ -361,6 +380,13 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
   const handleToggleSection = useCallback(
     (section: PhaseSidebarSection) =>
       onChangeGrouping((current) => togglePhaseSidebarSectionCollapsed(current, section.key)),
+    [onChangeGrouping],
+  );
+  const handleToggleDrafts = useCallback(
+    () =>
+      onChangeGrouping((current) =>
+        togglePhaseSidebarSectionCollapsed(current, PHASE_SIDEBAR_DRAFTS_SECTION_KEY),
+      ),
     [onChangeGrouping],
   );
 
@@ -523,7 +549,15 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
         keyboardShouldPersistTaps="handled"
         keyExtractor={(item) => item.key}
         renderItem={({ item }) =>
-          item.kind === "section" ? (
+          item.kind === "drafts-section" ? (
+            <PhaseSidebarDraftHeader
+              collapsed={item.collapsed}
+              count={item.count}
+              onToggle={handleToggleDrafts}
+            />
+          ) : item.kind === "draft" ? (
+            props.renderDraftRow(item.draft)
+          ) : item.kind === "section" ? (
             renderSectionHeader(item.section, item.collapsed)
           ) : (
             <PhaseSidebarRowView

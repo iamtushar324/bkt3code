@@ -24,6 +24,8 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+// T3-CUSTOM(expbkt3): each server controls whether agents can submit a native plan.
+import { AgentPlanSubmissionSettingsRow } from "./AgentPlanSubmissionSettingsRow";
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -243,6 +245,8 @@ function ExperimentsSettingsSection() {
   return (
     <View className="gap-3">
       <SettingsSection title="Experiments">
+        {/* T3-CUSTOM(expbkt3): saved server setting, independent from mobile preferences. */}
+        <AgentPlanSubmissionSettingsRow />
         <SettingsSwitchRow
           icon="square.grid.2x2"
           label="Phase-grouped Sidebar"

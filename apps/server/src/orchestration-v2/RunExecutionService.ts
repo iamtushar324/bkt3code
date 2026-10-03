@@ -2,6 +2,8 @@
 import { appendOpenThreadComments } from "../threadcomments/turnContext.ts";
 // T3-CUSTOM(expbkt3): capture this optional fork service before native workers hide their construction context.
 import { ThreadCommentsService } from "../threadcomments/ThreadCommentsService.ts";
+// T3-CUSTOM(expbkt3): the server plan policy reaches every provider.
+import { appendAgentPlanInstructions } from "./forkAgentPlanInstructions.expbkt3.ts";
 import * as Option from "effect/Option";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -833,14 +835,13 @@ export const layer: Layer.Layer<
             failure,
             threadDisposition: "reusable",
           });
-          const responseStreamingMode = yield* Effect.gen(function* () {
-            const responseStreamingMode = yield* serverSettings.getSettings.pipe(
-              Effect.map(
-                (settings) =>
-                  resolveProjectSettings(settings, input.appThread.projectId).settings
-                    .responseStreamingMode,
-              ),
-            );
+          // T3-CUSTOM(expbkt3): capture the plan policy with the existing turn settings read.
+          const runPreferences = yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings;
+            const responseStreamingMode = resolveProjectSettings(
+              settings,
+              input.appThread.projectId,
+            ).settings.responseStreamingMode;
             yield* checkpointService
               .captureBaseline({
                 scope: input.checkpointScope,
@@ -862,7 +863,11 @@ export const layer: Layer.Layer<
             ) {
               return null;
             }
-            return responseStreamingMode;
+            // T3-CUSTOM(expbkt3): the policy is server-wide, without project overrides.
+            return {
+              responseStreamingMode,
+              agentPlanSubmissionEnabled: settings.experimental.agentPlanSubmissionEnabled,
+            };
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
@@ -908,9 +913,12 @@ export const layer: Layer.Layer<
                 }),
             ),
           );
-          if (responseStreamingMode === null) {
+          // T3-CUSTOM(expbkt3): preserve the existing failed-preparation exit.
+          if (runPreferences === null) {
             return;
           }
+          // T3-CUSTOM(expbkt3): paragraph/token filters still use the upstream preference.
+          const { responseStreamingMode, agentPlanSubmissionEnabled } = runPreferences;
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
@@ -1360,7 +1368,11 @@ export const layer: Layer.Layer<
             : Effect.succeed(input.message.text);
           const providerMessage = compact
             ? input.message
-            : { ...input.message, text: yield* commentText };
+            : // T3-CUSTOM(expbkt3): command history stays unchanged; the agent gets the plan policy.
+              {
+                ...input.message,
+                text: appendAgentPlanInstructions(yield* commentText, agentPlanSubmissionEnabled),
+              };
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
@@ -1375,7 +1387,7 @@ export const layer: Layer.Layer<
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,
-            message: providerMessage,
+            message: providerMessage, // T3-CUSTOM(expbkt3): comments and the server plan policy reach the provider.
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
           };

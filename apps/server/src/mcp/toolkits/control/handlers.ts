@@ -1342,6 +1342,15 @@ const handlers = {
   // provider-authored plan (Markdown or HTML).
   t3_submit_plan: Effect.fn("T3ControlToolkit.submitPlan")(function* (input) {
     const operation = "submit-plan";
+    const settings = yield* (yield* ServerSettingsService).getSettings.pipe(
+      mapControlError(operation),
+    );
+    if (!settings.experimental.agentPlanSubmissionEnabled) {
+      return yield* new T3ControlToolError({
+        operation,
+        message: "Plan submission is disabled. Put the complete plan in the main chat.",
+      });
+    }
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.plan");
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* TurnStartBootstrap;

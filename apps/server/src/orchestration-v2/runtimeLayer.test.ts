@@ -1,5 +1,7 @@
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+// T3-CUSTOM(expbkt3): watch fixtures resolve the owner's source-control profile.
+import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -2292,6 +2294,10 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
               detail: () => Effect.die("host unreachable"),
               activity: () => Effect.die("host unreachable"),
             }),
+            // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+            Layer.mock(SourceControlProfileService)({
+              resolveThreadExecutionContext: () => Effect.succeed(null),
+            }),
           ),
         ),
       );
@@ -2402,6 +2408,10 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+            Layer.mock(SourceControlProfileService)({
+              resolveThreadExecutionContext: () => Effect.succeed(null),
+            }),
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.succeed(detail),
               activity: () =>

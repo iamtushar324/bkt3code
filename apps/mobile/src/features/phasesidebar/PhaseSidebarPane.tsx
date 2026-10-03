@@ -9,6 +9,7 @@
 // Everything below is wiring. Grouping, filtering, sorting, row metadata and
 // the drop rules all live in client-runtime or this feature's pure modules.
 import { useNavigation } from "@react-navigation/native";
+import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_PHASE_SIDEBAR_SORT,
   EMPTY_PHASE_SIDEBAR_FILTERS,
@@ -40,6 +41,12 @@ import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+import { scopedProjectKey } from "../../lib/scopedEntities";
+import { threadListEnvironmentsAtom } from "../../state/server";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { usePendingNewTasks, type PendingDraftTask } from "../../state/use-pending-new-tasks";
+import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
+import { ThreadListV2PendingRow } from "../threads/thread-list-v2-items";
 import { useEnvironmentAppearances } from "../environments/useEnvironmentAppearance";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -66,6 +73,7 @@ import {
   type PhaseSidebarHostFilters,
 } from "./phaseSidebarHostFilters";
 import { usePhaseSidebarRows, usePhaseSidebarViewerUserId } from "./usePhaseSidebarRows";
+import { selectPhaseSidebarDrafts } from "./phaseSidebarDrafts";
 
 function HeaderButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -111,6 +119,47 @@ export function PhaseSidebarPane(props: {
 }) {
   const navigation = useNavigation();
   const projects = useProjects();
+  const projectByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+      ),
+    [projects],
+  );
+  const pendingTasks = usePendingNewTasks();
+  const drafts = useMemo(
+    () => selectPhaseSidebarDrafts(pendingTasks, props.homeFilters),
+    [pendingTasks, props.homeFilters],
+  );
+  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
+  const { savedConnectionsById } = useSavedRemoteConnections();
+  const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
+  const renderDraftRow = useCallback(
+    (draft: PendingDraftTask) => (
+      <ThreadListV2PendingRow
+        environmentLabel={
+          Object.keys(savedConnectionsById).length > 1
+            ? (savedConnectionsById[draft.environmentId]?.environmentLabel ?? null)
+            : null
+        }
+        environmentMachine={machineByEnvironmentId.get(draft.environmentId)}
+        onDeletePendingTask={confirmDeletePendingTask}
+        onSelectPendingTask={openPendingTask}
+        pane="screen"
+        pendingTask={draft}
+        project={projectByKey.get(scopedProjectKey(draft.environmentId, draft.projectId)) ?? null}
+        showPendingDivider={false}
+        showTrailingDivider={false}
+      />
+    ),
+    [
+      confirmDeletePendingTask,
+      machineByEnvironmentId,
+      openPendingTask,
+      projectByKey,
+      savedConnectionsById,
+    ],
+  );
   const { environments } = useEnvironments();
   const viewerEnvironmentId = props.viewerEnvironmentId ?? environments[0]?.environmentId ?? null;
   const allRows = usePhaseSidebarRows({ viewerEnvironmentId });
@@ -500,6 +549,7 @@ export function PhaseSidebarPane(props: {
         activeThreadKey={props.selectedThreadKey}
         contentContainerStyle={props.contentContainerStyle}
         contentInsetAdjustmentBehavior={props.contentInsetAdjustmentBehavior}
+        drafts={drafts}
         environmentAppearanceFor={environmentAppearanceFor}
         environmentLabelFor={environmentLabelFor}
         filters={filters}
@@ -511,6 +561,7 @@ export function PhaseSidebarPane(props: {
         onSectionAction={handleSectionAction}
         onSelectRow={handleSelect}
         projectLabelFor={projectLabelFor}
+        renderDraftRow={renderDraftRow}
         rows={rows}
         sort={sort}
         viewerUserId={viewerUserId}

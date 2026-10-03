@@ -243,7 +243,9 @@ export function presentThreadShell(
     parentThreadId: thread.parentThreadId ?? thread.lineage.parentThreadId ?? null,
     parentEnvironmentId: thread.parentEnvironmentId ?? null,
     hasPendingAsyncUserInput: thread.hasPendingAsyncUserInput ?? false,
-    backgroundLiveness: (thread.pendingBackgroundTasks?.length ?? 0) > 0 ? "monitoring" : null,
+    backgroundLiveness: backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+      ? "monitoring"
+      : null,
     // T3-CUSTOM(expbkt3): END
     environmentId,
     id: thread.id,

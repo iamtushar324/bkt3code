@@ -50,7 +50,7 @@ import {
 } from "./toolkits/preview/handlers.ts";
 // T3-CUSTOM(expbkt3): BEGIN — the fork's control toolkit (T3 MCP control plane).
 import { T3ControlToolkitHandlersLive } from "./toolkits/control/handlers.ts";
-import { T3ControlToolkit } from "./toolkits/control/tools.ts";
+import { registerT3ControlToolkit } from "./toolkits/control/registration.expbkt3.ts";
 // T3-CUSTOM(expbkt3): END
 import {
   PreviewSnapshotTool,
@@ -685,7 +685,8 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 );
 
 // T3-CUSTOM(expbkt3): the fork's control toolkit.
-export const T3ControlToolkitRegistrationLive = McpServer.toolkit(T3ControlToolkit).pipe(
+export const T3ControlToolkitRegistrationLive = Layer.effectDiscard(registerT3ControlToolkit).pipe(
+  Layer.provide(McpServer.McpServer.layer),
   Layer.provide(T3ControlToolkitHandlersLive),
 );
 

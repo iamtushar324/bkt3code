@@ -227,6 +227,11 @@ import { PhaseSidebarGroupNameDialog } from "./sidebar/PhaseSidebarGroupNameDial
 import { phaseSidebarSectionHeaderClassName } from "./sidebar/PhaseGroupedSidebar.logic";
 import { MoveUnderSessionDialog } from "./sidebar/MoveUnderSessionDialog";
 import { NewThreadProjectPicker } from "./sidebar/NewThreadProjectPicker";
+// T3-CUSTOM(expbkt3): the dedicated unstarted-drafts group shares normal composer state.
+import {
+  PhaseSidebarDraftsGroup,
+  usePhaseSidebarDraftCount,
+} from "./sidebar/PhaseSidebarDraftsGroup";
 // T3-CUSTOM(expbkt3): "Create new thread" from a row, as a side-by-side session.
 import {
   buildNewThreadFromRowCreateInput,
@@ -2400,6 +2405,16 @@ export function PhaseGroupedSidebar() {
     [projects],
   );
   const repositoryOptions = useMemo(() => buildPhaseSidebarRepositoryOptions(projects), [projects]);
+  // T3-CUSTOM(expbkt3): drafts respect repository scope without thread-only phase metadata.
+  const draftScope = useMemo(
+    () => ({
+      projectByKey,
+      repositoryKeys: filters.repositoryKeys,
+      routeDraftId: routeParams.draftId ?? null,
+    }),
+    [projectByKey, filters.repositoryKeys, routeParams.draftId],
+  );
+  const visibleDraftCount = usePhaseSidebarDraftCount(draftScope);
   const repositoryLabels = useMemo(
     () => new Map(repositoryOptions.map((option) => [option.key, option.label])),
     [repositoryOptions],
@@ -3804,6 +3819,8 @@ export function PhaseGroupedSidebar() {
           className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
           data-testid="phase-sidebar-groups"
         >
+          {/* T3-CUSTOM(expbkt3): unsent draft sessions precede all lifecycle/project/custom groups. */}
+          <PhaseSidebarDraftsGroup {...draftScope} />
           {sections.map((section) => (
             <PhaseSidebarSectionBlock
               key={section.key}
@@ -3909,7 +3926,9 @@ export function PhaseGroupedSidebar() {
             </section>
           ) : null}
           {/* T3-CUSTOM(expbkt3): END */}
+          {/* T3-CUSTOM(expbkt3): drafts alone are a populated sidebar, even when collapsed. */}
           {sections.every((section) => section.nodes.length === 0) &&
+          visibleDraftCount === 0 &&
           snoozedRows.length + settledRows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
               <FilterIcon className="size-5 text-muted-foreground/40" />

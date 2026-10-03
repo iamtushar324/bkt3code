@@ -15,6 +15,8 @@ import {
 // T3-CUSTOM(expbkt3): native plan review (moved here from the removed Beta panel).
 import { searchableSetting } from "./settingsSearch";
 import { ExperimentsLogoutControl } from "../../fork/ExperimentsLogoutControl"; // T3-CUSTOM(expbkt3): log out (web and desktop).
+// T3-CUSTOM(expbkt3): agent plan tool availability is saved for every server session.
+import { AgentPlanSubmissionSettingsRow } from "./AgentPlanSubmissionSettingsRow";
 
 export function ExperimentsSettingsPanel() {
   const phaseGroupedSidebarEnabled = useClientSettings(
@@ -60,6 +62,8 @@ export function ExperimentsSettingsPanel() {
           }
         />
         {/* T3-CUSTOM(expbkt3): END */}
+        {/* T3-CUSTOM(expbkt3): independent from this device's native plan review display. */}
+        <AgentPlanSubmissionSettingsRow />
         {/* T3-CUSTOM(expbkt3): BEGIN — plan review takeover. */}
         <SettingsRow
           {...searchableSetting("plan-review-takeover")}

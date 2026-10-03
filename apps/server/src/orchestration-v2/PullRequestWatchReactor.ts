@@ -24,6 +24,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
+import { makePullRequestWatchOwnerExecution } from "./forkPullRequestWatchIdentity.expbkt3.ts"; // T3-CUSTOM(expbkt3): owner credentials for watch reads.
 
 /** Passes in a row that could not read a pull request before its watch ends (one a minute). */
 const READ_FAILURE_LIMIT = 15;
@@ -78,6 +79,7 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
+  const withOwnerExecution = yield* makePullRequestWatchOwnerExecution; // T3-CUSTOM(expbkt3): capture the fork identity services.
 
   // Passes in a row that failed, per watch. Kept in memory: a restart only delays the stop.
   const readFailures = new Map<string, number>();
@@ -134,13 +136,18 @@ export const make = Effect.gen(function* () {
     if (thread.settledOverride === "settled" || thread.settledAt !== null) return;
 
     const reference = { projectId: thread.projectId, ...pullRequest };
+    // T3-CUSTOM(expbkt3): run both host reads with the current owner's credentials.
     const read = yield* Effect.exit(
-      Effect.all(
-        [
-          pullRequests.detail({ ...reference, allowStale: false }),
-          pullRequests.activity(reference),
-        ],
-        { concurrency: 2 },
+      withOwnerExecution(
+        thread.id,
+        Effect.all(
+          // T3-CUSTOM(expbkt3): one owner context covers detail and activity.
+          [
+            pullRequests.detail({ ...reference, allowStale: false }),
+            pullRequests.activity(reference),
+          ],
+          { concurrency: 2 },
+        ),
       ),
     );
     // Only host reads count towards giving up; a refused wake is not the host's fault.

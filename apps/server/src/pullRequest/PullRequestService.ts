@@ -74,6 +74,11 @@ import {
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
+// T3-CUSTOM(expbkt3): profile watches must not share another owner's cached host result or viewer.
+import {
+  CurrentPullRequestProfileViewer,
+  sourceControlCredentialNamespace,
+} from "./sourceControlCredentialNamespace.expbkt3.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -3246,12 +3251,23 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const ref = yield* canonicalRef(input);
         const credential = yield* routingCredential;
-        return yield* read(
-          credential === null
-            ? ref
-            : { ...ref, [credentialNamespace]: credential.credentialFingerprint },
+        // T3-CUSTOM(expbkt3): partition profile reads and retain their verified viewer inside cache loaders.
+        const fingerprint = yield* sourceControlCredentialNamespace(
+          credential?.credentialFingerprint ?? null,
+        );
+        const profileViewer = yield* CurrentPullRequestProfileViewer;
+        const operation = read(
+          fingerprint === null ? ref : { ...ref, [credentialNamespace]: fingerprint },
           ...args,
         );
+        return yield* credential === null && profileViewer !== null && fingerprint !== null
+          ? operation.pipe(
+              Effect.provideService(routingCredential, {
+                credentialFingerprint: fingerprint,
+                viewer: profileViewer,
+              }),
+            )
+          : operation;
       });
 
   return PullRequestService.of({
