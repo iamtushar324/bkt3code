@@ -40,6 +40,8 @@ export interface McpCredentialRequest {
   // T3-CUSTOM(expbkt3): BEGIN — actor identity for control-plane capabilities, and the
   // caller-gated capability set made optional for pre-existing fork call sites.
   readonly actorUserId?: UserId | null;
+  /** T3-CUSTOM(expbkt3): accepted only through the authenticated manager route. */
+  readonly backgroundGrantHash?: string | undefined;
   /**
    * Capabilities the caller gates ("preview", "device").
    * T3-CUSTOM(expbkt3): optional — fork call sites that predate upstream's
@@ -142,6 +144,7 @@ export interface McpSessionRegistryOptions {
    * user-bound provider credential is tied to the logins returned here and
    * dies with them.
    */
+  readonly isBackgroundGrantActive?: (userId: UserId, grantHash: string) => Effect.Effect<boolean>;
   readonly listActiveLogins?: (userId: UserId) => Effect.Effect<ReadonlyArray<McpLoginBinding>>;
   // T3-CUSTOM(expbkt3): END
 }
@@ -233,6 +236,15 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     return next.size === records.size ? records : next;
   };
 
+  // T3-CUSTOM(expbkt3): grant checks fail closed and never substitute a browser login.
+  const grantIsActive = Effect.fnUntraced(function* (userId: UserId | null, grantHash: string) {
+    if (userId === null || options.isBackgroundGrantActive === undefined) return false;
+    const settings = yield* (
+      options.loadExternalMcpSettings?.() ?? Effect.succeed({ enabled: false, apiKey: "" })
+    );
+    return settings.enabled && (yield* options.isBackgroundGrantActive(userId, grantHash));
+  });
+
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
@@ -243,16 +255,30 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       // T3-CUSTOM(expbkt3): A user-bound credential is an extension of the
       // login that produced it. It never expires from inactivity, and it dies
       // when every login it was issued from is gone.
+      const backgroundGrantActive =
+        request.backgroundGrantHash === undefined
+          ? false
+          : yield* grantIsActive(actorUserId, request.backgroundGrantHash);
       const activeLogins =
-        actorUserId === null || options.listActiveLogins === undefined
+        request.backgroundGrantHash !== undefined ||
+        actorUserId === null ||
+        options.listActiveLogins === undefined
           ? undefined
           : yield* options.listActiveLogins(actorUserId);
       const loginSessionIds = activeLogins
         ? new Set(activeLogins.map((login) => login.sessionId))
         : undefined;
-      const expiresAt = activeLogins
-        ? activeLogins.reduce((latest, login) => Math.max(latest, login.expiresAtMillis), issuedAt)
-        : issuedAt + maximumLifetimeMs;
+      const expiresAt =
+        request.backgroundGrantHash !== undefined
+          ? backgroundGrantActive
+            ? Number.MAX_SAFE_INTEGER
+            : issuedAt - 1
+          : activeLogins
+            ? activeLogins.reduce(
+                (latest, login) => Math.max(latest, login.expiresAtMillis),
+                issuedAt,
+              )
+            : issuedAt + maximumLifetimeMs;
       if (activeLogins && activeLogins.length === 0) {
         yield* Effect.logWarning(
           "issuing an unusable provider MCP credential because the actor has no active login",
@@ -263,24 +289,32 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         actorUserId === null || options.loadPersonalProfile === undefined
           ? undefined
           : yield* options.loadPersonalProfile(actorUserId);
+      // T3-CUSTOM(expbkt3): background agents observe sessions; the bridge owns guarded writes.
+      // Browser/device access retains the normal provider policy. Personal upstream integrations
+      // enforce their own policy independently of the native T3 coordination capabilities.
       const capabilities = new Set<McpInvocationContext.McpCapability>([
-        "orchestration",
-        "worktree",
-        "pull-requests",
-        ...(request.capabilities ??
-          ((request.browserToolsAvailable ?? true) ? (["preview"] as const) : [])),
-        // T3-CUSTOM(expbkt3): the fork's control-plane capabilities ride on every
-        // provider session; browser/device stay gated by `request.capabilities`.
+        ...Array.from(
+          request.capabilities ??
+            ((request.browserToolsAvailable ?? true) ? (["preview"] as const) : []),
+        ).filter(
+          (capability) =>
+            request.backgroundGrantHash === undefined ||
+            capability === "preview" ||
+            capability === "device",
+        ),
         "t3.read",
-        "t3.control",
-        "t3.plan",
+        ...(request.backgroundGrantHash === undefined
+          ? (["orchestration", "worktree", "pull-requests", "t3.control", "t3.plan"] as const)
+          : []),
       ]);
-      // Every authenticated user-bound provider session may coordinate the
-      // user's other accessible sessions. Tool handlers still authorize every
-      // target thread/project against actorUserId before reading or mutating it.
-      if (actorUserId !== null) capabilities.add("t3.session.create");
+      if (actorUserId !== null && request.backgroundGrantHash === undefined)
+        capabilities.add("t3.session.create");
       const scope: McpInvocationContext.McpInvocationScope = {
         principal: "provider-session",
+        // T3-CUSTOM(expbkt3): derived credentials retain grant identity, never the original token.
+        ...(request.backgroundGrantHash === undefined
+          ? {}
+          : { backgroundGrantHash: request.backgroundGrantHash }),
         actorUserId,
         environmentId,
         threadId: ThreadId.make(request.threadId),
@@ -373,7 +407,21 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
         return [record.scope, { records: next }] as const;
       });
-      if (providerScope) return providerScope;
+      if (providerScope) {
+        // T3-CUSTOM(expbkt3): revoke/rotate/disable cuts off native and upstream MCP immediately.
+        if (
+          providerScope.backgroundGrantHash !== undefined &&
+          !(yield* grantIsActive(providerScope.actorUserId, providerScope.backgroundGrantHash))
+        ) {
+          yield* SynchronizedRef.update(state, ({ records }) => {
+            const next = new Map(records);
+            next.delete(tokenHash);
+            return { records: next };
+          });
+          return undefined;
+        }
+        return providerScope;
+      }
 
       // T3-CUSTOM(expbkt3): The server-wide switch controls all long-lived
       // external credentials. Short-lived ACP credentials above remain
@@ -505,6 +553,7 @@ const make = Effect.acquireRelease(
         UserMcpProfileStore.resolveActiveExternalToken(token).pipe(
           Effect.orElseSucceed(() => undefined),
         ),
+      isBackgroundGrantActive: UserMcpProfileStore.isActiveExternalGrant,
       listActiveLogins: (userId) =>
         sessions.listActive().pipe(
           Effect.map((clientSessions) =>

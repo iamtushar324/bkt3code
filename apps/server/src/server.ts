@@ -6,6 +6,8 @@ import * as PlanReviewServiceLayer from "./planreview/PlanReviewService.ts";
 import * as AgentUiServiceLayer from "./agentui/AgentUiService.ts";
 import * as PlanReviewDocuments from "./persistence/PlanReviewDocuments.ts";
 import * as AgentUiRenders from "./persistence/AgentUiRenders.ts";
+// T3-CUSTOM(expbkt3): user-owned manager bridge with an explicit revocable grant.
+import { managerRouteLayer } from "./orchestration-v2/managerHttp.expbkt3.ts";
 import { eventFeedRouteLayer } from "./orchestration-v2/eventFeedHttp.expbkt3.ts";
 import { pullRequestStateRouteLayer } from "./orchestration-v2/pullRequestStateHttp.expbkt3.ts";
 import * as EnvironmentUsers from "./persistence/EnvironmentUsers.ts";
@@ -802,6 +804,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     mcpUpstreamProxyRouteLayer,
     eventFeedRouteLayer,
+    managerRouteLayer, // T3-CUSTOM(expbkt3): personal manager grant routes.
     pullRequestStateRouteLayer,
     presenceRouteLayer,
   ).pipe(

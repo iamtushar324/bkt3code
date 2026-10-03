@@ -28,6 +28,8 @@ const errorMessage = (cause: unknown): string =>
 export const hasUserWideScope = (scope: McpInvocationContext.McpInvocationScope): boolean =>
   McpInvocationContext.isExternalMcpOperator(scope) ||
   scope.principal === "external-user" ||
+  // Background grants provide user-wide reads without granting session creation or control.
+  scope.backgroundGrantHash !== undefined ||
   scope.capabilities.has("t3.session.create");
 
 export const resolveMcpSessionTarget = Effect.fn("mcp.resolveSessionTarget")(function* (options: {

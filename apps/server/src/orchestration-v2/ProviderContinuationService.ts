@@ -1,4 +1,9 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): correlate native wakes with the executed provider turn.
+import {
+  CommandId,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -92,8 +97,42 @@ export const workerLive = Layer.effectDiscard(
                 : [request.delegatedCompletion.messageId],
           },
         );
-        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
-          yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
+        // T3-CUSTOM(expbkt3): the bridge owns all later turns for a granted run.
+        // A later queued/preparing human run has not replaced the native turn's authority.
+        const nativeSourceTurn = projection.providerTurns?.reduce<
+          OrchestrationV2ProviderTurn | undefined
+        >((latest, turn) => {
+          if (
+            turn.providerThreadId !== request.providerThreadId ||
+            turn.nativeTurnRef === null ||
+            turn.startedAt === null ||
+            turn.status === "pending"
+          )
+            return latest;
+          return latest === undefined || turn.ordinal > latest.ordinal ? turn : latest;
+        }, undefined);
+        const sourceRun =
+          request.delegatedCompletion === undefined
+            ? projection.runs?.find(
+                (run) =>
+                  nativeSourceTurn !== undefined && run.rootNodeId === nativeSourceTurn.nodeId,
+              )
+            : projection.runs?.find((run) => run.id === request.delegatedCompletion?.parentRunId);
+        const sourceMessages =
+          sourceRun?.userMessageId === undefined
+            ? []
+            : (yield* threads.getThreadRecords(request.threadId, ["messages"], {
+                messageIds: [sourceRun.userMessageId],
+              })).messages;
+        const backgroundOrigin = sourceMessages.some(
+          (message) => message.backgroundGrantHash !== undefined,
+        );
+        if (
+          backgroundOrigin ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null
+        ) {
+          yield* Effect.logInfo("orchestration-v2.provider-continuation.suppressed", {
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
           });

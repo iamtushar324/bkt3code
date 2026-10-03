@@ -59,6 +59,7 @@ import {
 } from "../identity/SessionIdentityEnvironment.ts";
 import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
 import type { ProviderSessionExecutionOptions } from "../provider/sessionExecutionOptions.expbkt3.ts";
+import { makeBackgroundTurnGuard } from "./backgroundTurnGrant.expbkt3.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -340,13 +341,19 @@ export const layerWithOptions = (
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      // T3-CUSTOM(expbkt3): grants are checked at process startup and reuse.
+      const checkBackgroundGrant = yield* makeBackgroundTurnGuard();
       // T3-CUSTOM(expbkt3): BEGIN resolve identity at each open, including lazy recovery.
       const executionOptionsFor = Effect.fn("ProviderSessionManagerV2.executionOptionsFor")(
         function* (
           threadId: ThreadId,
           messageId?: MessageId,
         ): Effect.fn.Return<ProviderSessionExecutionOptions> {
-          if (Option.isNone(identityService) && Option.isNone(sourceControlProfiles))
+          if (
+            Option.isNone(identityService) &&
+            Option.isNone(sourceControlProfiles) &&
+            messageId === undefined
+          )
             return { actorUserId: null };
           const thread = yield* projectionStore.getThread(threadId).pipe(Effect.orDie);
           const { messages } = yield* projectionStore
@@ -357,6 +364,9 @@ export const layerWithOptions = (
               ? messages.toReversed().find((message) => message.role === "user")
               : messages.find((message) => message.id === messageId);
           const latestSender = senderMessage?.sentByUserId ?? null;
+          // T3-CUSTOM(expbkt3): rollback has no message and must not inherit a historical grant.
+          const backgroundMessage = messageId === undefined ? undefined : senderMessage;
+
           const identityEnvironment = Option.isSome(identityService)
             ? yield* identityService.value.resolve({
                 ownerUserId: thread.ownerUserId ?? null,
@@ -369,7 +379,16 @@ export const layerWithOptions = (
                 .pipe(Effect.orDie)
             : null;
           return {
-            actorUserId: latestSender ?? thread.ownerUserId ?? null,
+            actorUserId:
+              backgroundMessage?.backgroundGrantHash === undefined
+                ? (latestSender ?? thread.ownerUserId ?? null)
+                : latestSender,
+            ...(backgroundMessage?.backgroundGrantHash === undefined
+              ? {}
+              : {
+                  backgroundGrantHash: backgroundMessage.backgroundGrantHash,
+                  backgroundRunId: backgroundMessage.runId ?? undefined,
+                }),
             sourceControlProfileId: thread.sourceControlProfileId ?? null,
             ...(identityEnvironment === undefined ? {} : { identityEnvironment }),
             ...(context === null ? {} : { environment: context.environment }),
@@ -379,6 +398,7 @@ export const layerWithOptions = (
       const executionIdentityKey = (options: ProviderSessionExecutionOptions) =>
         JSON.stringify([
           options.actorUserId ?? null,
+          options.backgroundGrantHash ?? null,
           options.sourceControlProfileId ?? null,
           sessionIdentityFingerprint(options.identityEnvironment ?? {}),
           options.environment ?? null,
@@ -480,7 +500,7 @@ export const layerWithOptions = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
         // T3-CUSTOM(expbkt3): bind MCP to the same sender as the exact queued message.
-        executionOptionsOverride?: ProviderSessionExecutionOptions,
+        executionOptions: ProviderSessionExecutionOptions,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? Effect.sync((): PreparedMcpCredential => {
@@ -504,8 +524,6 @@ export const layerWithOptions = (
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
                 // T3-CUSTOM(expbkt3): a token can survive a restart only for the same actor.
-                const executionOptions =
-                  executionOptionsOverride ?? (yield* executionOptionsFor(threadId));
                 const actorUserId = executionOptions.actorUserId ?? null;
                 const existing = McpProviderSession.readMcpProviderSession(threadId);
                 if (existing !== undefined) {
@@ -519,6 +537,7 @@ export const layerWithOptions = (
                     resolved.threadId === threadId &&
                     resolved.providerInstanceId === providerInstanceId &&
                     resolved.actorUserId === actorUserId && // T3-CUSTOM(expbkt3): actor isolation.
+                    resolved.backgroundGrantHash === executionOptions.backgroundGrantHash &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
@@ -535,6 +554,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   actorUserId, // T3-CUSTOM(expbkt3): personal MCP/control capabilities.
+                  backgroundGrantHash: executionOptions.backgroundGrantHash,
                 });
                 McpProviderSession.setMcpProviderSession(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
@@ -1277,6 +1297,7 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        readonly executionOptions: ProviderSessionExecutionOptions; // T3-CUSTOM(expbkt3): preserve process authority on attachment.
       }) =>
         Effect.suspend(() => {
           let preparedForCleanup: PreparedMcpCredential | undefined;
@@ -1293,7 +1314,12 @@ export const layerWithOptions = (
               attachThread(input),
             );
             if (attached) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              // T3-CUSTOM(expbkt3): attachment uses the process authority.
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.executionOptions,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1449,15 +1475,14 @@ export const layerWithOptions = (
         eventSubscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
-        credentialActorUserId: UserId | null, // T3-CUSTOM(expbkt3): exact actor captured before adapter open.
-        credentialSourceControlProfileId: ProviderSessionExecutionOptions["sourceControlProfileId"], // T3-CUSTOM(expbkt3): capture the selected Git profile with its process.
+        executionOptions: ProviderSessionExecutionOptions, // T3-CUSTOM(expbkt3): capture authority with the process.
       ): ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
         return {
           ...runtime,
-          credentialActorUserId, // T3-CUSTOM(expbkt3): active steers must match the actual provider credentials.
-          credentialSourceControlProfileId: credentialSourceControlProfileId ?? null, // T3-CUSTOM(expbkt3): profile edits cannot relabel existing process credentials.
+          credentialActorUserId: executionOptions.actorUserId ?? null, // T3-CUSTOM(expbkt3): active steers must match the actual provider credentials.
+          credentialSourceControlProfileId: executionOptions.sourceControlProfileId ?? null, // T3-CUSTOM(expbkt3): profile edits cannot relabel existing process credentials.
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
@@ -1469,6 +1494,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                executionOptions, // T3-CUSTOM(expbkt3): preserve the process grant.
               }),
             ).pipe(
               Effect.andThen(runtime.ensureThread(input)),
@@ -1502,6 +1528,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId,
                 providerInstanceId: runtime.instanceId,
+                executionOptions, // T3-CUSTOM(expbkt3): preserve the process grant.
               }),
             ).pipe(
               Effect.andThen(
@@ -1534,6 +1561,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.targetThreadId,
                 providerInstanceId: runtime.instanceId,
+                executionOptions, // T3-CUSTOM(expbkt3): preserve the process grant.
               }),
             ).pipe(
               Effect.andThen(runtime.forkThread(input)),
@@ -1560,6 +1588,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                executionOptions, // T3-CUSTOM(expbkt3): preserve the process grant.
               }),
             ).pipe(
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
@@ -1755,6 +1784,22 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               // T3-CUSTOM(expbkt3): BEGIN stale identity must never continue on a prior actor's process.
               const executionOptions = yield* executionOptionsFor(input.threadId, input.messageId);
+              const checkGrant = checkBackgroundGrant({
+                threadId: input.threadId,
+                actorUserId: executionOptions.actorUserId ?? null,
+                grantHash: executionOptions.backgroundGrantHash,
+                runId: executionOptions.backgroundRunId ?? null,
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
+              yield* checkGrant;
               const identityKey = executionIdentityKey(executionOptions);
               let existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined && existing.executionIdentityKey !== identityKey) {
@@ -1781,7 +1826,10 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
+                  executionOptions, // T3-CUSTOM(expbkt3): preserve the process grant.
                 });
+                // T3-CUSTOM(expbkt3): attachment can overlap revocation or stop.
+                yield* checkGrant;
                 yield* touchActivity(input.providerSessionId);
                 return existing.exposedRuntime;
               }
@@ -1814,63 +1862,60 @@ export const layerWithOptions = (
                 }
               });
               const sessionScope = yield* Scope.make();
-              const runtime = yield* adapter
-                .openSession({
-                  threadId: input.threadId,
-                  providerSessionId: input.providerSessionId,
-                  // T3-CUSTOM(expbkt3): identity is applied before any provider process starts.
-                  executionOptions: withSessionIdentityEnvironment(executionOptions),
-                  modelSelection: input.modelSelection,
-                  runtimePolicy: input.runtimePolicy,
-                  ...(input.resumeFromSession === undefined
-                    ? {}
-                    : { resumeFromSession: input.resumeFromSession }),
-                  ...(input.initialNativeThreadId === undefined
-                    ? {}
-                    : { initialNativeThreadId: input.initialNativeThreadId }),
-                  ...(input.initialProviderItemIdentityVersion === undefined
-                    ? {}
-                    : {
-                        initialProviderItemIdentityVersion:
-                          input.initialProviderItemIdentityVersion,
-                      }),
-                })
-                .pipe(
-                  Effect.provideService(Scope.Scope, sessionScope),
-                  Effect.tapError(() =>
-                    Scope.close(sessionScope, Exit.void).pipe(
-                      Effect.ignore,
-                      Effect.andThen(dropReservation),
-                      // Revoke only a credential this open freshly minted: a
-                      // reused credential is held by another live provider
-                      // process and must survive this open's failure.
-                      Effect.andThen(
-                        prepared.issued
-                          ? clearMcpSession(input.threadId, mcpCredentialId)
-                          : Effect.void,
-                      ),
+              // T3-CUSTOM(expbkt3): MCP preparation can overlap grant revocation.
+              const runtime = yield* checkGrant.pipe(
+                Effect.andThen(() =>
+                  adapter.openSession({
+                    threadId: input.threadId,
+                    providerSessionId: input.providerSessionId,
+                    // T3-CUSTOM(expbkt3): identity is applied before any provider process starts.
+                    executionOptions: withSessionIdentityEnvironment(executionOptions),
+                    modelSelection: input.modelSelection,
+                    runtimePolicy: input.runtimePolicy,
+                    ...(input.resumeFromSession === undefined
+                      ? {}
+                      : { resumeFromSession: input.resumeFromSession }),
+                    ...(input.initialNativeThreadId === undefined
+                      ? {}
+                      : { initialNativeThreadId: input.initialNativeThreadId }),
+                    ...(input.initialProviderItemIdentityVersion === undefined
+                      ? {}
+                      : {
+                          initialProviderItemIdentityVersion:
+                            input.initialProviderItemIdentityVersion,
+                        }),
+                  }),
+                ),
+                Effect.provideService(Scope.Scope, sessionScope),
+                Effect.tapError(() =>
+                  Scope.close(sessionScope, Exit.void).pipe(
+                    Effect.ignore,
+                    Effect.andThen(dropReservation),
+                    // Revoke only a credential this open freshly minted: a
+                    // reused credential is held by another live provider
+                    // process and must survive this open's failure.
+                    Effect.andThen(
+                      prepared.issued
+                        ? clearMcpSession(input.threadId, mcpCredentialId)
+                        : Effect.void,
                     ),
                   ),
-                  Effect.onInterrupt(() => dropReservation),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderSessionOpenError({
-                        instanceId: input.modelSelection.instanceId,
-                        providerSessionId: input.providerSessionId,
-                        cause,
-                      }),
-                  ),
-                );
+                ),
+                Effect.onInterrupt(() => dropReservation),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
               const eventSubscribers = yield* Ref.make<
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               // T3-CUSTOM(expbkt3): expose the process actor, independent of later messages or owner edits.
-              const exposedRuntime = decorateRuntime(
-                runtime,
-                eventSubscribers,
-                executionOptions.actorUserId ?? null,
-                executionOptions.sourceControlProfileId,
-              );
+              const exposedRuntime = decorateRuntime(runtime, eventSubscribers, executionOptions);
               const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
                 executionIdentityKey: identityKey, // T3-CUSTOM(expbkt3): credential restart fencing.

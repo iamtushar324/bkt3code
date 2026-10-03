@@ -1039,6 +1039,8 @@ export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Typ
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   // T3-CUSTOM(expbkt3): the durable human sender controls provider credentials.
   sentByUserId: Schema.optionalKey(Schema.NullOr(UserId)),
+  // T3-CUSTOM(expbkt3): server-stamped grant survives durable provider startup.
+  backgroundGrantHash: Schema.optionalKey(Schema.String),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1286,6 +1288,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("user_message"),
     // T3-CUSTOM(expbkt3): retain the human sender in timeline projections.
     sentByUserId: Schema.optionalKey(Schema.NullOr(UserId)),
+    // T3-CUSTOM(expbkt3): server-stamped background authority, never a command input.
+    backgroundGrantHash: Schema.optionalKey(Schema.String),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -2023,6 +2027,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("user_message"),
     // T3-CUSTOM(expbkt3): retain the human sender in timeline projections.
     sentByUserId: Schema.optionalKey(Schema.NullOr(UserId)),
+    // T3-CUSTOM(expbkt3): retain authority when durable JSON is decoded.
+    backgroundGrantHash: Schema.optionalKey(Schema.String),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),

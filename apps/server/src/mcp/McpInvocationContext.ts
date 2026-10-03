@@ -41,6 +41,8 @@ export interface McpInvocationScope {
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
+  /** T3-CUSTOM(expbkt3): server-issued background grant; revoked independently of browser logins. */
+  readonly backgroundGrantHash?: string;
 }
 
 // T3-CUSTOM(expbkt3): BEGIN — MCP control-plane operator/session-creation gating.

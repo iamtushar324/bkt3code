@@ -237,6 +237,11 @@ export class UserMcpProfileStore extends Context.Service<
     readonly resolveExternalToken: (
       rawToken: string,
     ) => Effect.Effect<ResolvedPersonalMcpToken | undefined, PersonalMcpSettingsError>;
+    /** Revalidate a derived background credential without retaining its bearer secret. */
+    readonly isExternalGrantActive: (
+      userId: UserId,
+      tokenHash: string,
+    ) => Effect.Effect<boolean, PersonalMcpSettingsError>;
     readonly getIntegrationCredential: (
       userId: UserId,
       integrationId: PersonalMcpIntegrationId,
@@ -621,6 +626,12 @@ export const layer = Layer.effect(
       revokeExternalToken: (userId) =>
         userLock.withLock(userId, revokeExternalTokenUnlocked(userId)),
       resolveExternalToken,
+      isExternalGrantActive: (userId, tokenHash) =>
+        Effect.gen(function* () {
+          const row = yield* readRow(userId);
+          if (!row?.externalTokenHash || row.externalTokenHash !== tokenHash) return false;
+          return (yield* materialize(userId, row)).externalAccessEnabled;
+        }),
       getIntegrationCredential,
       setIntegrationCredential: (userId, integrationId, credential, connection) =>
         userLock.withLock(
@@ -677,3 +688,11 @@ export const resolveActiveExternalToken = (
   activeUserMcpProfileStore
     ? activeUserMcpProfileStore.resolveExternalToken(rawToken)
     : Effect.succeed(undefined);
+
+/** A revoked or rotated personal token cannot keep a derived provider credential alive. */
+export const isActiveExternalGrant = (userId: UserId, tokenHash: string) =>
+  activeUserMcpProfileStore
+    ? activeUserMcpProfileStore
+        .isExternalGrantActive(userId, tokenHash)
+        .pipe(Effect.orElseSucceed(() => false))
+    : Effect.succeed(false);

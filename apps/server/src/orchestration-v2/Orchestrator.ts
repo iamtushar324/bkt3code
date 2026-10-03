@@ -1,3 +1,9 @@
+// T3-CUSTOM(expbkt3): background dispatch uses the native lock and durable receipt.
+import {
+  assertManagerDispatch,
+  assertManagerBootstrapDispatch,
+  type ManagerDispatchOptions,
+} from "./managerGuard.expbkt3.ts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -259,7 +265,7 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
     // T3-CUSTOM(expbkt3): the authenticated actor is supplied by transport access control.
-    options?: { readonly actorUserId?: UserId | null },
+    options?: { readonly actorUserId?: UserId | null } & ManagerDispatchOptions,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -9737,12 +9743,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
     // T3-CUSTOM(expbkt3): actor context is local to this command, never a shared mutable variable.
     actorUserId: UserId | null = null,
+    // T3-CUSTOM(expbkt3): supplied only by the authenticated manager service.
+    managerOptions: ManagerDispatchOptions = {},
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    // T3-CUSTOM(expbkt3): each bootstrap mutation revalidates the grant and permanent binding under the lock.
+    if (managerOptions.managerBootstrapGrant !== undefined) {
+      yield* assertManagerBootstrapDispatch(
+        command,
+        actorUserId,
+        managerOptions.managerBootstrapGrant,
+        projectionStore,
+        projects,
+        eventSink,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorCommandRejectedError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        ),
+      );
+    }
 
     const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
       Effect.mapError(
@@ -9797,7 +9826,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
-    const plan = yield* dispatchOnce(command).pipe(
+    // T3-CUSTOM(expbkt3): manager admission shares the native receipt failure path.
+    const plan = yield* Effect.gen(function* () {
+      // T3-CUSTOM(expbkt3): guard after deduplication; persist refusals in the native receipt path.
+      if (
+        managerOptions.backgroundGrantHash !== undefined ||
+        managerOptions.expectedRevision !== undefined
+      ) {
+        yield* assertManagerDispatch(
+          command,
+          actorUserId,
+          managerOptions,
+          projectionStore,
+          eventSink,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+      }
+      return yield* dispatchOnce(command);
+    }).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything has
         // nothing to record, which is its expected outcome, not a failure.
@@ -9921,6 +9975,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   payload: {
                     ...event.payload,
                     sentByUserId: actorUserId ?? event.payload.sentByUserId ?? null,
+                    // T3-CUSTOM(expbkt3): persist the verified grant with the original message.
+                    ...(managerOptions.backgroundGrantHash === undefined
+                      ? {}
+                      : { backgroundGrantHash: managerOptions.backgroundGrantHash }),
                   },
                 };
               }
@@ -9931,6 +9989,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   payload: {
                     ...event.payload,
                     sentByUserId: actorUserId ?? event.payload.sentByUserId ?? null,
+                    // T3-CUSTOM(expbkt3): persist the verified grant with the original message.
+                    ...(managerOptions.backgroundGrantHash === undefined
+                      ? {}
+                      : { backgroundGrantHash: managerOptions.backgroundGrantHash }),
                   },
                 };
               }
@@ -9986,7 +10048,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : options.actorUserId;
       return yield* threadDispatch.withLock(
         commandThreadId(command),
-        dispatchWithReceiptEffect(command, actorUserId).pipe(
+        dispatchWithReceiptEffect(command, actorUserId, options).pipe(
           Effect.provideService(CurrentOrchestrationActorUserId, actorUserId),
         ),
       );

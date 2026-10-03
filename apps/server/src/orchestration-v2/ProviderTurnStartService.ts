@@ -52,6 +52,8 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+// T3-CUSTOM(expbkt3): revalidate queued background authority at provider boundaries.
+import { makeBackgroundTurnGuard } from "./backgroundTurnGrant.expbkt3.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -109,6 +111,8 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    // T3-CUSTOM(expbkt3): callbacks capture only the original actor/grant/run IDs.
+    const checkBackgroundGrant = yield* makeBackgroundTurnGuard();
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -368,6 +372,42 @@ export const layer: Layer.Layer<
           });
         },
       );
+      // T3-CUSTOM(expbkt3): BEGIN never turn a queued grant into owner or native-control authority.
+      const backgroundTurn = message.backgroundGrantHash !== undefined;
+      const grantCheck = checkBackgroundGrant({
+        threadId: input.threadId,
+        runId,
+        actorUserId: message.sentByUserId ?? null,
+        grantHash: message.backgroundGrantHash,
+      });
+      const denyBackgroundStart = Effect.fn("backgroundTurnGrant.denyStart")(function* (
+        detail: string,
+      ) {
+        yield* settleRunBeforeStart({
+          signal: "background-authorization-denied",
+          status: "failed",
+          now: yield* DateTime.now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Background turn was not sent",
+            failure: makeProviderFailure({ class: "permission_error", message: detail }),
+          },
+        });
+      });
+      const backgroundAllowed = grantCheck.pipe(
+        Effect.as(true),
+        Effect.catchTag("BackgroundTurnDenied", (cause) =>
+          denyBackgroundStart(cause.detail).pipe(Effect.as(false)),
+        ),
+      );
+      if (backgroundTurn && message.text.trimStart().startsWith("/")) {
+        yield* denyBackgroundStart("Native control commands are unavailable to background turns.");
+        return;
+      }
+      if (!(yield* backgroundAllowed)) return;
+      // T3-CUSTOM(expbkt3): END
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
@@ -465,6 +505,8 @@ export const layer: Layer.Layer<
             Effect.orElseSucceed(() => undefined),
           );
           if (project !== undefined) {
+            // T3-CUSTOM(expbkt3): filesystem discovery can overlap revocation.
+            if (!(yield* backgroundAllowed)) return;
             yield* Effect.logWarning("provider turn start recreating missing worktree", {
               threadId: projection.thread.id,
               worktreePath,
@@ -472,11 +514,16 @@ export const layer: Layer.Layer<
             });
             yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
               Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
+                // T3-CUSTOM(expbkt3): renew the grant check after pruning.
+                grantCheck.pipe(
+                  Effect.andThen(() =>
+                    gitWorkflow.createWorktree({
+                      cwd: project.workspaceRoot,
+                      refName: branch,
+                      path: worktreePath,
+                    }),
+                  ),
+                ),
               ),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
@@ -522,6 +569,8 @@ export const layer: Layer.Layer<
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
+      // T3-CUSTOM(expbkt3): policy and workspace preparation can be slow.
+      if (!(yield* backgroundAllowed)) return;
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -588,11 +637,14 @@ export const layer: Layer.Layer<
       const session = sessionResult.success;
       // Only the provider's own thread load fails the run on the last attempt;
       // store, id and handoff failures around it keep their typed errors.
+      // T3-CUSTOM(expbkt3): construct provider calls only after the fresh grant check.
       const loadFromProvider = (
-        load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>,
+        load: () => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>,
       ) =>
         Effect.gen(function* () {
-          const loaded = yield* Effect.result(load);
+          // T3-CUSTOM(expbkt3): every native ensure/fork/fallback checks fresh authority.
+          if (!(yield* backgroundAllowed)) return undefined;
+          const loaded = yield* Effect.result(load());
           if (loaded._tag === "Success") return loaded.success;
           if (input.willRetry === true) return yield* loaded.failure;
           yield* settleStartFailure({
@@ -629,7 +681,7 @@ export const layer: Layer.Layer<
               cause: `Native fork transfer ${nativeForkTransfer.id} has no source provider execution.`,
             });
           }
-          return yield* loadFromProvider(
+          return yield* loadFromProvider(() =>
             session.forkThread({
               sourceProviderThread,
               sourceProviderTurns: sourceProjection.providerTurns,
@@ -647,7 +699,7 @@ export const layer: Layer.Layer<
           // row's identity when attaching native state. An adapter that mints
           // its own row instead leaves two live rows per app thread, and
           // `activeProviderThreadId` then flaps between them on every update.
-          return yield* loadFromProvider(
+          return yield* loadFromProvider(() =>
             session.ensureThread({
               threadId: projection.thread.id,
               modelSelection: run.modelSelection,
@@ -663,6 +715,8 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        // T3-CUSTOM(expbkt3): native resume is a provider side effect too.
+        if (!(yield* backgroundAllowed)) return undefined;
         const resumed = yield* Effect.result(
           uncertainDelivery
             ? Effect.fail(
@@ -692,7 +746,8 @@ export const layer: Layer.Layer<
           reason: uncertainDelivery ? "uncertain_history_delivery" : "resume_failed",
           errorTag: resumed.failure._tag,
         });
-        const replacement = yield* loadFromProvider(
+        // T3-CUSTOM(expbkt3): fallback is subject to the same fresh grant check.
+        const replacement = yield* loadFromProvider(() =>
           session.ensureThread({
             threadId: projection.thread.id,
             modelSelection: run.modelSelection,
@@ -775,6 +830,8 @@ export const layer: Layer.Layer<
       });
       // The last attempt already failed the run.
       if (loadedProviderThread === undefined) return;
+      // T3-CUSTOM(expbkt3): never commit a revoked start as a running turn.
+      if (!(yield* backgroundAllowed)) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
       }
@@ -1092,6 +1149,8 @@ export const layer: Layer.Layer<
         compact = false,
       ) =>
         Effect.gen(function* () {
+          // T3-CUSTOM(expbkt3): portable history is private source content.
+          yield* grantCheck;
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =
@@ -1139,10 +1198,15 @@ export const layer: Layer.Layer<
               ? {}
               : {
                   inject: (history: ProviderAdapterV2HistoricalContext) =>
-                    session.injectHistory!({
-                      providerThread: runningProviderThread,
-                      ...history,
-                    }),
+                    // T3-CUSTOM(expbkt3): recheck after history preparation before disclosure.
+                    grantCheck.pipe(
+                      Effect.andThen(() =>
+                        session.injectHistory!({
+                          providerThread: runningProviderThread,
+                          ...history,
+                        }),
+                      ),
+                    ),
                 }),
             persist: (handoff) =>
               Effect.gen(function* () {
@@ -1165,6 +1229,8 @@ export const layer: Layer.Layer<
               }),
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          // T3-CUSTOM(expbkt3): the final send cannot reuse an earlier grant check.
+          yield* grantCheck;
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]
             .filter((part) => part !== "")
@@ -1205,7 +1271,8 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        !backgroundTurn // T3-CUSTOM(expbkt3): even plain turns need the final guarded send.
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       yield* runExecution.startRootRun({
@@ -1233,7 +1300,16 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        // T3-CUSTOM(expbkt3): root preparation fails durably if authority changes.
+        shouldStartProviderTurn: () =>
+          grantCheck.pipe(
+            Effect.andThen(runControls.shouldStartProviderTurn()),
+            Effect.mapError((cause) =>
+              cause._tag === "BackgroundTurnDenied"
+                ? new ProjectionStore.ProjectionStoreReadError({ threadId: input.threadId, cause })
+                : cause,
+            ),
+          ),
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {

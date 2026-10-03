@@ -114,6 +114,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const noteSource =
       source !== undefined && isRestartNoteSource(source, projection.providerTurns);
     if (!source || (source.status !== "cancelled" && !noteSource)) return;
+    // T3-CUSTOM(expbkt3): the bridge reconciles background runs before it issues
+    // a new bounded review. A native continuation must not lose its grant.
+    const original = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+      messageIds: [source.userMessageId],
+    });
+    if (original.messages.some((message) => message.backgroundGrantHash !== undefined)) return;
     // A user submission after reconciliation takes precedence over an automatic prompt.
     if (projection.runs.some((run) => run.ordinal > source.ordinal)) return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
