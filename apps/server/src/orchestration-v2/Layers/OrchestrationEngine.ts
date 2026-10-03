@@ -12,6 +12,7 @@ import {
   type UserId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -31,6 +32,7 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { CurrentOrchestrationActorUserId } from "../forkActor.expbkt3.ts";
 import { legacyThreadShell, legacyActivities } from "../legacyProjection.expbkt3.ts";
 import { makeForkProviderNameResolver } from "../forkProviderName.expbkt3.ts";
+import { forkCompatibilityEvents } from "../forkCompatibilityEvents.expbkt3.ts";
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
@@ -432,17 +434,19 @@ const make = Effect.gen(function* () {
       Stream.flatMap((events) => Stream.fromIterable(events)),
       Stream.mapError(toPersistenceSqlError("V2 fork compatibility events")),
     );
-  const liveEvents = Stream.unwrap(
-    applicationEvents.latestApplicationSequence.pipe(
-      Effect.map((sequence) =>
-        translate(applicationEvents.streamApplicationEvents({ afterSequence: sequence })),
-      ),
-    ),
-  ).pipe(
+  const liveEvents = forkCompatibilityEvents({
+    latestSequence: applicationEvents.latestApplicationSequence,
+    open: (afterSequence) => applicationEvents.streamApplicationEvents({ afterSequence }),
+    replay: (afterSequence, throughSequence) =>
+      applicationEvents.readApplicationEvents({ afterSequence, throughSequence }),
+    translate: eventView,
+  }).pipe(
     Stream.catchCause((cause) =>
-      Stream.fromEffect(
-        Effect.logWarning("Fork compatibility event stream failed", { cause }),
-      ).pipe(Stream.drain),
+      Cause.hasInterruptsOnly(cause)
+        ? Stream.failCause(cause).pipe(Stream.orDie)
+        : Stream.fromEffect(
+            Effect.logWarning("Fork compatibility event stream failed", { cause }),
+          ).pipe(Stream.drain),
     ),
   );
   return {
