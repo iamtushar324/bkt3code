@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -42,6 +43,7 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as Recovery from "./ProviderRuntimeRecoveryService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { managerRouteLayer } from "./managerHttp.expbkt3.ts";
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const owner = UserId.make("owner");
 const other = UserId.make("other");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test-model" };
@@ -394,7 +396,7 @@ it.effect(
         expect(
           (page.events as { aggregateId: string }[]).every((e) => e.aggregateId !== "project-only"),
         ).toBe(true);
-        expect(JSON.stringify(page)).not.toContain("backgroundGrantHash");
+        expect(yield* encodeJson(page)).not.toContain("backgroundGrantHash");
         expect(page.nextAfter).toBe(page.headSequence);
         // Revoking membership removes historical events, not just future activity.
         yield* orchestrator.dispatch({

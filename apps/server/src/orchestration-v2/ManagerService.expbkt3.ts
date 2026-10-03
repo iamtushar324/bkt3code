@@ -56,6 +56,7 @@ export interface ManagerActor {
   readonly userId: UserId;
   readonly grantHash: string;
 }
+const isManagerDispatchError = Schema.is(ManagerDispatchError);
 const fail = (status: number, detail: string) => new ManagerError({ status, detail });
 const iso = (date: DateTime.Utc | null | undefined) =>
   date == null ? null : DateTime.formatIso(date);
@@ -342,7 +343,7 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError((error) => {
             const cause = "cause" in error ? error.cause : undefined;
-            const detail = cause instanceof ManagerDispatchError ? cause.detail : "manager-paused";
+            const detail = isManagerDispatchError(cause) ? cause.detail : "manager-paused";
             return fail(
               detail === "manager-grant-revoked"
                 ? 401
@@ -404,7 +405,7 @@ const make = Effect.gen(function* () {
   return { sessions, feed, receipt, prompt, bootstrap };
 });
 export class ManagerService extends Context.Service<ManagerService, Effect.Success<typeof make>>()(
-  "t3/orchestration-v2/ManagerService",
+  "t3/orchestration-v2/ManagerService.expbkt3/ManagerService",
 ) {}
 // The production runtime exposes the shared application receipt repository, not
 // its V2 adapter. Reuse that repository instead of creating another persistence layer.

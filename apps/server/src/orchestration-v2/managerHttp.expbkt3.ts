@@ -14,6 +14,7 @@ const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
 const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
 const decodePrompt = Schema.decodeUnknownEffect(Manager.ManagerPrompt);
 const decodeBootstrap = Schema.decodeUnknownEffect(Manager.ManagerBootstrap);
+const isManagerError = Schema.is(Manager.ManagerError);
 const json = HttpServerResponse.jsonUnsafe;
 const invalid = () => new Manager.ManagerError({ status: 400, detail: "invalid-request" });
 export const managerRouteLayer = Layer.unwrap(
@@ -40,7 +41,7 @@ export const managerRouteLayer = Layer.unwrap(
       effect.pipe(
         Effect.map(json),
         Effect.catch((error) =>
-          error instanceof Manager.ManagerError
+          isManagerError(error)
             ? Effect.succeed(json({ error: error.detail }, { status: error.status }))
             : Effect.logWarning("Manager request failed", { error }).pipe(
                 Effect.as(json({ error: "internal-error" }, { status: 500 })),
