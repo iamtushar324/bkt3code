@@ -240,6 +240,7 @@ export const make = Effect.gen(function* () {
       threadTitleRegeneration: true,
       threadVisitedTracking: true,
       threadPullRequests: true,
+      threadPullRequestWatch: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       // T3-CUSTOM(expbkt3): per-thread API-level cost.
