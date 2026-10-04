@@ -15,7 +15,8 @@ layer("055_OrchestrationV2", (it) => {
         migrationManifest.map(([id]) => id),
         [
           ...Array.from({ length: 45 }, (_, index) => index + 1),
-          ...Array.from({ length: 45 }, (_, index) => 1000 + index),
+          // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045.
+          ...Array.from({ length: 46 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -30,6 +31,7 @@ layer("055_OrchestrationV2", (it) => {
       assert.deepStrictEqual(executed, [
         [1043, "OrchestrationV2"],
         [1044, "RemoveRedundantProjectionIndexes"],
+        [1045, "SessionWebhooks"], // T3-CUSTOM(expbkt3): durable callback schema.
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -57,8 +59,10 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1042, name: "ClaudeAccountProfileAccess" },
         { migration_id: 1043, name: "OrchestrationV2" },
         { migration_id: 1044, name: "RemoveRedundantProjectionIndexes" },
+        { migration_id: 1045, name: "SessionWebhooks" }, // T3-CUSTOM(expbkt3): append, never rewrite.
       ]);
 
+      // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.
       const tables = yield* sql<{ readonly name: string }>`
         SELECT name
         FROM sqlite_master
@@ -72,7 +76,9 @@ layer("055_OrchestrationV2", (it) => {
             'orchestration_v2_projection_provider_session_bindings',
             'orchestration_v2_thread_launch_workflows',
             'orchestration_v2_legacy_imports',
-            'scheduled_tasks'
+            'scheduled_tasks',
+            'session_webhooks',
+            'session_webhook_events'
           )
         ORDER BY name
       `;
@@ -88,6 +94,8 @@ layer("055_OrchestrationV2", (it) => {
           "orchestration_v2_thread_launch_workflows",
           "orchestration_v2_turn_item_positions",
           "scheduled_tasks",
+          "session_webhook_events",
+          "session_webhooks",
         ],
       );
 
@@ -108,6 +116,40 @@ layer("055_OrchestrationV2", (it) => {
       assert.ok(threadColumns.some(({ name }) => name === "provider_instance_id"));
       assert.ok(subagentColumns.some(({ name }) => name === "driver"));
       assert.ok(subagentColumns.some(({ name }) => name === "provider_instance_id"));
+
+      // T3-CUSTOM(expbkt3): the new tables retain fixed routing, remote revisions and deduplication keys.
+      const webhookColumns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(session_webhooks)`;
+      const webhookEventColumns = yield* sql<{
+        readonly name: string;
+        readonly pk: number;
+      }>`PRAGMA table_info(session_webhook_events)`;
+      for (const name of [
+        "owner_user_id",
+        "thread_id",
+        "instance_id",
+        "trust_binding",
+        "callback_ref",
+        "receiver_revision",
+        "pending_action",
+      ])
+        assert.ok(
+          webhookColumns.some((column) => column.name === name),
+          `missing webhook column ${name}`,
+        );
+      assert.deepStrictEqual(
+        webhookEventColumns.filter(({ pk }) => pk > 0).map(({ name, pk }) => [name, pk]),
+        [
+          ["webhook_id", 1],
+          ["event_id", 2],
+        ],
+      );
+      for (const name of ["fingerprint", "payload", "command_id", "state", "next_attempt_at"])
+        assert.ok(
+          webhookEventColumns.some((column) => column.name === name),
+          `missing delivery column ${name}`,
+        );
 
       const indexes = yield* sql<{ readonly name: string }>`
         SELECT name
