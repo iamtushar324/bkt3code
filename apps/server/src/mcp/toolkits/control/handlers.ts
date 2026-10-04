@@ -1248,6 +1248,14 @@ const handlers = {
 
   t3_submit_plan: Effect.fn("T3ControlToolkit.submitPlan")(function* (input) {
     const operation = "submit-plan";
+    const settingsService = yield* ServerSettingsService;
+    const settings = yield* settingsService.getSettings.pipe(mapControlError(operation));
+    if (!settings.experimental.planSubmissionToolEnabled) {
+      return yield* new T3ControlToolError({
+        operation,
+        message: "The plan submission tool is disabled. Write the plan in chat instead.",
+      });
+    }
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.plan");
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* OrchestrationCommandDispatcher;
@@ -1414,6 +1422,7 @@ export const T3ControlToolkitHandlersLive = T3ControlToolkit.toLayer(handlers);
 
 /** Exposed for focused authorization tests. */
 export const __testing = {
+  submitPlan: handlers.t3_submit_plan,
   resolveSessionId,
   // T3-CUSTOM(expbkt3): caller-seam regression for bounded session list reads.
   listSessions: handlers.t3_list_sessions,

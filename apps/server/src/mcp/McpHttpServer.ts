@@ -28,8 +28,7 @@ import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
 } from "./toolkits/preview/handlers.ts";
-import { T3ControlToolkitHandlersLive } from "./toolkits/control/handlers.ts";
-import { T3ControlToolkit } from "./toolkits/control/tools.ts";
+import { T3ControlToolkitRegistrationLive } from "./toolkits/control/registration.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
@@ -614,9 +613,7 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 );
 
 // T3-CUSTOM(expbkt3): the fork's control toolkit.
-export const T3ControlToolkitRegistrationLive = McpServer.toolkit(T3ControlToolkit).pipe(
-  Layer.provide(T3ControlToolkitHandlersLive),
-);
+export { T3ControlToolkitRegistrationLive };
 
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),

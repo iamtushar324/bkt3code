@@ -3,6 +3,8 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SessionSummarySettingsSection } from "./SessionSummarySettingsSection";
+// T3-CUSTOM(expbkt3): server-wide plan submission tool experiment.
+import { PlanSubmissionSettingsRow } from "./PlanSubmissionSettingsRow";
 // T3-CUSTOM(expbkt3): session work summary + progress assessment.
 import { SessionWorkSummarySettingsSection } from "./SessionWorkSummarySettingsSection";
 import { ExternalMcpSettingsSection } from "./ExternalMcpSettingsSection";
@@ -49,6 +51,8 @@ export function ExperimentsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Experimental features">
+        {/* T3-CUSTOM(expbkt3): server-wide plan submission tool experiment. */}
+        <PlanSubmissionSettingsRow />
         {/* T3-CUSTOM(expbkt3): BEGIN — native plan review. */}
         <SettingsRow
           {...searchableSetting("native-plan-review")}
