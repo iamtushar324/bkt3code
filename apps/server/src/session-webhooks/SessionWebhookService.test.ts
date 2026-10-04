@@ -38,6 +38,7 @@ import { ToolyardIntegration } from "../toolyard/ToolyardIntegration.ts";
 import migration from "../persistence/Migrations/1045_SessionWebhooks.ts";
 import { make, SessionWebhookService } from "./SessionWebhookService.ts";
 import { sessionWebhookRouteLayer } from "./http.ts";
+import { MAX_CALLBACK_BYTES } from "./protocol.ts";
 import { assertSessionWebhookDispatch } from "./dispatchGuard.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
@@ -993,7 +994,7 @@ describe("durable session webhooks", () => {
             { disableListenLog: true, disableLogger: true },
           ).pipe(Layer.build);
           const client = yield* HttpClient.HttpClient;
-          const send = (payload: unknown, signatureValid = true) =>
+          const send = (payload: unknown, signatureValid = true, eventId = "evt_1") =>
             Effect.gen(function* () {
               const body = encodeJson(payload);
               const timestamp = String(
@@ -1003,10 +1004,10 @@ describe("durable session webhooks", () => {
               const request = HttpClientRequest.post(`/api/session-webhooks/${h.webhook.id}`).pipe(
                 HttpClientRequest.bodyText(body, "application/json"),
                 HttpClientRequest.setHeaders({
-                  "webhook-id": "evt_1",
+                  "webhook-id": eventId,
                   "webhook-timestamp": timestamp,
                   "webhook-signature": signatureValid
-                    ? `v1,${NodeCrypto.createHmac("sha256", secret).update(`evt_1.${timestamp}.${body}`).digest("base64")}`
+                    ? `v1,${NodeCrypto.createHmac("sha256", secret).update(`${eventId}.${timestamp}.${body}`).digest("base64")}`
                     : "v1,bad",
                 }),
               );
@@ -1031,8 +1032,32 @@ describe("durable session webhooks", () => {
           );
           assert.strictEqual(
             yield* send({ ...event, data: { ...event.data, overall_note: "x".repeat(70_000) } }),
+            400,
+          );
+          assert.strictEqual(
+            yield* send({
+              ...event,
+              data: { ...event.data, overall_note: "x".repeat(MAX_CALLBACK_BYTES) },
+            }),
             413,
           );
+          const largeEvent = {
+            ...h.event("evt_large"),
+            data: {
+              ...event.data,
+              overall_note: "😀".repeat(10_000),
+              calls: Array.from({ length: 12 }, (_, index) => ({
+                call_id: `review.${index}`,
+                verdict: index % 2 === 0 ? "accepted" : "rejected",
+                reason: "😀".repeat(4_000),
+              })),
+            },
+          };
+          assert.isAbove(Buffer.byteLength(encodeJson(largeEvent)), 65_536);
+          assert.strictEqual(yield* send(largeEvent, true, "evt_large"), 202);
+          assert.strictEqual(yield* send(largeEvent, true, "evt_large"), 202);
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).deliveries.length, 2);
+          assert.strictEqual(h.state.dispatches, 0);
         }),
       ).pipe(Effect.provide(NodeHttpServer.layerTest)),
     ),
