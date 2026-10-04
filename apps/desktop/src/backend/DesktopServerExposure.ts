@@ -547,6 +547,7 @@ export const make = Effect.gen(function* () {
 
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
       port: state.port,
+      networkAccessEnabled: state.mode === "network-accessible", // T3-CUSTOM(expbkt3): Gate direct tailnet endpoints.
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,

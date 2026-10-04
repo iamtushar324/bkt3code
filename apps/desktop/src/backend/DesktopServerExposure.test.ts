@@ -368,6 +368,31 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("advertises direct MagicDNS pairing only while network access is enabled", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4780 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const magicDns = endpoints.find((endpoint) => endpoint.label === "Tailscale MagicDNS");
+        assert.equal(magicDns?.httpBaseUrl, "http://desktop.tail.ts.net:4780/");
+        assert.equal(magicDns?.wsBaseUrl, "ws://desktop.tail.ts.net:4780/");
+        assert.equal(magicDns?.status, "available");
+
+        yield* serverExposure.setMode("local-only");
+        assert.deepEqual(
+          (yield* serverExposure.getAdvertisedEndpoints).map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4780/"],
+        );
+      }),
+      {},
+      mockSpawnerLayer(`{"Self":{"DNSName":"desktop.tail.ts.net."}}`),
+    ),
+  );
+
   it.effect("preserves explicit Tailscale exposure overrides", () =>
     withHarness(
       lanNetworkInterfaces,

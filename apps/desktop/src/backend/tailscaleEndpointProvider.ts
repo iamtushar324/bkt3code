@@ -101,6 +101,7 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
 export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAdvertisedEndpoints")(
   function* (input: {
     readonly port: number;
+    readonly networkAccessEnabled: boolean; // T3-CUSTOM(expbkt3): Direct endpoints require a network listener.
     readonly serveEnabled?: boolean;
     readonly servePort?: number;
     readonly networkInterfaces: NetworkInterfaces;
@@ -116,7 +117,10 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     never,
     ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient
   > {
-    const ipEndpoints = resolveTailscaleIpAdvertisedEndpoints(input);
+    // T3-CUSTOM(expbkt3): Advertise direct tailnet addresses only for network listeners.
+    const ipEndpoints = input.networkAccessEnabled
+      ? resolveTailscaleIpAdvertisedEndpoints(input)
+      : [];
     const readDnsName =
       input.readMagicDnsName ??
       readTailscaleStatus.pipe(
@@ -131,6 +135,20 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
               Effect.orElseSucceed(() => null),
             )
           : null;
+    // T3-CUSTOM(expbkt3): Direct MagicDNS uses the bundled server port without Serve.
+    const directMagicDnsEndpoint =
+      dnsName && input.networkAccessEnabled
+        ? createAdvertisedEndpoint({
+            provider: TAILSCALE_ENDPOINT_PROVIDER,
+            source: "desktop-addon",
+            id: `tailscale-magicdns:http://${dnsName}:${input.port}`,
+            label: "Tailscale MagicDNS",
+            httpBaseUrl: `http://${dnsName}:${input.port}`,
+            reachability: "private-network",
+            status: "available",
+            description: "Reachable from devices on the same Tailnet without Tailscale Serve.",
+          })
+        : null;
     const magicDnsEndpoint = yield* resolveTailscaleMagicDnsAdvertisedEndpoint({
       dnsName,
       serveEnabled: input.serveEnabled === true,
@@ -138,9 +156,11 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
       ...(input.probe === undefined ? {} : { probe: input.probe }),
     });
 
-    return Option.match(magicDnsEndpoint, {
-      onNone: () => ipEndpoints,
-      onSome: (endpoint) => [...ipEndpoints, endpoint],
-    });
+    // T3-CUSTOM(expbkt3): Prefer the direct MagicDNS address among tailnet endpoints.
+    return [
+      ...(directMagicDnsEndpoint ? [directMagicDnsEndpoint] : []),
+      ...ipEndpoints,
+      ...Option.toArray(magicDnsEndpoint),
+    ];
   },
 );

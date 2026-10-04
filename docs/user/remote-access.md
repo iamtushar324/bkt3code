@@ -37,6 +37,12 @@ On a desktop host, open **Settings → Connections**, enable **Network access**,
 then create a pairing link using an address the other device can reach. Changing
 network access restarts the desktop app. You can turn it off in the same place.
 
+When both devices use Tailscale, the desktop app prefers its MagicDNS hostname
+and server port for direct pairing, unless you chose another default address.
+These links use HTTP over your tailnet and do not require Tailscale Serve. Scan
+the QR code or paste the full link so the receiving app keeps the correct
+protocol and port.
+
 For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
 address:
 

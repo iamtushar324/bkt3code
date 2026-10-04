@@ -37,6 +37,7 @@ describe("tailscale endpoint provider", () => {
     Effect.gen(function* () {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
+        networkAccessEnabled: true,
         networkInterfaces: {
           tailscale0: [
             {
@@ -52,6 +53,26 @@ describe("tailscale endpoint provider", () => {
         statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
       });
       assert.deepEqual(endpoints, [
+        {
+          id: "tailscale-magicdns:http://desktop.tail.ts.net:3773",
+          label: "Tailscale MagicDNS",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://desktop.tail.ts.net:3773/",
+          wsBaseUrl: "ws://desktop.tail.ts.net:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+          description: "Reachable from devices on the same Tailnet without Tailscale Serve.",
+        },
         {
           id: "tailscale-ip:http://100.100.100.100:3773",
           label: "Tailscale IP",
@@ -101,6 +122,7 @@ describe("tailscale endpoint provider", () => {
       let readerCalls = 0;
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
+        networkAccessEnabled: true,
         networkInterfaces: {},
         readMagicDnsName: Effect.sync(() => {
           readerCalls += 1;
@@ -110,7 +132,7 @@ describe("tailscale endpoint provider", () => {
       assert.equal(readerCalls, 1);
       assert.deepEqual(
         endpoints.map((endpoint) => endpoint.httpBaseUrl),
-        ["https://desktop.tail.ts.net/"],
+        ["http://desktop.tail.ts.net:3773/", "https://desktop.tail.ts.net/"],
       );
     }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
   );
@@ -121,6 +143,7 @@ describe("tailscale endpoint provider", () => {
       Effect.gen(function* () {
         const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
           port: 3773,
+          networkAccessEnabled: false,
           networkInterfaces: {},
           statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
           serveEnabled: true,
@@ -149,5 +172,22 @@ describe("tailscale endpoint provider", () => {
           },
         ]);
       }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+  );
+
+  it.effect("does not advertise direct endpoints when network access is disabled", () =>
+    Effect.gen(function* () {
+      const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
+        port: 4780,
+        networkAccessEnabled: false,
+        networkInterfaces: {
+          tailscale0: [{ address: "100.90.1.2", family: "IPv4", internal: false }],
+        },
+        statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
+      });
+      assert.deepEqual(
+        endpoints.map((endpoint) => [endpoint.httpBaseUrl, endpoint.status]),
+        [["https://desktop.tail.ts.net/", "unavailable"]],
+      );
+    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
   );
 });
