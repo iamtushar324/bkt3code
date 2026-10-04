@@ -61,7 +61,7 @@ it("generates one unique virtual tool and complete schemas for every web RPC", (
 it("exposes the five Toolyard and webhook RPCs with their required scopes", () => {
   const methods = [
     [WS_FORK_METHODS.toolyardIntegrationStatus, "orchestration:read"],
-    [WS_FORK_METHODS.toolyardIntegrationConfigure, "access:write"],
+    [WS_FORK_METHODS.toolyardIntegrationConfigure, "orchestration:operate"],
     [WS_FORK_METHODS.toolyardDashboardHandoff, "orchestration:operate"],
     [WS_FORK_METHODS.sessionWebhooksList, "orchestration:read"],
     [WS_FORK_METHODS.sessionWebhooksUpdate, "orchestration:operate"],
@@ -69,9 +69,7 @@ it("exposes the five Toolyard and webhook RPCs with their required scopes", () =
   for (const [method, requiredScope] of methods) {
     const tool = getWebUiVirtualTool(webUiVirtualToolName(method));
     expect(tool).toMatchObject({ method, requiredScope, stream: false });
-    expect(isWebUiVirtualToolAuthorized(tool!, AuthStandardClientScopes)).toBe(
-      requiredScope !== "access:write",
-    );
+    expect(isWebUiVirtualToolAuthorized(tool!, AuthStandardClientScopes)).toBe(true);
     expect(isWebUiVirtualToolAuthorized(tool!, AuthAdministrativeScopes)).toBe(true);
   }
 });

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   UserId,
+  SessionWebhookError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,6 +48,7 @@ const binding = {
   origin: "https://toolyard.example",
   callbackOrigin: "https://t3.example",
   enabled: true as const,
+  trustGeneration: 0,
 };
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test-model" };
 const adapter = {
@@ -86,6 +88,7 @@ const services = Layer.mergeAll(native, ProjectionStore.layer, CommandReceiptSto
   Layer.provideMerge(SqlitePersistenceMemory),
 );
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isSessionWebhookError = Schema.is(SessionWebhookError);
 
 it.effect("uses one native receipt and preserves retries after busy admission", () =>
   Effect.gen(function* () {
@@ -199,6 +202,18 @@ it.effect("uses one native receipt and preserves retries after busy admission", 
     });
     yield* orchestrator.dispatch(second, { actorUserId: owner, sessionWebhookId: webhookId });
     assert.strictEqual(Option.isSome(yield* receipts.getByCommandId(second.commandId)), true);
+    assert.strictEqual((yield* projections.getThreadRecords(threadId, ["runs"])).runs.length, 2);
+    const stale = yield* command("evt_stale_generation");
+    binding.trustGeneration = 1;
+    const rejected = yield* orchestrator
+      .dispatch(stale, { actorUserId: owner, sessionWebhookId: webhookId })
+      .pipe(Effect.flip);
+    assert.strictEqual(isSessionWebhookError(rejected.cause), true);
+    assert.strictEqual(
+      isSessionWebhookError(rejected.cause) ? rejected.cause.detail : null,
+      "integration-disabled-or-replaced",
+    );
+    assert.strictEqual(Option.isNone(yield* receipts.getByCommandId(stale.commandId)), true);
     assert.strictEqual((yield* projections.getThreadRecords(threadId, ["runs"])).runs.length, 2);
   }).pipe(Effect.provide(services)),
 );

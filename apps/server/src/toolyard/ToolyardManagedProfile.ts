@@ -19,7 +19,7 @@ export function toolyardManagedProfile(
     providerInstanceIds: [],
     allowedTools: [],
     // A provider that cached failed discovery must refresh once the remote connection recovers.
-    configurationKey: `${status.instanceId}:${status.connection}`,
+    configurationKey: `${status.instanceId}:${status.trustGeneration}:${status.connection}`,
     ...(status.email ? { connectedEmail: status.email } : {}),
   };
 }

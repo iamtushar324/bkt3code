@@ -38,6 +38,7 @@ import { ToolyardIntegration } from "../toolyard/ToolyardIntegration.ts";
 import migration from "../persistence/Migrations/1045_SessionWebhooks.ts";
 import { make, SessionWebhookService } from "./SessionWebhookService.ts";
 import { sessionWebhookRouteLayer } from "./http.ts";
+import { MAX_CALLBACK_BYTES } from "./protocol.ts";
 import { assertSessionWebhookDispatch } from "./dispatchGuard.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
@@ -77,6 +78,7 @@ const harness = () =>
       deleted: false,
       integrationEnabled: true,
       instanceId: "instance_1",
+      trustGeneration: 0,
       lostReceipt: false,
       rotationOutage: false,
       historyOutage: false,
@@ -95,6 +97,7 @@ const harness = () =>
       }>,
       rotationLostReply: false,
       receiverRevision: 1,
+      remoteUpdates: 0,
       receiverAction: null as string | null,
       accessReadFailure: false,
       dispatches: 0,
@@ -170,6 +173,7 @@ const harness = () =>
         state.integrationEnabled
           ? {
               instanceId: state.instanceId,
+              trustGeneration: state.trustGeneration,
               environmentId: "env_1",
               origin: "https://toolyard.example",
               callbackOrigin: "https://t3.example",
@@ -180,7 +184,7 @@ const harness = () =>
       registerCallback: () =>
         Effect.sync(() => {
           state.registrations++;
-          return { callback_ref: "cb_1", revision: 1 };
+          return { callback_ref: `cb_${state.registrations}`, revision: 1 };
         }),
       inspectCallback: () =>
         Effect.gen(function* () {
@@ -208,6 +212,7 @@ const harness = () =>
         }),
       updateCallback: (_userId, _ref, input) =>
         Effect.gen(function* () {
+          state.remoteUpdates++;
           if (state.rotationOutage)
             return yield* new PersonalMcpSettingsError({ operation: "test", message: "outage" });
           if (input.expected_revision !== state.receiverRevision) {
@@ -330,6 +335,103 @@ const harness = () =>
     };
   });
 describe("durable session webhooks", () => {
+  it.effect(
+    "retires obsolete active and registering receivers without events or lifecycle actions",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const registeringId = "swh_22222222222222222222222222222222";
+          yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,status,revision,created_at,updated_at) SELECT ${registeringId},owner_user_id,thread_id,instance_id,trust_binding,'registering',revision,created_at,updated_at FROM session_webhooks WHERE id=${h.webhook.id}`;
+          h.state.integrationEnabled = false;
+          yield* h.service.drain();
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "active");
+          h.state.integrationEnabled = true;
+          h.state.trustGeneration = 1;
+          yield* h.service.drain();
+          for (const id of [h.webhook.id, registeringId]) {
+            const retired = yield* h.service.inspect(owner, id);
+            assert.strictEqual(retired.status, "disabled");
+            assert.strictEqual(retired.terminalReason, "integration-disabled-or-replaced");
+            assert.strictEqual(retired.deliveries.length, 0);
+          }
+        }),
+      ),
+  );
+  it.effect("retires stale lifecycle operations so they cannot starve a new generation", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        yield* h.receive(h.event());
+        h.state.rotationOutage = true;
+        yield* h.service.update(owner, h.webhook.id, "rotate", h.webhook.revision);
+        const sql = yield* SqlClient.SqlClient;
+        for (let i = 2; i <= 20; i++) {
+          const id = `swh_${i.toString(16).padStart(32, "0")}`;
+          yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,status,revision,created_at,updated_at,pending_action,sync_attempts) SELECT ${id},owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,${i === 2 ? "removed" : i === 3 ? "disabled" : "active"},revision,created_at,updated_at,pending_action,7 FROM session_webhooks WHERE id=${h.webhook.id}`;
+        }
+        h.state.trustGeneration = 1;
+        const replacement = yield* h.service.create(owner, threadId);
+        yield* h.service.update(owner, replacement.id, "rotate", replacement.revision);
+        h.state.rotationOutage = false;
+        yield* h.service.drain();
+        yield* h.service.drain();
+        const current = yield* h.service.inspect(owner, replacement.id);
+        assert.strictEqual(current.status, "active");
+        assert.strictEqual(current.terminalReason, null);
+        assert.strictEqual(h.state.receiverRevision, 2);
+        const retired = yield* h.service.inspect(owner, h.webhook.id);
+        assert.strictEqual(retired.status, "disabled");
+        assert.strictEqual(retired.deliveries[0]?.state, "terminal");
+        const old = yield* sql<{
+          status: string;
+          pending_action: string | null;
+          next_sync_at: string | null;
+          sync_attempts: number;
+        }>`SELECT status,pending_action,next_sync_at,sync_attempts FROM session_webhooks WHERE id=${`swh_${(2).toString(16).padStart(32, "0")}`}`;
+        assert.strictEqual(old[0]?.status, "removed");
+        assert.strictEqual(old[0]?.pending_action, null);
+        assert.strictEqual(old[0]?.next_sync_at, null);
+        assert.strictEqual(old[0]?.sync_attempts, 7);
+        assert.strictEqual(
+          (yield* sql<{
+            status: string;
+          }>`SELECT status FROM session_webhooks WHERE id=${`swh_${(3).toString(16).padStart(32, "0")}`}`)[0]
+            ?.status,
+          "disabled",
+        );
+        assert.strictEqual(h.state.dispatches, 0);
+      }),
+    ),
+  );
+  it.effect(
+    "recreates callbacks after same-instance trust replacement and never revives the old queue",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          yield* h.receive(h.event());
+          // A remove/re-add or rapid disable/enable has the same URLs but a new durable generation.
+          h.state.trustGeneration = 2;
+          const replacement = yield* h.service.create(owner, threadId);
+          assert.notStrictEqual(replacement.id, h.webhook.id);
+          assert.notStrictEqual(replacement.callbackRef, h.webhook.callbackRef);
+          assert.strictEqual(h.state.registrations, 2);
+          const stale = yield* h.receive(h.event("evt_stale")).pipe(Effect.flip);
+          assert.strictEqual(errorDetail(stale), "integration-disabled-or-replaced");
+          yield* h.service.drain();
+          const retired = (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0];
+          assert.strictEqual(retired?.state, "terminal");
+          assert.strictEqual(retired?.terminalReason, "integration-disabled-or-replaced");
+          assert.strictEqual(h.state.dispatches, 0);
+          h.state.trustGeneration = 4;
+          yield* h.service.drain();
+          assert.strictEqual(
+            (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0]?.state,
+            "terminal",
+          );
+          assert.strictEqual(h.state.dispatches, 0);
+        }),
+      ),
+  );
   it.effect("bounds a hanging history inspection and preserves its local receipt", () =>
     scenario((h) =>
       Effect.gen(function* () {
@@ -627,6 +729,60 @@ describe("durable session webhooks", () => {
       }),
     ),
   );
+  it.effect(
+    "rejects a thread-bound caller before history, secret, remote or database changes",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const otherThread = ThreadId.make("thread-narrow-caller");
+          yield* h.receive(h.event());
+          const before = yield* sql`SELECT * FROM session_webhooks WHERE id=${h.webhook.id}`;
+          const beforeEvents =
+            yield* sql`SELECT * FROM session_webhook_events WHERE webhook_id=${h.webhook.id}`;
+          const beforeSecrets = Array.from(h.secrets, ([key, value]) => [key, Buffer.from(value)]);
+          const historyReads = h.state.historyReads;
+          assert.strictEqual(
+            errorDetail(
+              yield* h.service.inspect(owner, h.webhook.id, otherThread).pipe(Effect.flip),
+            ),
+            "webhook-not-found",
+          );
+          for (const action of ["disable", "rotate", "remove"] as const) {
+            assert.strictEqual(
+              errorDetail(
+                yield* h.service
+                  .update(owner, h.webhook.id, action, 1, otherThread)
+                  .pipe(Effect.flip),
+              ),
+              "webhook-not-found",
+            );
+          }
+          assert.strictEqual(h.state.historyReads, historyReads);
+          assert.strictEqual(h.state.remoteUpdates, 0);
+          assert.deepStrictEqual(
+            Array.from(h.secrets, ([key, value]) => [key, Buffer.from(value)]),
+            beforeSecrets,
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM session_webhooks WHERE id=${h.webhook.id}`,
+            before,
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM session_webhook_events WHERE webhook_id=${h.webhook.id}`,
+            beforeEvents,
+          );
+          assert.strictEqual(
+            (yield* h.service.inspect(owner, h.webhook.id, threadId)).id,
+            h.webhook.id,
+          );
+          assert.strictEqual(
+            (yield* h.service.update(owner, h.webhook.id, "disable", 1, threadId)).status,
+            "disabled",
+          );
+        }),
+      ),
+  );
   it.effect("enforces owner and revision on lifecycle actions", () =>
     scenario((h) =>
       Effect.gen(function* () {
@@ -838,7 +994,7 @@ describe("durable session webhooks", () => {
             { disableListenLog: true, disableLogger: true },
           ).pipe(Layer.build);
           const client = yield* HttpClient.HttpClient;
-          const send = (payload: unknown, signatureValid = true) =>
+          const send = (payload: unknown, signatureValid = true, eventId = "evt_1") =>
             Effect.gen(function* () {
               const body = encodeJson(payload);
               const timestamp = String(
@@ -848,10 +1004,10 @@ describe("durable session webhooks", () => {
               const request = HttpClientRequest.post(`/api/session-webhooks/${h.webhook.id}`).pipe(
                 HttpClientRequest.bodyText(body, "application/json"),
                 HttpClientRequest.setHeaders({
-                  "webhook-id": "evt_1",
+                  "webhook-id": eventId,
                   "webhook-timestamp": timestamp,
                   "webhook-signature": signatureValid
-                    ? `v1,${NodeCrypto.createHmac("sha256", secret).update(`evt_1.${timestamp}.${body}`).digest("base64")}`
+                    ? `v1,${NodeCrypto.createHmac("sha256", secret).update(`${eventId}.${timestamp}.${body}`).digest("base64")}`
                     : "v1,bad",
                 }),
               );
@@ -876,8 +1032,32 @@ describe("durable session webhooks", () => {
           );
           assert.strictEqual(
             yield* send({ ...event, data: { ...event.data, overall_note: "x".repeat(70_000) } }),
+            400,
+          );
+          assert.strictEqual(
+            yield* send({
+              ...event,
+              data: { ...event.data, overall_note: "x".repeat(MAX_CALLBACK_BYTES) },
+            }),
             413,
           );
+          const largeEvent = {
+            ...h.event("evt_large"),
+            data: {
+              ...event.data,
+              overall_note: "😀".repeat(10_000),
+              calls: Array.from({ length: 12 }, (_, index) => ({
+                call_id: `review.${index}`,
+                verdict: index % 2 === 0 ? "accepted" : "rejected",
+                reason: "😀".repeat(4_000),
+              })),
+            },
+          };
+          assert.isAbove(Buffer.byteLength(encodeJson(largeEvent)), 65_536);
+          assert.strictEqual(yield* send(largeEvent, true, "evt_large"), 202);
+          assert.strictEqual(yield* send(largeEvent, true, "evt_large"), 202);
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).deliveries.length, 2);
+          assert.strictEqual(h.state.dispatches, 0);
         }),
       ).pipe(Effect.provide(NodeHttpServer.layerTest)),
     ),

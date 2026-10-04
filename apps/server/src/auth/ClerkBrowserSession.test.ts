@@ -1,4 +1,10 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  AuthStandardClientScopes,
+  EnvironmentId,
+  WS_FORK_METHODS,
+} from "@t3tools/contracts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentUserId } from "@t3tools/contracts";
@@ -11,6 +17,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import { requiredScopeForRpcMethod } from "./RpcAuthorization.ts";
 
 const testConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-clerk-browser-session-test-",
@@ -44,6 +51,15 @@ it.layer(
 
       expect(verified.subject).toBe("clerk:user_clerk_alice");
       expect(verified.userId).toBe(userId);
+      // Toolyard checks the active administrator independently, without administrative pairing scopes.
+      expect(verified.scopes).toEqual(AuthStandardClientScopes);
+      expect(verified.scopes).not.toContain(AuthAccessWriteScope);
+      expect(requiredScopeForRpcMethod(WS_FORK_METHODS.toolyardIntegrationConfigure)).toBe(
+        AuthOrchestrationOperateScope,
+      );
+      expect(verified.scopes).toContain(
+        requiredScopeForRpcMethod(WS_FORK_METHODS.toolyardIntegrationConfigure),
+      );
     }).pipe(Effect.provide(authLayer)),
   );
 });

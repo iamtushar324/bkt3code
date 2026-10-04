@@ -27,6 +27,7 @@ interface Connection {
 }
 interface Persisted {
   environmentId: string;
+  trustGeneration: number;
   privateKey: string;
   kid: string;
   settings: ToolyardInstanceSettings;
@@ -125,7 +126,15 @@ export class ToolyardConnectionCore {
       const existing = JSON.parse(raw) as Persisted;
       if (existing.environmentId === this.options.environmentId) {
         NodeCrypto.createPrivateKey(existing.privateKey);
-        this.state = { ...existing, pendingRevocations: existing.pendingRevocations ?? [] };
+        const trustGeneration =
+          existing.trustGeneration === undefined ? 0 : existing.trustGeneration;
+        if (!Number.isSafeInteger(trustGeneration) || trustGeneration < 0)
+          throw new ToolyardIntegrationFailure("invalid_persisted_trust_generation", 500);
+        this.state = {
+          ...existing,
+          trustGeneration,
+          pendingRevocations: existing.pendingRevocations ?? [],
+        };
         return;
       }
       // A database/secrets copy must not copy another environment's trust.
@@ -133,6 +142,7 @@ export class ToolyardConnectionCore {
     const pair = NodeCrypto.generateKeyPairSync("ed25519");
     this.state = {
       environmentId: this.options.environmentId,
+      trustGeneration: 0,
       privateKey: pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
       kid: NodeCrypto.randomUUID(),
       settings: {
@@ -151,6 +161,18 @@ export class ToolyardConnectionCore {
   private async persist() {
     await this.options.write(JSON.stringify(this.state));
   }
+  private advanceTrustGeneration(state: Persisted) {
+    if (state.trustGeneration >= Number.MAX_SAFE_INTEGER)
+      throw new ToolyardIntegrationFailure("trust_generation_exhausted", 409);
+    state.trustGeneration++;
+  }
+  private async persistSettingsChange(change: (candidate: Persisted) => void) {
+    const candidate = { ...this.state, pendingRevocations: [...this.state.pendingRevocations] };
+    change(candidate);
+    // Readers must not observe tentative trust while durable storage can still fail.
+    await this.options.write(JSON.stringify(candidate));
+    this.state = candidate;
+  }
   baseUrl() {
     return this.state.settings.baseUrl;
   }
@@ -162,6 +184,7 @@ export class ToolyardConnectionCore {
           environmentId: this.options.environmentId,
           origin: settings.origin,
           enabled: true as const,
+          trustGeneration: this.state.trustGeneration,
         }
       : null;
   }
@@ -271,10 +294,17 @@ export class ToolyardConnectionCore {
         throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
       if (input.remove) {
         // Persist the tombstone before a remote revoke; an outage cannot restore access.
-        this.state.settings = { ...old, enabled: false, removed: true, revision: old.revision + 1 };
-        this.state.connections = {};
-        this.enqueueRevocation(old, userId);
-        await this.persist();
+        await this.persistSettingsChange((candidate) => {
+          if (!old.removed) this.advanceTrustGeneration(candidate);
+          candidate.settings = {
+            ...old,
+            enabled: false,
+            removed: true,
+            revision: old.revision + 1,
+          };
+          candidate.connections = {};
+          this.enqueueRevocation(old, userId, candidate);
+        });
         await this.flushRevocationsUnlocked();
         return this.status(userId, false);
       }
@@ -338,33 +368,37 @@ export class ToolyardConnectionCore {
         if (registration.protocol !== metadata.protocol)
           throw new ToolyardIntegrationFailure("registration_protocol_mismatch", 409);
       }
-      // Never transmit old credentials to a replacement URL or trust binding.
-      if (changed || !input.enabled) this.state.connections = {};
-      this.state.settings = {
-        revision: old.revision + 1,
-        enabled: input.enabled,
-        removed: false,
-        baseUrl,
-        instanceId,
-        origin,
-      };
-      if (old.enabled && (changed || !input.enabled)) this.enqueueRevocation(old, userId);
-      await this.persist();
+      // The generation changes only with a committed trust lifecycle transition.
+      await this.persistSettingsChange((candidate) => {
+        if (changed || old.enabled !== input.enabled) this.advanceTrustGeneration(candidate);
+        // Never transmit old credentials to a replacement URL or trust binding.
+        if (changed || !input.enabled) candidate.connections = {};
+        candidate.settings = {
+          revision: old.revision + 1,
+          enabled: input.enabled,
+          removed: false,
+          baseUrl,
+          instanceId,
+          origin,
+        };
+        if (old.enabled && (changed || !input.enabled))
+          this.enqueueRevocation(old, userId, candidate);
+      });
       await this.flushRevocationsUnlocked();
       return this.status(userId, false);
     });
   }
-  private enqueueRevocation(settings: ToolyardInstanceSettings, userId: string) {
+  private enqueueRevocation(settings: ToolyardInstanceSettings, userId: string, state: Persisted) {
     if (!settings.baseUrl || !settings.instanceId) return;
     if (
-      this.state.pendingRevocations.some(
+      state.pendingRevocations.some(
         (job) =>
           job.settings.instanceId === settings.instanceId &&
           job.settings.baseUrl === settings.baseUrl,
       )
     )
       return;
-    this.state.pendingRevocations.push({
+    state.pendingRevocations.push({
       settings: { ...settings },
       userId,
       attempts: 0,
@@ -488,6 +522,7 @@ export class ToolyardConnectionCore {
     const connection = this.state.connections[this.key(userId)];
     return {
       ...this.state.settings,
+      trustGeneration: this.state.trustGeneration,
       revocationPending: this.state.pendingRevocations.length,
       administrator: user.admin,
       connection: connection?.state ?? ("not_connected" as const),
