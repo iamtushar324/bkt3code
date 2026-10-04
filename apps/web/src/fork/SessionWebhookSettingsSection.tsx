@@ -85,13 +85,37 @@ export function SessionWebhookSettingsSection() {
                 Remove
               </Button>
             </div>
+            <p className="text-sm font-medium">Toolyard delivery</p>
+            {webhook.deliveryHistoryError && (
+              <p className="text-xs text-muted-foreground">
+                Delivery history is unavailable: {webhook.deliveryHistoryError}.
+              </p>
+            )}
+            {(webhook.deliveryHistory ?? []).map((delivery) => (
+              <div key={delivery.eventId} className="space-y-1 text-xs">
+                <p className="break-all">
+                  {delivery.eventId}: {delivery.status}. Delivery attempts: {delivery.attempts}.
+                  {delivery.terminalReason ? ` ${delivery.terminalReason}` : ""}
+                </p>
+                {delivery.history.map((attempt) => (
+                  <p key={attempt.attempt} className="break-all text-muted-foreground">
+                    Attempt {attempt.attempt}, {new Date(attempt.at).toLocaleString()}:
+                    {attempt.httpStatus === null
+                      ? " No HTTP response."
+                      : ` HTTP ${attempt.httpStatus}.`}
+                    {` ${attempt.outcome}`}
+                  </p>
+                ))}
+              </div>
+            ))}
+            <p className="text-sm font-medium">T3 notification dispatch</p>
             {webhook.deliveries.length === 0 ? (
               <p className="text-xs text-muted-foreground">No callback has arrived.</p>
             ) : (
               <ul className="space-y-1 text-xs">
                 {webhook.deliveries.map((delivery) => (
                   <li key={delivery.eventId} className="break-all">
-                    {delivery.eventId}: {delivery.state}. Attempts: {delivery.attempts}.
+                    {delivery.eventId}: {delivery.state}. Dispatch attempts: {delivery.attempts}.
                     {delivery.terminalReason ? ` ${delivery.terminalReason}` : ""}
                   </li>
                 ))}

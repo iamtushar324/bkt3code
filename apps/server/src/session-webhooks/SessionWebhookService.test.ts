@@ -15,6 +15,9 @@ import {
   PersonalMcpSettingsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as DateTime from "effect/DateTime";
@@ -58,6 +61,9 @@ function scenario<E>(
 }
 const harness = () =>
   Effect.gen(function* () {
+    const historyEntered = yield* Deferred.make<void>();
+    const twoHistoriesEntered = yield* Deferred.make<void>();
+    const fourHistoriesEntered = yield* Deferred.make<void>();
     const secrets = new Map<string, Uint8Array>();
     const receipts = new Map<string, CommandReceiptV2>();
     const state = {
@@ -73,6 +79,20 @@ const harness = () =>
       instanceId: "instance_1",
       lostReceipt: false,
       rotationOutage: false,
+      historyOutage: false,
+      historyBlocked: false,
+      blockedHistoryReads: 0,
+      activeHistoryReads: 0,
+      peakHistoryReads: 0,
+      historyReads: 0,
+      remoteDeliveries: [] as Array<{
+        event_id: string;
+        inbox_id: string;
+        status: "pending" | "delivering" | "delivered" | "failed";
+        attempts: number;
+        terminal_reason?: string;
+        history: Array<{ attempt: number; at: number; http_status?: number; outcome: string }>;
+      }>,
       rotationLostReply: false,
       receiverRevision: 1,
       receiverAction: null as string | null,
@@ -161,6 +181,30 @@ const harness = () =>
         Effect.sync(() => {
           state.registrations++;
           return { callback_ref: "cb_1", revision: 1 };
+        }),
+      inspectCallback: () =>
+        Effect.gen(function* () {
+          state.historyReads++;
+          if (state.historyBlocked) {
+            state.blockedHistoryReads++;
+            state.activeHistoryReads++;
+            state.peakHistoryReads = Math.max(state.peakHistoryReads, state.activeHistoryReads);
+            yield* Deferred.succeed(historyEntered, undefined);
+            if (state.blockedHistoryReads === 2)
+              yield* Deferred.succeed(twoHistoriesEntered, undefined);
+            if (state.blockedHistoryReads === 4)
+              yield* Deferred.succeed(fourHistoriesEntered, undefined);
+            return yield* Effect.never.pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  state.activeHistoryReads--;
+                }),
+              ),
+            );
+          }
+          if (state.historyOutage)
+            return yield* new PersonalMcpSettingsError({ operation: "test", message: "outage" });
+          return { deliveries: state.remoteDeliveries };
         }),
       updateCallback: (_userId, _ref, input) =>
         Effect.gen(function* () {
@@ -277,12 +321,168 @@ const harness = () =>
       webhook,
       event,
       receive,
+      historyEntered,
+      twoHistoriesEntered,
+      fourHistoriesEntered,
       receipts,
       secrets,
       restart: () => make.pipe(Effect.provide(dependencies)),
     };
   });
 describe("durable session webhooks", () => {
+  it.effect("bounds a hanging history inspection and preserves its local receipt", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        yield* h.receive(h.event());
+        h.state.historyBlocked = true;
+        const inspection = yield* Effect.forkChild(h.service.inspect(owner, h.webhook.id));
+        yield* Deferred.await(h.historyEntered);
+        yield* TestClock.adjust("2 seconds");
+        const result = yield* Fiber.join(inspection);
+        assert.strictEqual(result.deliveries.length, 1);
+        assert.strictEqual(result.deliveryHistoryError, "delivery-history-unavailable");
+        assert.strictEqual(h.state.activeHistoryReads, 0);
+      }),
+    ),
+  );
+  it.effect(
+    "uses one list history budget with bounded concurrency and preserves every local row",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          for (let i = 2; i <= 7; i++) {
+            const id = `swh_${i.toString(16).padStart(32, "0")}`;
+            yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,status,revision,created_at,updated_at) SELECT ${id},owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,status,revision,created_at,updated_at FROM session_webhooks WHERE id=${h.webhook.id}`;
+          }
+          yield* h.receive(h.event());
+          h.state.historyBlocked = true;
+          const listing = yield* Effect.forkChild(h.service.list(owner));
+          yield* Deferred.await(h.fourHistoriesEntered);
+          assert.strictEqual(h.state.peakHistoryReads, 4);
+          yield* TestClock.adjust("2 seconds");
+          const result = yield* Fiber.join(listing);
+          assert.strictEqual(result.length, 7);
+          assert.strictEqual(
+            result.reduce((count, row) => count + row.deliveries.length, 0),
+            1,
+          );
+          assert.strictEqual(
+            result.every((row) => row.deliveryHistoryError === "delivery-history-unavailable"),
+            true,
+          );
+          assert.strictEqual(h.state.activeHistoryReads, 0);
+          assert.strictEqual(h.state.peakHistoryReads, 4);
+        }),
+      ),
+  );
+  it.effect("releases the lifecycle lock before history retrieval", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        h.state.historyBlocked = true;
+        const creating = yield* Effect.forkChild(h.service.create(owner, threadId));
+        yield* Deferred.await(h.historyEntered);
+        const disabling = yield* Effect.forkChild(
+          h.service.update(owner, h.webhook.id, "disable", h.webhook.revision),
+        );
+        yield* Deferred.await(h.twoHistoriesEntered);
+        const sql = yield* SqlClient.SqlClient;
+        assert.strictEqual(
+          (yield* sql<{
+            status: string;
+          }>`SELECT status FROM session_webhooks WHERE id=${h.webhook.id}`)[0]?.status,
+          "disabled",
+        );
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(creating);
+        assert.strictEqual((yield* Fiber.join(disabling)).status, "disabled");
+        assert.strictEqual(h.state.activeHistoryReads, 0);
+      }),
+    ),
+  );
+  it.effect(
+    "shows failed Toolyard deliveries that never reached T3 and their physical attempts",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          h.state.remoteDeliveries = [
+            {
+              event_id: "evt_never_received",
+              inbox_id: "in_failed",
+              status: "failed",
+              attempts: 2,
+              terminal_reason: "retry_limit",
+              history: [
+                { attempt: 1, at: 1_000, http_status: 503, outcome: "receiver unavailable" },
+                { attempt: 2, at: 2_000, outcome: "timeout\nwithout response" },
+              ],
+            },
+          ];
+          const view = yield* h.service.inspect(owner, h.webhook.id);
+          assert.strictEqual(view.deliveries.length, 0);
+          assert.strictEqual(view.deliveryHistory?.[0]?.eventId, "evt_never_received");
+          assert.strictEqual(view.deliveryHistory?.[0]?.history[0]?.httpStatus, 503);
+          assert.strictEqual(
+            view.deliveryHistory?.[0]?.history[1]?.outcome,
+            "timeout without response",
+          );
+          assert.strictEqual(view.deliveryHistoryError, null);
+        }),
+      ),
+  );
+  it.effect("preserves local history on an outage and refuses old instance credentials", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        yield* h.receive(h.event());
+        h.state.historyOutage = true;
+        const unavailable = yield* h.service.inspect(owner, h.webhook.id);
+        assert.strictEqual(unavailable.deliveries.length, 1);
+        assert.strictEqual(unavailable.deliveryHistoryError, "delivery-history-unavailable");
+        const reads = h.state.historyReads;
+        h.state.instanceId = "replaced_instance";
+        const replaced = yield* h.service.inspect(owner, h.webhook.id);
+        assert.strictEqual(replaced.deliveries.length, 1);
+        assert.strictEqual(replaced.deliveryHistoryError, "integration-disabled-or-replaced");
+        h.state.integrationEnabled = false;
+        yield* h.service.list(owner);
+        assert.strictEqual(h.state.historyReads, reads);
+      }),
+    ),
+  );
+  it.effect("rejects unbounded delivery history without hiding local records", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        h.state.remoteDeliveries = Array.from({ length: 101 }, () => ({
+          event_id: "evt",
+          inbox_id: "in",
+          status: "failed" as const,
+          attempts: 0,
+          history: [],
+        }));
+        const view = yield* h.service.inspect(owner, h.webhook.id);
+        assert.strictEqual(view.deliveryHistoryError, "delivery-history-unavailable");
+        assert.deepStrictEqual(view.deliveryHistory, []);
+      }),
+    ),
+  );
+  it.effect("exposes final lifecycle sync failure and stops automatic retries", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        h.state.rotationOutage = true;
+        yield* h.service.update(owner, h.webhook.id, "rotate", h.webhook.revision);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE session_webhooks SET sync_attempts=19,next_sync_at=NULL WHERE id=${h.webhook.id}`;
+        yield* h.service.drain();
+        assert.strictEqual(
+          (yield* h.service.inspect(owner, h.webhook.id)).terminalReason,
+          "rotate-server-sync-failed",
+        );
+        h.state.rotationOutage = false;
+        yield* h.service.drain();
+        assert.strictEqual(h.state.receiverRevision, 1);
+      }),
+    ),
+  );
   it.effect("persists complete outcomes before ack and deduplicates matching deliveries", () =>
     scenario((h) =>
       Effect.gen(function* () {

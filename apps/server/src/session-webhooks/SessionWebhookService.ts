@@ -1,6 +1,10 @@
 /** T3-CUSTOM(expbkt3): durable, owner-bound session webhook lifecycle and receipts. */
 import { CommandId, EnvironmentUserId, MessageId, ThreadId, UserId } from "@t3tools/contracts";
-import { SessionWebhookError, type SessionWebhookView } from "@t3tools/contracts";
+import {
+  SessionWebhookError,
+  SessionWebhookDeliveryHistory,
+  type SessionWebhookView,
+} from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +35,14 @@ import {
 } from "./protocol.ts";
 
 const isSessionWebhookError = Schema.is(SessionWebhookError);
+const decodeDeliveryHistory = Schema.decodeUnknownEffect(
+  Schema.Array(SessionWebhookDeliveryHistory).check(Schema.isMaxLength(100)),
+);
+const historyText = (value: string) =>
+  Array.from(value.slice(0, 500), (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127 ? " " : character;
+  }).join("");
 
 interface WebhookRow {
   readonly id: string;
@@ -125,7 +137,48 @@ export const make = Effect.gen(function* () {
     if (!row) return yield* fail(404, "webhook-not-found");
     return row;
   });
-  const view = Effect.fn("sessionWebhook.view")(function* (row: WebhookRow) {
+  const remoteHistory = Effect.fn("sessionWebhook.remoteHistory")(function* (row: WebhookRow) {
+    return yield* Effect.gen(function* () {
+      if (row.callback_ref === null) return { deliveryHistory: [], deliveryHistoryError: null };
+      yield* requireOwner(UserId.make(row.owner_user_id));
+      const binding = yield* integration.instanceBinding;
+      if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding)
+        return { deliveryHistory: [], deliveryHistoryError: "integration-disabled-or-replaced" };
+      const inspection = yield* integration.inspectCallback(
+        UserId.make(row.owner_user_id),
+        row.callback_ref,
+      );
+      const current = yield* integration.instanceBinding;
+      if (!current || !current.enabled || receiverTrustBinding(current) !== row.trust_binding)
+        return { deliveryHistory: [], deliveryHistoryError: "integration-disabled-or-replaced" };
+      const deliveryHistory = yield* decodeDeliveryHistory(
+        inspection.deliveries.map((delivery) => ({
+          eventId: delivery.event_id,
+          inboxId: delivery.inbox_id,
+          status: delivery.status,
+          attempts: delivery.attempts,
+          terminalReason: delivery.terminal_reason ? historyText(delivery.terminal_reason) : null,
+          history: delivery.history.map((attempt) => ({
+            attempt: attempt.attempt,
+            at: attempt.at,
+            httpStatus: attempt.http_status ?? null,
+            outcome: historyText(attempt.outcome),
+          })),
+        })),
+      );
+      return { deliveryHistory, deliveryHistoryError: null };
+    }).pipe(
+      Effect.timeout("2 seconds"),
+      // An outage must not hide the durable T3 receipt and dispatch records.
+      Effect.catch(() =>
+        Effect.succeed({
+          deliveryHistory: [],
+          deliveryHistoryError: "delivery-history-unavailable",
+        }),
+      ),
+    );
+  });
+  const localView = Effect.fn("sessionWebhook.localView")(function* (row: WebhookRow) {
     const deliveries =
       yield* sql<EventRow>`SELECT * FROM session_webhook_events WHERE webhook_id=${row.id} ORDER BY received_at DESC LIMIT 50`;
     return {
@@ -138,6 +191,8 @@ export const make = Effect.gen(function* () {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       terminalReason: row.terminal_reason,
+      deliveryHistory: [],
+      deliveryHistoryError: null,
       deliveries: deliveries.map((event) => ({
         eventId: event.event_id,
         state: event.state,
@@ -148,16 +203,35 @@ export const make = Effect.gen(function* () {
       })),
     } satisfies SessionWebhookView;
   });
+  const view = Effect.fn("sessionWebhook.view")(function* (row: WebhookRow) {
+    return { ...(yield* localView(row)), ...(yield* remoteHistory(row)) };
+  });
   const inspect = Effect.fn("sessionWebhook.inspect")(function* (userId: UserId, id: string) {
     return yield* view(yield* rowFor(userId, id));
   });
   const list = Effect.fn("sessionWebhook.list")(function* (userId: UserId) {
     yield* requireOwner(userId);
-    return yield* Effect.forEach(
-      yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE owner_user_id=${userId} ORDER BY created_at DESC LIMIT 100`,
-      view,
-      { concurrency: 1 },
-    );
+    const rows =
+      yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE owner_user_id=${userId} ORDER BY created_at DESC LIMIT 100`;
+    const locals = yield* Effect.forEach(rows, localView, { concurrency: 1 });
+    const result: SessionWebhookView[] = locals.map((local) => ({
+      ...local,
+      deliveryHistoryError: "delivery-history-unavailable",
+    }));
+    // One shared budget prevents a slow instance from multiplying latency by the number of receivers.
+    yield* Effect.forEach(
+      rows,
+      (row, index) =>
+        remoteHistory(row).pipe(
+          Effect.tap((remote) =>
+            Effect.sync(() => {
+              result[index] = { ...locals[index]!, ...remote };
+            }),
+          ),
+        ),
+      { concurrency: 4, discard: true },
+    ).pipe(Effect.timeoutOption("2 seconds"));
+    return result;
   });
   const create = Effect.fn("sessionWebhook.create")(function* (userId: UserId, threadId: ThreadId) {
     yield* requireDestination(userId, threadId);
@@ -165,7 +239,7 @@ export const make = Effect.gen(function* () {
     if (!binding || !binding.enabled) return yield* fail(409, "toolyard-integration-disabled");
     const existing =
       (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE owner_user_id=${userId} AND thread_id=${threadId} AND instance_id=${binding.instanceId} AND trust_binding=${receiverTrustBinding(binding)} AND status IN ('active','registering') ORDER BY created_at LIMIT 1`)[0];
-    if (existing?.status === "active") return yield* view(existing);
+    if (existing?.status === "active") return yield* localView(existing);
     const id = existing?.id ?? `swh_${NodeCrypto.randomBytes(16).toString("hex")}`;
     const secret = yield* secrets.getOrCreateRandom(keyName(id), 32);
     const time = now();
@@ -186,7 +260,7 @@ export const make = Effect.gen(function* () {
     )
       return yield* fail(409, "integration-changed");
     yield* sql`UPDATE session_webhooks SET callback_ref=${registration.callback_ref},receiver_revision=${registration.revision},status='active',updated_at=${now()} WHERE id=${id} AND status='registering'`;
-    return yield* inspect(userId, id);
+    return yield* localView(yield* rowFor(userId, id));
   });
   const synchronizeReceiver = Effect.fn("sessionWebhook.syncReceiver")(function* (row: WebhookRow) {
     if (!row.pending_action || !row.callback_ref) return;
@@ -250,7 +324,7 @@ export const make = Effect.gen(function* () {
     }
     // Persist the operation before server exchange; a lost response reuses the exact pending key/revision.
     yield* synchronizeReceiver(yield* rowFor(userId, id)).pipe(Effect.catch(() => Effect.void));
-    return yield* inspect(userId, id);
+    return yield* localView(yield* rowFor(userId, id));
   });
   const receive = Effect.fn("sessionWebhook.receive")(function* (
     id: string,
@@ -333,7 +407,7 @@ export const make = Effect.gen(function* () {
       yield* lifecycleLock.withPermits(1)(
         synchronizeReceiver(row).pipe(
           Effect.catch(() =>
-            sql`UPDATE session_webhooks SET sync_attempts=sync_attempts+1,next_sync_at=${DateTime.formatIso(DateTime.makeUnsafe(millis() + Math.min(600_000, 2 ** Math.min(row.sync_attempts, 10) * 2_000)))},terminal_reason=${`${row.pending_action}-server-sync-pending`} WHERE id=${row.id} AND revision=${row.revision}`.pipe(
+            sql`UPDATE session_webhooks SET sync_attempts=sync_attempts+1,next_sync_at=${row.sync_attempts + 1 >= 20 ? null : DateTime.formatIso(DateTime.makeUnsafe(millis() + Math.min(600_000, 2 ** Math.min(row.sync_attempts, 10) * 2_000)))},terminal_reason=${`${row.pending_action}-server-sync-${row.sync_attempts + 1 >= 20 ? "failed" : "pending"}`} WHERE id=${row.id} AND revision=${row.revision}`.pipe(
               Effect.asVoid,
             ),
           ),
@@ -447,7 +521,9 @@ export const make = Effect.gen(function* () {
   });
   return {
     create: (userId: UserId, threadId: ThreadId) =>
-      lifecycleLock.withPermits(1)(create(userId, threadId)),
+      lifecycleLock
+        .withPermits(1)(create(userId, threadId))
+        .pipe(Effect.flatMap((created) => inspect(userId, created.id))),
     inspect,
     list,
     update: (
@@ -455,7 +531,10 @@ export const make = Effect.gen(function* () {
       id: string,
       action: "disable" | "rotate" | "remove",
       expectedRevision: number,
-    ) => lifecycleLock.withPermits(1)(update(userId, id, action, expectedRevision)),
+    ) =>
+      lifecycleLock
+        .withPermits(1)(update(userId, id, action, expectedRevision))
+        .pipe(Effect.flatMap((updated) => inspect(userId, updated.id))),
     receive,
     drain: () => dispatchLock.withPermits(1)(drain()),
   };

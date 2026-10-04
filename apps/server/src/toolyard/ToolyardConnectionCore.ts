@@ -1,6 +1,12 @@
 /** T3-CUSTOM(expbkt3): Environment/instance/user-isolated, server-owned federation. */
 import * as NodeCrypto from "node:crypto";
 
+const REQUIRED_INSTANCE_CAPABILITIES = [
+  "inbox.batch.v1",
+  "callbacks.standard-webhooks.v1",
+  "federation.ed25519.v1",
+  "dashboard.handoff.v1",
+] as const;
 export type ConnectionState = "connected" | "unavailable" | "revoked" | "disabled";
 export interface ToolyardInstanceSettings {
   revision: number;
@@ -189,13 +195,17 @@ export class ToolyardConnectionCore {
     path: string,
     body?: Record<string, unknown>,
     token?: string,
+    maximumResponseBytes = 65536,
+    signal?: AbortSignal,
   ) {
     let response: Response;
     try {
       response = await (this.options.fetch ?? fetch)(`${baseUrl}${path}`, {
         method: body ? "POST" : "GET",
         redirect: "error",
-        signal: AbortSignal.timeout(10_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+          : AbortSignal.timeout(10_000),
         headers: {
           accept: "application/json",
           ...(body ? { "content-type": "application/json" } : {}),
@@ -206,8 +216,27 @@ export class ToolyardConnectionCore {
     } catch {
       throw new ToolyardIntegrationFailure("instance_unavailable", 503);
     }
-    const text = await response.text();
-    if (text.length > 65536) throw new ToolyardIntegrationFailure("invalid_response", 502);
+    // Bound the response before decoding it, including callback histories with many attempts.
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    const reader = response.body?.getReader();
+    if (reader) {
+      try {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          length += chunk.value.byteLength;
+          if (length > maximumResponseBytes) {
+            await reader.cancel();
+            throw new ToolyardIntegrationFailure("response_size_limit_exceeded", 502);
+          }
+          chunks.push(chunk.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    const text = new TextDecoder().decode(Buffer.concat(chunks));
     let data: Record<string, unknown>;
     try {
       data = object(JSON.parse(text));
@@ -254,6 +283,14 @@ export class ToolyardConnectionCore {
       const metadata = await this.request(baseUrl, "/.well-known/toolyard-instance");
       if (metadata.protocol !== "toolyard-federation-v1")
         throw new ToolyardIntegrationFailure("unsupported_instance_protocol");
+      const advertised = Array.isArray(metadata.capabilities) ? metadata.capabilities : [];
+      const missing = REQUIRED_INSTANCE_CAPABILITIES.filter(
+        (capability) => !advertised.includes(capability),
+      );
+      if (missing.length > 0)
+        throw new ToolyardIntegrationFailure(
+          `required_instance_capabilities_missing:${missing.join(",")}`,
+        );
       const instanceId = string(metadata, "instance_id");
       if (
         input.enabled &&
@@ -289,13 +326,17 @@ export class ToolyardConnectionCore {
           type: "spki",
           format: "der",
         });
-        await this.request(baseUrl, "/v1/federation/register", {
+        const registration = await this.request(baseUrl, "/v1/federation/register", {
           issuer: this.options.environmentId,
           kid: this.state.kid,
           public_key: publicDer.subarray(-32).toString("base64"),
           origin,
           token: input.adminToken,
         });
+        if (registration.instance_id !== instanceId)
+          throw new ToolyardIntegrationFailure("registration_instance_identity_mismatch", 409);
+        if (registration.protocol !== metadata.protocol)
+          throw new ToolyardIntegrationFailure("registration_protocol_mismatch", 409);
       }
       // Never transmit old credentials to a replacement URL or trust binding.
       if (changed || !input.enabled) this.state.connections = {};
@@ -482,6 +523,33 @@ export class ToolyardConnectionCore {
       { ...input, environment_id: this.options.environmentId },
       connection.token,
     );
+  }
+  async inspectCallback(userId: string, ref: string, signal?: AbortSignal) {
+    if (!/^[A-Za-z0-9_-]{1,256}$/.test(ref))
+      throw new ToolyardIntegrationFailure("invalid_callback_reference");
+    const settings = { ...this.state.settings };
+    const connection = await this.credential(userId);
+    if (!connection?.token) throw new ToolyardIntegrationFailure("connection_unavailable", 403);
+    if (settings.revision !== this.state.settings.revision)
+      throw new ToolyardIntegrationFailure("instance_changed", 409);
+    try {
+      const result = await this.request(
+        settings.baseUrl!,
+        `/v1/callbacks/receivers/${ref}`,
+        undefined,
+        connection.token,
+        1048576,
+        signal,
+      );
+      if (settings.revision !== this.state.settings.revision)
+        throw new ToolyardIntegrationFailure("instance_changed", 409);
+      return result;
+    } catch (error) {
+      // A rejected credential requires a new owner/admin decision, never automatic reprovisioning.
+      if (error instanceof ToolyardIntegrationFailure && error.status === 401)
+        await this.retire(userId, connection.token);
+      throw error;
+    }
   }
   async updateCallback(
     userId: string,

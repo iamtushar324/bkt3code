@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
@@ -25,6 +26,34 @@ const failure = (cause: unknown) =>
       cause instanceof ToolyardIntegrationFailure ? cause.code : "Toolyard integration failed.",
   });
 const call = <A>(f: () => Promise<A>) => Effect.tryPromise({ try: f, catch: failure });
+const HistoryIdentifier = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+const HistoryCount = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+);
+export const ToolyardCallbackInspection = Schema.Struct({
+  deliveries: Schema.Array(
+    Schema.Struct({
+      event_id: HistoryIdentifier,
+      inbox_id: HistoryIdentifier,
+      status: Schema.Literals(["pending", "delivering", "delivered", "failed"]),
+      attempts: HistoryCount,
+      terminal_reason: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+      history: Schema.Array(
+        Schema.Struct({
+          attempt: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+          at: HistoryCount,
+          http_status: Schema.optional(
+            Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+          ),
+          outcome: Schema.String.check(Schema.isMaxLength(1024)),
+        }),
+      ).check(Schema.isMaxLength(256)),
+    }),
+  ).check(Schema.isMaxLength(100)),
+});
+export type ToolyardCallbackInspection = typeof ToolyardCallbackInspection.Type;
+const decodeCallbackInspection = Schema.decodeUnknownEffect(ToolyardCallbackInspection);
 export class ToolyardIntegration extends Context.Service<
   ToolyardIntegration,
   {
@@ -47,6 +76,10 @@ export class ToolyardIntegration extends Context.Service<
       userId: UserId,
       input: { destination: string; secret: string; client_receiver_id: string },
     ) => Effect.Effect<{ callback_ref: string; revision: number }, PersonalMcpSettingsError>;
+    inspectCallback: (
+      userId: UserId,
+      ref: string,
+    ) => Effect.Effect<ToolyardCallbackInspection, PersonalMcpSettingsError>;
     updateCallback: (
       userId: UserId,
       ref: string,
@@ -110,6 +143,20 @@ export const toolyardIntegrationLayer = Layer.effect(
             throw new ToolyardIntegrationFailure("invalid_callback_response", 502);
           return { callback_ref: result.callback_ref, revision: result.revision };
         }),
+      inspectCallback: (userId, ref) =>
+        Effect.tryPromise({
+          try: (signal) => core.inspectCallback(userId, ref, signal),
+          catch: failure,
+        }).pipe(
+          Effect.flatMap(decodeCallbackInspection),
+          Effect.mapError(
+            () =>
+              new PersonalMcpSettingsError({
+                operation: "inspect-callback",
+                message: "callback_history_unavailable_or_invalid",
+              }),
+          ),
+        ),
       updateCallback: (userId, ref, input) =>
         call(async () => {
           const result = await core.updateCallback(userId, ref, input);

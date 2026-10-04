@@ -80,9 +80,36 @@ function EnvironmentWebhooks({ target }: { readonly target: SettingsTarget }) {
                   </Pressable>
                 ))}
             </View>
+            <Text className="text-sm font-semibold text-foreground">Toolyard delivery</Text>
+            {webhook.deliveryHistoryError && (
+              <Text className="text-xs text-foreground-muted">
+                Delivery history is unavailable: {webhook.deliveryHistoryError}.
+              </Text>
+            )}
+            {(webhook.deliveryHistory ?? []).map((delivery) => (
+              <View key={delivery.eventId} className="gap-1">
+                <Text className="text-xs text-foreground-muted">
+                  {delivery.eventId}: {delivery.status}. Delivery attempts: {delivery.attempts}.
+                  {delivery.terminalReason ? ` ${delivery.terminalReason}` : ""}
+                </Text>
+                {delivery.history.map((attempt) => (
+                  <Text key={attempt.attempt} className="text-xs text-foreground-muted">
+                    Attempt {attempt.attempt}, {new Date(attempt.at).toLocaleString()}:
+                    {attempt.httpStatus === null
+                      ? " No HTTP response."
+                      : ` HTTP ${attempt.httpStatus}.`}
+                    {` ${attempt.outcome}`}
+                  </Text>
+                ))}
+              </View>
+            ))}
+            <Text className="text-sm font-semibold text-foreground">T3 notification dispatch</Text>
+            {webhook.deliveries.length === 0 && (
+              <Text className="text-xs text-foreground-muted">No callback has arrived.</Text>
+            )}
             {webhook.deliveries.map((delivery) => (
               <Text key={delivery.eventId} className="text-xs text-foreground-muted">
-                {delivery.eventId}: {delivery.state}. Attempts: {delivery.attempts}.
+                {delivery.eventId}: {delivery.state}. Dispatch attempts: {delivery.attempts}.
                 {delivery.terminalReason ? ` ${delivery.terminalReason}` : ""}
               </Text>
             ))}

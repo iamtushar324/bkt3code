@@ -8,6 +8,20 @@ import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 function fixture(environmentId = "environment-one", storage = { value: null as string | null }) {
   let now = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T00:00:00Z"));
   let connects = 0;
+  let capabilities: unknown = [
+    "inbox.batch.v1",
+    "callbacks.standard-webhooks.v1",
+    "federation.ed25519.v1",
+    "dashboard.handoff.v1",
+  ];
+  let registrationOverride: Record<string, unknown> = {};
+  let inspectionStatus = 200;
+  let inspectionOwner: string | undefined;
+  let inspectionHook = async (_signal?: AbortSignal) => {};
+  let inspection: Record<string, unknown> = {
+    receiver: { callback_ref: "receiver-one" },
+    deliveries: [],
+  };
   let revoke = false;
   let outage = false;
   let loseResponse = false;
@@ -16,6 +30,7 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
     url: string;
     body: Record<string, unknown>;
     authorization?: string | undefined;
+    method: string | undefined;
   }[] = [];
   const server = new Map<string, { token: string; version: number }>();
   const fetcher: typeof fetch = async (input, init) => {
@@ -24,6 +39,7 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
     requests.push({
       url,
       body,
+      method: init?.method,
       authorization: (init?.headers as Record<string, string>)?.authorization,
     });
     if (outage) throw new Error("network failure");
@@ -33,8 +49,21 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
       return respond({
         instance_id: url.startsWith("https://second") ? "instance-two" : "instance-one",
         protocol: "toolyard-federation-v1",
+        capabilities,
       });
-    if (url.endsWith("/register")) return respond({ registered: true });
+    if (url.endsWith("/register"))
+      return respond({
+        registered: true,
+        instance_id: url.startsWith("https://second") ? "instance-two" : "instance-one",
+        protocol: "toolyard-federation-v1",
+        ...registrationOverride,
+      });
+    if (url.includes("/callbacks/receivers/") && init?.method === "GET") {
+      await inspectionHook(init?.signal ?? undefined);
+      if (inspectionOwner && !requests.at(-1)?.authorization?.includes(inspectionOwner))
+        return respond({ error: "receiver_not_owned" }, 403);
+      return respond(inspection, inspectionStatus);
+    }
     if (url.endsWith("/revoke")) return respond({ revoked: true });
     if (url.endsWith("/connect")) {
       connects++;
@@ -91,6 +120,22 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
     configure,
     storage,
     requests,
+    setCapabilities: (value: unknown) => {
+      capabilities = value;
+    },
+    setRegistration: (value: Record<string, unknown>) => {
+      registrationOverride = value;
+    },
+    setInspectionOwner: (owner: string) => {
+      inspectionOwner = owner;
+    },
+    setInspectionHook: (hook: (signal?: AbortSignal) => Promise<void>) => {
+      inspectionHook = hook;
+    },
+    setInspection: (value: Record<string, unknown>, status = 200) => {
+      inspection = value;
+      inspectionStatus = status;
+    },
     get connects() {
       return connects;
     },
@@ -113,6 +158,154 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
 }
 
 describe("server-owned Toolyard federation", () => {
+  it.each([
+    "inbox.batch.v1",
+    "callbacks.standard-webhooks.v1",
+    "federation.ed25519.v1",
+    "dashboard.handoff.v1",
+  ])(
+    "refuses an instance missing %s without registering trust or persisting a connection",
+    async (missing) => {
+      const f = fixture();
+      await f.core.initialize();
+      const previous = f.storage.value;
+      f.setCapabilities(
+        [
+          "inbox.batch.v1",
+          "callbacks.standard-webhooks.v1",
+          "federation.ed25519.v1",
+          "dashboard.handoff.v1",
+        ].filter((value) => value !== missing),
+      );
+      await expect(f.configure()).rejects.toMatchObject({
+        code: `required_instance_capabilities_missing:${missing}`,
+      });
+      expect(f.storage.value).toBe(previous);
+      expect(f.requests.some((request) => request.url.endsWith("/register"))).toBe(false);
+      expect(await f.core.credential("user_a")).toBeNull();
+      expect(f.core.binding()).toBeNull();
+    },
+  );
+  it.each([
+    [{ instance_id: "unexpected-instance" }, "registration_instance_identity_mismatch"],
+    [{ protocol: "unexpected-protocol" }, "registration_protocol_mismatch"],
+  ] as const)(
+    "rejects changed registration metadata %j without changing the local trust binding",
+    async (override, code) => {
+      const f = fixture();
+      await f.core.initialize();
+      const initial = f.storage.value;
+      f.setRegistration(override);
+      await expect(f.configure()).rejects.toMatchObject({ code });
+      expect(f.storage.value).toBe(initial);
+      expect(f.core.binding()).toBeNull();
+      expect(await f.core.credential("user_a")).toBeNull();
+      f.setRegistration({});
+      await f.configure();
+      const original = await f.core.credential("user_a");
+      const persisted = f.storage.value;
+      f.setRegistration(override);
+      await expect(f.configure(1, { baseUrl: "https://second.test" })).rejects.toMatchObject({
+        code,
+      });
+      expect(f.storage.value).toBe(persisted);
+      expect((await f.core.credential("user_a"))?.token).toBe(original?.token);
+      const restart = fixture("environment-one", f.storage);
+      await restart.core.initialize();
+      expect(restart.core.binding()?.instanceId).toBe("instance-one");
+    },
+  );
+  it("inspects only the authenticated user's receiver and supports safe read retries", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    f.setInspection({ deliveries: [{ event_id: "decision-one", history: [] }] });
+    expect(await f.core.inspectCallback("user_a", "receiver-one")).toMatchObject({
+      deliveries: [{ event_id: "decision-one" }],
+    });
+    const first = f.requests.at(-1)!;
+    expect(first.method).toBe("GET");
+    expect(first.authorization).toContain("user_a");
+    f.setOutage(true);
+    await expect(f.core.inspectCallback("user_a", "receiver-one")).rejects.toMatchObject({
+      code: "instance_unavailable",
+    });
+    f.setOutage(false);
+    await f.core.inspectCallback("user_a", "receiver-one");
+    expect(f.requests.at(-1)?.authorization).toBe(first.authorization);
+    f.setInspectionOwner("user_a");
+    await expect(f.core.inspectCallback("user_b", "receiver-one")).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(f.requests.at(-1)?.authorization).toContain("user_b");
+    await expect(f.core.inspectCallback("user_a", "../receiver")).rejects.toMatchObject({
+      code: "invalid_callback_reference",
+    });
+    f.setInspection({ error: "connection_revoked" }, 401);
+    await expect(f.core.inspectCallback("user_a", "receiver-one")).rejects.toMatchObject({
+      status: 401,
+    });
+    const attempts = f.connects;
+    await expect(f.core.inspectCallback("user_a", "receiver-one")).rejects.toMatchObject({
+      code: "connection_unavailable",
+    });
+    expect(f.connects).toBe(attempts);
+  });
+  it("bounds inspection responses and never sends a prior-instance credential to a replacement", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    const old = await f.core.credential("user_a");
+    f.setInspection({ large: "x".repeat(1048577) });
+    await expect(f.core.inspectCallback("user_a", "receiver-one")).rejects.toMatchObject({
+      code: "response_size_limit_exceeded",
+    });
+    f.setInspection({ deliveries: [] });
+    f.setInspectionHook(async () => {
+      await f.configure(1, { baseUrl: "https://second.test" });
+    });
+    await expect(f.core.inspectCallback("user_a", "receiver-one")).rejects.toMatchObject({
+      code: "instance_changed",
+    });
+    f.setInspectionHook(async () => {});
+    await f.core.inspectCallback("user_a", "receiver-one");
+    expect(f.requests.at(-1)?.url).toBe("https://second.test/v1/callbacks/receivers/receiver-one");
+    expect(f.requests.at(-1)?.authorization).not.toContain(old?.token);
+    expect(f.requests.at(-1)?.authorization).toContain("instance-two");
+  });
+  it("cancels the physical history fetch when its caller interrupts", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    await f.core.credential("user_a");
+    const controller = new AbortController();
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let transportCancelled = false;
+    f.setInspectionHook(
+      (signal) =>
+        new Promise<void>((_resolve, reject) => {
+          signal!.addEventListener(
+            "abort",
+            () => {
+              transportCancelled = true;
+              reject(signal!.reason);
+            },
+            { once: true },
+          );
+          markEntered();
+        }),
+    );
+    const result = expect(
+      f.core.inspectCallback("user_a", "receiver-one", controller.signal),
+    ).rejects.toMatchObject({ code: "instance_unavailable" });
+    await entered;
+    controller.abort();
+    await result;
+    expect(transportCancelled).toBe(true);
+  });
   it("recovers a lost connect response without rotating the remote credential", async () => {
     const f = fixture();
     await f.core.initialize();
