@@ -1,5 +1,6 @@
 /** T3-CUSTOM(expbkt3): unauthenticated transport, authenticated by Standard Webhooks signatures. */
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as ByteSize from "effect/ByteSize";
 import * as Layer from "effect/Layer";
 import {
@@ -11,6 +12,7 @@ import {
 import { SessionWebhookError } from "@t3tools/contracts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
 import { MAX_CALLBACK_BYTES } from "./protocol.ts";
+const isSessionWebhookError = Schema.is(SessionWebhookError);
 export const sessionWebhookRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const service = yield* SessionWebhookService;
@@ -40,7 +42,7 @@ export const sessionWebhookRouteLayer = Layer.unwrap(
       );
     }).pipe(
       Effect.catch((error) =>
-        error instanceof SessionWebhookError
+        isSessionWebhookError(error)
           ? Effect.succeed(
               HttpServerResponse.jsonUnsafe({ error: error.detail }, { status: error.status }),
             )

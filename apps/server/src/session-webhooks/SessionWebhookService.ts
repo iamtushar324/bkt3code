@@ -3,6 +3,8 @@ import { CommandId, EnvironmentUserId, MessageId, ThreadId, UserId } from "@t3to
 import { SessionWebhookError, type SessionWebhookView } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -27,6 +29,8 @@ import {
   verifyStandardWebhook,
   receiverTrustBinding,
 } from "./protocol.ts";
+
+const isSessionWebhookError = Schema.is(SessionWebhookError);
 
 interface WebhookRow {
   readonly id: string;
@@ -63,7 +67,13 @@ interface QueueCursor {
   readonly eventId: string;
 }
 const fail = (status: number, detail: string) => new SessionWebhookError({ status, detail });
-const now = () => new Date().toISOString();
+const now = () => DateTime.formatIso(DateTime.nowUnsafe());
+const millis = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
+const RotationKey = Schema.fromJsonString(
+  Schema.Struct({ expiresAt: Schema.Number, key: Schema.String }),
+);
+const encodeRotationKey = Schema.encodeSync(RotationKey);
+const decodeRotationKey = Schema.decodeUnknownSync(RotationKey);
 const keyName = (id: string) => `session-webhook-${id}`;
 const secretText = (secret: Uint8Array) => `whsec_${Buffer.from(secret).toString("base64")}`;
 const isId = (id: string) => /^swh_[a-f0-9]{32}$/.test(id);
@@ -203,7 +213,7 @@ export const make = Effect.gen(function* () {
         yield* secrets.set(
           `${keyName(row.id)}-previous`,
           Buffer.from(
-            JSON.stringify({ expiresAt: Date.now() + 300_000, key: secretText(previous.value) }),
+            encodeRotationKey({ expiresAt: millis() + 300_000, key: secretText(previous.value) }),
           ),
         );
       yield* secrets.set(keyName(row.id), next.value);
@@ -263,13 +273,16 @@ export const make = Effect.gen(function* () {
     }
     const previous = yield* secrets.get(`${keyName(id)}-previous`);
     if (Option.isSome(previous)) {
-      const stored: unknown = JSON.parse(Buffer.from(previous.value).toString());
+      const stored = yield* Effect.try({
+        try: () => decodeRotationKey(Buffer.from(previous.value).toString()),
+        catch: () => fail(503, "rotation-key-invalid"),
+      });
       if (
         typeof stored === "object" &&
         stored !== null &&
         "expiresAt" in stored &&
         typeof stored.expiresAt === "number" &&
-        stored.expiresAt > Date.now() &&
+        stored.expiresAt > millis() &&
         "key" in stored &&
         typeof stored.key === "string"
       )
@@ -280,7 +293,7 @@ export const make = Effect.gen(function* () {
         body,
         ...headers,
         secrets: validSecrets,
-        nowSeconds: Math.floor(Date.now() / 1000),
+        nowSeconds: Math.floor(millis() / 1000),
       })
     )
       return yield* fail(401, "invalid-webhook-signature");
@@ -300,7 +313,7 @@ export const make = Effect.gen(function* () {
         }
         const current = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
         if (current?.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
-        const cutoff = new Date(Date.now() - 60_000).toISOString();
+        const cutoff = DateTime.formatIso(DateTime.makeUnsafe(millis() - 60_000));
         const count =
           (yield* sql<{
             count: number;
@@ -320,7 +333,7 @@ export const make = Effect.gen(function* () {
       yield* lifecycleLock.withPermits(1)(
         synchronizeReceiver(row).pipe(
           Effect.catch(() =>
-            sql`UPDATE session_webhooks SET sync_attempts=sync_attempts+1,next_sync_at=${new Date(Date.now() + Math.min(600_000, 2 ** Math.min(row.sync_attempts, 10) * 2_000)).toISOString()},terminal_reason=${`${row.pending_action}-server-sync-pending`} WHERE id=${row.id} AND revision=${row.revision}`.pipe(
+            sql`UPDATE session_webhooks SET sync_attempts=sync_attempts+1,next_sync_at=${DateTime.formatIso(DateTime.makeUnsafe(millis() + Math.min(600_000, 2 ** Math.min(row.sync_attempts, 10) * 2_000)))},terminal_reason=${`${row.pending_action}-server-sync-pending`} WHERE id=${row.id} AND revision=${row.revision}`.pipe(
               Effect.asVoid,
             ),
           ),
@@ -372,7 +385,7 @@ export const make = Effect.gen(function* () {
         Effect.map(Option.some),
         Effect.catch((error) =>
           Effect.gen(function* () {
-            if (!(error instanceof SessionWebhookError)) return yield* Effect.fail(error);
+            if (!isSessionWebhookError(error)) return yield* Effect.fail(error);
             yield* terminal(error.detail);
             return Option.none();
           }),
@@ -398,7 +411,7 @@ export const make = Effect.gen(function* () {
         next_attempt_at: string | null;
       }>`SELECT next_attempt_at FROM session_webhook_events WHERE webhook_id=${event.webhook_id} AND event_id=${event.event_id}`)[0]
         ?.next_attempt_at;
-      if (retry && Date.parse(retry) > Date.now()) continue;
+      if (retry && DateTime.toEpochMillis(DateTime.makeUnsafe(retry)) > millis()) continue;
       yield* sql`UPDATE session_webhook_events SET state='dispatching',attempts=attempts+1,updated_at=${now()} WHERE webhook_id=${event.webhook_id} AND event_id=${event.event_id}`;
       const parsed = parseDecisionCallback(event.payload, event.event_id);
       const result = yield* orchestrator
@@ -420,12 +433,10 @@ export const make = Effect.gen(function* () {
           Effect.map(Option.some),
           Effect.catch((error) => {
             const detail =
-              "cause" in error && error.cause instanceof SessionWebhookError
-                ? error.cause.detail
-                : null;
+              "cause" in error && isSessionWebhookError(error.cause) ? error.cause.detail : null;
             if (detail && detail !== "destination-busy")
               return terminal(detail).pipe(Effect.as(Option.none()));
-            return sql`UPDATE session_webhook_events SET state='queued',next_attempt_at=${new Date(Date.now() + Math.min(600_000, 2 ** Math.min(event.attempts, 10) * 2_000)).toISOString()},updated_at=${now()} WHERE webhook_id=${event.webhook_id} AND event_id=${event.event_id}`.pipe(
+            return sql`UPDATE session_webhook_events SET state='queued',next_attempt_at=${DateTime.formatIso(DateTime.makeUnsafe(millis() + Math.min(600_000, 2 ** Math.min(event.attempts, 10) * 2_000)))},updated_at=${now()} WHERE webhook_id=${event.webhook_id} AND event_id=${event.event_id}`.pipe(
               Effect.as(Option.none()),
             );
           }),

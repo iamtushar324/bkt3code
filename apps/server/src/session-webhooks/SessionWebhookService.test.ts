@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
@@ -37,15 +38,18 @@ import { sessionWebhookRouteLayer } from "./http.ts";
 import { assertSessionWebhookDispatch } from "./dispatchGuard.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isSessionWebhookError = Schema.is(SessionWebhookError);
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const errorDetail = (error: unknown) =>
-  error instanceof SessionWebhookError ? error.detail : "unexpected-error";
+  isSessionWebhookError(error) ? error.detail : "unexpected-error";
 const owner = UserId.make("user_owner");
 const stranger = UserId.make("user_other");
 const threadId = ThreadId.make("thread-target");
-function scenario(
+function scenario<E>(
   test: (
     h: Effect.Success<ReturnType<typeof harness>>,
-  ) => Effect.Effect<void, unknown, SqlClient.SqlClient>,
+  ) => Effect.Effect<void, E, SqlClient.SqlClient>,
 ) {
   return Effect.gen(function* () {
     yield* migration;
@@ -245,7 +249,7 @@ const harness = () =>
     const event = (id = "evt_1") => ({
       type: "inbox.decision",
       event_id: id,
-      timestamp: new Date().toISOString(),
+      timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
       data: {
         inbox_id: "in_1",
         decision_revision: 2,
@@ -258,8 +262,8 @@ const harness = () =>
       },
     });
     const receive = (payload: ReturnType<typeof event>) => {
-      const body = JSON.stringify(payload);
-      const timestamp = String(Math.floor(Date.now() / 1000));
+      const body = encodeJson(payload);
+      const timestamp = String(Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000));
       const secret = secrets.get(`session-webhook-${webhook.id}`)!;
       return service.receive(webhook.id, body, {
         id: payload.event_id,
@@ -317,7 +321,7 @@ describe("durable session webhooks", () => {
         assert.strictEqual((yield* h.receive(payload)).duplicate, true);
         yield* h.service.drain();
         assert.strictEqual(h.state.dispatches, 1);
-        assert.strictEqual(h.state.notifications[0]?.includes(JSON.stringify(response)), true);
+        assert.strictEqual(h.state.notifications[0]?.includes(encodeJson(response)), true);
         assert.strictEqual(
           h.state.notifications[0]?.includes("Read the authoritative Inbox status"),
           true,
@@ -338,7 +342,7 @@ describe("durable session webhooks", () => {
           .receive({ ...event, data: { ...event.data, status_ref: "in_2" } })
           .pipe(Effect.flip);
         assert.strictEqual(
-          error instanceof SessionWebhookError ? error.detail : "unexpected",
+          isSessionWebhookError(error) ? error.detail : "unexpected",
           "event-content-conflict",
         );
       }),
@@ -408,7 +412,7 @@ describe("durable session webhooks", () => {
         yield* h.receive(h.event());
         h.state.accessReadFailure = true;
         const error = yield* h.service.drain().pipe(Effect.flip);
-        assert.strictEqual(error instanceof PersistenceSqlError, true);
+        assert.strictEqual(isPersistenceSqlError(error), true);
         const pending = (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0];
         assert.strictEqual(pending?.state, "queued");
         assert.strictEqual(pending?.terminalReason, null);
@@ -636,8 +640,10 @@ describe("durable session webhooks", () => {
           const client = yield* HttpClient.HttpClient;
           const send = (payload: unknown, signatureValid = true) =>
             Effect.gen(function* () {
-              const body = JSON.stringify(payload);
-              const timestamp = String(Math.floor(Date.now() / 1000));
+              const body = encodeJson(payload);
+              const timestamp = String(
+                Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000),
+              );
               const secret = h.secrets.get(`session-webhook-${h.webhook.id}`)!;
               const request = HttpClientRequest.post(`/api/session-webhooks/${h.webhook.id}`).pipe(
                 HttpClientRequest.bodyText(body, "application/json"),
@@ -682,7 +688,7 @@ describe("durable session webhooks", () => {
         const reused = yield* h.service.create(owner, threadId);
         assert.strictEqual(reused.id, h.webhook.id);
         assert.strictEqual(h.state.registrations, 1);
-        assert.strictEqual(JSON.stringify(reused).includes("whsec_"), false);
+        assert.strictEqual(encodeJson(reused).includes("whsec_"), false);
       }),
     ),
   );

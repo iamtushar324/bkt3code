@@ -143,12 +143,15 @@ const makeHandlers = (
   return makeForkWsHandlers(deps as unknown as ForkWsHandlerDeps);
 };
 
-/** The connect flow itself never fails; only the authorization wrapper can. */
+/** T3-CUSTOM(expbkt3): transport authorization and managed connection access can fail. */
 const connect = (
   httpClient: HttpClient.HttpClient,
   profiles: ReturnType<typeof makeProfiles>["profiles"],
   options: { readonly actorUserId?: UserId | null; readonly token?: string } = {},
-): Effect.Effect<PersonalMcpToolyardConnectResult, EnvironmentAuthorizationError> =>
+): Effect.Effect<
+  PersonalMcpToolyardConnectResult,
+  EnvironmentAuthorizationError | PersonalMcpSettingsError
+> =>
   makeHandlers(
     httpClient,
     profiles,

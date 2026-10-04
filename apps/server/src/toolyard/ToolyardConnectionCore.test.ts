@@ -1,11 +1,12 @@
 /** T3-CUSTOM(expbkt3): Trust, isolation, recovery and single-use browser handoff boundaries. */
 import { describe, it, expect } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import { ToolyardConnectionCore, canonicalToolyardUrl } from "./ToolyardConnectionCore.ts";
 import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 
 function fixture(environmentId = "environment-one", storage = { value: null as string | null }) {
-  let now = Date.now();
+  let now = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T00:00:00Z"));
   let connects = 0;
   let revoke = false;
   let outage = false;
@@ -53,13 +54,13 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
         email: `${claims.sub}@beknown.work`,
         agent_id: key,
         credential_version: connection.version,
-        expires_at: new Date(now + 3600_000).toISOString(),
+        expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 3600_000)),
       });
     }
     if (url.endsWith("/handoff"))
       return respond({
         url: handoffUrl,
-        expires_at: new Date(now + 60_000).toISOString(),
+        expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 60_000)),
       });
     return respond({ callback_ref: "receiver-one", revision: 1 });
   };

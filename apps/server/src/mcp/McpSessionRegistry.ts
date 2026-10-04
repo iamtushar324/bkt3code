@@ -10,6 +10,7 @@ import {
   userIdFromSubject,
   type AuthSessionId,
   type PersonalMcpProfile,
+  type PersonalMcpSettingsError,
   type UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -142,7 +143,7 @@ export interface McpSessionRegistryOptions {
   /** T3-CUSTOM(expbkt3): inspection preserves storage errors rather than treating them as an empty catalog. */
   readonly loadPersonalProfileForInspection?: (
     userId: UserId,
-  ) => Effect.Effect<PersonalMcpProfile | undefined, unknown>;
+  ) => Effect.Effect<PersonalMcpProfile | undefined, PersonalMcpSettingsError>;
   readonly resolveExternalUserToken?: (
     rawToken: string,
   ) => Effect.Effect<UserMcpProfileStore.ResolvedPersonalMcpToken | undefined>;

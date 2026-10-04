@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
@@ -84,6 +85,8 @@ const native = makeOrchestratorV2ReplayLayerWithRegistry(
 const services = Layer.mergeAll(native, ProjectionStore.layer, CommandReceiptStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
 );
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 it.effect("uses one native receipt and preserves retries after busy admission", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -135,7 +138,7 @@ it.effect("uses one native receipt and preserves retries after busy admission", 
     yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,status,created_at,updated_at) VALUES(${webhookId},${owner},${threadId},${binding.instanceId},${receiverTrustBinding(binding)},'active','2026-10-04','2026-10-04')`;
     const command = (eventId: string) =>
       Effect.gen(function* () {
-        const payload = JSON.stringify({
+        const payload = encodeJson({
           type: "inbox.decision",
           event_id: eventId,
           timestamp: "2026-10-04T12:00:00Z",

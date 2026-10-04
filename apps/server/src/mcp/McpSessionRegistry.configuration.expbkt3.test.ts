@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  PersonalMcpSettingsError,
   ProviderInstanceId,
   ThreadId,
   UserId,
@@ -117,7 +118,14 @@ it.effect(
           // Issuance still receives the existing fail-closed reader.
           loadPersonalProfile: () => Effect.undefined,
           loadPersonalProfileForInspection: () =>
-            outage ? Effect.fail(new Error("storage unavailable")) : Effect.undefined,
+            outage
+              ? Effect.fail(
+                  new PersonalMcpSettingsError({
+                    operation: "inspect-profile",
+                    message: "storage unavailable",
+                  }),
+                )
+              : Effect.undefined,
         })
         .pipe(
           Effect.provideService(
