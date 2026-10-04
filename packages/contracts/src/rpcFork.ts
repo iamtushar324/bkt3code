@@ -1,5 +1,9 @@
 import { SessionWebhookView, SessionWebhookUpdateInput } from "./sessionWebhooks.ts";
-import { ToolyardIntegrationStatus, ToolyardIntegrationConfigureInput, ToolyardDashboardHandoff } from "./toolyardIntegration.ts";
+import {
+  ToolyardIntegrationStatus,
+  ToolyardIntegrationConfigureInput,
+  ToolyardDashboardHandoff,
+} from "./toolyardIntegration.ts";
 /**
  * T3-CUSTOM(expbkt3): Fork websocket RPC definitions.
  *
@@ -542,11 +546,14 @@ export const WsToolyardIntegrationStatusRpc = Rpc.make(WS_FORK_METHODS.toolyardI
   success: ToolyardIntegrationStatus,
   error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
 });
-export const WsToolyardIntegrationConfigureRpc = Rpc.make(WS_FORK_METHODS.toolyardIntegrationConfigure, {
-  payload: ToolyardIntegrationConfigureInput,
-  success: ToolyardIntegrationStatus,
-  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
-});
+export const WsToolyardIntegrationConfigureRpc = Rpc.make(
+  WS_FORK_METHODS.toolyardIntegrationConfigure,
+  {
+    payload: ToolyardIntegrationConfigureInput,
+    success: ToolyardIntegrationStatus,
+    error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+  },
+);
 export const WsToolyardDashboardHandoffRpc = Rpc.make(WS_FORK_METHODS.toolyardDashboardHandoff, {
   payload: Schema.Struct({}),
   success: ToolyardDashboardHandoff,

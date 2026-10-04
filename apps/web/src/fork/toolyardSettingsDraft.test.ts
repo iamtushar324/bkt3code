@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): Settings drafts survive remount/reload and disappear on logout. */
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   clearToolyardSettingsDrafts,
   readToolyardSettingsDraft,

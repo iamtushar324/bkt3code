@@ -31,7 +31,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { makePerUserLock } from "./PerUserLock.ts";
-import { managedToolyardIntegration, managedToolyardCredential, managedToolyardBaseUrl, hasManagedToolyardRuntime } from "../toolyard/ToolyardIntegration.ts";
+import {
+  managedToolyardIntegration,
+  managedToolyardCredential,
+  managedToolyardBaseUrl,
+  hasManagedToolyardRuntime,
+} from "../toolyard/ToolyardIntegration.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -198,9 +203,14 @@ const validateIntegration = (integration: PersonalMcpProfileUpdate["integrations
     throw new Error(`Integration id '${integration.id}' is invalid.`);
   }
   const url = new URL(integration.url);
-  if (hasManagedToolyardRuntime() && integration.id !== TOOLYARD_MCP_INTEGRATION_ID &&
-    (isToolyardGatewayUrl(integration.url) || integration.url === `${managedToolyardBaseUrl()}/mcp`)) {
-    throw new Error("Toolyard uses the environment's server-owned connection. Remove the manual Toolyard integration.");
+  if (
+    hasManagedToolyardRuntime() &&
+    integration.id !== TOOLYARD_MCP_INTEGRATION_ID &&
+    (isToolyardGatewayUrl(integration.url) || integration.url === `${managedToolyardBaseUrl()}/mcp`)
+  ) {
+    throw new Error(
+      "Toolyard uses the environment's server-owned connection. Remove the manual Toolyard integration.",
+    );
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Integration '${integration.id}' must use an HTTP or HTTPS URL.`);
@@ -323,11 +333,19 @@ export const layer = Layer.effect(
         externalTokenPrefix: row?.externalTokenPrefix ?? "",
         integrations: yield* managedToolyardIntegration(userId).pipe(
           Effect.catch(() => Effect.succeed(null)),
-          Effect.map((managed) => managed === undefined ? presentIntegrations(stored.integrations) : [
-            ...(managed === null ? [] : [managed]),
-            ...presentIntegrations(stored.integrations).filter((entry) => entry.id !== TOOLYARD_MCP_INTEGRATION_ID &&
-              !isToolyardGatewayUrl(entry.url) && entry.url !== `${managedToolyardBaseUrl()}/mcp`),
-          ]),
+          Effect.map((managed) =>
+            managed === undefined
+              ? presentIntegrations(stored.integrations)
+              : [
+                  ...(managed === null ? [] : [managed]),
+                  ...presentIntegrations(stored.integrations).filter(
+                    (entry) =>
+                      entry.id !== TOOLYARD_MCP_INTEGRATION_ID &&
+                      !isToolyardGatewayUrl(entry.url) &&
+                      entry.url !== `${managedToolyardBaseUrl()}/mcp`,
+                  ),
+                ],
+          ),
         ),
         updatedAt: row?.updatedAt ?? now,
       });
@@ -623,7 +641,8 @@ export const layer = Layer.effect(
 
     const getIntegrationCredential = Effect.fn("UserMcpProfileStore.getIntegrationCredential")(
       function* (userId: UserId, integrationId: PersonalMcpIntegrationId) {
-        if (integrationId === TOOLYARD_MCP_INTEGRATION_ID && hasManagedToolyardRuntime()) return yield* managedToolyardCredential(userId);
+        if (integrationId === TOOLYARD_MCP_INTEGRATION_ID && hasManagedToolyardRuntime())
+          return yield* managedToolyardCredential(userId);
         const value = yield* secrets
           .get(secretName(userId, integrationId))
           .pipe(Effect.mapError((cause) => fail("read-integration-secret", cause)));

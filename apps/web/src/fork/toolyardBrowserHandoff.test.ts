@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): Browser handoffs preserve user activation and use the native OS opener. */
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 const nativeOpen = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../localApi", () => ({ ensureLocalApi: () => ({ shell: { openExternal: nativeOpen } }) }));
 import { createToolyardBrowserHandoffTarget } from "./toolyardBrowserHandoff";

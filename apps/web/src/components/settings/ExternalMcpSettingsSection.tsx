@@ -285,7 +285,6 @@ export function ExternalMcpSettingsSection() {
         </SettingsRow>
       </SettingsSection>
 
-
       <SettingsSection title="My managed MCP integrations">
         <SettingsRow
           title="Credential routing"

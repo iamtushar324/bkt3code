@@ -65,6 +65,7 @@ function fixture(provider = "codex") {
     onIssue: () => {},
     onInspect: Effect.void as Effect.Effect<void>,
     upstreamServers: [] as ReadonlyArray<McpProviderSession.McpUpstreamServerConfig>,
+    inspectionUnavailable: false,
     pendingPrompt: false,
     pendingWork: false,
     events: undefined as Queue.Queue<ProviderAdapterV2Event, Cause.Done> | undefined,
@@ -203,7 +204,9 @@ function fixture(provider = "codex") {
               };
             }),
           inspectUpstreamServers: () =>
-            state.onInspect.pipe(Effect.map(() => state.upstreamServers)),
+            state.onInspect.pipe(
+              Effect.map(() => (state.inspectionUnavailable ? undefined : state.upstreamServers)),
+            ),
           resolve: (token) =>
             Effect.sync(() => {
               const index = Number(token.replace("credential-", "")) - 1;
@@ -425,6 +428,31 @@ it.effect.each([false, true])(
       for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
       expect(yield* manager.open(f.open)).not.toBe(original);
       expect(f.state.closed).toBe(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "retains an idle healthy provider and its credentials when the profile snapshot is unavailable",
+  () => {
+    const f = fixture();
+    f.state.upstreamServers = [toolyardServer()];
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open(f.open);
+      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      f.state.upstreamServers = [];
+      f.state.inspectionUnavailable = true;
+      expect(yield* manager.open(f.open)).toBe(original);
+      expect(f.state.closed).toBe(0);
+      expect(f.issued).toHaveLength(1);
+      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
+        credential,
+      );
+      f.state.inspectionUnavailable = false;
+      expect(yield* manager.open(f.open)).not.toBe(original);
+      expect(f.state.closed).toBe(1);
+      expect(f.issued).toHaveLength(2);
     }).pipe(Effect.provide(f.layer));
   },
 );

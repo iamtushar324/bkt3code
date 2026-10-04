@@ -72,7 +72,7 @@ export interface McpSessionRegistryShape {
   /** T3-CUSTOM(expbkt3): inspect current configuration without rotating any credentials. */
   readonly inspectUpstreamServers?: (
     request: Pick<McpCredentialRequest, "actorUserId" | "providerInstanceId">,
-  ) => Effect.Effect<ReadonlyArray<McpProviderSession.McpUpstreamServerConfig>>;
+  ) => Effect.Effect<ReadonlyArray<McpProviderSession.McpUpstreamServerConfig> | undefined>;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
@@ -139,6 +139,10 @@ export interface McpSessionRegistryOptions {
     readonly apiKey: string;
   }>;
   readonly loadPersonalProfile?: (userId: UserId) => Effect.Effect<PersonalMcpProfile | undefined>;
+  /** T3-CUSTOM(expbkt3): inspection preserves storage errors rather than treating them as an empty catalog. */
+  readonly loadPersonalProfileForInspection?: (
+    userId: UserId,
+  ) => Effect.Effect<PersonalMcpProfile | undefined, unknown>;
   readonly resolveExternalUserToken?: (
     rawToken: string,
   ) => Effect.Effect<UserMcpProfileStore.ResolvedPersonalMcpToken | undefined>;
@@ -481,17 +485,21 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     inspectUpstreamServers: (request) =>
       Effect.gen(function* () {
         const actorUserId = request.actorUserId ?? null;
+        const loadProfile = options.loadPersonalProfileForInspection ?? options.loadPersonalProfile;
         const profile =
-          actorUserId === null || options.loadPersonalProfile === undefined
+          actorUserId === null || loadProfile === undefined
             ? undefined
-            : yield* options.loadPersonalProfile(actorUserId);
+            : yield* loadProfile(actorUserId);
         return configuredUpstreamServers({
           endpoint,
           actorUserId,
           providerInstanceId: request.providerInstanceId,
           profile,
         });
-      }),
+      }).pipe(
+        // An unavailable snapshot is distinct from a successful empty catalog. Keep the live process.
+        Effect.catchCause(() => Effect.undefined),
+      ),
     issue,
     resolve,
     touch,
@@ -544,6 +552,8 @@ const make = Effect.acquireRelease(
         UserMcpProfileStore.getActivePersonalMcpProfile(userId).pipe(
           Effect.orElseSucceed(() => undefined),
         ),
+      // T3-CUSTOM(expbkt3): keep issuance fail-closed, but retain healthy processes during inspection outages.
+      loadPersonalProfileForInspection: UserMcpProfileStore.getActivePersonalMcpProfile,
       resolveExternalUserToken: (token) =>
         UserMcpProfileStore.resolveActiveExternalToken(token).pipe(
           Effect.orElseSucceed(() => undefined),

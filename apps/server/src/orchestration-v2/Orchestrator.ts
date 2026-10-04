@@ -9833,11 +9833,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // T3-CUSTOM(expbkt3): transient busy refusal must not create a permanent rejected receipt.
     if (managerOptions.sessionWebhookId !== undefined) {
       yield* assertSessionWebhookDispatch(
-        command, actorUserId, managerOptions.sessionWebhookId, projectionStore, eventSink, projects,
+        command,
+        actorUserId,
+        managerOptions.sessionWebhookId,
+        projectionStore,
+        eventSink,
+        projects,
       ).pipe(
-        Effect.mapError((cause) => new OrchestratorCommandRejectedError({
-          commandId: command.commandId, commandType: command.type, cause,
-        })),
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorCommandRejectedError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        ),
       );
     }
 

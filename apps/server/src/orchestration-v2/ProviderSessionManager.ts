@@ -1866,6 +1866,7 @@ export const layerWithOptions = (
                   providerInstanceId: candidate.runtime.instanceId,
                 });
                 if (
+                  upstream !== undefined && // T3-CUSTOM(expbkt3): an unavailable profile is not an empty catalog.
                   candidate.mcpUpstreamKeyByThread.get(input.threadId) !==
                     upstreamConfigurationKey(upstream) &&
                   candidate.busyCount === 0

@@ -130,7 +130,10 @@ export function performExperimentsLogout(
   return performWebLogout({
     logoutEnvironment: plan.revokeEnvironmentSession ? effects.logoutEnvironment : skip,
     signOutClerk: plan.signOutClerk ? effects.signOutClerk : skip,
-    redirectToSignIn: () => { clearToolyardSettingsDrafts(); return effects.navigate(plan.destination); },
+    redirectToSignIn: () => {
+      clearToolyardSettingsDrafts();
+      return effects.navigate(plan.destination);
+    },
   });
 }
 

@@ -66,7 +66,11 @@ import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import type * as ClaudeAccountsService from "./claudeAccounts/ClaudeAccountsService.ts";
 // T3-CUSTOM(expbkt3): toolyard auto-connect
 import { connectToolyard } from "./mcp/ToolyardConnect.ts";
-import { activeToolyardStatus, activeToolyardConfigure, activeToolyardHandoff } from "./toolyard/ToolyardIntegration.ts";
+import {
+  activeToolyardStatus,
+  activeToolyardConfigure,
+  activeToolyardHandoff,
+} from "./toolyard/ToolyardIntegration.ts";
 import { SessionWebhookService } from "./session-webhooks/SessionWebhookService.ts";
 
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -839,9 +843,17 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.sessionWebhooksList,
         actorUserId === null
-          ? Effect.fail(new PersonalMcpSettingsError({ operation: "webhook", message: "verified_identity_required" }))
+          ? Effect.fail(
+              new PersonalMcpSettingsError({
+                operation: "webhook",
+                message: "verified_identity_required",
+              }),
+            )
           : Effect.flatMap(SessionWebhookService, (service) => service.list(actorUserId)).pipe(
-              Effect.mapError((cause) => new PersonalMcpSettingsError({ operation: "webhook", message: cause.message })),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalMcpSettingsError({ operation: "webhook", message: cause.message }),
+              ),
             ),
         { "rpc.aggregate": "session-webhooks" },
       ),
@@ -849,9 +861,19 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.sessionWebhooksUpdate,
         actorUserId === null
-          ? Effect.fail(new PersonalMcpSettingsError({ operation: "webhook", message: "verified_identity_required" }))
-          : Effect.flatMap(SessionWebhookService, (service) => service.update(actorUserId, input.id, input.action, input.expectedRevision)).pipe(
-              Effect.mapError((cause) => new PersonalMcpSettingsError({ operation: "webhook", message: cause.message })),
+          ? Effect.fail(
+              new PersonalMcpSettingsError({
+                operation: "webhook",
+                message: "verified_identity_required",
+              }),
+            )
+          : Effect.flatMap(SessionWebhookService, (service) =>
+              service.update(actorUserId, input.id, input.action, input.expectedRevision),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PersonalMcpSettingsError({ operation: "webhook", message: cause.message }),
+              ),
             ),
         { "rpc.aggregate": "session-webhooks" },
       ),
@@ -859,7 +881,12 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.toolyardIntegrationStatus,
         actorUserId === null
-          ? Effect.fail(new PersonalMcpSettingsError({ operation: "toolyard", message: "verified_identity_required" }))
+          ? Effect.fail(
+              new PersonalMcpSettingsError({
+                operation: "toolyard",
+                message: "verified_identity_required",
+              }),
+            )
           : activeToolyardStatus(actorUserId),
         { "rpc.aggregate": "toolyard" },
       ),
@@ -867,7 +894,12 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.toolyardIntegrationConfigure,
         actorUserId === null
-          ? Effect.fail(new PersonalMcpSettingsError({ operation: "toolyard", message: "verified_identity_required" }))
+          ? Effect.fail(
+              new PersonalMcpSettingsError({
+                operation: "toolyard",
+                message: "verified_identity_required",
+              }),
+            )
           : activeToolyardConfigure(actorUserId, input),
         { "rpc.aggregate": "toolyard" },
       ),
@@ -875,7 +907,12 @@ export const makeForkWsHandlers = ({
       observeRpcEffect(
         WS_METHODS.toolyardDashboardHandoff,
         actorUserId === null
-          ? Effect.fail(new PersonalMcpSettingsError({ operation: "toolyard", message: "verified_identity_required" }))
+          ? Effect.fail(
+              new PersonalMcpSettingsError({
+                operation: "toolyard",
+                message: "verified_identity_required",
+              }),
+            )
           : activeToolyardHandoff(actorUserId),
         { "rpc.aggregate": "toolyard" },
       ),

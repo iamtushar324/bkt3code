@@ -73,7 +73,7 @@ it.effect(
         },
       ];
       const request = { actorUserId: actor, providerInstanceId };
-      const enabled = yield* registry.inspectUpstreamServers!(request);
+      const enabled = (yield* registry.inspectUpstreamServers!(request))!;
       expect(enabled.map((server) => server.id)).toEqual(["toolyard", "bifrost"]);
       expect(upstreamConfigurationKey(enabled)).not.toBe(
         upstreamConfigurationKey(issued.config.upstreamServers),
@@ -83,7 +83,7 @@ it.effect(
         (yield* registry.inspectUpstreamServers!({
           ...request,
           actorUserId: UserId.make("other-member"),
-        })).map((server) => server.id),
+        }))!.map((server) => server.id),
       ).toEqual(["bifrost"]);
       integrations = [
         {
@@ -92,14 +92,66 @@ it.effect(
           allowedTools: ["inbox.status", "inbox.request"],
         },
       ];
-      const unavailable = yield* registry.inspectUpstreamServers!(request);
+      const unavailable = (yield* registry.inspectUpstreamServers!(request))!;
       integrations = [{ ...integrations[0]!, configurationKey: "instance:connected" }];
-      const changed = yield* registry.inspectUpstreamServers!(request);
+      const changed = (yield* registry.inspectUpstreamServers!(request))!;
       expect(changed[0]?.endpoint).toBe(unavailable[0]?.endpoint);
       expect(upstreamConfigurationKey(changed)).not.toBe(upstreamConfigurationKey(unavailable));
       expect(changed[0]?.endpoint).toBe(enabled[0]?.endpoint);
       expect(upstreamConfigurationKey(changed)).not.toBe(upstreamConfigurationKey(enabled));
       expect(yield* registry.resolve(token)).toBeDefined();
       expect(issued.config.upstreamServers.map((server) => server.id)).toEqual(["bifrost"]);
+    }),
+);
+
+it.effect(
+  "returns an unavailable snapshot for a storage error without revoking an issued credential",
+  () =>
+    Effect.gen(function* () {
+      const actor = UserId.make("user_member");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      let outage = false;
+      const registry = yield* McpSessionRegistry.__testing
+        .make({
+          now: () => 1_000,
+          // Issuance still receives the existing fail-closed reader.
+          loadPersonalProfile: () => Effect.undefined,
+          loadPersonalProfileForInspection: () =>
+            outage ? Effect.fail(new Error("storage unavailable")) : Effect.undefined,
+        })
+        .pipe(
+          Effect.provideService(
+            HttpServer.HttpServer,
+            HttpServer.HttpServer.of({
+              address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+              serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+            }),
+          ),
+          Effect.provideService(
+            ServerEnvironment.ServerEnvironment,
+            ServerEnvironment.ServerEnvironment.of({
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment")),
+              getDescriptor: Effect.die("unused"),
+            }),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+      const request = { actorUserId: actor, providerInstanceId };
+      const issued = yield* registry.issue({
+        ...request,
+        threadId: ThreadId.make("storage-outage-thread"),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      expect(yield* registry.inspectUpstreamServers!(request)).toEqual(
+        issued.config.upstreamServers,
+      );
+      outage = true;
+      expect(yield* registry.inspectUpstreamServers!(request)).toBeUndefined();
+      expect(yield* registry.resolve(token)).toBeDefined();
+      outage = false;
+      expect(yield* registry.inspectUpstreamServers!(request)).toEqual(
+        issued.config.upstreamServers,
+      );
+      expect(yield* registry.resolve(token)).toBeDefined();
     }),
 );
