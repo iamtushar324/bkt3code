@@ -570,6 +570,7 @@ export function useThreadActions() {
         return deleteResult;
       }
 
+      // T3-CUSTOM(expbkt3): BEGIN — retain the fork worktree cleanup arguments.
       const removeResult = await removeWorktree({
         environmentId: threadRef.environmentId,
         input: {
@@ -578,6 +579,7 @@ export function useThreadActions() {
           force: true,
         },
       });
+      // T3-CUSTOM(expbkt3): END
       // T3-CUSTOM(expbkt3): A second refresh here cannot identify the thread after deletion.
       const cleanupFailure = removeResult._tag === "Failure" ? removeResult : null;
       if (cleanupFailure) {
