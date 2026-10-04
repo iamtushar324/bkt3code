@@ -18,6 +18,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
       assert.deepStrictEqual(executed, [
         [1043, "OrchestrationV2"],
         [1044, "RemoveRedundantProjectionIndexes"],
+        [1045, "SessionWebhooks"],
       ]);
       const after = yield* sql<{
         migration_id: number;

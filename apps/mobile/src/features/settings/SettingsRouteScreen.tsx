@@ -1,3 +1,7 @@
+// T3-CUSTOM(expbkt3): server-owned Toolyard connection.
+import { ToolyardSettingsSection } from "./ToolyardSettingsSection";
+// T3-CUSTOM(expbkt3): agent-created session callbacks.
+import { SessionWebhooksSettingsSection } from "./SessionWebhooksSettingsSection";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
@@ -245,6 +249,10 @@ function ExperimentsSettingsSection() {
   return (
     <View className="gap-3">
       <SettingsSection title="Experiments">
+        {/* T3-CUSTOM(expbkt3): callback destinations and durable delivery history. */}
+        <SessionWebhooksSettingsSection />
+        {/* T3-CUSTOM(expbkt3): instance trust and automatic connection. */}
+        <ToolyardSettingsSection />
         {/* T3-CUSTOM(expbkt3): saved server setting, independent from mobile preferences. */}
         <AgentPlanSubmissionSettingsRow />
         <SettingsSwitchRow

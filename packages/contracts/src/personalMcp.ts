@@ -99,6 +99,8 @@ export const PersonalMcpIntegration = Schema.Struct({
    */
   connectedEmail: Schema.optional(TrimmedString),
   connectedAt: Schema.optional(IsoDateTime),
+  /** T3-CUSTOM(expbkt3): server-owned non-secret readiness key for provider refresh. */
+  configurationKey: Schema.optional(TrimmedString),
 });
 export type PersonalMcpIntegration = typeof PersonalMcpIntegration.Type;
 
@@ -168,6 +170,7 @@ export const TOOLYARD_CONNECT_ERROR_CODES = [
   "store_failed",
   "not_signed_in",
   "identity_mismatch",
+  "connection_unavailable",
 ] as const;
 export type ToolyardConnectErrorCode = (typeof TOOLYARD_CONNECT_ERROR_CODES)[number];
 

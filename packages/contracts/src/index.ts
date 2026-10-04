@@ -186,3 +186,9 @@ export {
   computeTurnDurationMs,
 } from "./orchestration.ts";
 // T3-CUSTOM(expbkt3): END
+
+// T3-CUSTOM(expbkt3): session callback management.
+export * from "./sessionWebhooks.ts";
+
+// T3-CUSTOM(expbkt3): server-owned Toolyard federation.
+export * from "./toolyardIntegration.ts";

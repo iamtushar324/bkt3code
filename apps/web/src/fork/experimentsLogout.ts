@@ -1,3 +1,4 @@
+import { clearToolyardSettingsDrafts } from "./toolyardSettingsDraft";
 /**
  * T3-CUSTOM(expbkt3): what "Log out" in Settings → Experiments does on each client.
  *
@@ -129,7 +130,10 @@ export function performExperimentsLogout(
   return performWebLogout({
     logoutEnvironment: plan.revokeEnvironmentSession ? effects.logoutEnvironment : skip,
     signOutClerk: plan.signOutClerk ? effects.signOutClerk : skip,
-    redirectToSignIn: () => effects.navigate(plan.destination),
+    redirectToSignIn: () => {
+      clearToolyardSettingsDrafts();
+      return effects.navigate(plan.destination);
+    },
   });
 }
 

@@ -20,6 +20,8 @@ import type { ProjectStoreV2 } from "./ProjectStore.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 export interface ManagerDispatchOptions {
+  /** T3-CUSTOM(expbkt3): fixed callback destination, checked inside the native lock. */
+  readonly sessionWebhookId?: string;
   readonly backgroundGrantHash?: string;
   readonly expectedRevision?: number;
   readonly managerBootstrapGrant?: { readonly hash: string; readonly projectId: ProjectId };

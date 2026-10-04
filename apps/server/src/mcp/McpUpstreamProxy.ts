@@ -24,6 +24,11 @@ import {
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { makeUpstreamRejectionTracker, rejectionKey } from "./UpstreamRejectionTracker.ts";
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
+import {
+  hasManagedToolyardRuntime,
+  managedToolyardCredentialForUrl,
+  retireManagedToolyardCredential,
+} from "../toolyard/ToolyardIntegration.ts";
 
 const PATH = /^\/mcp\/upstream\/([A-Za-z0-9._-]+)$/;
 /**
@@ -73,6 +78,7 @@ interface ForwardedRequestOptions {
   readonly customHeaderName: string;
   readonly credential: string;
   readonly threadId: ThreadId;
+  readonly integrationId?: string;
 }
 
 const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(function* (
@@ -114,7 +120,7 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
       );
       break;
   }
-  if (isToolyardGatewayUrl(options.url)) {
+  if (options.integrationId === TOOLYARD_MCP_INTEGRATION_ID || isToolyardGatewayUrl(options.url)) {
     outgoing = outgoing.pipe(HttpClientRequest.setHeader(T3_SESSION_ID_HEADER, options.threadId));
   }
   return outgoing;
@@ -183,9 +189,13 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
         { status: 403, headers: { "cache-control": "no-store" } },
       );
     }
-    const credential = yield* UserMcpProfileStore.getActiveIntegrationCredential(
-      invocation.actorUserId,
-      PersonalMcpIntegrationId.make(integration.id),
+    const credential = yield* (
+      integrationId === TOOLYARD_MCP_INTEGRATION_ID && hasManagedToolyardRuntime()
+        ? managedToolyardCredentialForUrl(actorUserId, integration.url)
+        : UserMcpProfileStore.getActiveIntegrationCredential(
+            invocation.actorUserId,
+            PersonalMcpIntegrationId.make(integration.id),
+          )
     ).pipe(Effect.catch(() => Effect.succeed(undefined)));
     if (!credential) {
       return HttpServerResponse.jsonUnsafe(
@@ -234,6 +244,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       customHeaderName: integration.customHeaderName,
       credential,
       threadId: invocation.threadId,
+      integrationId,
     });
 
     // The agent still gets toolyard's answer as is; this only decides whether
@@ -257,10 +268,14 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
         });
         return;
       }
-      const retired = yield* UserMcpProfileStore.retireActiveIntegrationCredential(
-        actorUserId,
-        PersonalMcpIntegrationId.make(integrationId),
-        credential,
+      const retired = yield* (
+        hasManagedToolyardRuntime()
+          ? retireManagedToolyardCredential(actorUserId, credential)
+          : UserMcpProfileStore.retireActiveIntegrationCredential(
+              actorUserId,
+              PersonalMcpIntegrationId.make(integrationId),
+              credential,
+            )
       ).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("personal MCP credential could not be retired", {

@@ -5,13 +5,12 @@
  * experimental T3 MCP endpoint.
  */
 import {
-  BIFROST_MCP_INTEGRATION_ID,
-  PersonalMcpIntegrationId,
   ProviderInstanceId,
   ThreadId,
   userIdFromSubject,
   type AuthSessionId,
   type PersonalMcpProfile,
+  type PersonalMcpSettingsError,
   type UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -32,6 +31,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): external MCP on/off switch.
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
+import { configuredUpstreamServers } from "./McpUpstreamConfiguration.ts"; // T3-CUSTOM(expbkt3): read-only configuration inspection.
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts"; // T3-CUSTOM(expbkt3): personal MCP integrations + external tokens.
 
 export interface McpCredentialRequest {
@@ -70,6 +70,10 @@ export interface McpLoginBinding {
 }
 
 export interface McpSessionRegistryShape {
+  /** T3-CUSTOM(expbkt3): inspect current configuration without rotating any credentials. */
+  readonly inspectUpstreamServers?: (
+    request: Pick<McpCredentialRequest, "actorUserId" | "providerInstanceId">,
+  ) => Effect.Effect<ReadonlyArray<McpProviderSession.McpUpstreamServerConfig> | undefined>;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
@@ -136,6 +140,10 @@ export interface McpSessionRegistryOptions {
     readonly apiKey: string;
   }>;
   readonly loadPersonalProfile?: (userId: UserId) => Effect.Effect<PersonalMcpProfile | undefined>;
+  /** T3-CUSTOM(expbkt3): inspection preserves storage errors rather than treating them as an empty catalog. */
+  readonly loadPersonalProfileForInspection?: (
+    userId: UserId,
+  ) => Effect.Effect<PersonalMcpProfile | undefined, PersonalMcpSettingsError>;
   readonly resolveExternalUserToken?: (
     rawToken: string,
   ) => Effect.Effect<UserMcpProfileStore.ResolvedPersonalMcpToken | undefined>;
@@ -323,36 +331,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         capabilities,
         issuedAt,
       };
-      const configuredUpstreamServers =
-        personalProfile?.integrations
-          .filter(
-            (integration) =>
-              integration.enabled &&
-              integration.credentialConfigured &&
-              (integration.providerInstanceIds.length === 0 ||
-                integration.providerInstanceIds.includes(request.providerInstanceId)),
-          )
-          .map((integration) => ({
-            id: PersonalMcpIntegrationId.make(integration.id),
-            name: integration.name,
-            endpoint: `${endpoint.slice(0, -"/mcp".length)}/mcp/upstream/${encodeURIComponent(integration.id)}`,
-            authMode: integration.authMode,
-            allowedTools: integration.allowedTools,
-          })) ?? [];
-      const upstreamServers =
-        actorUserId !== null &&
-        !configuredUpstreamServers.some((server) => server.id === BIFROST_MCP_INTEGRATION_ID)
-          ? [
-              ...configuredUpstreamServers,
-              {
-                id: PersonalMcpIntegrationId.make(BIFROST_MCP_INTEGRATION_ID),
-                name: "Bifrost",
-                endpoint: `${endpoint.slice(0, -"/mcp".length)}/mcp/upstream/${BIFROST_MCP_INTEGRATION_ID}`,
-                authMode: "x-bf-vk" as const,
-                allowedTools: [],
-              },
-            ]
-          : configuredUpstreamServers;
+      // T3-CUSTOM(expbkt3): issue and inspection share the exact current configuration.
+      const upstreamServers = configuredUpstreamServers({
+        endpoint,
+        actorUserId,
+        providerInstanceId: request.providerInstanceId,
+        profile: personalProfile,
+      });
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(pruneDead(records, issuedAt));
         // T3-CUSTOM(expbkt3): a thread has exactly one live provider MCP
@@ -497,6 +482,25 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     }));
 
   return McpSessionRegistry.of({
+    // T3-CUSTOM(expbkt3): profile lookup cannot mint, revoke, or consume a provider credential.
+    inspectUpstreamServers: (request) =>
+      Effect.gen(function* () {
+        const actorUserId = request.actorUserId ?? null;
+        const loadProfile = options.loadPersonalProfileForInspection ?? options.loadPersonalProfile;
+        const profile =
+          actorUserId === null || loadProfile === undefined
+            ? undefined
+            : yield* loadProfile(actorUserId);
+        return configuredUpstreamServers({
+          endpoint,
+          actorUserId,
+          providerInstanceId: request.providerInstanceId,
+          profile,
+        });
+      }).pipe(
+        // An unavailable snapshot is distinct from a successful empty catalog. Keep the live process.
+        Effect.catchCause(() => Effect.undefined),
+      ),
     issue,
     resolve,
     touch,
@@ -549,6 +553,8 @@ const make = Effect.acquireRelease(
         UserMcpProfileStore.getActivePersonalMcpProfile(userId).pipe(
           Effect.orElseSucceed(() => undefined),
         ),
+      // T3-CUSTOM(expbkt3): keep issuance fail-closed, but retain healthy processes during inspection outages.
+      loadPersonalProfileForInspection: UserMcpProfileStore.getActivePersonalMcpProfile,
       resolveExternalUserToken: (token) =>
         UserMcpProfileStore.resolveActiveExternalToken(token).pipe(
           Effect.orElseSucceed(() => undefined),

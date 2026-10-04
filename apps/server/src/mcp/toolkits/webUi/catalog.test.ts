@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   UserId,
+  WS_FORK_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 
@@ -38,7 +39,7 @@ const invocation = (
 
 it("generates one unique virtual tool and complete schemas for every web RPC", () => {
   // T3-CUSTOM(expbkt3): the catalog includes native V2 methods and every retained fork RPC.
-  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(221);
+  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(226);
   expect(WEB_UI_STREAM_TOOL_COUNT).toBe(31);
   expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(WsRpcGroup.requests.size);
   expect(new Set(WEB_UI_VIRTUAL_TOOLS.map((tool) => tool.name)).size).toBe(
@@ -54,6 +55,24 @@ it("generates one unique virtual tool and complete schemas for every web RPC", (
     expect(detail?.inputSchema).toBeDefined();
     expect(detail?.successSchema).toBeDefined();
     expect(detail?.errorSchema).toBeDefined();
+  }
+});
+
+it("exposes the five Toolyard and webhook RPCs with their required scopes", () => {
+  const methods = [
+    [WS_FORK_METHODS.toolyardIntegrationStatus, "orchestration:read"],
+    [WS_FORK_METHODS.toolyardIntegrationConfigure, "access:write"],
+    [WS_FORK_METHODS.toolyardDashboardHandoff, "orchestration:operate"],
+    [WS_FORK_METHODS.sessionWebhooksList, "orchestration:read"],
+    [WS_FORK_METHODS.sessionWebhooksUpdate, "orchestration:operate"],
+  ] as const;
+  for (const [method, requiredScope] of methods) {
+    const tool = getWebUiVirtualTool(webUiVirtualToolName(method));
+    expect(tool).toMatchObject({ method, requiredScope, stream: false });
+    expect(isWebUiVirtualToolAuthorized(tool!, AuthStandardClientScopes)).toBe(
+      requiredScope !== "access:write",
+    );
+    expect(isWebUiVirtualToolAuthorized(tool!, AuthAdministrativeScopes)).toBe(true);
   }
 });
 

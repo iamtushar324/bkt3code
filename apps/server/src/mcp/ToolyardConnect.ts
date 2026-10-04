@@ -38,6 +38,10 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { makePerUserLock } from "./PerUserLock.ts";
+import {
+  activeToolyardStatus,
+  hasManagedToolyardRuntime,
+} from "../toolyard/ToolyardIntegration.ts";
 import type * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
 
 const DEFAULT_TIMEOUT: Duration.Input = "10 seconds";
@@ -176,6 +180,12 @@ export const connectToolyard = Effect.fn("ToolyardConnect.connect")(function* (
   input: ConnectToolyardInput,
 ) {
   if (input.actorUserId === null) return failure("not_signed_in");
+  if (hasManagedToolyardRuntime()) {
+    const status = yield* activeToolyardStatus(input.actorUserId);
+    return status.connection === "connected"
+      ? { connected: true, email: status.email ?? "" }
+      : failure("connection_unavailable");
+  }
   const subject = yield* readClerkTokenSubject(input.clerkToken);
   if (subject === undefined) return failure("invalid_token");
   if (subject !== input.actorUserId) {

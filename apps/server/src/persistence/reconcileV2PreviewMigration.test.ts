@@ -12,6 +12,7 @@ const database = NodeSqliteClient.layer({ filename: ":memory:" });
 const pendingV2Migrations = [
   [1043, "OrchestrationV2"],
   [1044, "RemoveRedundantProjectionIndexes"],
+  [1045, "SessionWebhooks"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -36,7 +37,7 @@ describe("fork V2 ledger upgrade", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("keeps existing V2 import progress when applying index cleanup", () =>
+  it.effect("keeps existing V2 import progress when applying index cleanup and webhooks", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 1043 });
@@ -47,7 +48,10 @@ describe("fork V2 ledger upgrade", () => {
       `;
       const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
       const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.deepStrictEqual(yield* runMigrations(), [pendingV2Migrations[1]]);
+      assert.deepStrictEqual(yield* runMigrations(), [
+        pendingV2Migrations[1],
+        pendingV2Migrations[2],
+      ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
       assert.deepStrictEqual(
