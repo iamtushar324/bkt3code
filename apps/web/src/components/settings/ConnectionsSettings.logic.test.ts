@@ -2,8 +2,11 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  endpointDefaultPreferenceKey,
   isQrShareableEndpoint,
+  isTailscaleHttpsEndpoint,
   isWslSettingsRowVisible,
+  selectPairingEndpoint,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -112,6 +115,54 @@ function makeEndpoint(overrides: Partial<AdvertisedEndpoint>): AdvertisedEndpoin
     ...overrides,
   };
 }
+
+describe("selectPairingEndpoint", () => {
+  const lan = makeEndpoint({ isDefault: true });
+  const magicDns = makeEndpoint({
+    id: "tailscale-magicdns:http://desktop.tail.ts.net:4780",
+    label: "Tailscale MagicDNS",
+    provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
+    httpBaseUrl: "http://desktop.tail.ts.net:4780/",
+    wsBaseUrl: "ws://desktop.tail.ts.net:4780/",
+    reachability: "private-network",
+  });
+  const https = makeEndpoint({
+    ...magicDns,
+    id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+    httpBaseUrl: "https://desktop.tail.ts.net/",
+    wsBaseUrl: "wss://desktop.tail.ts.net/",
+  });
+
+  it("prefers direct MagicDNS over the automatic LAN default", () => {
+    const selected = selectPairingEndpoint([lan, magicDns, https]);
+    expect(selected?.httpBaseUrl).toBe("http://desktop.tail.ts.net:4780/");
+    expect(selected && isTailscaleHttpsEndpoint(selected)).toBe(false);
+  });
+
+  it("honors explicit LAN and HTTPS preferences", () => {
+    expect(selectPairingEndpoint([lan, magicDns, https], "desktop-core:lan:http")).toBe(lan);
+    expect(selectPairingEndpoint([lan, magicDns, https], "tailscale:magicdns:https")).toBe(https);
+  });
+
+  it("keeps the MagicDNS preference when the Mac's hostname or server port changes", () => {
+    const moved = makeEndpoint({
+      ...magicDns,
+      id: "tailscale-magicdns:http://renamed.tail.ts.net:5000",
+      httpBaseUrl: "http://renamed.tail.ts.net:5000/",
+    });
+    expect(selectPairingEndpoint([lan, moved], endpointDefaultPreferenceKey(magicDns))).toBe(moved);
+  });
+
+  it("falls back to LAN when MagicDNS is unavailable", () => {
+    expect(
+      selectPairingEndpoint(
+        [lan, { ...magicDns, status: "unavailable" }],
+        "tailscale:magicdns:http",
+      ),
+    ).toBe(lan);
+    expect(selectPairingEndpoint([{ ...magicDns, status: "unavailable" }])).toBeNull();
+  });
+});
 
 describe("isQrShareableEndpoint", () => {
   it("excludes loopback endpoints so a scanned phone never dials itself", () => {
