@@ -348,7 +348,7 @@ export function useThreadActions() {
     [router, unarchiveThreadMutation],
   );
 
-  // T3-CUSTOM(expbkt3): the guarded public action below owns archive progress.
+  // T3-CUSTOM(expbkt3): BEGIN — the guarded public action below owns archive progress.
   const archiveThreadOnce = useCallback(
     async (target: ScopedThreadRef) => {
       const resolved = resolveThreadTarget(target);
@@ -381,13 +381,12 @@ export function useThreadActions() {
         action.finish();
         return { result: archiveResult, didArchive: false };
       }
-      // T3-CUSTOM(expbkt3): BEGIN — the RPC acknowledgement precedes the shell event.
+      // The RPC acknowledgement precedes the shell event.
       const projectionResult = await settlePromise(() => waitForThreadArchive(threadRef));
       if (projectionResult._tag === "Failure") {
         action.finish();
         return { result: projectionResult, didArchive: false };
       }
-      // T3-CUSTOM(expbkt3): END
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
@@ -421,6 +420,8 @@ export function useThreadActions() {
       unarchiveThread,
     ],
   );
+
+  // T3-CUSTOM(expbkt3): END
 
   // T3-CUSTOM(expbkt3): BEGIN — protect all web entry points, including context menus.
   const archiveThread = useCallback(
