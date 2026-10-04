@@ -25,8 +25,6 @@ const legacyReaderFiles: Record<string, string> = {
   "orchestration-v2/Layers/ProjectionSnapshotQuery.ts": "legacy HTTP projection compatibility",
   "orchestration-v2/legacyProjection.expbkt3.ts": "legacy HTTP response conversion",
   "orchestration-v2/ownershipBackfill.ts": "one-time owner and membership backfill",
-  "persistence/Layers/ProjectionMemberships.ts":
-    "legacy memberships retained for native access checks",
   "presence/presenceMessages.ts": "legacy activity presence compatibility",
 };
 const retiredPaths = [

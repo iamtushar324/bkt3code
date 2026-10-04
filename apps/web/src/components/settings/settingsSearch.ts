@@ -879,6 +879,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
   },
+  // T3-CUSTOM(expbkt3): server-wide plan submission tool experiment.
+  {
+    id: "plan-submission-tool",
+    title: "Plan submission tool",
+    to: "/settings/experiments",
+    searchTerms: ["t3_submit_plan agent markdown html chat submit disabled"],
+  },
   // T3-CUSTOM(expbkt3): native plan review.
   {
     id: "native-plan-review",

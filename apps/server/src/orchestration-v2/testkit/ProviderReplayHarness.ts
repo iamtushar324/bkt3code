@@ -287,6 +287,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
   const serverSettingsLayer = ServerSettings.layerTest({
     responseStreamingMode: "turn",
+    // T3-CUSTOM(expbkt3): captured native prompts predate the chat-only plan policy.
+    experimental: { agentPlanSubmissionEnabled: true },
     ...(options.continueThreadsAfterServerUpdate === undefined
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),

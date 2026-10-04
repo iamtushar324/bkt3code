@@ -29,10 +29,10 @@ const settingsLayer = () =>
   );
 
 it.layer(NodeServices.layer)("saved agent plan policy", (it) => {
-  it.effect("enables the tool for existing settings without the new field", () =>
+  it.effect("disables the tool for existing settings without the new field", () =>
     Effect.gen(function* () {
       const settings = yield* decodeSettings({ experimental: {} });
-      assert.equal(settings.experimental.agentPlanSubmissionEnabled, true);
+      assert.equal(settings.experimental.agentPlanSubmissionEnabled, false);
     }),
   );
 
@@ -42,6 +42,9 @@ it.layer(NodeServices.layer)("saved agent plan policy", (it) => {
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const initial = yield* settings.getSettings;
+      yield* settings.updateSettings({
+        experimental: { agentPlanSubmissionEnabled: true },
+      });
       const patch = yield* decodePatch({
         experimental: { agentPlanSubmissionEnabled: false },
       });

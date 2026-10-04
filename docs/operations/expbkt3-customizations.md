@@ -79,11 +79,6 @@ history rollback, and older Claude turns do not have the SDK message boundaries
 that native rewind requires. The importer preserves the actual current Claude
 resume cursor; it does not infer historical SDK IDs from T3 message IDs.
 
-**Retired event types.** The event log is append-only, so fork databases still
-hold events of removed features. `persistence/retiredOrchestrationEvents.expbkt3.ts`
-lists those types and reads skip them before decoding. Whenever a fork event type
-is removed, add it there, or replaying an existing database fails.
-
 **Marker baseline.** `scripts/fork-marker-baseline.json` started empty on the
 cut: every fork hunk in an upstream-owned file is marked. Keep it empty.
 
