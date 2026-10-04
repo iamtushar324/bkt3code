@@ -7,7 +7,6 @@
  * upstream table stays a one-line fork diff.
  */
 import {
-  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   ORCHESTRATION_WS_METHODS,
@@ -81,6 +80,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.sessionWebhooksList]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.sessionWebhooksUpdate]: AuthOrchestrationOperateScope,
   [WS_FORK_METHODS.toolyardIntegrationStatus]: AuthOrchestrationReadScope,
-  [WS_FORK_METHODS.toolyardIntegrationConfigure]: AuthAccessWriteScope,
+  // Clerk browser sessions carry standard scopes; configure separately requires an active administrator.
+  [WS_FORK_METHODS.toolyardIntegrationConfigure]: AuthOrchestrationOperateScope,
   [WS_FORK_METHODS.toolyardDashboardHandoff]: AuthOrchestrationOperateScope,
 } as const;
