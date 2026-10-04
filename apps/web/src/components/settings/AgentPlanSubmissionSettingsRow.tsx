@@ -6,6 +6,7 @@ import {
 } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 export function AgentPlanSubmissionSettingsRow() {
   const enabled = usePrimarySettings(
@@ -15,8 +16,8 @@ export function AgentPlanSubmissionSettingsRow() {
   const updateSettings = useUpdatePrimarySettings();
   return (
     <SettingsRow
-      title="Agent plan tool"
-      description="Allow agents to submit plans to the plan panel. Turn this off to require plans in the main chat. Applies to all sessions on this server."
+      {...searchableSetting("plan-submission-tool")}
+      description="Let agents use t3_submit_plan for a separate plan review. By default, this tool is disabled. Agents must write those plans in chat. This setting applies to every session on this server. Provider plan modes remain available."
       control={
         <Switch
           checked={enabled}
@@ -24,7 +25,7 @@ export function AgentPlanSubmissionSettingsRow() {
           onCheckedChange={(checked) =>
             updateSettings({ experimental: { agentPlanSubmissionEnabled: Boolean(checked) } })
           }
-          aria-label="Allow agent plan submission"
+          aria-label="Plan submission tool"
         />
       }
     />

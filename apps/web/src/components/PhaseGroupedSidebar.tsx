@@ -75,6 +75,8 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { ThreadArchiveStatus } from "../fork/ThreadArchiveStatus";
+import { isThreadArchivePending, useThreadArchivePending } from "../fork/threadArchivePending";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -1076,6 +1078,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   } = props;
   const threadRef = scopeThreadRef(row.thread.environmentId, row.thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const isArchiving = useThreadArchivePending(threadRef);
   // T3-CUSTOM(expbkt3): BEGIN — running comes from the provider session.
   const currentUserId = useCurrentUserId();
   const sessionActive = phaseSidebarIsExecutionActive(row.thread);
@@ -1308,6 +1311,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // Position, not the event: a right-click and a touch long-press open the same
   // menu, and only one of them has a mouse event to hand.
   const openRowContextMenu = async (position: { x: number; y: number }) => {
+    if (isThreadArchivePending(threadRef)) return;
     const api = readLocalApi();
     if (!api) return;
     // T3-CUSTOM(expbkt3): BEGIN — lifecycle parking items, capability-gated
@@ -1498,6 +1502,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       ],
       position,
     );
+    if (isThreadArchivePending(threadRef)) return;
     if (action === "rename") onStartRename(row);
     if (action === "mark-unread") {
       markThreadUnread(threadKey, row.thread.latestRun?.completedAt);
@@ -1570,6 +1575,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   return (
     <li
       data-thread-item
+      className="relative"
       // T3-CUSTOM(expbkt3): nested rows indent, capped so a deep chain does not
       // eat the title. Depth 0 emits no style, keeping root rows unchanged.
       {...(treeDepth !== undefined && treeDepth > 0
@@ -1582,12 +1588,12 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       <button
         ref={rowRef}
         type="button"
-        className={phaseSidebarRowClassName(
-          active,
-          selected,
-          needsUserInput,
-          planReady,
-          hasAsyncQuestion,
+        disabled={isArchiving}
+        inert={isArchiving}
+        aria-busy={isArchiving || undefined}
+        className={cn(
+          phaseSidebarRowClassName(active, selected, needsUserInput, planReady, hasAsyncQuestion),
+          isArchiving && "pointer-events-none animate-none opacity-50",
         )}
         aria-current={active ? "page" : undefined}
         aria-expanded={hasChildren ? treeExpanded : undefined}
@@ -1677,7 +1683,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           <PhaseSidebarUnreadIndicator isUnread={row.isUnreadCompletion} threadId={row.thread.id} />
         )}
         {/* T3-CUSTOM(expbkt3): Vertically centered adaptive content lane. */}
-        <span className={PHASE_SIDEBAR_CONTENT_CLASS_NAME}>
+        <span className={cn(PHASE_SIDEBAR_CONTENT_CLASS_NAME, isArchiving && "pr-28")}>
           {renaming ? (
             <input
               autoFocus
@@ -2229,8 +2235,11 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
         </span>
         {/* T3-CUSTOM(expbkt3): BEGIN — hover actions overlay the row instead of reflowing metadata. */}
         <span
-          className={phaseSidebarRowActionsClassName(
-            snoozeMenuOpen || linearTagDialogOpen || mattermostDialogOpen,
+          className={cn(
+            phaseSidebarRowActionsClassName(
+              snoozeMenuOpen || linearTagDialogOpen || mattermostDialogOpen,
+            ),
+            isArchiving && "hidden!",
           )}
         >
           {section === "snoozed" ? (
@@ -2282,6 +2291,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           <PhaseRowAction
             label={`Archive ${row.thread.title}`}
             tooltip="Archive"
+            testId={`phase-thread-archive-${row.thread.id}`}
             onClick={() => onArchive(row)}
           >
             <ArchiveIcon className="size-3.5" />
@@ -2289,6 +2299,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
         </span>
         {/* T3-CUSTOM(expbkt3): END */}
       </button>
+      {isArchiving ? <ThreadArchiveStatus title={row.thread.title} /> : null}
       <LinearIssueTagDialog
         open={linearTagDialogOpen}
         initialUrl={row.thread.linearIssueUrl ?? linearIssue?.url ?? ""}

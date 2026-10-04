@@ -49,6 +49,10 @@ import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "./threadUndo";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
+// T3-CUSTOM(expbkt3): shared progress and duplicate-click guard for archive actions.
+import { runWithThreadArchivePending } from "../fork/threadArchivePending";
+// T3-CUSTOM(expbkt3): keep the card blocked until the shell confirms the archive.
+import { waitForThreadArchive } from "../fork/threadArchiveArrival";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -344,20 +348,24 @@ export function useThreadActions() {
     [router, unarchiveThreadMutation],
   );
 
-  const archiveThread = useCallback(
-    async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
+  // T3-CUSTOM(expbkt3): the guarded public action below owns archive progress.
+  const archiveThreadOnce = useCallback(
+    async (target: ScopedThreadRef) => {
       const resolved = resolveThreadTarget(target);
-      if (!resolved) return AsyncResult.success(undefined);
+      if (!resolved) return { result: AsyncResult.success(undefined), didArchive: false };
       const { thread, threadRef } = resolved;
       if (!threadRuntimeCanArchive(thread.runtime)) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadArchiveBlockedError({
-              environmentId: threadRef.environmentId,
-              threadId: threadRef.threadId,
-            }),
+        return {
+          result: AsyncResult.failure(
+            Cause.fail(
+              new ThreadArchiveBlockedError({
+                environmentId: threadRef.environmentId,
+                threadId: threadRef.threadId,
+              }),
+            ),
           ),
-        );
+          didArchive: false,
+        };
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
@@ -371,14 +379,20 @@ export function useThreadActions() {
       });
       if (archiveResult._tag === "Failure") {
         action.finish();
-        return archiveResult;
+        return { result: archiveResult, didArchive: false };
       }
+      // T3-CUSTOM(expbkt3): BEGIN — the RPC acknowledgement precedes the shell event.
+      const projectionResult = await settlePromise(() => waitForThreadArchive(threadRef));
+      if (projectionResult._tag === "Failure") {
+        action.finish();
+        return { result: projectionResult, didArchive: false };
+      }
+      // T3-CUSTOM(expbkt3): END
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      opts.onArchived?.();
       showThreadUndoNotice({
         action: "Archived",
         claim: action,
@@ -392,12 +406,12 @@ export function useThreadActions() {
           handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
         );
         if (navigationResult._tag === "Failure") {
-          return navigationResult;
+          return { result: navigationResult, didArchive: true };
         }
-        return archiveResult;
+        return { result: archiveResult, didArchive: true };
       }
 
-      return archiveResult;
+      return { result: archiveResult, didArchive: true };
     },
     [
       archiveThreadMutation,
@@ -407,6 +421,17 @@ export function useThreadActions() {
       unarchiveThread,
     ],
   );
+
+  // T3-CUSTOM(expbkt3): BEGIN — protect all web entry points, including context menus.
+  const archiveThread = useCallback(
+    async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
+      const outcome = await runWithThreadArchivePending(target, () => archiveThreadOnce(target));
+      if (outcome.didArchive) opts.onArchived?.();
+      return outcome.result;
+    },
+    [archiveThreadOnce],
+  );
+  // T3-CUSTOM(expbkt3): END
 
   const deleteThread = useCallback(
     async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {

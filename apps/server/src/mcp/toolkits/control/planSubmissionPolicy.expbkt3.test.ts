@@ -175,6 +175,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeRpcResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(RpcResponse));
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
+const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeSavedSettings = Schema.encodeSync(Schema.fromJsonString(ServerSettings));
 const decodeSavedSettings = Schema.decodeSync(Schema.fromJsonString(ServerSettings));
 const responseJson = (body: string) =>
@@ -258,6 +259,19 @@ it.effect("changes plan tool visibility for existing HTTP sessions without a res
         return (yield* decodeToolList(response.message.result)).tools.map((tool) => tool.name);
       });
       const firstSession = sessions[0]!;
+      const defaultTools = yield* listTools(firstSession);
+      expect(defaultTools).not.toContain("t3_submit_plan");
+      const defaultRefused = yield* rpc(
+        "tools/call",
+        { name: "t3_submit_plan", arguments: plan },
+        firstSession,
+      );
+      expect(defaultRefused.message.error).toBeDefined();
+      expect(fixture.commands).toHaveLength(0);
+      expect(fixture.reads).toBe(0);
+
+      yield* fixture.setCurrent(true);
+      yield* fixture.publishCurrent;
       const originalTools = yield* listTools(firstSession);
       expect(originalTools).toContain("t3_submit_plan");
       expect(originalTools).toContain("t3_get_session");
@@ -343,14 +357,14 @@ it.effect("rejects a cached direct handler before any plan read or mutation", ()
   ),
 );
 
-it("defaults older saved settings to enabled and retains an explicit saved disable", () => {
-  const oldSettings = Schema.decodeSync(ServerSettings)({ experimental: {} });
-  expect(oldSettings.experimental.agentPlanSubmissionEnabled).toBe(true);
-  const disabled = {
+it("defaults older saved settings to disabled and retains an explicit saved enable", () => {
+  const oldSettings = decodeServerSettings({ experimental: {} });
+  expect(oldSettings.experimental.agentPlanSubmissionEnabled).toBe(false);
+  const enabled = {
     ...oldSettings,
-    experimental: { ...oldSettings.experimental, agentPlanSubmissionEnabled: false },
+    experimental: { ...oldSettings.experimental, agentPlanSubmissionEnabled: true },
   };
-  const saved = encodeSavedSettings(disabled);
+  const saved = encodeSavedSettings(enabled);
   const reopened = decodeSavedSettings(saved);
-  expect(reopened.experimental.agentPlanSubmissionEnabled).toBe(false);
+  expect(reopened.experimental.agentPlanSubmissionEnabled).toBe(true);
 });

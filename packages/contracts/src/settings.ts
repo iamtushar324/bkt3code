@@ -1127,8 +1127,10 @@ export type SessionArchiveSettings = typeof SessionArchiveSettings.Type;
 
 export const ExperimentalSettings = Schema.Struct({
   externalMcp: ExternalMcpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  // T3-CUSTOM(expbkt3): agents can be required to put their plans in the main chat.
-  agentPlanSubmissionEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3-CUSTOM(expbkt3): agents write plans in chat unless the submit tool is enabled.
+  agentPlanSubmissionEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
   sessionArchive: SessionArchiveSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
