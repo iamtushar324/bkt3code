@@ -96,6 +96,7 @@ const harness = () =>
       }>,
       rotationLostReply: false,
       receiverRevision: 1,
+      remoteUpdates: 0,
       receiverAction: null as string | null,
       accessReadFailure: false,
       dispatches: 0,
@@ -210,6 +211,7 @@ const harness = () =>
         }),
       updateCallback: (_userId, _ref, input) =>
         Effect.gen(function* () {
+          state.remoteUpdates++;
           if (state.rotationOutage)
             return yield* new PersonalMcpSettingsError({ operation: "test", message: "outage" });
           if (input.expected_revision !== state.receiverRevision) {
@@ -725,6 +727,60 @@ describe("durable session webhooks", () => {
         );
       }),
     ),
+  );
+  it.effect(
+    "rejects a thread-bound caller before history, secret, remote or database changes",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const otherThread = ThreadId.make("thread-narrow-caller");
+          yield* h.receive(h.event());
+          const before = yield* sql`SELECT * FROM session_webhooks WHERE id=${h.webhook.id}`;
+          const beforeEvents =
+            yield* sql`SELECT * FROM session_webhook_events WHERE webhook_id=${h.webhook.id}`;
+          const beforeSecrets = Array.from(h.secrets, ([key, value]) => [key, Buffer.from(value)]);
+          const historyReads = h.state.historyReads;
+          assert.strictEqual(
+            errorDetail(
+              yield* h.service.inspect(owner, h.webhook.id, otherThread).pipe(Effect.flip),
+            ),
+            "webhook-not-found",
+          );
+          for (const action of ["disable", "rotate", "remove"] as const) {
+            assert.strictEqual(
+              errorDetail(
+                yield* h.service
+                  .update(owner, h.webhook.id, action, 1, otherThread)
+                  .pipe(Effect.flip),
+              ),
+              "webhook-not-found",
+            );
+          }
+          assert.strictEqual(h.state.historyReads, historyReads);
+          assert.strictEqual(h.state.remoteUpdates, 0);
+          assert.deepStrictEqual(
+            Array.from(h.secrets, ([key, value]) => [key, Buffer.from(value)]),
+            beforeSecrets,
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM session_webhooks WHERE id=${h.webhook.id}`,
+            before,
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM session_webhook_events WHERE webhook_id=${h.webhook.id}`,
+            beforeEvents,
+          );
+          assert.strictEqual(
+            (yield* h.service.inspect(owner, h.webhook.id, threadId)).id,
+            h.webhook.id,
+          );
+          assert.strictEqual(
+            (yield* h.service.update(owner, h.webhook.id, "disable", 1, threadId)).status,
+            "disabled",
+          );
+        }),
+      ),
   );
   it.effect("enforces owner and revision on lifecycle actions", () =>
     scenario((h) =>

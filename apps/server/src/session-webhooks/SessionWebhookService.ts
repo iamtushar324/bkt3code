@@ -129,12 +129,17 @@ export const make = Effect.gen(function* () {
       return yield* fail(409, "destination-paused-or-archived");
     return shell;
   });
-  const rowFor = Effect.fn("sessionWebhook.row")(function* (userId: UserId, id: string) {
+  const rowFor = Effect.fn("sessionWebhook.row")(function* (
+    userId: UserId,
+    id: string,
+    allowedThreadId?: ThreadId,
+  ) {
     if (!isId(id)) return yield* fail(400, "invalid-webhook-id");
     yield* requireOwner(userId);
     const row =
       (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id} AND owner_user_id=${userId}`)[0];
-    if (!row) return yield* fail(404, "webhook-not-found");
+    if (!row || (allowedThreadId !== undefined && row.thread_id !== allowedThreadId))
+      return yield* fail(404, "webhook-not-found");
     return row;
   });
   const remoteHistory = Effect.fn("sessionWebhook.remoteHistory")(function* (row: WebhookRow) {
@@ -206,8 +211,12 @@ export const make = Effect.gen(function* () {
   const view = Effect.fn("sessionWebhook.view")(function* (row: WebhookRow) {
     return { ...(yield* localView(row)), ...(yield* remoteHistory(row)) };
   });
-  const inspect = Effect.fn("sessionWebhook.inspect")(function* (userId: UserId, id: string) {
-    return yield* view(yield* rowFor(userId, id));
+  const inspect = Effect.fn("sessionWebhook.inspect")(function* (
+    userId: UserId,
+    id: string,
+    allowedThreadId?: ThreadId,
+  ) {
+    return yield* view(yield* rowFor(userId, id, allowedThreadId));
   });
   const list = Effect.fn("sessionWebhook.list")(function* (userId: UserId) {
     yield* requireOwner(userId);
@@ -317,8 +326,9 @@ export const make = Effect.gen(function* () {
     id: string,
     action: "disable" | "rotate" | "remove",
     expectedRevision: number,
+    allowedThreadId?: ThreadId,
   ) {
-    const row = yield* rowFor(userId, id);
+    const row = yield* rowFor(userId, id, allowedThreadId);
     if (row.revision !== expectedRevision) return yield* fail(409, "webhook-revision-conflict");
     // Reconcile the exact remote operation before its successor changes the expected revision.
     if (row.pending_action !== null) return yield* fail(409, "webhook-server-sync-pending");
@@ -340,8 +350,10 @@ export const make = Effect.gen(function* () {
       yield* secrets.remove(`${keyName(id)}-next`).pipe(Effect.ignore);
     }
     // Persist the operation before server exchange; a lost response reuses the exact pending key/revision.
-    yield* synchronizeReceiver(yield* rowFor(userId, id)).pipe(Effect.catch(() => Effect.void));
-    return yield* localView(yield* rowFor(userId, id));
+    yield* synchronizeReceiver(yield* rowFor(userId, id, allowedThreadId)).pipe(
+      Effect.catch(() => Effect.void),
+    );
+    return yield* localView(yield* rowFor(userId, id, allowedThreadId));
   });
   const receive = Effect.fn("sessionWebhook.receive")(function* (
     id: string,
@@ -564,10 +576,11 @@ export const make = Effect.gen(function* () {
       id: string,
       action: "disable" | "rotate" | "remove",
       expectedRevision: number,
+      allowedThreadId?: ThreadId,
     ) =>
       lifecycleLock
-        .withPermits(1)(update(userId, id, action, expectedRevision))
-        .pipe(Effect.flatMap((updated) => inspect(userId, updated.id))),
+        .withPermits(1)(update(userId, id, action, expectedRevision, allowedThreadId))
+        .pipe(Effect.flatMap((updated) => inspect(userId, updated.id, allowedThreadId))),
     receive,
     drain: () => dispatchLock.withPermits(1)(drain()),
   };
