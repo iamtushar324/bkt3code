@@ -11,6 +11,11 @@ import { hasClerkPublicConfig } from "../cloud/publicConfig";
 // T3-CUSTOM(expbkt3): team-mode detection reads the server's clerk descriptor.
 import { serverAuthDescriptorSupportsTeam } from "../fork/environmentTeamCapability";
 
+// T3-CUSTOM(expbkt3): return to explicit Toolyard settings submission after browser authentication.
+import { pendingToolyardSettingsContinuation } from "../fork/toolyardSettingsContinuation";
+const afterAuthentication = () =>
+  pendingToolyardSettingsContinuation() ? ("/settings/experiments" as const) : ("/" as const);
+
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
     const { authGateState } = context;
@@ -21,7 +26,7 @@ export const Route = createFileRoute("/pair")({
     }
 
     if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
-      throw redirect({ to: "/", replace: true });
+      throw redirect({ to: afterAuthentication(), replace: true });
     }
     return {
       authGateState,
@@ -51,7 +56,7 @@ function PairRouteView() {
     return (
       <ClerkSignInGate
         onAuthenticated={() => {
-          void navigate({ to: "/", replace: true });
+          void navigate({ to: afterAuthentication(), replace: true });
         }}
       />
     );
@@ -61,7 +66,7 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        void navigate({ to: "/", replace: true });
+        void navigate({ to: afterAuthentication(), replace: true });
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />

@@ -5,13 +5,22 @@ import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { usePhaseSidebarViewerUserId } from "../phasesidebar/usePhaseSidebarRows";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  createToolyardSettingsContinuation,
+  toolyardCommittedDraftMatches,
+  toolyardSettingsFailureCode,
+  toolyardSettingsFailureMessage,
+  toolyardSettingsOrigin,
+  type ToolyardSettingsDraft,
+} from "@t3tools/client-runtime/toolyard-trust-setup";
 import { Linking, Pressable, Switch, TextInput, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { usePreparedConnection } from "../../state/session";
 
 const noAdminToken = async () => null;
 function ClerkEnvironmentToolyard({ target }: { readonly target: SettingsTarget }) {
@@ -59,6 +68,7 @@ function EnvironmentToolyardContent({
     "Toolyard settings",
   );
   const handoff = useAtomCommand(serverEnvironment.openToolyardDashboard, "Open Toolyard");
+  const prepared = Option.getOrNull(usePreparedConnection(target.environmentId));
   const [draft, setDraft] = useState<{
     baseUrl: string;
     enabled: boolean;
@@ -66,6 +76,21 @@ function EnvironmentToolyardContent({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [browserDraft, setBrowserDraft] = useState<ToolyardSettingsDraft | null>(null);
+  useEffect(() => {
+    if (browserDraft && status && toolyardCommittedDraftMatches(browserDraft, status)) {
+      setDraft((value) =>
+        value &&
+        value.baseUrl === browserDraft.baseUrl &&
+        value.enabled === browserDraft.enabled &&
+        value.revision === browserDraft.revision
+          ? null
+          : value,
+      );
+      setBrowserDraft(null);
+      setError(null);
+    }
+  }, [browserDraft, status]);
   const current = draft ?? {
     baseUrl: status?.baseUrl ?? "",
     enabled: status?.enabled ?? false,
@@ -77,7 +102,11 @@ function EnvironmentToolyardContent({
     try {
       const adminToken = await readAdminToken();
       const publicUrl = target.serverConfig.settings.experimental.externalMcp.publicUrl;
-      const origin = status?.origin ?? (publicUrl ? new URL(publicUrl).origin : "");
+      const origin =
+        status?.origin ??
+        toolyardSettingsOrigin(prepared?.httpBaseUrl ?? "") ??
+        toolyardSettingsOrigin(publicUrl ?? "") ??
+        "";
       const saved = await configure({
         environmentId: target.environmentId,
         input: {
@@ -91,7 +120,23 @@ function EnvironmentToolyardContent({
       });
       appAtomRegistry.refresh(atom);
       if (AsyncResult.isSuccess(saved)) setDraft(null);
-      else setError("The settings did not save. Your draft remains.");
+      else {
+        const code = toolyardSettingsFailureCode(saved.cause);
+        if (!remove && !adminToken && code === "admin_trust_registration_required") {
+          const url = createToolyardSettingsContinuation(
+            prepared?.httpBaseUrl ?? "",
+            target.environmentId,
+            userScope,
+            current,
+            Date.now(),
+          );
+          await Linking.openURL(url);
+          setBrowserDraft(current);
+          setError(
+            "Complete the administrator trust setup in your browser. Then select Refresh status. Your draft remains.",
+          );
+        } else setError(toolyardSettingsFailureMessage(code));
+      }
     } catch {
       setError("The server trust registration failed. Your draft remains.");
     } finally {
@@ -181,6 +226,7 @@ function EnvironmentToolyardContent({
               onPress={() => {
                 setDraft(null);
                 setError(null);
+                setBrowserDraft(null);
               }}
             >
               <Text className="p-2 text-foreground">Discard</Text>

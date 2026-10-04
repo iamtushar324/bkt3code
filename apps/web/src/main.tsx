@@ -5,6 +5,8 @@ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router"
 import "./index.css";
 
 import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
+// T3-CUSTOM(expbkt3): browser-only public setup continuation, without tokens.
+import { prepareToolyardSettingsContinuation } from "./fork/toolyardSettingsContinuation";
 import { isElectron } from "./env";
 // T3-CUSTOM(expbkt3): standalone identity mode also loads the lazy auth shell.
 import { resolveAppClerkMode, resolveClerkPublishableKey } from "./cloud/publicConfig";
@@ -17,6 +19,8 @@ import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
+// T3-CUSTOM(expbkt3): preserve public Toolyard setup drafts before authentication redirects.
+prepareToolyardSettingsContinuation();
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
