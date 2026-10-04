@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): fixed session webhook admission in the native dispatch lock.
+import { makeSessionWebhookDispatchGuard } from "../session-webhooks/dispatchGuard.ts";
 // T3-CUSTOM(expbkt3): background dispatch uses the native lock and durable receipt.
 import {
   assertManagerDispatch,
@@ -738,6 +740,8 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  // T3-CUSTOM(expbkt3): capture optional fork services without changing upstream runtime dependencies.
+  const assertSessionWebhookDispatch = yield* makeSessionWebhookDispatchGuard;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -9824,6 +9828,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         sequence: receipt.resultSequence,
         storedEvents,
       } satisfies OrchestratorV2DispatchResult;
+    }
+
+    // T3-CUSTOM(expbkt3): transient busy refusal must not create a permanent rejected receipt.
+    if (managerOptions.sessionWebhookId !== undefined) {
+      yield* assertSessionWebhookDispatch(
+        command, actorUserId, managerOptions.sessionWebhookId, projectionStore, eventSink, projects,
+      ).pipe(
+        Effect.mapError((cause) => new OrchestratorCommandRejectedError({
+          commandId: command.commandId, commandType: command.type, cause,
+        })),
+      );
     }
 
     // T3-CUSTOM(expbkt3): manager admission shares the native receipt failure path.

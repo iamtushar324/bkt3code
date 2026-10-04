@@ -28,7 +28,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { ToolyardSettingsSection } from "./ToolyardSettingsSection";
 
 export function formatExternalMcpApiKey(bytes: Uint8Array): string {
   return `t3exp_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -286,7 +285,6 @@ export function ExternalMcpSettingsSection() {
         </SettingsRow>
       </SettingsSection>
 
-      <ToolyardSettingsSection />
 
       <SettingsSection title="My managed MCP integrations">
         <SettingsRow

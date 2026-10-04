@@ -36,6 +36,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { upstreamConfigurationKey } from "../mcp/McpUpstreamConfiguration.ts"; // T3-CUSTOM(expbkt3): restart stale provider configurations at idle boundaries.
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
@@ -212,6 +213,8 @@ interface LiveSessionEntry {
    * outbox executes the old session's detach).
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
+  /** T3-CUSTOM(expbkt3): snapshot the configuration each running process received. */
+  readonly mcpUpstreamKeyByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapterV2SessionRuntime;
@@ -525,6 +528,14 @@ export const layerWithOptions = (
                 if (deviceToolsAvailable) capabilities.add("device");
                 // T3-CUSTOM(expbkt3): a token can survive a restart only for the same actor.
                 const actorUserId = executionOptions.actorUserId ?? null;
+                // T3-CUSTOM(expbkt3): configuration inspection must not consume or rotate credentials.
+                const currentUpstream =
+                  mcpSessionRegistry.inspectUpstreamServers === undefined
+                    ? undefined
+                    : yield* mcpSessionRegistry.inspectUpstreamServers({
+                        actorUserId,
+                        providerInstanceId,
+                      });
                 const existing = McpProviderSession.readMcpProviderSession(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -538,6 +549,10 @@ export const layerWithOptions = (
                     resolved.providerInstanceId === providerInstanceId &&
                     resolved.actorUserId === actorUserId && // T3-CUSTOM(expbkt3): actor isolation.
                     resolved.backgroundGrantHash === executionOptions.backgroundGrantHash &&
+                    // T3-CUSTOM(expbkt3): unchanged identity cannot retain a stale upstream catalog.
+                    (currentUpstream === undefined ||
+                      upstreamConfigurationKey(existing.upstreamServers) ===
+                        upstreamConfigurationKey(currentUpstream)) &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
@@ -890,6 +905,8 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
+        /** T3-CUSTOM(expbkt3): a configuration refresh must retain pending human prompts. */
+        readonly requireNoPendingRuntimeRequest?: boolean;
       }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
@@ -897,24 +914,37 @@ export const layerWithOptions = (
           if (candidate === undefined) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
-          const removed = yield* Effect.zip(
-            Ref.modify(sessions, (current) => {
-              const existing = current.get(key);
-              if (existing !== candidate) {
-                return [existing === undefined ? "gone" : "changed", current] as const;
-              }
-              if (
-                input.onlyIfIdleGeneration !== undefined &&
-                (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-              ) {
-                return ["kept", current] as const;
-              }
-              const updated = new Map(current);
-              updated.delete(key);
-              return ["removed", updated] as const;
-            }),
-            DateTime.now,
-          ).pipe(candidate.requestEventPermit.withPermits(1));
+          // T3-CUSTOM(expbkt3): BEGIN — serialize the final prompt check with request persistence.
+          const removed = yield* Effect.gen(function* () {
+            if (input.requireNoPendingRuntimeRequest === true) {
+              const blocked = yield* Effect.forEach(candidate.attachedThreadIds, (threadId) =>
+                projectionStore.getThreadShell(threadId).pipe(
+                  Effect.map((thread) => thread === null || thread.pendingRuntimeRequest !== null),
+                  Effect.catchCause(() => Effect.succeed(true)),
+                ),
+              );
+              if (blocked.some(Boolean)) return ["kept", yield* DateTime.now] as const;
+            }
+            return yield* Effect.zip(
+              Ref.modify(sessions, (current) => {
+                const existing = current.get(key);
+                if (existing !== candidate) {
+                  return [existing === undefined ? "gone" : "changed", current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return ["kept", current] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(key);
+                return ["removed", updated] as const;
+              }),
+              DateTime.now,
+            );
+          }).pipe(candidate.requestEventPermit.withPermits(1));
+          // T3-CUSTOM(expbkt3): END
           const [outcome, releasedAt] = removed;
           // Another entry took this id while the permit was held; release it instead.
           if (outcome === "changed") return yield* removeLiveEntry(input);
@@ -930,6 +960,8 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        /** T3-CUSTOM(expbkt3): a configuration refresh must retain pending human prompts. */
+        readonly requireNoPendingRuntimeRequest?: boolean;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1329,8 +1361,17 @@ export const layerWithOptions = (
                   if (entry === undefined) return current;
                   const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
                   mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                  // T3-CUSTOM(expbkt3): retain the exact attached configuration snapshot.
+                  const mcpUpstreamKeyByThread = new Map(entry.mcpUpstreamKeyByThread);
+                  mcpUpstreamKeyByThread.set(
+                    input.threadId,
+                    upstreamConfigurationKey(
+                      McpProviderSession.readMcpProviderSession(input.threadId)?.upstreamServers ??
+                        [],
+                    ),
+                  );
                   const updated = new Map(current);
-                  updated.set(key, { ...entry, mcpCredentialIdByThread });
+                  updated.set(key, { ...entry, mcpCredentialIdByThread, mcpUpstreamKeyByThread });
                   return updated;
                 });
               }
@@ -1811,6 +1852,44 @@ export const layerWithOptions = (
                 existing = undefined;
               }
               // T3-CUSTOM(expbkt3): END
+              // T3-CUSTOM(expbkt3): BEGIN — all provider adapters pick up changed MCP configuration on safe reuse.
+              if (
+                existing !== undefined &&
+                existing.attachedThreadIds.has(input.threadId) &&
+                options.configureMcp !== false &&
+                mcpSessionRegistry.inspectUpstreamServers !== undefined
+              ) {
+                const candidate = existing;
+                const generation = candidate.idleGeneration;
+                const upstream = yield* mcpSessionRegistry.inspectUpstreamServers({
+                  actorUserId: executionOptions.actorUserId ?? null,
+                  providerInstanceId: candidate.runtime.instanceId,
+                });
+                if (
+                  candidate.mcpUpstreamKeyByThread.get(input.threadId) !==
+                    upstreamConfigurationKey(upstream) &&
+                  candidate.busyCount === 0
+                ) {
+                  // A provider can remain busy between turns. Failed inspection retains its process.
+                  const hasPendingWork =
+                    candidate.runtime.hasPendingBackgroundWork === undefined
+                      ? false
+                      : yield* candidate.runtime.hasPendingBackgroundWork.pipe(
+                          Effect.catchCause(() => Effect.succeed(true)),
+                        );
+                  if (!hasPendingWork) {
+                    yield* releaseEntry({
+                      providerSessionId: input.providerSessionId,
+                      reason: "manual_shutdown",
+                      detail: "The MCP integration configuration changed.",
+                      onlyIfIdleGeneration: generation,
+                      requireNoPendingRuntimeRequest: true,
+                    });
+                  }
+                }
+                existing = (yield* Ref.get(sessions)).get(key);
+              }
+              // T3-CUSTOM(expbkt3): END
               if (existing !== undefined) {
                 if (
                   !existing.attachedThreadIds.has(input.threadId) &&
@@ -1925,6 +2004,16 @@ export const layerWithOptions = (
                   mcpCredentialId === undefined
                     ? new Map()
                     : new Map([[input.threadId, mcpCredentialId]]),
+                // T3-CUSTOM(expbkt3): compare current settings with what this process actually received.
+                mcpUpstreamKeyByThread: new Map([
+                  [
+                    input.threadId,
+                    upstreamConfigurationKey(
+                      McpProviderSession.readMcpProviderSession(input.threadId)?.upstreamServers ??
+                        [],
+                    ),
+                  ],
+                ]),
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,

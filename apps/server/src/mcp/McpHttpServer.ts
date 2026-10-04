@@ -1,3 +1,5 @@
+// T3-CUSTOM(expbkt3): owner-bound session callback toolkit.
+import { SessionWebhookToolkitRegistrationLive } from "../session-webhooks/mcp.ts";
 // T3-CUSTOM(expbkt3): native MCP commands carry the authenticated sender.
 import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.expbkt3.ts";
 // T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane: authenticated external operators alongside
@@ -748,6 +750,7 @@ export const McpTransportLive = McpServer.layerHttp({
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
 export const layer = Layer.mergeAll(
+  SessionWebhookToolkitRegistrationLive, // T3-CUSTOM(expbkt3): agent-created session webhooks.
   PreviewToolkitRegistrationLive,
   T3ControlToolkitRegistrationLive, // T3-CUSTOM(expbkt3): T3 MCP control plane toolkit.
   WebUiRpcRegistrationLive, // T3-CUSTOM(expbkt3): web UI RPC parity bridge.

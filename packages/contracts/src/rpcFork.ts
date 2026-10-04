@@ -1,3 +1,5 @@
+import { SessionWebhookView, SessionWebhookUpdateInput } from "./sessionWebhooks.ts";
+import { ToolyardIntegrationStatus, ToolyardIntegrationConfigureInput, ToolyardDashboardHandoff } from "./toolyardIntegration.ts";
 /**
  * T3-CUSTOM(expbkt3): Fork websocket RPC definitions.
  *
@@ -151,6 +153,11 @@ export const WS_FORK_METHODS = {
   claudeAccountsAccessSet: "claudeAccounts.access.set",
   // T3-CUSTOM(expbkt3): toolyard auto-connect
   personalMcpConnectToolyard: "personalMcp.connectToolyard",
+  toolyardIntegrationStatus: "toolyard.integration.status",
+  toolyardIntegrationConfigure: "toolyard.integration.configure",
+  toolyardDashboardHandoff: "toolyard.dashboard.handoff",
+  sessionWebhooksList: "sessionWebhooks.list",
+  sessionWebhooksUpdate: "sessionWebhooks.update",
 } as const;
 
 export const WsPersonalMcpGetProfileRpc = Rpc.make(WS_FORK_METHODS.personalMcpGetProfile, {
@@ -529,7 +536,38 @@ export const WsPersonalMcpConnectToolyardRpc = Rpc.make(
   },
 );
 
+// T3-CUSTOM(expbkt3): server trust and device-independent dashboard handoff.
+export const WsToolyardIntegrationStatusRpc = Rpc.make(WS_FORK_METHODS.toolyardIntegrationStatus, {
+  payload: Schema.Struct({ userScope: Schema.optional(Schema.String) }),
+  success: ToolyardIntegrationStatus,
+  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+});
+export const WsToolyardIntegrationConfigureRpc = Rpc.make(WS_FORK_METHODS.toolyardIntegrationConfigure, {
+  payload: ToolyardIntegrationConfigureInput,
+  success: ToolyardIntegrationStatus,
+  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+});
+export const WsToolyardDashboardHandoffRpc = Rpc.make(WS_FORK_METHODS.toolyardDashboardHandoff, {
+  payload: Schema.Struct({}),
+  success: ToolyardDashboardHandoff,
+  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+});
+export const WsSessionWebhooksListRpc = Rpc.make(WS_FORK_METHODS.sessionWebhooksList, {
+  payload: Schema.Struct({ userScope: Schema.optional(Schema.String) }),
+  success: Schema.Array(SessionWebhookView),
+  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+});
+export const WsSessionWebhooksUpdateRpc = Rpc.make(WS_FORK_METHODS.sessionWebhooksUpdate, {
+  payload: SessionWebhookUpdateInput,
+  success: SessionWebhookView,
+  error: Schema.Union([PersonalMcpSettingsError, EnvironmentAuthorizationError]),
+});
 export const FORK_WS_RPCS = [
+  WsSessionWebhooksListRpc,
+  WsSessionWebhooksUpdateRpc,
+  WsToolyardIntegrationStatusRpc,
+  WsToolyardIntegrationConfigureRpc,
+  WsToolyardDashboardHandoffRpc,
   WsThreadCommentsListRpc,
   WsThreadCommentsAddRpc,
   WsThreadCommentsReplyRpc,

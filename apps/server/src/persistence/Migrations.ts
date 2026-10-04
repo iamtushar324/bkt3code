@@ -190,6 +190,8 @@ import Migration1044 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts"
 // Always allocate an ID greater than the current maximum registry ID. This is
 // required by Migrator.make, which only runs migrations newer than the highest
 // row already present in effect_sql_migrations.
+// T3-CUSTOM(expbkt3): owner-bound session callback storage.
+import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -305,6 +307,8 @@ const migrationEntries = [
   // T3-CUSTOM(expbkt3): preserve every applied ID and allocate V2 monotonically.
   [1043, "OrchestrationV2", Migration1043],
   [1044, "RemoveRedundantProjectionIndexes", Migration1044],
+  // T3-CUSTOM(expbkt3): durable session callback delivery.
+  [1045, "SessionWebhooks", Migration1045],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

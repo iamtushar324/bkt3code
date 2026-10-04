@@ -17,6 +17,8 @@ export interface McpUpstreamServerConfig {
   readonly endpoint: string;
   readonly authMode: PersonalMcpAuthMode;
   readonly allowedTools: ReadonlyArray<string>;
+  /** T3-CUSTOM(expbkt3): hash of upstream source and readiness behind the stable local proxy. */
+  readonly configurationKey?: string;
 }
 
 export function upstreamMcpServerName(server: McpUpstreamServerConfig): string {

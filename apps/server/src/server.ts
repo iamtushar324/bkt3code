@@ -1,3 +1,7 @@
+// T3-CUSTOM(expbkt3): server-owned Toolyard integration and durable session callback delivery.
+import { toolyardIntegrationLayer } from "./toolyard/ToolyardIntegration.ts";
+import * as SessionWebhooks from "./session-webhooks/SessionWebhookService.ts";
+import { sessionWebhookRouteLayer } from "./session-webhooks/http.ts";
 // T3-CUSTOM(expbkt3): BEGIN kept fork services composed on the native V2 runtime.
 import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
 import { mcpUpstreamProxyRouteLayer } from "./mcp/McpUpstreamProxy.ts";
@@ -635,6 +639,8 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
 ).pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
+  // T3-CUSTOM(expbkt3): capture trust and access in the actual native V2 runtime, before startup workers.
+  Layer.provideMerge(toolyardIntegrationLayer.pipe(Layer.provideMerge(EnvironmentUsers.layer))),
   // T3-CUSTOM(expbkt3): expose the same native stores to retained fork services.
   Layer.provideMerge(Layer.merge(ProjectionStoreV2.layer, OrchestrationV2EventSinkLayerLive)),
   Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
@@ -750,7 +756,10 @@ const ForkApplicationLayerLive = Layer.mergeAll(
   Layer.provideMerge(ThreadWorkspaceGroups.layer),
 );
 
-const RuntimeDependenciesLive = ForkApplicationLayerLive.pipe(
+const RuntimeDependenciesLive = SessionWebhooks.workerLayer.pipe(
+  // T3-CUSTOM(expbkt3): callback worker consumes the native engine and shared trust services.
+  Layer.provideMerge(SessionWebhooks.layer),
+  Layer.provideMerge(ForkApplicationLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesLive),
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
@@ -805,6 +814,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     mcpUpstreamProxyRouteLayer,
     eventFeedRouteLayer,
     managerRouteLayer, // T3-CUSTOM(expbkt3): personal manager grant routes.
+    sessionWebhookRouteLayer, // T3-CUSTOM(expbkt3): signed decision callback receiver.
     pullRequestStateRouteLayer,
     presenceRouteLayer,
   ).pipe(

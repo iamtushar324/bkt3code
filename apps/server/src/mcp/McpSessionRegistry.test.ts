@@ -779,6 +779,7 @@ it.effect("proxies the built-in toolyard integration once the user is connected"
         endpoint: "http://127.0.0.1:43123/mcp/upstream/toolyard",
         authMode: "bearer",
         allowedTools: [],
+        configurationKey: expect.stringMatching(/^[a-f0-9]{64}$/), // T3-CUSTOM(expbkt3): stable source identity.
       },
       {
         id: "bifrost",

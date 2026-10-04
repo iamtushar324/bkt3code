@@ -1274,6 +1274,12 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // T3-CUSTOM(expbkt3): the built-in toolyard integration connects through
     // the browser's Clerk token instead of a pasted credential.
+    // T3-CUSTOM(expbkt3): server-owned Toolyard access for web, desktop and mobile.
+    sessionWebhooksList: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:webhooks:list", tag: WS_METHODS.sessionWebhooksList }),
+    sessionWebhooksUpdate: createEnvironmentRpcCommand(runtime, { label: "environment-data:webhooks:update", tag: WS_METHODS.sessionWebhooksUpdate, concurrency: configConcurrency }),
+    toolyardIntegrationStatus: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:toolyard:status", tag: WS_METHODS.toolyardIntegrationStatus }),
+    configureToolyardIntegration: createEnvironmentRpcCommand(runtime, { label: "environment-data:toolyard:configure", tag: WS_METHODS.toolyardIntegrationConfigure, concurrency: configConcurrency }),
+    openToolyardDashboard: createEnvironmentRpcCommand(runtime, { label: "environment-data:toolyard:handoff", tag: WS_METHODS.toolyardDashboardHandoff, concurrency: configConcurrency }),
     connectToolyard: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:personal-mcp:connect-toolyard",
       tag: WS_METHODS.personalMcpConnectToolyard,

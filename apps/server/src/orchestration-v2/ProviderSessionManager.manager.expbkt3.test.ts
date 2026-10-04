@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import { expect, vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  PersonalMcpIntegrationId,
   MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -39,15 +40,15 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 vi.mock("../mcp/UserMcpProfileStore.ts", () => ({ isActiveExternalGrant: vi.fn() }));
 
-function fixture() {
+function fixture(provider = "codex") {
   const now = DateTime.makeUnsafe("2026-10-03T00:00:00Z");
   const threadId = ThreadId.make("background-process-thread");
   const actor = UserId.make("original-member");
   const owner = UserId.make("other-owner");
   const messageId = MessageId.make("original-message");
   const runId = RunId.make("original-run");
-  const instanceId = ProviderInstanceId.make("codex");
-  const driver = ProviderDriverKind.make("codex");
+  const instanceId = ProviderInstanceId.make(provider);
+  const driver = ProviderDriverKind.make(provider);
   const providerSessionId = ProviderSessionId.make("background-process");
   const modelSelection = { instanceId, model: "test" };
   const runtimePolicy = {
@@ -62,6 +63,11 @@ function fixture() {
     closed: 0,
     ensured: 0,
     onIssue: () => {},
+    onInspect: Effect.void as Effect.Effect<void>,
+    upstreamServers: [] as ReadonlyArray<McpProviderSession.McpUpstreamServerConfig>,
+    pendingPrompt: false,
+    pendingWork: false,
+    events: undefined as Queue.Queue<ProviderAdapterV2Event, Cause.Done> | undefined,
   };
   const issued: McpSessionRegistry.McpCredentialRequest[] = [];
   const thread = {
@@ -94,6 +100,7 @@ function fixture() {
       Effect.gen(function* () {
         state.opened++;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+        state.events = events;
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             state.closed++;
@@ -131,6 +138,7 @@ function fixture() {
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,
           respondToRuntimeRequest: () => Effect.void,
+          hasPendingBackgroundWork: Effect.sync(() => state.pendingWork),
         };
       }),
   };
@@ -157,7 +165,7 @@ function fixture() {
               ...thread,
               activeRunId: state.stopped ? null : runId,
               status: state.stopped ? "interrupted" : "starting",
-              pendingRuntimeRequest: null,
+              pendingRuntimeRequest: state.pendingPrompt ? { id: "human-question" } : null,
               hasActionableProposedPlan: false,
               pendingBackgroundTasks: [],
             } as never),
@@ -188,13 +196,28 @@ function fixture() {
                   actorUserId: request.actorUserId ?? null,
                   endpoint: "http://localhost/mcp",
                   authorizationHeader: `Bearer credential-${issued.length}`,
-                  upstreamServers: [],
+                  upstreamServers: state.upstreamServers,
                   browserToolsAvailable: false,
                 },
                 expiresAt: Number.MAX_SAFE_INTEGER,
               };
             }),
-          resolve: () => Effect.undefined,
+          inspectUpstreamServers: () =>
+            state.onInspect.pipe(Effect.map(() => state.upstreamServers)),
+          resolve: (token) =>
+            Effect.sync(() => {
+              const index = Number(token.replace("credential-", "")) - 1;
+              const request = issued[index];
+              return request
+                ? ({
+                    threadId: request.threadId,
+                    providerInstanceId: request.providerInstanceId,
+                    actorUserId: request.actorUserId ?? null,
+                    backgroundGrantHash: request.backgroundGrantHash,
+                    capabilities: new Set(),
+                  } as never)
+                : undefined;
+            }),
           revokeThread: () => Effect.void,
           revokeProviderSession: () => Effect.void,
         }),
@@ -290,3 +313,118 @@ it.effect("a background process keeps its actor and grant when it attaches anoth
     expect(f.issued.at(-1)?.backgroundGrantHash).toBe("original-grant");
   }).pipe(Effect.provide(f.layer));
 });
+
+const toolyardServer = (
+  allowedTools: string[] = [],
+): McpProviderSession.McpUpstreamServerConfig => ({
+  id: PersonalMcpIntegrationId.make("toolyard"),
+  name: "toolyard",
+  endpoint: "http://localhost/mcp/upstream/toolyard",
+  authMode: "bearer",
+  allowedTools,
+});
+
+it.effect.each(["codex", "claude-code", "cursor", "grok", "opencode", "antigravity"])(
+  "%s receives a newly enabled Toolyard proxy on the next idle reuse",
+  (provider) => {
+    const f = fixture(provider);
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open(f.open);
+      f.state.upstreamServers = [toolyardServer()];
+      const replacement = yield* manager.open(f.open);
+      expect(replacement).not.toBe(original);
+      expect(f.state.opened).toBe(2);
+      expect(f.state.closed).toBe(1);
+      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.upstreamServers).toEqual(
+        f.state.upstreamServers,
+      );
+      expect(yield* manager.open(f.open)).toBe(replacement);
+      expect(f.state.opened).toBe(2);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect.each(["tools", "endpoint", "source"])(
+  "restarts an idle provider after its upstream %s changes",
+  (change) => {
+    const f = fixture();
+    f.state.upstreamServers = [toolyardServer(["inbox.status"])];
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open(f.open);
+      f.state.upstreamServers = [
+        {
+          ...toolyardServer(["inbox.status"]),
+          ...(change === "tools" ? { allowedTools: ["inbox.status", "inbox.request"] } : {}),
+          ...(change === "endpoint"
+            ? { endpoint: "http://new-localhost/mcp/upstream/toolyard" }
+            : {}),
+          ...(change === "source" ? { configurationKey: "replacement-instance" } : {}),
+        },
+      ];
+      expect(yield* manager.open(f.open)).not.toBe(original);
+      expect(f.state.closed).toBe(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect.each(["prompt", "background"])(
+  "retains the process and credential while a %s is pending",
+  (pending) => {
+    const f = fixture();
+    const open = { ...f.open, messageId: f.messages[1]!.id };
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open(open);
+      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      f.state.upstreamServers = [toolyardServer()];
+      f.state.pendingPrompt = pending === "prompt";
+      f.state.pendingWork = pending === "background";
+      expect(yield* manager.open(open)).toBe(original);
+      expect(f.state.closed).toBe(0);
+      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
+        credential,
+      );
+      f.state.pendingPrompt = false;
+      f.state.pendingWork = false;
+      expect(yield* manager.open(open)).not.toBe(original);
+      expect(f.state.closed).toBe(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect.each([false, true])(
+  "retains an active turn through a configuration change (inspection race: %s)",
+  (race) => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open(f.open);
+      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      f.state.upstreamServers = [toolyardServer()];
+      const start = original.startTurn({ threadId: f.threadId } as never);
+      if (race) f.state.onInspect = start.pipe(Effect.orDie);
+      else yield* start;
+      expect(yield* manager.open(f.open)).toBe(original);
+      expect(f.state.closed).toBe(0);
+      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
+        credential,
+      );
+      f.state.onInspect = Effect.void;
+      yield* Queue.offer(f.state.events!, {
+        type: "turn.terminal",
+        driver: ProviderDriverKind.make("codex"),
+        providerThreadId: "provider-thread",
+        providerTurnId: "provider-turn",
+        runOrdinal: 1,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      } as never);
+      for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+      expect(yield* manager.open(f.open)).not.toBe(original);
+      expect(f.state.closed).toBe(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);

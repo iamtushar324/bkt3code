@@ -7,6 +7,7 @@
  * upstream table stays a one-line fork diff.
  */
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   ORCHESTRATION_WS_METHODS,
@@ -77,4 +78,9 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   // T3-CUSTOM(expbkt3): toolyard auto-connect
   // Connecting writes a credential, so it needs operate.
   [WS_FORK_METHODS.personalMcpConnectToolyard]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.sessionWebhooksList]: AuthOrchestrationReadScope,
+  [WS_FORK_METHODS.sessionWebhooksUpdate]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.toolyardIntegrationStatus]: AuthOrchestrationReadScope,
+  [WS_FORK_METHODS.toolyardIntegrationConfigure]: AuthAccessWriteScope,
+  [WS_FORK_METHODS.toolyardDashboardHandoff]: AuthOrchestrationOperateScope,
 } as const;
