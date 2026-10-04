@@ -3,9 +3,11 @@ import * as NodeCrypto from "node:crypto";
 import { describe, it, expect } from "vite-plus/test";
 import {
   callbackCommandId,
+  callbackFingerprint,
   decisionNotification,
   parseDecisionCallback,
   verifyStandardWebhook,
+  receiverTrustBinding,
 } from "./protocol.ts";
 const secret = Buffer.alloc(32, 7);
 const event = {
@@ -28,6 +30,28 @@ const body = JSON.stringify(event);
 const sign = (raw: string, id = "evt_1", timestamp = "1000") =>
   `v1,${NodeCrypto.createHmac("sha256", secret).update(`${id}.${timestamp}.${raw}`).digest("base64")}`;
 describe("Standard Webhooks receiver", () => {
+  it("preserves generation-zero bindings and invalidates them after trust lifecycle changes", () => {
+    const binding = {
+      environmentId: "env_1",
+      instanceId: "instance_1",
+      origin: "https://toolyard.example",
+      callbackOrigin: "https://t3.example",
+    };
+    const legacy = callbackFingerprint(
+      JSON.stringify([
+        binding.environmentId,
+        binding.instanceId,
+        binding.origin,
+        binding.callbackOrigin,
+      ]),
+    );
+    expect(receiverTrustBinding(binding)).toBe(legacy);
+    expect(receiverTrustBinding({ ...binding, trustGeneration: 0 })).toBe(legacy);
+    expect(receiverTrustBinding({ ...binding, trustGeneration: 1 })).not.toBe(legacy);
+    expect(receiverTrustBinding({ ...binding, trustGeneration: 2 })).not.toBe(
+      receiverTrustBinding({ ...binding, trustGeneration: 1 }),
+    );
+  });
   it("verifies raw bytes and every signed metadata field", () => {
     const input = {
       body,

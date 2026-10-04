@@ -77,6 +77,7 @@ const harness = () =>
       deleted: false,
       integrationEnabled: true,
       instanceId: "instance_1",
+      trustGeneration: 0,
       lostReceipt: false,
       rotationOutage: false,
       historyOutage: false,
@@ -170,6 +171,7 @@ const harness = () =>
         state.integrationEnabled
           ? {
               instanceId: state.instanceId,
+              trustGeneration: state.trustGeneration,
               environmentId: "env_1",
               origin: "https://toolyard.example",
               callbackOrigin: "https://t3.example",
@@ -180,7 +182,7 @@ const harness = () =>
       registerCallback: () =>
         Effect.sync(() => {
           state.registrations++;
-          return { callback_ref: "cb_1", revision: 1 };
+          return { callback_ref: `cb_${state.registrations}`, revision: 1 };
         }),
       inspectCallback: () =>
         Effect.gen(function* () {
@@ -330,6 +332,103 @@ const harness = () =>
     };
   });
 describe("durable session webhooks", () => {
+  it.effect(
+    "retires obsolete active and registering receivers without events or lifecycle actions",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const registeringId = "swh_22222222222222222222222222222222";
+          yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,status,revision,created_at,updated_at) SELECT ${registeringId},owner_user_id,thread_id,instance_id,trust_binding,'registering',revision,created_at,updated_at FROM session_webhooks WHERE id=${h.webhook.id}`;
+          h.state.integrationEnabled = false;
+          yield* h.service.drain();
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "active");
+          h.state.integrationEnabled = true;
+          h.state.trustGeneration = 1;
+          yield* h.service.drain();
+          for (const id of [h.webhook.id, registeringId]) {
+            const retired = yield* h.service.inspect(owner, id);
+            assert.strictEqual(retired.status, "disabled");
+            assert.strictEqual(retired.terminalReason, "integration-disabled-or-replaced");
+            assert.strictEqual(retired.deliveries.length, 0);
+          }
+        }),
+      ),
+  );
+  it.effect("retires stale lifecycle operations so they cannot starve a new generation", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        yield* h.receive(h.event());
+        h.state.rotationOutage = true;
+        yield* h.service.update(owner, h.webhook.id, "rotate", h.webhook.revision);
+        const sql = yield* SqlClient.SqlClient;
+        for (let i = 2; i <= 20; i++) {
+          const id = `swh_${i.toString(16).padStart(32, "0")}`;
+          yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,status,revision,created_at,updated_at,pending_action,sync_attempts) SELECT ${id},owner_user_id,thread_id,instance_id,trust_binding,callback_ref,receiver_revision,${i === 2 ? "removed" : i === 3 ? "disabled" : "active"},revision,created_at,updated_at,pending_action,7 FROM session_webhooks WHERE id=${h.webhook.id}`;
+        }
+        h.state.trustGeneration = 1;
+        const replacement = yield* h.service.create(owner, threadId);
+        yield* h.service.update(owner, replacement.id, "rotate", replacement.revision);
+        h.state.rotationOutage = false;
+        yield* h.service.drain();
+        yield* h.service.drain();
+        const current = yield* h.service.inspect(owner, replacement.id);
+        assert.strictEqual(current.status, "active");
+        assert.strictEqual(current.terminalReason, null);
+        assert.strictEqual(h.state.receiverRevision, 2);
+        const retired = yield* h.service.inspect(owner, h.webhook.id);
+        assert.strictEqual(retired.status, "disabled");
+        assert.strictEqual(retired.deliveries[0]?.state, "terminal");
+        const old = yield* sql<{
+          status: string;
+          pending_action: string | null;
+          next_sync_at: string | null;
+          sync_attempts: number;
+        }>`SELECT status,pending_action,next_sync_at,sync_attempts FROM session_webhooks WHERE id=${`swh_${(2).toString(16).padStart(32, "0")}`}`;
+        assert.strictEqual(old[0]?.status, "removed");
+        assert.strictEqual(old[0]?.pending_action, null);
+        assert.strictEqual(old[0]?.next_sync_at, null);
+        assert.strictEqual(old[0]?.sync_attempts, 7);
+        assert.strictEqual(
+          (yield* sql<{
+            status: string;
+          }>`SELECT status FROM session_webhooks WHERE id=${`swh_${(3).toString(16).padStart(32, "0")}`}`)[0]
+            ?.status,
+          "disabled",
+        );
+        assert.strictEqual(h.state.dispatches, 0);
+      }),
+    ),
+  );
+  it.effect(
+    "recreates callbacks after same-instance trust replacement and never revives the old queue",
+    () =>
+      scenario((h) =>
+        Effect.gen(function* () {
+          yield* h.receive(h.event());
+          // A remove/re-add or rapid disable/enable has the same URLs but a new durable generation.
+          h.state.trustGeneration = 2;
+          const replacement = yield* h.service.create(owner, threadId);
+          assert.notStrictEqual(replacement.id, h.webhook.id);
+          assert.notStrictEqual(replacement.callbackRef, h.webhook.callbackRef);
+          assert.strictEqual(h.state.registrations, 2);
+          const stale = yield* h.receive(h.event("evt_stale")).pipe(Effect.flip);
+          assert.strictEqual(errorDetail(stale), "integration-disabled-or-replaced");
+          yield* h.service.drain();
+          const retired = (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0];
+          assert.strictEqual(retired?.state, "terminal");
+          assert.strictEqual(retired?.terminalReason, "integration-disabled-or-replaced");
+          assert.strictEqual(h.state.dispatches, 0);
+          h.state.trustGeneration = 4;
+          yield* h.service.drain();
+          assert.strictEqual(
+            (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0]?.state,
+            "terminal",
+          );
+          assert.strictEqual(h.state.dispatches, 0);
+        }),
+      ),
+  );
   it.effect("bounds a hanging history inspection and preserves its local receipt", () =>
     scenario((h) =>
       Effect.gen(function* () {

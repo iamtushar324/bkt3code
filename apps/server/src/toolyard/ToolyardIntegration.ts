@@ -70,6 +70,7 @@ export class ToolyardIntegration extends Context.Service<
       environmentId: string;
       origin: string;
       callbackOrigin: string;
+      trustGeneration?: number;
       enabled: true;
     } | null>;
     registerCallback: (

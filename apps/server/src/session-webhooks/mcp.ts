@@ -24,7 +24,7 @@ const toolkit = Toolkit.make(
   Tool.make("t3_session_webhook_create", {
     ...shared,
     description:
-      "Create or obtain an owner-bound Toolyard decision webhook. Defaults to this session. An alternative must be accessible to the authenticated initiating user. Returns an opaque callbackRef for inbox.submit; secrets stay on the servers. This does not create or resume a session. Decisions queue after the active turn and require authoritative Inbox status retrieval before execution.",
+      "Create or obtain an owner-bound Toolyard decision webhook. Defaults to this session. An alternative must be accessible to the authenticated initiating user. Pass the opaque callbackRef as callback_ref to Toolyard inbox.request; secrets stay on the servers. This does not create or resume a session. Decisions queue after the active turn and require authoritative Inbox status retrieval before execution.",
     parameters: Schema.Struct({ sessionId: Schema.optional(ThreadId) }),
     success: SessionWebhookView,
   }),

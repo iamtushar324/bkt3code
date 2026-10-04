@@ -262,10 +262,27 @@ export const make = Effect.gen(function* () {
     yield* sql`UPDATE session_webhooks SET callback_ref=${registration.callback_ref},receiver_revision=${registration.revision},status='active',updated_at=${now()} WHERE id=${id} AND status='registering'`;
     return yield* localView(yield* rowFor(userId, id));
   });
+  const retireReplacedReceiver = Effect.fn("sessionWebhook.retireReplacedReceiver")(function* (
+    row: WebhookRow,
+  ) {
+    const binding = yield* integration.instanceBinding;
+    if (!binding || receiverTrustBinding(binding) === row.trust_binding) return;
+    // A durable replacement can never reconcile an operation against the retired receiver.
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const changed =
+          yield* sql`UPDATE session_webhooks SET pending_action=NULL,next_sync_at=NULL,status=CASE WHEN status IN ('active','registering') THEN 'disabled' ELSE status END,terminal_reason='integration-disabled-or-replaced',updated_at=${now()} WHERE id=${row.id} AND revision=${row.revision} AND trust_binding=${row.trust_binding} RETURNING id`;
+        if (changed.length !== 1) return;
+        yield* sql`UPDATE session_webhook_events SET state='terminal',terminal_reason='integration-disabled-or-replaced',updated_at=${now()} WHERE webhook_id=${row.id} AND state IN ('queued','dispatching')`;
+      }),
+    );
+  });
   const synchronizeReceiver = Effect.fn("sessionWebhook.syncReceiver")(function* (row: WebhookRow) {
     if (!row.pending_action || !row.callback_ref) return;
     const binding = yield* integration.instanceBinding;
-    if (!binding || receiverTrustBinding(binding) !== row.trust_binding) return;
+    if (!binding) return;
+    if (receiverTrustBinding(binding) !== row.trust_binding)
+      return yield* retireReplacedReceiver(row);
     const next =
       row.pending_action === "rotate"
         ? yield* secrets.get(`${keyName(row.id)}-next`)
@@ -338,6 +355,9 @@ export const make = Effect.gen(function* () {
     if (!isId(id)) return yield* fail(404, "webhook-not-found");
     const row = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
     if (!row || row.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
+    const binding = yield* integration.instanceBinding;
+    if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding)
+      return yield* fail(410, "integration-disabled-or-replaced");
     const secret = yield* secrets.get(keyName(id));
     if (Option.isNone(secret)) return yield* fail(410, "webhook-secret-unavailable");
     const validSecrets: Uint8Array[] = [secret.value];
@@ -387,6 +407,13 @@ export const make = Effect.gen(function* () {
         }
         const current = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
         if (current?.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
+        const currentBinding = yield* integration.instanceBinding;
+        if (
+          !currentBinding ||
+          !currentBinding.enabled ||
+          receiverTrustBinding(currentBinding) !== current.trust_binding
+        )
+          return yield* fail(410, "integration-disabled-or-replaced");
         const cutoff = DateTime.formatIso(DateTime.makeUnsafe(millis() - 60_000));
         const count =
           (yield* sql<{
@@ -401,6 +428,12 @@ export const make = Effect.gen(function* () {
     );
   });
   const drain = Effect.fn("sessionWebhook.drain")(function* () {
+    const binding = yield* integration.instanceBinding;
+    if (binding) {
+      const stale =
+        yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE status IN ('active','registering') AND trust_binding<>${receiverTrustBinding(binding)} LIMIT 20`;
+      for (const row of stale) yield* lifecycleLock.withPermits(1)(retireReplacedReceiver(row));
+    }
     const updates =
       yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE pending_action IS NOT NULL AND sync_attempts<20 AND (next_sync_at IS NULL OR next_sync_at<=${now()}) LIMIT 20`;
     for (const row of updates)

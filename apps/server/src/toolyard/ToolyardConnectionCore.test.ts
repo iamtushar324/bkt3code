@@ -8,6 +8,9 @@ import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 function fixture(environmentId = "environment-one", storage = { value: null as string | null }) {
   let now = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T00:00:00Z"));
   let connects = 0;
+  let failNextWrite = false;
+  let writeHook = async (_value: string) => {};
+  let remoteTrustGeneration = 0;
   let capabilities: unknown = [
     "inbox.batch.v1",
     "callbacks.standard-webhooks.v1",
@@ -64,7 +67,11 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
         return respond({ error: "receiver_not_owned" }, 403);
       return respond(inspection, inspectionStatus);
     }
-    if (url.endsWith("/revoke")) return respond({ revoked: true });
+    if (url.endsWith("/revoke")) {
+      remoteTrustGeneration++;
+      server.clear();
+      return respond({ revoked: true });
+    }
     if (url.endsWith("/connect")) {
       connects++;
       if (revoke) return respond({ error: "connection_revoked" }, 403);
@@ -72,7 +79,10 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
         Buffer.from(String(body.assertion).split(".")[1]!, "base64url").toString(),
       );
       const key = `${claims.iss}:${claims.aud}:${claims.sub}`;
-      const connection = server.get(key) ?? { token: `secret-${key}`, version: 1 };
+      const connection = server.get(key) ?? {
+        token: `secret-${key}${remoteTrustGeneration ? `:generation-${remoteTrustGeneration}` : ""}`,
+        version: 1,
+      };
       server.set(key, connection);
       if (loseResponse) {
         loseResponse = false;
@@ -91,12 +101,20 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
         url: handoffUrl,
         expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 60_000)),
       });
-    return respond({ callback_ref: "receiver-one", revision: 1 });
+    return respond({
+      callback_ref: remoteTrustGeneration ? `receiver-${remoteTrustGeneration}` : "receiver-one",
+      revision: 1,
+    });
   };
   const core = new ToolyardConnectionCore({
     environmentId,
     read: async () => storage.value,
     write: async (value) => {
+      await writeHook(value);
+      if (failNextWrite) {
+        failNextWrite = false;
+        throw new Error("storage unavailable");
+      }
       storage.value = value;
     },
     now: () => now,
@@ -118,6 +136,12 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
   return {
     core,
     configure,
+    failNextWrite: () => {
+      failNextWrite = true;
+    },
+    setWriteHook: (hook: (value: string) => Promise<void>) => {
+      writeHook = hook;
+    },
     storage,
     requests,
     setCapabilities: (value: unknown) => {
@@ -158,6 +182,134 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
 }
 
 describe("server-owned Toolyard federation", () => {
+  it("advances durable trust generations across disable/enable and same-instance remove/re-add, preserving no-op saves", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    expect((await f.core.status("user_admin")).trustGeneration).toBe(0);
+    await f.configure();
+    const first = f.core.binding()!;
+    const firstCredential = await f.core.credential("user_a");
+    const firstReceiver = await f.core.registerCallback("user_a", {
+      destination: "https://stage.test/callback",
+      secret: "test-secret",
+      client_receiver_id: "first",
+    });
+    const firstProfile = toolyardManagedProfile(await f.core.status("user_a"));
+    expect(first.trustGeneration).toBe(1);
+    await f.configure(1);
+    expect(f.core.binding()?.trustGeneration).toBe(first.trustGeneration);
+    await f.configure(2, { enabled: false });
+    expect(f.core.binding()).toBeNull();
+    expect((await f.core.status("user_admin")).trustGeneration).toBe(2);
+    await f.configure(3);
+    expect(f.core.binding()?.trustGeneration).toBe(3);
+    expect(toolyardManagedProfile(await f.core.status("user_a"))?.configurationKey).not.toBe(
+      firstProfile?.configurationKey,
+    );
+    await f.configure(4, { remove: true });
+    expect((await f.core.status("user_admin")).trustGeneration).toBe(4);
+    await f.configure(5);
+    expect((await f.core.credential("user_a"))?.token).not.toBe(firstCredential?.token);
+    expect(
+      (
+        await f.core.registerCallback("user_a", {
+          destination: "https://stage.test/callback",
+          secret: "test-secret",
+          client_receiver_id: "second",
+        })
+      ).callback_ref,
+    ).not.toBe(firstReceiver.callback_ref);
+    expect(f.core.binding()).toMatchObject({
+      instanceId: first.instanceId,
+      origin: first.origin,
+      trustGeneration: 5,
+    });
+    const restart = fixture("environment-one", f.storage);
+    await restart.core.initialize();
+    expect(restart.core.binding()?.trustGeneration).toBe(5);
+    await restart.configure(6);
+    expect(restart.core.binding()?.trustGeneration).toBe(5);
+    restart.setRegistration({ instance_id: "changed-registration" });
+    await expect(restart.configure(7, { baseUrl: "https://second.test" })).rejects.toMatchObject({
+      code: "registration_instance_identity_mismatch",
+    });
+    expect(restart.core.binding()?.trustGeneration).toBe(5);
+    restart.setRegistration({});
+    await restart.configure(7, { baseUrl: "https://second.test" });
+    expect(restart.core.binding()?.trustGeneration).toBe(6);
+  });
+  it("defaults old persisted trust to zero and retains it across a restart and no-op save", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    const state = JSON.parse(f.storage.value!);
+    delete state.trustGeneration;
+    f.storage.value = JSON.stringify(state);
+    const old = fixture("environment-one", f.storage);
+    await old.core.initialize();
+    expect(old.core.binding()?.trustGeneration).toBe(0);
+    await old.configure(1);
+    const restart = fixture("environment-one", f.storage);
+    await restart.core.initialize();
+    expect(restart.core.binding()?.trustGeneration).toBe(0);
+    await restart.configure(2, { enabled: false });
+    await restart.configure(3);
+    expect(restart.core.binding()?.trustGeneration).toBe(2);
+  });
+  it("does not advance trust on a failed setup or failed durable transition", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    f.setRegistration({ protocol: "wrong" });
+    await expect(f.configure()).rejects.toMatchObject({ code: "registration_protocol_mismatch" });
+    expect((await f.core.status("user_admin")).trustGeneration).toBe(0);
+    f.setRegistration({});
+    await f.configure();
+    const credential = await f.core.credential("user_a");
+    const persisted = f.storage.value;
+    const binding = f.core.binding();
+    f.failNextWrite();
+    await expect(f.configure(1, { remove: true })).rejects.toThrow("storage unavailable");
+    expect(f.core.binding()).toEqual(binding);
+    expect(f.storage.value).toBe(persisted);
+    expect((await f.core.credential("user_a"))?.token).toBe(credential?.token);
+    f.failNextWrite();
+    await expect(f.configure(1, { enabled: false })).rejects.toThrow("storage unavailable");
+    expect(f.core.binding()).toEqual(binding);
+    expect(f.storage.value).toBe(persisted);
+    const restart = fixture("environment-one", f.storage);
+    await restart.core.initialize();
+    expect(restart.core.binding()?.trustGeneration).toBe(1);
+    expect((await restart.core.credential("user_a"))?.token).toBe(credential?.token);
+  });
+  it("keeps the committed trust visible while a gated durable transition fails", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    const credential = await f.core.credential("user_a");
+    const binding = f.core.binding();
+    const persisted = f.storage.value;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    f.setWriteHook(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    f.failNextWrite();
+    const failed = expect(f.configure(1, { remove: true })).rejects.toThrow("storage unavailable");
+    await entered.promise;
+    expect(f.core.binding()).toEqual(binding);
+    expect((await f.core.status("user_admin", false)).trustGeneration).toBe(
+      binding?.trustGeneration,
+    );
+    expect((await f.core.credential("user_a"))?.token).toBe(credential?.token);
+    expect(f.storage.value).toBe(persisted);
+    release.resolve();
+    await failed;
+    expect(f.core.binding()).toEqual(binding);
+    expect(f.storage.value).toBe(persisted);
+    expect(f.requests.some((request) => request.url.endsWith("/revoke"))).toBe(false);
+  });
+
   it.each([
     "inbox.batch.v1",
     "callbacks.standard-webhooks.v1",

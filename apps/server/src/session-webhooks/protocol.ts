@@ -202,6 +202,7 @@ export const receiverTrustBinding = (binding: {
   environmentId: string;
   origin: string;
   callbackOrigin: string;
+  trustGeneration?: number;
 }) =>
   callbackFingerprint(
     JSON.stringify([
@@ -209,5 +210,7 @@ export const receiverTrustBinding = (binding: {
       binding.instanceId,
       binding.origin,
       binding.callbackOrigin,
+      // Preserve existing receiver bindings until the first durable trust lifecycle change.
+      ...((binding.trustGeneration ?? 0) === 0 ? [] : [binding.trustGeneration]),
     ]),
   );
