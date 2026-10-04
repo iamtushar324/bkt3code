@@ -957,6 +957,9 @@ const buildAppUnderTest = (options?: {
             updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
             streamChanges: Stream.empty,
             ...options?.layers?.serverSettings,
+            // T3-CUSTOM(expbkt3): Plan tool registration acquires the settings subscription before its snapshot.
+            subscribeChanges:
+              options?.layers?.serverSettings?.subscribeChanges ?? Effect.succeed(Stream.empty),
           }),
           Layer.mock(ClerkIdentityVerifier.ClerkIdentityVerifier)({
             verify: () => Effect.die("Clerk identity verifier not stubbed"),

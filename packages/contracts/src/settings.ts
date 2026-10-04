@@ -1148,6 +1148,8 @@ export const SessionArchiveSettings = Schema.Struct({
 export type SessionArchiveSettings = typeof SessionArchiveSettings.Type;
 
 export const ExperimentalSettings = Schema.Struct({
+  // T3-CUSTOM(expbkt3): agents write plans in chat unless the submit tool is enabled.
+  planSubmissionToolEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sessionSummary: SessionSummarySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // T3-CUSTOM(expbkt3): BEGIN — bulk session manager work summaries.
   sessionWorkSummary: SessionWorkSummarySettings.pipe(
@@ -1716,6 +1718,8 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   experimental: Schema.optionalKey(
     Schema.Struct({
+      // T3-CUSTOM(expbkt3): server enforcement of the plan submission tool.
+      planSubmissionToolEnabled: Schema.optionalKey(Schema.Boolean),
       externalMcp: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.optionalKey(Schema.Boolean),

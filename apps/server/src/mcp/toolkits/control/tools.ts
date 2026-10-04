@@ -536,7 +536,7 @@ export const T3SubmitPlanTool = mutatingTool(
     }),
     success: Schema.Unknown,
     failure: T3ControlToolError,
-    dependencies: plannotatorDependencies,
+    dependencies: [...plannotatorDependencies, ServerSettingsService],
   }).annotate(Tool.Title, "Submit plan for Plannotator review"),
 );
 
