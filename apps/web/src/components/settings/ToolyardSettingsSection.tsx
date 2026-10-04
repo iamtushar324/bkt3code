@@ -3,7 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useCurrentUserId } from "../../state/identity";
@@ -22,7 +22,19 @@ import {
   toolyardDraftKey,
   type ToolyardSettingsDraft,
 } from "../../fork/toolyardSettingsDraft";
+import {
+  pendingToolyardSettingsContinuation,
+  clearToolyardSettingsContinuation,
+} from "../../fork/toolyardSettingsContinuation";
 import { readBkManagedEnvironment } from "../../fork/managedEnvironment";
+import {
+  createToolyardSettingsContinuation,
+  readToolyardSettingsContinuation,
+  toolyardCommittedDraftMatches,
+  toolyardSettingsFailureCode,
+  toolyardSettingsFailureMessage,
+  toolyardSettingsOrigin,
+} from "@t3tools/client-runtime/toolyard-trust-setup";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -58,18 +70,80 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
   const [draft, setDraftState] = useState<ToolyardSettingsDraft | null>(() =>
     readToolyardSettingsDraft(draftKey),
   );
-  const setDraft = (value: ToolyardSettingsDraft | null) => {
-    writeToolyardSettingsDraft(draftKey, value);
-    setDraftState(value);
-  };
+  const setDraft = useCallback(
+    (value: ToolyardSettingsDraft | null) => {
+      writeToolyardSettingsDraft(draftKey, value);
+      setDraftState(value);
+    },
+    [draftKey],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [browserDraft, setBrowserDraft] = useState<ToolyardSettingsDraft | null>(null);
+  const [continuationRead, setContinuationRead] = useState(false);
   const current = draft ?? {
     baseUrl: status?.baseUrl ?? "",
     enabled: status?.enabled ?? false,
     revision: status?.revision ?? 0,
   };
-  const refresh = () => appAtomRegistry.refresh(statusAtom);
+  const refresh = useCallback(() => appAtomRegistry.refresh(statusAtom), [statusAtom]);
+  const environmentBrowserUrl = () => {
+    // The authenticated primary connection owns the browser destination. MCP settings do not.
+    const prepared = primary ? readPreparedConnection(primary) : null;
+    return prepared?.httpBaseUrl && toolyardSettingsOrigin(prepared.httpBaseUrl)
+      ? prepared.httpBaseUrl
+      : null;
+  };
+  useEffect(() => {
+    if (continuationRead || !primary || !status || !userScope.startsWith("user_")) return;
+    const continuation = readToolyardSettingsContinuation(
+      pendingToolyardSettingsContinuation() ?? window.location.hash,
+      primary,
+      userScope,
+      window.location.origin,
+      draft,
+      Date.now(),
+    );
+    setContinuationRead(true);
+    if (!continuation) return;
+    clearToolyardSettingsContinuation();
+    // Remove the public fragment after consumption; credentials never appear in this link.
+    window.history.replaceState(
+      window.history.state,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    if (continuation.draft) setDraft(continuation.draft);
+    setNotice(continuation.message);
+  }, [continuationRead, primary, status, userScope, draft, setDraft]);
+  useEffect(() => {
+    if (!browserDraft) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      refresh();
+      if (++attempts >= 40) {
+        window.clearInterval(timer);
+        setNotice(
+          "Complete Save in the browser. Select Refresh here to read the server result. Your draft remains until the result matches.",
+        );
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [browserDraft, refresh]);
+  useEffect(() => {
+    if (!browserDraft || !status || !toolyardCommittedDraftMatches(browserDraft, status)) return;
+    // An edit made after the handoff must remain a draft.
+    if (
+      draft &&
+      draft.baseUrl === browserDraft.baseUrl &&
+      draft.enabled === browserDraft.enabled &&
+      draft.revision === browserDraft.revision
+    )
+      setDraft(null);
+    setBrowserDraft(null);
+    setNotice("The browser saved the matching settings. The server trust is verified.");
+  }, [browserDraft, status, draft, setDraft]);
   const origin = () => {
     if (status?.origin) return status.origin;
     // Direct web access names the verified server, even when a copied config is stale.
@@ -84,6 +158,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
       }
     }
     for (const value of [
+      environmentBrowserUrl(),
       publicMcpUrl,
       readBkManagedEnvironment()?.httpBaseUrl,
       window.location.origin,
@@ -117,10 +192,49 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
       });
       refresh();
       if (AsyncResult.isSuccess(saved)) setDraft(null);
-      else
-        setError(
-          "The settings did not save. Your draft remains. Refresh the server status before another attempt.",
-        );
+      else if (AsyncResult.isFailure(saved)) {
+        const code = toolyardSettingsFailureCode(saved.cause);
+        if (
+          code === "admin_trust_registration_required" &&
+          !adminToken &&
+          !remove &&
+          window.desktopBridge
+        ) {
+          const destination = environmentBrowserUrl();
+          if (!destination) {
+            setError(
+              "This environment has no HTTPS browser address. Your draft remains. Ask its administrator to configure a public address.",
+            );
+            return;
+          }
+          const url = createToolyardSettingsContinuation(
+            destination,
+            primary,
+            userScope,
+            current,
+            Date.now(),
+          );
+          const browser = createToolyardBrowserHandoffTarget();
+          try {
+            await browser.open(url);
+            setBrowserDraft({ ...current });
+            setNotice(
+              "The default browser opened T3 Settings. Use the same account. Review the draft, then select Save and verify trust. Your desktop draft remains.",
+            );
+          } finally {
+            browser.close();
+          }
+        } else
+          setError(
+            code === "admin_trust_registration_required" && !adminToken
+              ? "Use a signed-in browser administrator account to verify server trust. Your draft remains."
+              : toolyardSettingsFailureMessage(code),
+          );
+      }
+    } catch {
+      setError(
+        "The settings or browser request failed. Your draft remains. Select Refresh, then try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -188,6 +302,11 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
             Connection expires {new Date(status.expiresAt).toLocaleString()}.
           </p>
         ) : null}
+        {notice ? (
+          <p role="status" className="my-2 text-xs text-muted-foreground">
+            {notice}
+          </p>
+        ) : null}
         {error ? (
           <p role="alert" className="my-2 text-xs text-destructive-foreground">
             {error}
@@ -248,6 +367,8 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
               onClick={() => {
                 setDraft(null);
                 setError(null);
+                setNotice(null);
+                setBrowserDraft(null);
               }}
             >
               Discard

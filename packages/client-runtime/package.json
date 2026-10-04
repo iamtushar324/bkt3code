@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./toolyard-trust-setup": "./src/fork/toolyardTrustSetup.ts",
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
