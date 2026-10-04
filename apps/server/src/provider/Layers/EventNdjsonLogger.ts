@@ -192,6 +192,7 @@ function providerLogPath(directory: string, prefix: string, threadSegment: strin
   return NodePath.join(directory, `${prefix}${threadSegment}.log`);
 }
 
+// T3-CUSTOM(expbkt3): filter duplicate and transient provider log frames.
 function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
   if (stream === "orchestration" || typeof event !== "object" || event === null) {
     return true;
@@ -336,6 +337,7 @@ function summarizeProviderEvent(event: unknown): unknown {
   } catch {
     return { truncated: true };
   }
+  // T3-CUSTOM(expbkt3): bounded summary fallback belongs to the fork.
 }
 
 /** Bounds traversal before the logger encodes payloads. */

@@ -8,6 +8,7 @@ import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
+  // T3-CUSTOM(expbkt3): keep detail streams only for active sessions.
   isThreadSessionRunning,
 } from "@t3tools/client-runtime/state/threads";
 // T3-CUSTOM(expbkt3): BEGIN — reactive IndexedDB pending-send state.
@@ -58,6 +59,7 @@ type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
 // True once a thread's own stream no longer needs to stay open: it is in sync
 // and shows a settled session, or it cannot progress (deleted or failed). A
 // stream that is still loading or reconnecting keeps waiting for the stop.
+// T3-CUSTOM(expbkt3): BEGIN — retain detail streams until stopped sessions are in sync.
 function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState, E>): boolean {
   if (!AsyncResult.isSuccess(result)) return true;
   const { status, data, error } = result.value;
@@ -66,6 +68,8 @@ function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState,
     status === "live" && !Option.exists(data, (thread) => isThreadSessionRunning(thread.session))
   );
 }
+
+// T3-CUSTOM(expbkt3): END
 
 /**
  * Keeps the thread state atom mounted for each running thread in the listed
@@ -76,6 +80,7 @@ function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState,
  * until its own detail is live and shows the stop too. Then the stream closes
  * and saves the settled state to disk.
  */
+// T3-CUSTOM(expbkt3): BEGIN — mount running thread streams across environments.
 export function createRunningThreadKeepAliveAtom<E>(input: {
   readonly environmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
   readonly threadsAtom: (
@@ -126,6 +131,8 @@ export function createRunningThreadKeepAliveAtom<E>(input: {
 }
 
 /** Mounted by `RunningThreadKeepAlive` on desktop, for every enabled environment. */
+// T3-CUSTOM(expbkt3): END
+
 export const runningThreadKeepAliveAtom = createRunningThreadKeepAliveAtom({
   environmentIdsAtom: Atom.map(environmentCatalog.catalogValueAtom, (catalog) => [
     ...enabledEnvironmentIds(catalog),
