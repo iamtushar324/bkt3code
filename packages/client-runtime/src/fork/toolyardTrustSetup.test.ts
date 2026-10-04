@@ -8,7 +8,7 @@ import {
   toolyardCommittedDraftMatches,
   toolyardSettingsFailureCode,
   toolyardSettingsFailureMessage,
-} from "./toolyardTrustSetup";
+} from "./toolyardTrustSetup.ts";
 const now = 1_800_000_000_000;
 const draft = { baseUrl: "https://toolyard.test", enabled: true, revision: 4 };
 const make = () =>
