@@ -1,7 +1,9 @@
 /** T3-CUSTOM(expbkt3): Standard Webhooks framing and the fixed Toolyard notification contract. */
 import * as NodeCrypto from "node:crypto";
 
-export const MAX_CALLBACK_BYTES = 65_536;
+// A full Toolyard decision can contain 12 reasons (4,000 codepoints each) and a
+// 10,000-codepoint note. Allow JSON escaping while retaining a bounded transport.
+export const MAX_CALLBACK_BYTES = 512 * 1_024;
 export const TIMESTAMP_TOLERANCE_SECONDS = 300;
 export interface QuestionAnswer {
   readonly selected_option_ids?: ReadonlyArray<string>;
@@ -33,15 +35,19 @@ export interface DecisionCallback {
 }
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_:-]{1,160}$/.test(value);
+const callIdentifier = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(value);
 const text = (value: unknown, max = 8_000): value is string =>
   typeof value === "string" && value.length <= max;
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const optionalText = (value: unknown) => value === undefined || text(value);
 const onlyKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string>) =>
   Object.keys(value).every((key) => keys.includes(key));
 const boundedCharacters = (value: unknown, max: number): value is string =>
   typeof value === "string" && Array.from(value).length <= max;
+// Go strings.TrimSpace uses Unicode White_Space, rather than JavaScript trim
+// (which also removes FEFF and does not remove NEXT LINE).
+const trimSpace = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 const questionAnswer = (value: unknown): value is QuestionAnswer => {
   if (
     !object(value) ||
@@ -64,7 +70,8 @@ const questionAnswer = (value: unknown): value is QuestionAnswer => {
     (!Array.isArray(ids) ||
       ids.length > 12 ||
       !ids.every(
-        (id) => text(id, 80) && id.length > 0 && Buffer.byteLength(id) <= 80 && id.trim() === id,
+        (id) =>
+          text(id, 80) && id.length > 0 && Buffer.byteLength(id) <= 80 && trimSpace(id) === id,
       ) ||
       new Set(ids).size !== ids.length)
   )
@@ -78,11 +85,12 @@ const questionAnswer = (value: unknown): value is QuestionAnswer => {
       labels.length !== (ids?.length ?? 0))
   )
     return false;
-  return (ids?.length ?? 0) > 0 || value.text.trim().length > 0;
+  return (ids?.length ?? 0) > 0 || trimSpace(value.text).length > 0;
 };
 
 /** Strict allowlist prevents credentials/results or caller-controlled routing from entering prompts. */
 export function parseDecisionCallback(raw: string, eventId: string): DecisionCallback {
+  if (Buffer.byteLength(raw) > MAX_CALLBACK_BYTES) throw new Error("invalid-callback-payload");
   const parsed: unknown = JSON.parse(raw);
   if (
     !object(parsed) ||
@@ -115,10 +123,10 @@ export function parseDecisionCallback(raw: string, eventId: string): DecisionCal
     !["decided", "expired", "cancelled"].includes(String(data.status)) ||
     parsed.type !== `inbox.${data.status === "decided" ? "decision" : data.status}` ||
     !Array.isArray(data.calls) ||
-    data.calls.length > 100 ||
+    data.calls.length > 12 ||
     !text(data.status_ref, 512) ||
     data.status_ref.length === 0 ||
-    !optionalText(data.overall_note) ||
+    (data.overall_note !== undefined && !boundedCharacters(data.overall_note, 10_000)) ||
     (data.response !== undefined && !questionAnswer(data.response)) ||
     (data.request_expires_at !== undefined &&
       (!Number.isSafeInteger(data.request_expires_at) || Number(data.request_expires_at) < 0)) ||
@@ -135,9 +143,9 @@ export function parseDecisionCallback(raw: string, eventId: string): DecisionCal
     if (
       !object(call) ||
       !onlyKeys(call, ["call_id", "verdict", "reason"]) ||
-      !identifier(call.call_id) ||
+      !callIdentifier(call.call_id) ||
       !["accepted", "rejected"].includes(String(call.verdict)) ||
-      !optionalText(call.reason) ||
+      (call.reason !== undefined && !boundedCharacters(call.reason, 4_000)) ||
       ids.has(call.call_id)
     )
       throw new Error("invalid-callback-call");
