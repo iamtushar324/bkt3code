@@ -26,6 +26,7 @@ export const Route = createFileRoute("/pair")({
     }
 
     if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
+      // T3-CUSTOM(expbkt3): restore an explicit Toolyard draft after browser authentication.
       throw redirect({ to: afterAuthentication(), replace: true });
     }
     return {
@@ -66,6 +67,7 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
+        // T3-CUSTOM(expbkt3): restore an explicit Toolyard draft after pairing authentication.
         void navigate({ to: afterAuthentication(), replace: true });
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
