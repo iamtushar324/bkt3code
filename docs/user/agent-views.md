@@ -42,7 +42,7 @@ rewriting URL fragments, or weakening the iframe sandbox.
 
 ## Turning it off
 
-**Settings → Experiments → Agent views in chat.** While it is off, an agent that
+**Settings → BK Add-ons → Agent views in chat.** While it is off, an agent that
 tries to show a view leaves an ordinary collapsed tool row instead, and nothing
 is rendered. The setting is per client, so turning it off on your laptop does not
 change what you see on your phone.

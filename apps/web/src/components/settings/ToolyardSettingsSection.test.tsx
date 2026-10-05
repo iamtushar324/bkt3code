@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
       requestId: string;
       authorizationUrl: string | null;
       expiresAt: string;
-      status: "pending" | "approved" | "cancelled";
+      status: "pending" | "approved" | "cancelled" | "rejected" | "expired";
       lastError: string | null;
     },
     apiKeyAllowed: true,
@@ -28,12 +28,12 @@ const mocks = vi.hoisted(() => ({
     enabled: false,
     removed: false,
     baseUrl: null as string | null,
-    instanceId: null,
-    origin: null,
+    instanceId: null as string | null,
+    origin: null as string | null,
     administrator: true,
     connection: "not_connected",
-    email: null,
-    expiresAt: null,
+    email: null as string | null,
+    expiresAt: null as string | null,
   },
   userId: "user_admin",
   clerkUserId: "user_admin" as string | null,
@@ -42,30 +42,15 @@ const mocks = vi.hoisted(() => ({
   sessionAuthenticated: new Map<string, boolean>(),
   statusByEnvironment: new Map<string, object>(),
   statusQueries: vi.fn(),
-  webhookQueries: vi.fn(),
-  webhookUpdate: vi.fn(),
   configure: vi.fn(),
+  handoff: vi.fn(),
   token: vi.fn(),
   open: vi.fn(),
   refresh: vi.fn(),
-  atom: {},
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) => {
     if (atom === "clerk-user") return mocks.clerkUserId;
-    const webhookEnvironmentId = (atom as { webhookEnvironmentId?: string }).webhookEnvironmentId;
-    if (webhookEnvironmentId)
-      return AsyncResult.success([
-        {
-          id: `${webhookEnvironmentId}-hook`,
-          threadId: `${webhookEnvironmentId}-thread`,
-          revision: 1,
-          status: "active",
-          terminalReason: null,
-          deliveries: [],
-          deliveryHistory: [],
-        },
-      ]);
     const environmentId = (atom as { environmentId?: string }).environmentId;
     return AsyncResult.success(mocks.statusByEnvironment.get(environmentId ?? "") ?? mocks.status);
   },
@@ -109,22 +94,13 @@ vi.mock("../../state/server", () => ({
       mocks.statusQueries(input);
       return { environmentId: input.environmentId };
     },
-    sessionWebhooksList: (input: { environmentId: string }) => {
-      mocks.webhookQueries(input);
-      return { webhookEnvironmentId: input.environmentId };
-    },
-    sessionWebhooksUpdate: "webhook-update",
     configureToolyardIntegration: "configure",
     openToolyardDashboard: "handoff",
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "configure"
-      ? mocks.configure
-      : command === "webhook-update"
-        ? mocks.webhookUpdate
-        : vi.fn(),
+    command === "configure" ? mocks.configure : command === "handoff" ? mocks.handoff : vi.fn(),
 }));
 vi.mock("../../state/teamIdentityToken", () => ({ readTeamClerkToken: () => mocks.token() }));
 vi.mock("../../rpc/atomRegistry", () => ({ appAtomRegistry: { refresh: mocks.refresh } }));
@@ -140,13 +116,126 @@ vi.mock("../ui/button", () => ({
     <button {...props}>{children}</button>
   ),
 }));
+vi.mock("../ui/badge", () => ({
+  Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+}));
 vi.mock("../ui/input", () => ({ Input: (props: object) => <input {...props} /> }));
 vi.mock("../ui/switch", () => ({
   Switch: (props: object) => <button data-testid="switch" {...props} />,
 }));
+// Folds keep their panels mounted, as the component requests with keepMounted.
+vi.mock("../ui/collapsible", async () => {
+  const { createContext, useContext } = await import("react");
+  const Fold = createContext({ open: false, onOpenChange: (_open: boolean) => {} });
+  return {
+    Collapsible: ({
+      open,
+      onOpenChange,
+      children,
+    }: {
+      open: boolean;
+      onOpenChange: (open: boolean) => void;
+      children: ReactNode;
+    }) => <Fold value={{ open, onOpenChange }}>{children}</Fold>,
+    CollapsibleTrigger: ({
+      children,
+      render: _render,
+      ...props
+    }: {
+      children: ReactNode;
+      render?: unknown;
+    }) => {
+      const fold = useContext(Fold);
+      return (
+        <button {...props} aria-expanded={fold.open} onClick={() => fold.onOpenChange(!fold.open)}>
+          {children}
+        </button>
+      );
+    },
+    CollapsiblePanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  };
+});
+vi.mock("../ui/radio-group", async () => {
+  const { createContext, useContext } = await import("react");
+  const Group = createContext({
+    value: undefined as unknown,
+    disabled: false as boolean | undefined,
+    onValueChange: (_value: unknown) => {},
+  });
+  return {
+    RadioGroup: ({
+      value,
+      disabled,
+      onValueChange,
+      children,
+    }: {
+      value: unknown;
+      disabled?: boolean;
+      onValueChange: (value: unknown) => void;
+      children: ReactNode;
+    }) => (
+      <Group value={{ value, disabled, onValueChange }}>
+        <div role="radiogroup">{children}</div>
+      </Group>
+    ),
+    Radio: ({ value, disabled }: { value: string; disabled?: boolean }) => {
+      const group = useContext(Group);
+      return (
+        <button
+          role="radio"
+          value={value}
+          aria-checked={group.value === value}
+          disabled={Boolean(disabled || group.disabled)}
+          onClick={() => group.onValueChange(value)}
+        />
+      );
+    },
+  };
+});
+vi.mock("../ui/alert-dialog", async () => {
+  const { createContext, useContext } = await import("react");
+  const Close = createContext((_open: boolean) => {});
+  const Pass = ({ children }: { children: ReactNode }) => <>{children}</>;
+  return {
+    AlertDialog: ({
+      open,
+      onOpenChange,
+      children,
+    }: {
+      open: boolean;
+      onOpenChange: (open: boolean) => void;
+      children: ReactNode;
+    }) =>
+      open ? (
+        <Close value={onOpenChange}>
+          <div role="alertdialog">{children}</div>
+        </Close>
+      ) : null,
+    AlertDialogPopup: Pass,
+    AlertDialogHeader: Pass,
+    AlertDialogFooter: Pass,
+    AlertDialogTitle: Pass,
+    AlertDialogDescription: Pass,
+    AlertDialogClose: ({ children }: { children: ReactNode }) => {
+      const close = useContext(Close);
+      return <button onClick={() => close(false)}>{children}</button>;
+    },
+  };
+});
 vi.mock("./settingsLayout", () => ({
-  SettingsSection: ({ children, title }: { children: ReactNode; title: string }) => (
-    <section data-title={title}>{children}</section>
+  SettingsSection: ({
+    children,
+    title,
+    headerAction,
+  }: {
+    children: ReactNode;
+    title: string;
+    headerAction?: ReactNode;
+  }) => (
+    <section data-title={title}>
+      {headerAction}
+      {children}
+    </section>
   ),
   SettingsRow: ({ children, control }: { children: ReactNode; control: ReactNode }) => (
     <div>
@@ -155,8 +244,7 @@ vi.mock("./settingsLayout", () => ({
     </div>
   ),
 }));
-import { ToolyardSettingsSection } from "./ToolyardSettingsSection";
-import { SessionWebhookSettingsSection } from "../../fork/SessionWebhookSettingsSection";
+import { EnvironmentToolyardSettings, ToolyardSettingsSection } from "./ToolyardSettingsSection";
 import { readToolyardSettingsDraft, toolyardDraftKey } from "../../fork/toolyardSettingsDraft";
 let renderer: ReactTestRenderer;
 const key = toolyardDraftKey("env_stage", "user_admin");
@@ -164,9 +252,37 @@ const failure = (code: string) =>
   AsyncResult.failure(
     Cause.fail(new PersonalMcpSettingsError({ operation: "Toolyard integration", message: code })),
   );
+const pendingRequest = (
+  status: "pending" | "approved" | "cancelled" | "rejected" | "expired" = "pending",
+) => ({
+  requestId: "host-request-0123456789",
+  authorizationUrl: "https://toolyard.test/connections/authorize?request=reference",
+  expiresAt: "2099-01-01T00:00:00Z",
+  status,
+  lastError: null,
+});
 function button(name: string) {
   return renderer.root.findAllByType("button").find((node) => node.children.includes(name))!;
 }
+function method(value: "team" | "api-key" | "host") {
+  return renderer.root.findAll(
+    (node) => node.type === "button" && node.props.role === "radio" && node.props.value === value,
+  )[0]!;
+}
+function dialog() {
+  return renderer.root.findAllByProps({ role: "alertdialog" })[0];
+}
+function dialogButton(name: string) {
+  return dialog()!
+    .findAllByType("button")
+    .find((node) => node.children.includes(name))!;
+}
+function fold(name: string) {
+  return renderer.root
+    .findAllByType("button")
+    .find((node) => node.props["aria-expanded"] !== undefined && node.children.includes(name))!;
+}
+const text = () => JSON.stringify(renderer.toJSON());
 async function render() {
   await act(() => {
     renderer = create(<ToolyardSettingsSection />);
@@ -216,6 +332,8 @@ beforeEach(() => {
     baseUrl: null,
     removed: false,
     connection: "not_connected",
+    email: null,
+    expiresAt: null,
   };
   mocks.userId = "user_admin";
   mocks.clerkUserId = "user_admin";
@@ -330,7 +448,7 @@ it("submits a local API key once without Clerk or browser trust and clears the s
     return AsyncResult.success(mocks.status);
   });
   await render();
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   await act(() => {
     renderer.root
       .findByProps({ "aria-label": "Toolyard base URL" })
@@ -356,7 +474,7 @@ it.each(["invalid_api_key", "invalid_assertion"])(
   async (code) => {
     mocks.configure.mockResolvedValue(failure(code));
     await render();
-    await act(() => button("API key connection").props.onClick());
+    await act(() => method("api-key").props.onClick());
     await act(() =>
       renderer.root
         .findByProps({ "aria-label": "Toolyard API key" })
@@ -378,7 +496,7 @@ it.each(["invalid_api_key", "invalid_assertion"])(
 );
 it("restores the public API mode after reload without recovering the secret", async () => {
   await render();
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   await act(() =>
     renderer.root
       .findByProps({ "aria-label": "Toolyard API key" })
@@ -391,7 +509,7 @@ it("restores the public API mode after reload without recovering the secret", as
 });
 it("clears a secret when the authenticated user changes", async () => {
   await render();
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   await act(() =>
     renderer.root
       .findByProps({ "aria-label": "Toolyard API key" })
@@ -399,10 +517,10 @@ it("clears a secret when the authenticated user changes", async () => {
   );
   mocks.userId = "user_other";
   await act(() => renderer.update(<ToolyardSettingsSection />));
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   expect(renderer.root.findByProps({ "aria-label": "Toolyard API key" }).props.value).toBe("");
 });
-it("disconnects only the current account through the user action", async () => {
+it("disconnects only the current account after confirmation", async () => {
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -414,6 +532,8 @@ it("disconnects only the current account through the user action", async () => {
   mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
   await render();
   await act(() => button("Disconnect my account").props.onClick());
+  expect(mocks.configure).not.toHaveBeenCalled();
+  await act(() => dialogButton("Disconnect").props.onClick());
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     disconnect: true,
     mode: "api-key",
@@ -422,53 +542,201 @@ it("disconnects only the current account through the user action", async () => {
   expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
   expect(button("Remove instance")).toBeUndefined();
 });
-
-it("retains a public edit made while a successful Save request is pending", async () => {
-  let complete!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  mocks.configure.mockImplementation(async () => {
-    await pending;
-    mocks.status = {
-      ...mocks.status,
-      revision: 1,
-      enabled: true,
-      baseUrl: "https://toolyard.test",
-    };
-    return AsyncResult.success(mocks.status);
-  });
+it("sends no disconnect when the confirmation is cancelled, and keeps a refused disconnect visible", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "host",
+    revision: 5,
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "connected",
+  };
+  mocks.configure.mockResolvedValue(failure("settings_revision_conflict"));
   await render();
-  await edit();
-  await act(() => button("Save and verify trust").props.onClick());
+  await act(() => button("Disconnect my account").props.onClick());
+  expect(dialog()).toBeDefined();
+  await act(() => dialogButton("Cancel").props.onClick());
+  expect(dialog()).toBeUndefined();
+  expect(mocks.configure).not.toHaveBeenCalled();
+  await act(() => button("Disconnect my account").props.onClick());
+  await act(() => dialogButton("Disconnect").props.onClick());
   expect(mocks.configure).toHaveBeenCalledOnce();
-  await act(() =>
-    renderer.root.findByProps({ "aria-label": "Toolyard base URL" }).props.onChange({
-      target: { value: "https://later-draft.test" },
-    }),
-  );
-  await act(async () => {
-    complete();
-    await pending;
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    disconnect: true,
+    expectedRevision: 5,
   });
-  expect(readToolyardSettingsDraft(key)?.baseUrl).toBe("https://later-draft.test");
-  expect(renderer.root.findByProps({ "aria-label": "Toolyard base URL" }).props.value).toBe(
-    "https://later-draft.test",
+  expect(renderer.root.findByProps({ role: "alert" }).children.join("")).toContain(
+    "The server settings changed",
   );
+  expect(text()).toContain("Connected");
+});
+it("removes the instance only after the administrator confirms, with the expected revision", async () => {
+  mocks.status = {
+    ...mocks.status,
+    revision: 4,
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "connected",
+  };
+  mocks.configure.mockResolvedValue(
+    AsyncResult.success({ ...mocks.status, removed: true, enabled: false, revision: 5 }),
+  );
+  await render();
+  // A team connection has no personal disconnect until another method is chosen.
+  expect(button("Disconnect my account")).toBeUndefined();
+  await act(() => button("Remove instance").props.onClick());
+  await act(() => dialogButton("Cancel").props.onClick());
+  expect(mocks.configure).not.toHaveBeenCalled();
+  await act(() => button("Remove instance").props.onClick());
+  await act(() => dialogButton("Remove instance").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    remove: true,
+    expectedRevision: 4,
+  });
+  expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("disconnect");
+  expect(dialog()).toBeUndefined();
+});
+it("shows an approved request on a connected account as history, with Open Toolyard and no Connect action", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "host",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "connected",
+    email: "dev@beknown.work",
+    agentId: "agent_0123456789abcdef",
+    ownerId: "owner_0123456789abcdef",
+    pendingConnection: pendingRequest("approved"),
+  };
+  mocks.handoff.mockResolvedValue(
+    AsyncResult.success({ url: "https://toolyard.test/handoff?code=x", expiresAt: "2099" }),
+  );
+  await render();
+  expect(text()).toContain("Connected");
+  expect(text()).toContain("dev@beknown.work");
+  expect(text()).not.toContain("Awaiting");
+  expect(text()).not.toContain("Connection request:");
+  for (const label of [
+    "Connect my Toolyard account",
+    "Start a new request",
+    "Open account consent",
+    "Save and verify trust",
+    "Discard",
+  ])
+    expect(button(label)).toBeUndefined();
+  // Summaries abbreviate identifiers; details keep the full values and the finished request.
+  expect(text()).toContain("agent_01…");
+  expect(text()).toContain("agent_0123456789abcdef");
+  expect(text()).toContain("owner_0123456789abcdef");
+  expect(text()).toContain("Approved");
+  expect(fold("Connection details").props["aria-expanded"]).toBe(false);
+  await act(() => button("Open Toolyard").props.onClick());
+  expect(mocks.open).toHaveBeenCalledWith("https://toolyard.test/handoff?code=x");
+  expect(mocks.configure).not.toHaveBeenCalled();
+});
+it("offers account consent while a request is pending and no routine save without a draft", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "host",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    pendingConnection: pendingRequest(),
+  };
+  await render();
+  expect(text()).toContain("Awaiting your decision");
+  expect(button("Connect my Toolyard account")).toBeUndefined();
+  await act(() => button("Open account consent").props.onClick());
+  expect(mocks.open).toHaveBeenCalledWith(
+    "https://toolyard.test/connections/authorize?request=reference",
+  );
+});
+it("starts a new consent request after a rejected one", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "host",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    pendingConnection: pendingRequest("rejected"),
+  };
+  mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
+  await render();
+  expect(text()).toContain("Request rejected");
+  await act(() => button("Start a new request").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    mode: "host",
+    hostAction: "begin",
+  });
+});
+it("shows an outage as unavailable with Retry, never as revoked access", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "api-key",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "unavailable",
+    email: "dev@beknown.work",
+  };
+  await render();
+  expect(text()).toContain("Status unavailable");
+  expect(text()).not.toContain("Access revoked");
+  expect(button("Save and connect")).toBeUndefined();
+  expect(button("Open Toolyard")).toBeUndefined();
+  await act(() => button("Retry").props.onClick());
+  expect(mocks.refresh).toHaveBeenCalledOnce();
+});
+it("opens server setup for a draft, keeps the draft when the fold closes, and shows conflicts outside it", async () => {
+  mocks.status = {
+    ...mocks.status,
+    revision: 2,
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "connected",
+  };
+  await render();
+  expect(fold("Server setup — administrator").props["aria-expanded"]).toBe(false);
+  expect(button("Save and verify trust")).toBeUndefined();
+  await act(() =>
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard base URL" })
+      .props.onChange({ target: { value: "https://next.test" } }),
+  );
+  expect(fold("Server setup — administrator").props["aria-expanded"]).toBe(true);
+  await act(() => fold("Server setup — administrator").props.onClick());
+  expect(fold("Server setup — administrator").props["aria-expanded"]).toBe(false);
+  expect(renderer.root.findByProps({ "aria-label": "Toolyard base URL" }).props.value).toBe(
+    "https://next.test",
+  );
+  expect(button("Save and verify trust").props.disabled).toBe(false);
+  mocks.status = { ...mocks.status, revision: 3 };
+  await act(() => renderer.update(<ToolyardSettingsSection />));
+  expect(renderer.root.findByProps({ role: "alert" }).findByType("p").children.join("")).toContain(
+    "revision 2",
+  );
+  await act(() => button("Use current revision").props.onClick());
+  expect(readToolyardSettingsDraft(key)).toMatchObject({
+    baseUrl: "https://next.test",
+    revision: 3,
+  });
 });
 it("disables team access when the server has no verified team identity", async () => {
   mocks.status = { ...mocks.status, mode: "api-key", teamAvailable: false };
   await render();
-  expect(button("Team connection").props.disabled).toBe(true);
-  expect(button("API key connection").props.disabled).toBe(false);
+  expect(method("team").props.disabled).toBe(true);
+  expect(method("api-key").props.disabled).toBe(false);
+  expect(text()).toContain("no verified team identity");
   expect(mocks.token).not.toHaveBeenCalled();
 });
 it.each([
-  ["api-key", "team", "Team connection", "Save and verify trust"],
-  ["team", "api-key", "API key connection", "Save and connect"],
+  ["api-key", "team", "Save and verify trust"],
+  ["team", "api-key", "Save and connect"],
 ] as const)(
   "keeps the %s disconnect action after the draft selects %s",
-  async (savedMode, nextMode, choice, saveLabel) => {
+  async (savedMode, nextMode, saveLabel) => {
     mocks.status = {
       ...mocks.status,
       mode: savedMode,
@@ -482,13 +750,17 @@ it.each([
       return AsyncResult.success(mocks.status);
     });
     await render();
-    await act(() => button(choice).props.onClick());
+    expect(fold("Manage connection").props["aria-expanded"]).toBe(false);
+    await act(() => method(nextMode).props.onClick());
+    // The method change needs a disconnect first, so its fold opens and the warning stays outside.
+    expect(fold("Manage connection").props["aria-expanded"]).toBe(true);
     expect(button(saveLabel).props.disabled).toBe(true);
     expect(button("Disconnect my account").props.disabled).toBe(false);
     expect(renderer.root.findByProps({ role: "alert" }).children.join("")).toContain(
       "Disconnect my account",
     );
     await act(() => button("Disconnect my account").props.onClick());
+    await act(() => dialogButton("Disconnect").props.onClick());
     expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
       disconnect: true,
       remove: false,
@@ -509,7 +781,7 @@ it("targets the selected server and isolates its public draft, API key, and user
   });
   mocks.sessionUsers.set("env_mac", null);
   await render();
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   await act(() => {
     renderer.root
       .findByProps({ "aria-label": "Toolyard base URL" })
@@ -528,6 +800,7 @@ it("targets the selected server and isolates its public draft, API key, and user
     environmentId: "env_mac",
     input: { userScope: "local-user" },
   });
+  expect(text()).toContain("All clients authorized for this local profile");
   await act(() =>
     renderer.root
       .findByProps({ "aria-label": "Toolyard API key" })
@@ -600,24 +873,32 @@ it("applies a browser continuation only to its selected server when two servers 
   expect(mocks.configure).not.toHaveBeenCalled();
 });
 
-it("lists and updates webhook destinations on each selected server under that server's user", async () => {
-  mocks.selectedIds = ["env_stage", "env_mac"];
-  mocks.sessionUsers.set("env_mac", null);
-  mocks.webhookUpdate.mockResolvedValue(AsyncResult.success({}));
+it("uses the grouped title and Refresh, and re-reads status when the group refreshes", async () => {
+  const environment = {
+    environmentId: "env_stage",
+    label: "Stage",
+    serverConfig: {
+      auth: { clerk: {} },
+      settings: { experimental: { externalMcp: { publicUrl: null } } },
+    },
+  } as unknown as Parameters<typeof EnvironmentToolyardSettings>[0]["environment"];
   await act(() => {
-    renderer = create(<SessionWebhookSettingsSection />);
+    renderer = create(
+      <EnvironmentToolyardSettings environment={environment} compact refreshVersion={0} />,
+    );
   });
-  expect(mocks.webhookQueries.mock.calls.map(([input]) => input)).toEqual([
-    { environmentId: "env_stage", input: { userScope: "user_admin" } },
-    { environmentId: "env_mac", input: { userScope: "local-user" } },
-  ]);
-  const mac = renderer.root.findByProps({ "data-title": "Session webhooks — Mac" });
-  const disable = mac.findAllByType("button").find((node) => node.children.includes("Disable"))!;
-  await act(() => disable.props.onClick());
-  expect(mocks.webhookUpdate.mock.calls[0]![0]).toMatchObject({
-    environmentId: "env_mac",
-    input: { id: "env_mac-hook", action: "disable", expectedRevision: 1 },
-  });
+  expect(renderer.root.findByType("section").props["data-title"]).toBe("Toolyard");
+  expect(button("Refresh")).toBeUndefined();
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  await act(() =>
+    renderer.update(
+      <EnvironmentToolyardSettings environment={environment} compact refreshVersion={1} />,
+    ),
+  );
+  expect(mocks.refresh).toHaveBeenCalledOnce();
+  await act(() => renderer.update(<EnvironmentToolyardSettings environment={environment} />));
+  expect(renderer.root.findByType("section").props["data-title"]).toBe("Toolyard — Stage");
+  expect(button("Refresh")).toBeDefined();
 });
 
 it("opens host account consent with no copied API key or Clerk token", async () => {
@@ -658,7 +939,7 @@ it("opens host account consent with no copied API key or Clerk token", async () 
 it("retains a failed host draft through navigation and reload", async () => {
   await render();
   await edit();
-  await act(() => button("Account consent").props.onClick());
+  await act(() => method("host").props.onClick());
   mocks.configure.mockResolvedValue(failure("instance_unavailable"));
   await act(() => button("Connect my Toolyard account").props.onClick());
   expect(readToolyardSettingsDraft(key)).toEqual({
@@ -669,7 +950,7 @@ it("retains a failed host draft through navigation and reload", async () => {
   });
   await act(() => renderer.unmount());
   await render();
-  expect(button("Account consent").props["aria-pressed"]).toBe(true);
+  expect(method("host").props["aria-checked"]).toBe(true);
   expect(renderer.root.findAllByProps({ role: "alert" }).length).toBe(0);
 });
 it("refuses a consent destination from another Toolyard instance", async () => {
@@ -698,13 +979,7 @@ it("cancels only the committed request and preserves a newer settings draft", as
     revision: 3,
     baseUrl: "https://toolyard.test",
     enabled: true,
-    pendingConnection: {
-      requestId: "host-request",
-      authorizationUrl: "https://toolyard.test/connections/authorize?request=reference",
-      expiresAt: "2099-01-01T00:00:00Z",
-      status: "pending",
-      lastError: null,
-    },
+    pendingConnection: pendingRequest(),
   };
   mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
   await render();
@@ -713,7 +988,7 @@ it("cancels only the committed request and preserves a newer settings draft", as
       .findByProps({ "aria-label": "Toolyard base URL" })
       .props.onChange({ target: { value: "https://new-draft.test" } }),
   );
-  await act(() => button("API key connection").props.onClick());
+  await act(() => method("api-key").props.onClick());
   await act(() => button("Cancel connection request").props.onClick());
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     expectedRevision: 3,
@@ -725,4 +1000,47 @@ it("cancels only the committed request and preserves a newer settings draft", as
     baseUrl: "https://new-draft.test",
     mode: "api-key",
   });
+});
+
+it("clears the consent instruction after a pending request becomes connected", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "host",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+  };
+  mocks.configure.mockResolvedValue(
+    AsyncResult.success({ ...mocks.status, pendingConnection: pendingRequest() }),
+  );
+  await render();
+  await act(() => button("Connect my Toolyard account").props.onClick());
+  mocks.status = { ...mocks.status, pendingConnection: pendingRequest() };
+  await act(() => renderer.update(<ToolyardSettingsSection />));
+  expect(text()).toContain("Awaiting your Toolyard account decision");
+  mocks.status = {
+    ...mocks.status,
+    connection: "connected",
+    pendingConnection: pendingRequest("approved"),
+  };
+  await act(() => renderer.update(<ToolyardSettingsSection />));
+  expect(text()).toContain("Connected");
+  expect(text()).not.toContain("Awaiting your Toolyard account decision");
+  expect(text()).not.toContain("Review the account and host");
+  expect(button("Connect my Toolyard account")).toBeUndefined();
+});
+it("does not offer an ineffective team reconnect through a settings save", async () => {
+  mocks.status = {
+    ...mocks.status,
+    mode: "team",
+    enabled: true,
+    baseUrl: "https://toolyard.test",
+    connection: "revoked",
+    revision: 4,
+  };
+  await render();
+  expect(button("Save and verify trust")).toBeUndefined();
+  expect(text()).toContain("A settings save does not restore revoked access");
+  expect(method("host")).toBeDefined();
+  expect(mocks.configure).not.toHaveBeenCalled();
 });

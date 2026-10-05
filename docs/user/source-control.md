@@ -151,7 +151,7 @@ The thread header's git button follows the worktree. With uncommitted changes it
 highlighted **Commit**; once everything is committed it highlights **Create PR** (or **Push** when a
 pull request is already open). Clicking it asks the agent in the chat to do the step, so the agent
 writes the commit message or pull request itself; while a turn is running the request waits in the
-queue. The chevron beside it keeps the direct git actions. Turn this off in **Settings → Experiments →
+queue. The chevron beside it keeps the direct git actions. Turn this off in **Settings → BK Add-ons →
 Smart git button** to get the classic button back.
 
 ## Review and merge

@@ -1,7 +1,7 @@
 # Toolyard access for native clients
 
 Connect your Toolyard account to the destination BKT3 server first.
-Use **Settings → Experiments → Toolyard → Connect my Toolyard account**.
+Use **Settings → BK Add-ons → Toolyard → Connect my Toolyard account**.
 Toolyard assigns the host agent to your Toolyard account.
 
 The server saves the Toolyard credential in its secret store.
@@ -12,7 +12,7 @@ Inbox decisions remain necessary for restricted tool calls.
 ## Authenticate a native client
 
 Use your personal T3 external MCP token on a shared server.
-Create it under **Settings → Experiments → External MCP server → My external access**.
+Create it under **Settings → BK Add-ons → External MCP server → My external access**.
 This token belongs to your T3 user.
 Do not use a server-wide legacy operator token.
 The native endpoint rejects that token because it has no user owner.

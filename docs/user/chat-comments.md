@@ -9,7 +9,7 @@ a plan or a pull request. Open comments travel to the agent with every message
 you send until you resolve them, so a note like "reuse the existing column" keeps
 its place in the conversation instead of getting lost in the next prompt.
 
-Turn it on or off in **Settings → Experiments → Chat comments**. It is on by
+Turn it on or off in **Settings → BK Add-ons → Chat comments**. It is on by
 default. While it is off, the selection actions, highlights, the Comments panel
 entry and the composer strip are hidden on that device; comments that are already
 open still reach the agent until they are resolved.
