@@ -80,7 +80,7 @@ describe("toolyardConnectionPresentation", () => {
     ],
     [{ connection: "revoked" }, "revoked", "Access revoked", "error"],
     [{ connection: "unavailable" }, "unavailable", "Status unavailable", "warning"],
-    [{ connection: "disabled" }, "disabled", "Integration disabled", "secondary"],
+    [{ connection: "disabled" }, "disabled", "Connection disabled", "error"],
     [{ enabled: false, connection: "connected" }, "disabled", "Integration disabled", "secondary"],
     [{ removed: true, connection: "connected" }, "removed", "Instance removed", "secondary"],
     [{ baseUrl: null, enabled: false }, "not_configured", "Not set up", "secondary"],
@@ -116,4 +116,17 @@ describe("Toolyard labels", () => {
     expect(shortToolyardId("agent_0123456789abcdef")).toBe("agent_01…");
     expect(shortToolyardId("agent_1")).toBe("agent_1");
   });
+});
+
+it("distinguishes a disabled connection from a disabled integration without inferring the cause", () => {
+  const account = toolyardConnectionPresentation(status({ enabled: true, connection: "disabled" }));
+  const integration = toolyardConnectionPresentation(
+    status({ enabled: false, connection: "disabled" }),
+  );
+  expect(account.description).toContain("for this connection");
+  expect(account.description).not.toContain("for your account");
+  expect(account.description).not.toContain("Toolyard administrator");
+  expect(account.description).toContain("will not reconnect automatically");
+  expect(account.description).not.toContain("administrator can enable it");
+  expect(integration.label).toBe("Integration disabled");
 });

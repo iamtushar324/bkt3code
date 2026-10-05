@@ -102,12 +102,19 @@ export function toolyardConnectionPresentation(
       "secondary",
       "No Toolyard instance is set up on this server.",
     );
-  if (!status.enabled || status.connection === "disabled")
+  if (!status.enabled)
     return summary(
       "disabled",
       "Integration disabled",
       "secondary",
       "Toolyard is disabled on this server. An administrator can enable it.",
+    );
+  if (status.connection === "disabled")
+    return summary(
+      "disabled",
+      "Connection disabled",
+      "error",
+      "The server reports disabled access for this connection. T3 will not reconnect automatically. Check Connection details.",
     );
   if (connected)
     return summary(
