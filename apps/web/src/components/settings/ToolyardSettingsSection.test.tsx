@@ -554,7 +554,10 @@ it("does not inspect Toolyard credentials before the selected server authenticat
 
 it("applies a browser continuation only to its selected server when two servers are visible", async () => {
   mocks.selectedIds = ["env_stage", "env_other"];
-  window.location.origin = "https://other.test";
+  vi.stubGlobal("window", {
+    ...window,
+    location: { ...window.location, origin: "https://other.test" },
+  });
   window.location.hash = new URL(
     createToolyardSettingsContinuation(
       "https://other.test",
