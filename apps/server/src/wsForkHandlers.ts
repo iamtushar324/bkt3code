@@ -843,14 +843,16 @@ export const makeForkWsHandlers = ({
     [WS_METHODS.sessionWebhooksList]: () =>
       observeRpcEffect(
         WS_METHODS.sessionWebhooksList,
-        actorUserId === null
+        managedToolyardActor(actorUserId) === null
           ? Effect.fail(
               new PersonalMcpSettingsError({
                 operation: "webhook",
                 message: "verified_identity_required",
               }),
             )
-          : Effect.flatMap(SessionWebhookService, (service) => service.list(actorUserId)).pipe(
+          : Effect.flatMap(SessionWebhookService, (service) =>
+              service.list(managedToolyardActor(actorUserId)!),
+            ).pipe(
               Effect.mapError(
                 (cause) =>
                   new PersonalMcpSettingsError({ operation: "webhook", message: cause.message }),
@@ -861,7 +863,7 @@ export const makeForkWsHandlers = ({
     [WS_METHODS.sessionWebhooksUpdate]: (input) =>
       observeRpcEffect(
         WS_METHODS.sessionWebhooksUpdate,
-        actorUserId === null
+        managedToolyardActor(actorUserId) === null
           ? Effect.fail(
               new PersonalMcpSettingsError({
                 operation: "webhook",
@@ -869,7 +871,12 @@ export const makeForkWsHandlers = ({
               }),
             )
           : Effect.flatMap(SessionWebhookService, (service) =>
-              service.update(actorUserId, input.id, input.action, input.expectedRevision),
+              service.update(
+                managedToolyardActor(actorUserId)!,
+                input.id,
+                input.action,
+                input.expectedRevision,
+              ),
             ).pipe(
               Effect.mapError(
                 (cause) =>

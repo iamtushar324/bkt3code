@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, UserId } from "@t3tools/contracts";
+import { EnvironmentId, UserId, WS_METHODS, type SessionWebhookView } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
@@ -16,6 +16,9 @@ import {
   managedToolyardActor,
   ToolyardCallbackInspection,
 } from "./ToolyardIntegration.ts";
+
+import { makeForkWsHandlers, type ForkWsHandlerDeps } from "../wsForkHandlers.ts";
+import { SessionWebhookService } from "../session-webhooks/SessionWebhookService.ts";
 
 const integrationTestLayer = (team: boolean) => {
   const config = Layer.effect(
@@ -131,3 +134,52 @@ it.effect("never converts an anonymous team transport into the local owner", () 
     ).toBe("Failure");
   }).pipe(Effect.provide(integrationTestLayer(true))),
 );
+
+for (const team of [false, true]) {
+  it.effect(`webhook Settings preserve the authenticated ${team ? "team" : "local"} boundary`, () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const deps = {
+        actorUserId: null,
+        actorIsAdmin: false,
+        observeRpcEffect: (_method, effect) => effect,
+        observeRpcStream: (_method, stream) => stream,
+      } satisfies Partial<ForkWsHandlerDeps>;
+      const handlers = makeForkWsHandlers(deps as unknown as ForkWsHandlerDeps);
+      const mock = Layer.mock(SessionWebhookService)({
+        list: (owner) =>
+          Effect.sync(() => {
+            calls.push(["list", owner]);
+            return [];
+          }),
+        update: (owner, id, action, revision) =>
+          Effect.sync(() => {
+            calls.push(["update", owner, id, action, revision]);
+            return {} as SessionWebhookView;
+          }),
+      });
+      const list = yield* Effect.result(
+        handlers[WS_METHODS.sessionWebhooksList]().pipe(Effect.provide(mock)),
+      );
+      const update = yield* Effect.result(
+        handlers[WS_METHODS.sessionWebhooksUpdate]({
+          id: "swh_fixture",
+          action: "disable",
+          expectedRevision: 2,
+        }).pipe(Effect.provide(mock)),
+      );
+      if (team) {
+        expect(list._tag).toBe("Failure");
+        expect(update._tag).toBe("Failure");
+        expect(calls).toEqual([]);
+      } else {
+        expect(list._tag).toBe("Success");
+        expect(update._tag).toBe("Success");
+        expect(calls).toEqual([
+          ["list", "local-user"],
+          ["update", "local-user", "swh_fixture", "disable", 2],
+        ]);
+      }
+    }).pipe(Effect.provide(integrationTestLayer(team))),
+  );
+}
