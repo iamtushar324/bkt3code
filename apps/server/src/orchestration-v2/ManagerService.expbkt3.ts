@@ -166,9 +166,9 @@ const make = Effect.gen(function* () {
   const sessions = Effect.fn("manager.sessions")(function* (actor: ManagerActor) {
     // Capture the earlier watermark: any concurrent change is replayed after this inventory.
     const snapshotSequence = yield* applicationEvents.latestApplicationSequence;
-    const active = yield* projections.getShellSnapshot();
-    const archived = yield* projections.getShellSnapshot({ location: "archive" });
-    const threads = [...active.threads, ...archived.archivedThreads].filter((thread) =>
+    // One read covers both locations; pollers call this every few seconds.
+    const shell = yield* projections.getShellSnapshot();
+    const threads = [...shell.threads, ...shell.archivedThreads].filter((thread) =>
       isOwnerOrMember(thread, actor.userId),
     );
     const projectIds = new Set(threads.map((thread) => thread.projectId));
