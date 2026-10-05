@@ -135,8 +135,9 @@ it.effect("never converts an anonymous team transport into the local owner", () 
   }).pipe(Effect.provide(integrationTestLayer(true))),
 );
 
-for (const team of [false, true]) {
-  it.effect(`webhook Settings preserve the authenticated ${team ? "team" : "local"} boundary`, () =>
+it.effect.each([false, true])(
+  "webhook Settings preserve the authenticated boundary (team=%s)",
+  (team) =>
     Effect.gen(function* () {
       const calls: unknown[] = [];
       const deps = {
@@ -181,5 +182,4 @@ for (const team of [false, true]) {
         ]);
       }
     }).pipe(Effect.provide(integrationTestLayer(team))),
-  );
-}
+);

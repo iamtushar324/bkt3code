@@ -18,7 +18,7 @@ export interface ToolyardInstanceSettings {
 }
 export type ToolyardConnectionMode = "team" | "api-key";
 interface Connection {
-  mode?: ToolyardConnectionMode;
+  mode?: ToolyardConnectionMode | undefined;
   userId?: string;
   connectionGeneration?: number;
   token?: string;
@@ -319,7 +319,7 @@ export class ToolyardConnectionCore {
       enabled: boolean;
       adminToken?: string | undefined;
       remove?: boolean | undefined;
-      mode?: ToolyardConnectionMode;
+      mode?: ToolyardConnectionMode | undefined;
       apiKey?: string | undefined;
       disconnect?: boolean | undefined;
     },

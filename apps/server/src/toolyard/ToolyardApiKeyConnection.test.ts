@@ -1,5 +1,6 @@
 /** T3-CUSTOM(expbkt3): Local API connection isolation, lifecycle, recovery, and scoped callbacks. */
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import { ToolyardConnectionCore } from "./ToolyardConnectionCore.ts";
 
 const bootstrap = "ag_fixture.bootstrap-only-secret";
@@ -40,7 +41,7 @@ function fixture(environmentId = "local-env", storage = { value: null as string 
         email: "owner@example.test",
         agent_id: `agent:${environmentId}:${userId}`,
         user_id: "real-toolyard-owner",
-        expires_at: new Date(now + 30 * 86400_000).toISOString(),
+        expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 30 * 86400_000)),
         credential_version: version,
         instance_id: "ty-one",
         connection_generation: generation,
@@ -72,7 +73,7 @@ function fixture(environmentId = "local-env", storage = { value: null as string 
       if (path === "/v1/connections/handoff")
         return reply({
           url: "https://toolyard.test/v1/federation/handoff?code=single-use",
-          expires_at: new Date(now + 60_000).toISOString(),
+          expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 60_000)),
         });
       if (path === "/v1/connections/revoke") {
         if (revokeOutage) throw new Error("revoke unavailable");

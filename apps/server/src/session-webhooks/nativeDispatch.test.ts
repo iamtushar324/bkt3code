@@ -47,6 +47,7 @@ const binding = {
   environmentId: "env_1",
   origin: "https://toolyard.example",
   callbackOrigin: "https://t3.example",
+  transport: "push" as const,
   enabled: true as const,
   trustGeneration: 0,
 };

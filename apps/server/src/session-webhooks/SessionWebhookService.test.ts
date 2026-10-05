@@ -469,7 +469,13 @@ describe("durable session webhooks", () => {
           h.state.pullQueue = [];
           h.enqueue();
           yield* h.service.pull();
-          h.enqueue({ ...h.event(), data: { ...h.event().data, overall_note: "changed" } });
+          h.enqueue({
+            ...h.event(),
+            data: {
+              ...h.event().data,
+              calls: h.event().data.calls.map((call) => ({ ...call, reason: "changed" })),
+            },
+          });
           yield* h.service.pull();
           assert.deepStrictEqual(h.state.pullAcks, ["evt_1"]);
           yield* h.service.drain();
