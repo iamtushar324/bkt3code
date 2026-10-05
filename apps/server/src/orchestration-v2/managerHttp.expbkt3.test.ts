@@ -494,6 +494,12 @@ it.effect("does not recreate an archived or deleted manager", () =>
         commandId: CommandId.make("archive-manager"),
         threadId,
       });
+      // Archived sessions stay in the inventory, marked archived and not idle.
+      expect((yield* request("/api/manager/sessions")).threads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: threadId, archivedAt: expect.any(String), idle: false }),
+        ]),
+      );
       yield* request("/api/manager/bootstrap", { projectId, modelSelection }, 409);
       yield* orchestrator.dispatch({
         type: "thread.delete",
