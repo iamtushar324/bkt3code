@@ -54,9 +54,11 @@ const make = Effect.gen(function* () {
     wrap(
       Effect.gen(function* () {
         const snapshot = yield* projections.getShellSnapshot({ location, unsettledOnly });
+        // The V2 store returns archived rows in `archivedThreads`, never in `threads`.
+        const threads = location === "archive" ? snapshot.archivedThreads : snapshot.threads;
         const names = new Map(
           yield* Effect.forEach(
-            [...new Set(snapshot.threads.map((thread) => thread.providerInstanceId))],
+            [...new Set(threads.map((thread) => thread.providerInstanceId))],
             (instanceId) =>
               providerName(instanceId).pipe(Effect.map((driver) => [instanceId, driver] as const)),
             { concurrency: 2 },
@@ -64,7 +66,7 @@ const make = Effect.gen(function* () {
         );
         return {
           snapshotSequence: snapshot.snapshotSequence,
-          threads: snapshot.threads.map((thread) =>
+          threads: threads.map((thread) =>
             legacyThreadShell(thread, names.get(thread.providerInstanceId)),
           ),
           projects: (yield* projectService.listShells()).map((project) =>
