@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, UserId, WS_METHODS, type SessionWebhookView } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, UserId, WS_METHODS } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
@@ -156,7 +156,20 @@ it.effect.each([false, true])(
         update: (owner, id, action, revision) =>
           Effect.sync(() => {
             calls.push(["update", owner, id, action, revision]);
-            return {} as SessionWebhookView;
+            return {
+              id,
+              threadId: ThreadId.make("local-thread"),
+              instanceId: "fixture-instance",
+              callbackRef: "fixture-callback",
+              status: "disabled" as const,
+              revision,
+              createdAt: "2026-10-05T00:00:00Z",
+              updatedAt: "2026-10-05T00:00:00Z",
+              terminalReason: null,
+              deliveryHistory: [],
+              deliveryHistoryError: null,
+              deliveries: [],
+            };
           }),
       });
       const list = yield* Effect.result(

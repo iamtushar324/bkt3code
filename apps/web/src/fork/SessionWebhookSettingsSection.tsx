@@ -1,19 +1,74 @@
 /** T3-CUSTOM(expbkt3): inspect agent-created destinations without exposing callback secrets. */
 import { useAtomValue } from "@effect/atom-react";
-import { EnvironmentId, type SessionWebhookView } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig, SessionWebhookView } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useMemo, useState } from "react";
-import { useCurrentUserId } from "../state/identity";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironmentSessionState } from "../state/session";
+import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { Button } from "../components/ui/button";
 import { SettingsSection } from "../components/settings/settingsLayout";
 export function SessionWebhookSettingsSection() {
-  const userScope = useCurrentUserId() ?? "signed-out";
-  const environmentId = usePrimaryEnvironmentId() ?? EnvironmentId.make("unavailable");
+  const { connectedEnvironments } = useSettingsScope();
+  return connectedEnvironments.length === 0 ? (
+    <SettingsSection title="Session webhooks">
+      <p className="text-sm text-muted-foreground">
+        Connect a selected server to inspect session webhooks.
+      </p>
+    </SettingsSection>
+  ) : (
+    connectedEnvironments.map((environment) =>
+      environment.serverConfig ? (
+        <EnvironmentSessionWebhookSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          label={environment.label}
+          serverConfig={environment.serverConfig}
+        />
+      ) : null,
+    )
+  );
+}
+function EnvironmentSessionWebhookSettings({
+  environmentId,
+  label,
+  serverConfig,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly serverConfig: ServerConfig;
+}) {
+  const { data: session } = useEnvironmentSessionState(environmentId);
+  const userScope = session?.authenticated
+    ? (session.userId ?? (serverConfig.auth.clerk ? null : "local-user"))
+    : null;
+  return userScope ? (
+    <SessionWebhookSettingsContent
+      key={`${environmentId}:${userScope}`}
+      environmentId={environmentId}
+      label={label}
+      userScope={userScope}
+    />
+  ) : (
+    <SettingsSection title={`Session webhooks — ${label}`}>
+      <p className="text-sm text-muted-foreground">
+        Authenticate with this server to inspect session webhooks.
+      </p>
+    </SettingsSection>
+  );
+}
+function SessionWebhookSettingsContent({
+  environmentId,
+  label,
+  userScope,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly userScope: string;
+}) {
   const atom = useMemo(
     () => serverEnvironment.sessionWebhooksList({ environmentId, input: { userScope } }),
     [environmentId, userScope],
@@ -35,7 +90,7 @@ export function SessionWebhookSettingsSection() {
     }
   };
   return (
-    <SettingsSection title="Session webhooks">
+    <SettingsSection title={`Session webhooks — ${label}`}>
       <p className="text-sm text-muted-foreground">
         Agents create a webhook for one session. Toolyard decisions queue after the active turn. A
         callback does not grant permission.

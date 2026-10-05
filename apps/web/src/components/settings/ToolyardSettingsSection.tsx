@@ -1,14 +1,13 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
-import { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useCurrentUserId } from "../../state/identity";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { readPreparedConnection } from "../../state/session";
+import { currentClerkUserAtom } from "../../state/identity";
+import { readPreparedConnection, useEnvironmentSessionState } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readTeamClerkToken } from "../../state/teamIdentityToken";
@@ -26,7 +25,6 @@ import {
   pendingToolyardSettingsContinuation,
   clearToolyardSettingsContinuation,
 } from "../../fork/toolyardSettingsContinuation";
-import { readBkManagedEnvironment } from "../../fork/managedEnvironment";
 import {
   createToolyardSettingsContinuation,
   readToolyardSettingsContinuation,
@@ -35,22 +33,69 @@ import {
   toolyardSettingsFailureMessage,
   toolyardSettingsOrigin,
 } from "@t3tools/client-runtime/toolyard-trust-setup";
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
 
+interface ToolyardSettingsEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly serverConfig: ServerConfig;
+}
 export function ToolyardSettingsSection() {
-  const primary = usePrimaryEnvironmentId();
-  const userId = useCurrentUserId();
-  return (
-    <ToolyardSettingsContent key={`${primary}:${userId}`} userScope={userId ?? "unverified"} />
+  const { connectedEnvironments } = useSettingsScope();
+  return connectedEnvironments.length === 0 ? (
+    <SettingsSection title="Toolyard">
+      <p className="text-sm text-muted-foreground">
+        Connect a selected server to configure Toolyard.
+      </p>
+    </SettingsSection>
+  ) : (
+    connectedEnvironments.map((environment) =>
+      environment.serverConfig ? (
+        <EnvironmentToolyardSettings
+          key={environment.environmentId}
+          environment={{ ...environment, serverConfig: environment.serverConfig }}
+        />
+      ) : null,
+    )
   );
 }
-function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) {
-  const primary = usePrimaryEnvironmentId();
-  const environmentId = primary ?? EnvironmentId.make("unavailable");
+function EnvironmentToolyardSettings({
+  environment,
+}: {
+  readonly environment: ToolyardSettingsEnvironment;
+}) {
+  const { data: session } = useEnvironmentSessionState(environment.environmentId);
+  // The selected server verifies the user. Primary-server identity cannot select this credential.
+  const userScope = session?.authenticated
+    ? (session.userId ?? (environment.serverConfig.auth.clerk ? null : "local-user"))
+    : null;
+  return userScope ? (
+    <ToolyardSettingsContent
+      key={`${environment.environmentId}:${userScope}`}
+      environment={environment}
+      userScope={userScope}
+    />
+  ) : (
+    <SettingsSection title={`Toolyard — ${environment.label}`}>
+      <p className="text-sm text-muted-foreground">
+        Authenticate with this server to configure Toolyard.
+      </p>
+    </SettingsSection>
+  );
+}
+function ToolyardSettingsContent({
+  environment,
+  userScope,
+}: {
+  readonly environment: ToolyardSettingsEnvironment;
+  readonly userScope: string;
+}) {
+  const environmentId = environment.environmentId;
+  const clerkUserId = useAtomValue(currentClerkUserAtom);
   const target = useMemo(
     () => ({ environmentId, input: { userScope } }),
     [environmentId, userScope],
@@ -63,9 +108,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     "Toolyard settings",
   );
   const handoff = useAtomCommand(serverEnvironment.openToolyardDashboard, "Open Toolyard");
-  const publicMcpUrl = usePrimarySettings(
-    (settings) => settings.experimental.externalMcp.publicUrl,
-  );
+  const publicMcpUrl = environment.serverConfig.settings.experimental.externalMcp.publicUrl;
   const draftKey = toolyardDraftKey(environmentId, userScope);
   const [draft, setDraftState] = useState<ToolyardSettingsDraft | null>(() =>
     readToolyardSettingsDraft(draftKey),
@@ -97,17 +140,30 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     status?.connection === "connected" && (status.mode === "api-key" || modeChange);
   const refresh = useCallback(() => appAtomRegistry.refresh(statusAtom), [statusAtom]);
   const environmentBrowserUrl = () => {
-    // The authenticated primary connection owns the browser destination. MCP settings do not.
-    const prepared = primary ? readPreparedConnection(primary) : null;
+    // This server's authenticated connection owns the browser destination.
+    const prepared = readPreparedConnection(environmentId);
     return prepared?.httpBaseUrl && toolyardSettingsOrigin(prepared.httpBaseUrl)
       ? prepared.httpBaseUrl
       : null;
   };
   useEffect(() => {
-    if (continuationRead || !primary || !status || !userScope.startsWith("user_")) return;
+    if (continuationRead || !status || !userScope.startsWith("user_")) return;
+    const fragment = pendingToolyardSettingsContinuation() ?? window.location.hash;
+    // Multiple selected servers must not consume another server's public continuation.
+    if (fragment.startsWith("#toolyard-settings=")) {
+      try {
+        const payload = JSON.parse(
+          decodeURIComponent(fragment.slice("#toolyard-settings=".length)),
+        ) as { environmentId?: unknown };
+        if (typeof payload.environmentId === "string" && payload.environmentId !== environmentId)
+          return;
+      } catch {
+        // The bounded decoder below explains malformed links without applying their contents.
+      }
+    }
     const continuation = readToolyardSettingsContinuation(
-      pendingToolyardSettingsContinuation() ?? window.location.hash,
-      primary,
+      fragment,
+      environmentId,
       userScope,
       window.location.origin,
       draft,
@@ -124,7 +180,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     );
     if (continuation.draft) setDraft(continuation.draft);
     setNotice(continuation.message);
-  }, [continuationRead, primary, status, userScope, draft, setDraft]);
+  }, [continuationRead, environmentId, status, userScope, draft, setDraft]);
   useEffect(() => {
     if (!browserDraft) return;
     let attempts = 0;
@@ -156,7 +212,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
   const origin = () => {
     if (status?.origin) return status.origin;
     // Direct web access names the verified server, even when a copied config is stale.
-    const prepared = primary ? readPreparedConnection(primary) : null;
+    const prepared = readPreparedConnection(environmentId);
     if (prepared) {
       try {
         const actual = new URL(prepared.httpBaseUrl);
@@ -166,12 +222,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
         /* Remote/relay uses the server's configured public endpoint below. */
       }
     }
-    for (const value of [
-      environmentBrowserUrl(),
-      publicMcpUrl,
-      readBkManagedEnvironment()?.httpBaseUrl,
-      window.location.origin,
-    ]) {
+    for (const value of [environmentBrowserUrl(), publicMcpUrl]) {
       if (!value) continue;
       try {
         const url = new URL(value);
@@ -183,15 +234,18 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     return "";
   };
   const save = async (remove = false, disconnect = false) => {
-    if (!primary || !status) return;
+    if (!status) return;
     setBusy(true);
     setError(null);
     try {
       const submittedKey = apiKey;
       const submittedDraft = draft;
-      const adminToken = mode === "team" && !disconnect ? await readTeamClerkToken() : null;
+      const adminToken =
+        mode === "team" && !disconnect && clerkUserId === userScope
+          ? await readTeamClerkToken()
+          : null;
       const saved = await configure({
-        environmentId: primary,
+        environmentId,
         input: {
           expectedRevision: current.revision,
           baseUrl: current.baseUrl,
@@ -236,7 +290,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
           }
           const url = createToolyardSettingsContinuation(
             destination,
-            primary,
+            environmentId,
             userScope,
             current,
             Date.now(),
@@ -269,13 +323,12 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     }
   };
   const open = async () => {
-    if (!primary) return;
     setBusy(true);
     setError(null);
     let browser: ToolyardBrowserHandoffTarget | null = null;
     try {
       browser = createToolyardBrowserHandoffTarget();
-      const response = await handoff({ environmentId: primary, input: {} });
+      const response = await handoff({ environmentId, input: {} });
       if (!AsyncResult.isSuccess(response)) {
         setError("Toolyard could not create a browser handoff. Check the connection status.");
         return;
@@ -290,7 +343,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     }
   };
   return (
-    <SettingsSection title="Toolyard">
+    <SettingsSection title={`Toolyard — ${environment.label}`}>
       <SettingsRow
         title="Connection"
         description="T3 owns your connection on this server. Credentials stay on the server. Toolyard asks you for each Inbox decision."
