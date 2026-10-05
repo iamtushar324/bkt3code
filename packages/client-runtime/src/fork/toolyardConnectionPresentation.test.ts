@@ -118,12 +118,14 @@ describe("Toolyard labels", () => {
   });
 });
 
-it("distinguishes disabled account access from a disabled integration", () => {
+it("distinguishes a disabled connection from a disabled integration without inferring the cause", () => {
   const account = toolyardConnectionPresentation(status({ enabled: true, connection: "disabled" }));
   const integration = toolyardConnectionPresentation(
     status({ enabled: false, connection: "disabled" }),
   );
-  expect(account.description).toContain("for your account");
+  expect(account.description).toContain("for this connection");
+  expect(account.description).not.toContain("for your account");
+  expect(account.description).not.toContain("Toolyard administrator");
   expect(account.description).toContain("will not reconnect automatically");
   expect(account.description).not.toContain("administrator can enable it");
   expect(integration.label).toBe("Integration disabled");

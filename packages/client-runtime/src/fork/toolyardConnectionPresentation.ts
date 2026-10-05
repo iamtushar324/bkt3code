@@ -114,7 +114,7 @@ export function toolyardConnectionPresentation(
       "disabled",
       "Connection disabled",
       "error",
-      "The server reports disabled Toolyard access for your account. Contact a Toolyard administrator to check your access. T3 will not reconnect automatically.",
+      "The server reports disabled access for this connection. T3 will not reconnect automatically. Check Connection details.",
     );
   if (connected)
     return summary(
