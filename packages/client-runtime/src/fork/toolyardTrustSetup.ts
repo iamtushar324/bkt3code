@@ -155,6 +155,8 @@ const errorMessages: Record<string, string> = {
   api_key_connection_conflict:
     "This API key belongs to another connection. Use a key for your own account.",
   connection_revoked: "Toolyard revoked this connection. T3 will not restore it automatically.",
+  cancel_host_request_before_mode_change:
+    "Cancel the pending account consent before you save a different connection method. Your draft remains.",
   disconnect_before_mode_change:
     "Select Disconnect my account before you save a different connection method. Your draft remains.",
   team_connection_reauthorization_required:

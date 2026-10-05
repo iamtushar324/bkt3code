@@ -194,6 +194,11 @@ export const toolyardIntegrationLayer = Layer.effect(
       Effect.repeat(Schedule.spaced("1 minute")),
       Effect.forkScoped,
     );
+    yield* call(() => core.reconcileHostConnections()).pipe(
+      Effect.catch(() => Effect.void),
+      Effect.repeat(Schedule.spaced("5 seconds")),
+      Effect.forkScoped,
+    );
     return ToolyardIntegration.of({
       assertConnectionOwner: (userId) => call(() => core.assertConnectionOwner(userId)),
       isLocalOwner: (userId) => Effect.succeed(isLocalOwner(userId)),

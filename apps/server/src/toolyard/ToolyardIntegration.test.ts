@@ -113,7 +113,7 @@ it.effect("permits the authenticated local profile only when Clerk team mode is 
     expect(yield* service.status(local)).toMatchObject({
       administrator: true,
       teamAvailable: false,
-      mode: "api-key",
+      mode: "host",
       connection: "not_connected",
     });
     expect(

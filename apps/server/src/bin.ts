@@ -17,7 +17,11 @@ if (
   })
 ) {
   const command = process.argv[2];
-  if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
+  // T3-CUSTOM(expbkt3): native Toolyard stdio access avoids the full CLI startup graph.
+  if (command === "toolyard-mcp-bridge") {
+    const { runNativeToolyardCli } = await import("./toolyard/ToolyardNativeCli.ts");
+    await runNativeToolyardCli(process.argv.slice(3));
+  } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {

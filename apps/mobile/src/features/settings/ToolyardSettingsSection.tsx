@@ -22,6 +22,19 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import { environmentSession, usePreparedConnection } from "../../state/session";
 
+function checkedConsentUrl(value: string | null, baseUrl: string | null): string {
+  if (!value) throw new Error("The server has not received the consent address yet.");
+  const url = new URL(value);
+  if (
+    !baseUrl ||
+    url.protocol !== "https:" ||
+    url.origin !== new URL(baseUrl).origin ||
+    url.username ||
+    url.password
+  )
+    throw new Error("The Toolyard consent destination does not match this instance.");
+  return url.href;
+}
 const noAdminToken = async () => null;
 function ClerkEnvironmentToolyard({ target }: { readonly target: SettingsTarget }) {
   const { getToken, userId: clerkUserId } = useAuth();
@@ -83,13 +96,13 @@ function EnvironmentToolyardContent({
     baseUrl: string;
     enabled: boolean;
     revision: number;
-    mode?: "team" | "api-key";
+    mode?: "team" | "api-key" | "host";
   } | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [browserDraft, setBrowserDraft] = useState<
-    (ToolyardSettingsDraft & { mode?: "team" | "api-key" }) | null
+    (ToolyardSettingsDraft & { mode?: "team" | "api-key" | "host" }) | null
   >(null);
   useEffect(() => {
     if (browserDraft && status && toolyardCommittedDraftMatches(browserDraft, status)) {
@@ -114,7 +127,8 @@ function EnvironmentToolyardContent({
   const mode = current.mode ?? status?.mode ?? "team";
   const modeChange = status?.connection === "connected" && mode !== (status.mode ?? "team");
   const canDisconnect =
-    status?.connection === "connected" && (status.mode === "api-key" || modeChange);
+    status?.connection === "connected" &&
+    (status.mode === "api-key" || status.mode === "host" || modeChange);
   const save = async (remove = false, disconnect = false) => {
     setBusy(true);
     setError(null);
@@ -138,6 +152,9 @@ function EnvironmentToolyardContent({
           remove,
           mode,
           ...(disconnect ? { disconnect: true } : {}),
+          ...(mode === "host" && current.enabled && !remove && !disconnect
+            ? { hostAction: "begin" as const }
+            : {}),
           ...(mode === "api-key" && submittedKey && !remove && !disconnect
             ? { apiKey: submittedKey }
             : {}),
@@ -146,6 +163,16 @@ function EnvironmentToolyardContent({
       });
       appAtomRegistry.refresh(atom);
       if (AsyncResult.isSuccess(saved)) {
+        if (
+          mode === "host" &&
+          saved.value.pendingConnection?.status === "pending" &&
+          saved.value.pendingConnection.authorizationUrl &&
+          !remove &&
+          !disconnect
+        )
+          await Linking.openURL(
+            checkedConsentUrl(saved.value.pendingConnection.authorizationUrl, saved.value.baseUrl),
+          );
         // A newer edit remains a draft after this request completes.
         if (!disconnect) {
           setDraft((value) => (value === submittedDraft ? null : value));
@@ -184,6 +211,43 @@ function EnvironmentToolyardContent({
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (status?.pendingConnection?.status !== "pending") return;
+    const timer = setInterval(() => appAtomRegistry.refresh(atom), 3000);
+    return () => clearInterval(timer);
+  }, [status?.pendingConnection?.status, atom]);
+  const consentAction = async (cancel: boolean) => {
+    if (!status?.pendingConnection || !status.baseUrl) return;
+    setError(null);
+    setBusy(true);
+    try {
+      if (cancel) {
+        const result = await configure({
+          environmentId: target.environmentId,
+          input: {
+            expectedRevision: status.revision,
+            baseUrl: status.baseUrl,
+            origin: status.origin ?? "",
+            enabled: true,
+            mode: "host",
+            hostAction: "cancel",
+          },
+        });
+        appAtomRegistry.refresh(atom);
+        if (!AsyncResult.isSuccess(result))
+          setError(
+            "The connection request could not be cancelled. Select Refresh, then try again.",
+          );
+      } else
+        await Linking.openURL(
+          checkedConsentUrl(status.pendingConnection.authorizationUrl, status.baseUrl),
+        );
+    } catch {
+      setError("The account consent request failed. Select Refresh, then try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
   const open = async () => {
     setBusy(true);
     setError(null);
@@ -210,6 +274,39 @@ function EnvironmentToolyardContent({
         {status?.connection ?? "Unavailable"}
         {status?.email ? ` · ${status.email}` : ""}
       </Text>
+      {status?.agentId ? (
+        <Text className="text-sm text-foreground-muted">
+          Host: {status.hostName ?? target.label}. Agent: {status.agentId}.
+          {status.ownerId ? ` Toolyard owner: ${status.ownerId}.` : ""}
+        </Text>
+      ) : null}
+      {status?.pendingConnection ? (
+        <View className="gap-2">
+          <Text className="text-foreground-muted">
+            {status.pendingConnection.status === "pending"
+              ? "Awaiting your Toolyard account decision."
+              : `Connection request: ${status.pendingConnection.status}.`}
+          </Text>
+          {status.pendingConnection.status === "pending" ? (
+            <View className="flex-row flex-wrap gap-2">
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy || !status.pendingConnection.authorizationUrl}
+                onPress={() => void consentAction(false)}
+              >
+                <Text className="p-2 text-foreground">Open account consent</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => void consentAction(true)}
+              >
+                <Text className="p-2 text-foreground">Cancel connection request</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
       {status?.removed ? (
         <Text className="text-foreground-muted">The administrator removed this instance.</Text>
       ) : null}
@@ -238,6 +335,19 @@ function EnvironmentToolyardContent({
         <>
           <Text className="font-semibold text-foreground">Connection method</Text>
           <View className="flex-row flex-wrap gap-2">
+            {status.hostConsentAllowed ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: mode === "host" }}
+                disabled={busy}
+                onPress={() => {
+                  setApiKey("");
+                  setDraft({ ...current, mode: "host", enabled: true });
+                }}
+              >
+                <Text className="p-2 text-foreground">Account consent</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ selected: mode === "team" }}
@@ -263,7 +373,8 @@ function EnvironmentToolyardContent({
           </View>
           {status.teamAvailable === false ? (
             <Text className="text-sm text-foreground-muted">
-              This server has no verified team identity. Use your Toolyard API key.
+              This server has no verified team identity. Authorize your Toolyard account in the
+              browser.
             </Text>
           ) : null}
           {modeChange ? (
@@ -297,6 +408,15 @@ function EnvironmentToolyardContent({
           ) : null}
         </>
       ) : null}
+      {mode === "host" ? (
+        <Text className="text-sm text-foreground-muted">
+          Toolyard records your account as the host agent owner. Restricted calls still require an
+          Inbox decision.
+          {userScope === "local-user"
+            ? " All clients authorized for this local profile use the same Toolyard account."
+            : ""}
+        </Text>
+      ) : null}
       {status?.administrator ? (
         <>
           <TextInput
@@ -318,7 +438,8 @@ function EnvironmentToolyardContent({
           </View>
         </>
       ) : null}
-      {status && (status.administrator || mode === "api-key" || canDisconnect) ? (
+      {status &&
+      (status.administrator || mode === "api-key" || mode === "host" || canDisconnect) ? (
         <View className="flex-row flex-wrap gap-2">
           <Pressable
             accessibilityRole="button"
@@ -326,13 +447,18 @@ function EnvironmentToolyardContent({
               busy ||
               modeChange ||
               (mode === "team" && status.teamAvailable === false) ||
-              (!draft && !apiKey && !status.removed) ||
-              (mode === "api-key" && !status.baseUrl && !status.administrator)
+              (mode === "host" && status.pendingConnection?.status === "pending") ||
+              (!draft && !apiKey && !status.removed && mode !== "host") ||
+              ((mode === "api-key" || mode === "host") && !status.baseUrl && !status.administrator)
             }
             onPress={() => void save()}
           >
             <Text className="p-2 text-foreground">
-              {mode === "api-key" ? "Save and connect" : "Save and verify trust"}
+              {mode === "host" && current.enabled
+                ? "Connect my Toolyard account"
+                : mode === "api-key"
+                  ? "Save and connect"
+                  : "Save and verify trust"}
             </Text>
           </Pressable>
           <Pressable

@@ -8,7 +8,18 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { createToolyardSettingsContinuation } from "@t3tools/client-runtime/toolyard-trust-setup";
 const mocks = vi.hoisted(() => ({
   status: {
-    mode: "team" as "team" | "api-key",
+    mode: "team" as "team" | "api-key" | "host",
+    hostConsentAllowed: true,
+    hostName: "Test Mac",
+    agentId: null as string | null,
+    ownerId: null as string | null,
+    pendingConnection: null as null | {
+      requestId: string;
+      authorizationUrl: string | null;
+      expiresAt: string;
+      status: "pending" | "approved" | "cancelled";
+      lastError: string | null;
+    },
     apiKeyAllowed: true,
     teamAvailable: true,
     callbackTransport: "push" as "push" | "pull",
@@ -194,6 +205,10 @@ beforeEach(() => {
   mocks.status = {
     ...mocks.status,
     mode: "team",
+    hostConsentAllowed: true,
+    pendingConnection: null,
+    ownerId: null,
+    agentId: null,
     teamAvailable: true,
     administrator: true,
     revision: 0,
@@ -602,5 +617,112 @@ it("lists and updates webhook destinations on each selected server under that se
   expect(mocks.webhookUpdate.mock.calls[0]![0]).toMatchObject({
     environmentId: "env_mac",
     input: { id: "env_mac-hook", action: "disable", expectedRevision: 1 },
+  });
+});
+
+it("opens host account consent with no copied API key or Clerk token", async () => {
+  mocks.selectedIds = ["env_mac"];
+  mocks.sessionUsers.set("env_mac", null);
+  mocks.status = {
+    ...mocks.status,
+    mode: "host",
+    teamAvailable: false,
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+  };
+  mocks.configure.mockResolvedValue(
+    AsyncResult.success({
+      ...mocks.status,
+      pendingConnection: {
+        requestId: "host-request",
+        authorizationUrl: "https://toolyard.test/connections/authorize?request=public-reference",
+        expiresAt: "2099-01-01T00:00:00Z",
+        status: "pending",
+        lastError: null,
+      },
+    }),
+  );
+  await render();
+  await act(() => button("Connect my Toolyard account").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0]).toMatchObject({
+    environmentId: "env_mac",
+    input: { mode: "host", hostAction: "begin", enabled: true },
+  });
+  expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
+  expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("adminToken");
+  expect(mocks.token).not.toHaveBeenCalled();
+  expect(mocks.open).toHaveBeenCalledWith(
+    "https://toolyard.test/connections/authorize?request=public-reference",
+  );
+});
+it("retains a failed host draft through navigation and reload", async () => {
+  await render();
+  await edit();
+  await act(() => button("Account consent").props.onClick());
+  mocks.configure.mockResolvedValue(failure("instance_unavailable"));
+  await act(() => button("Connect my Toolyard account").props.onClick());
+  expect(readToolyardSettingsDraft(key)).toEqual({
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    revision: 0,
+    mode: "host",
+  });
+  await act(() => renderer.unmount());
+  await render();
+  expect(button("Account consent").props["aria-pressed"]).toBe(true);
+  expect(renderer.root.findAllByProps({ role: "alert" }).length).toBe(0);
+});
+it("refuses a consent destination from another Toolyard instance", async () => {
+  mocks.status = { ...mocks.status, mode: "host", baseUrl: "https://toolyard.test", enabled: true };
+  mocks.configure.mockResolvedValue(
+    AsyncResult.success({
+      ...mocks.status,
+      pendingConnection: {
+        requestId: "host-request",
+        authorizationUrl: "https://other.test/connections/authorize?request=reference",
+        expiresAt: "2099-01-01T00:00:00Z",
+        status: "pending",
+        lastError: null,
+      },
+    }),
+  );
+  await render();
+  await act(() => button("Connect my Toolyard account").props.onClick());
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(renderer.root.findAllByProps({ role: "alert" }).length).toBeGreaterThan(0);
+});
+it("cancels only the committed request and preserves a newer settings draft", async () => {
+  mocks.status = {
+    ...mocks.status,
+    mode: "host",
+    revision: 3,
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    pendingConnection: {
+      requestId: "host-request",
+      authorizationUrl: "https://toolyard.test/connections/authorize?request=reference",
+      expiresAt: "2099-01-01T00:00:00Z",
+      status: "pending",
+      lastError: null,
+    },
+  };
+  mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
+  await render();
+  await act(() =>
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard base URL" })
+      .props.onChange({ target: { value: "https://new-draft.test" } }),
+  );
+  await act(() => button("API key connection").props.onClick());
+  await act(() => button("Cancel connection request").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    expectedRevision: 3,
+    baseUrl: "https://toolyard.test",
+    mode: "host",
+    hostAction: "cancel",
+  });
+  expect(readToolyardSettingsDraft(key)).toMatchObject({
+    baseUrl: "https://new-draft.test",
+    mode: "api-key",
   });
 });
