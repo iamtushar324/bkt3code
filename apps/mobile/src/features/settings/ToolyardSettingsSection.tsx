@@ -545,8 +545,8 @@ function EnvironmentToolyardContent({
           <Text className="text-sm text-foreground-muted">{presentation.description}</Text>
           {status?.mode === "team" && presentation.phase === "revoked" ? (
             <Text className="text-sm text-foreground-muted">
-              Select an available method in Manage connection to authorize access. A settings save
-              does not restore revoked access.
+              Select an available method under Connect your account to authorize access. A settings
+              save does not restore revoked access.
             </Text>
           ) : null}
         </>
