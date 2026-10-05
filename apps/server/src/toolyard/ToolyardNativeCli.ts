@@ -1,7 +1,7 @@
 /** T3-CUSTOM(expbkt3): Small native stdio entry; only T3 auth reaches this client process. */
 // @effect-diagnostics nodeBuiltinImport:off
-import * as Fs from "node:fs/promises";
-import { constants } from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
 import { runAcpMcpStdioBridge } from "../mcp/AcpMcpStdioBridge.ts";
 
@@ -17,7 +17,10 @@ export function nativeToolyardEndpoint(serverUrl: string) {
 
 /** Reject symlinks and other users' readable files. Never accept a token through argv. */
 export async function readNativeT3Token(filename: string) {
-  const file = await Fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await NodeFSP.open(
+    filename,
+    NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+  );
   try {
     const stat = await file.stat();
     if (
@@ -50,13 +53,15 @@ export async function runNativeToolyardCli(args: readonly string[]) {
   try {
     const endpoint = nativeToolyardEndpoint(args[1]!);
     const token = await readNativeT3Token(args[3]!);
+    const fetchImplementation = globalThis.fetch;
     await Effect.runPromise(
       runAcpMcpStdioBridge({
         endpoint,
         authorization: `Bearer ${token}`,
         input: process.stdin,
         output: process.stdout,
-        fetchImplementation: (url, init) => fetch(url, { ...init, redirect: "manual" }),
+        fetchImplementation: (url, init) =>
+          fetchImplementation(url, { ...init, redirect: "manual" }),
       }),
     );
   } catch {

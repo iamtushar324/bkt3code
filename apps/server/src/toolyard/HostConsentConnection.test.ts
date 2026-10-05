@@ -1,5 +1,6 @@
 /** T3-CUSTOM(expbkt3): Host possession, durable consent, ownership, and recovery. */
-import * as Crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import { ToolyardConnectionCore } from "./ToolyardConnectionCore.ts";
 
@@ -39,7 +40,7 @@ function fixture(environmentId = "env-one", storage = { value: null as string | 
       if (body.proof) {
         const [header, payload, signature] = body.proof.split(".");
         claims = JSON.parse(Buffer.from(payload, "base64url").toString());
-        const key = Crypto.createPublicKey({
+        const key = NodeCrypto.createPublicKey({
           key: Buffer.concat([
             Buffer.from("302a300506032b6570032100", "hex"),
             Buffer.from(String(claims!.public_key), "base64"),
@@ -48,7 +49,7 @@ function fixture(environmentId = "env-one", storage = { value: null as string | 
           format: "der",
         });
         expect(
-          Crypto.verify(
+          NodeCrypto.verify(
             null,
             Buffer.from(`${header}.${payload}`),
             key,
@@ -79,7 +80,7 @@ function fixture(environmentId = "env-one", storage = { value: null as string | 
         email: "owner@example.test",
         user_id: "toolyard-owner",
         agent_id: `agent:${environmentId}:${userId}`,
-        expires_at: new Date(now + 30 * 86400_000).toISOString(),
+        expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 30 * 86400_000)),
         credential_version: version,
         instance_id: "instance-one",
         connection_generation: 1,
@@ -102,7 +103,7 @@ function fixture(environmentId = "env-one", storage = { value: null as string | 
           status: beginDecision ? decision : "pending",
           request_id: claims!.request_id,
           authorization_url: `${invalidUrl ? "https://evil.test" : "https://toolyard.test"}/connections/host/authorize?code=opaque`,
-          expires_at: new Date(now + 600_000).toISOString(),
+          expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 600_000)),
         });
       }
       if (path.endsWith("/poll"))
@@ -123,7 +124,7 @@ function fixture(environmentId = "env-one", storage = { value: null as string | 
       if (path.endsWith("/handoff"))
         return reply({
           url: "https://toolyard.test/connections/handoff?code=one-use",
-          expires_at: new Date(now + 60000).toISOString(),
+          expires_at: DateTime.formatIso(DateTime.makeUnsafe(now + 60000)),
         });
       return reply({ cancelled: true });
     },

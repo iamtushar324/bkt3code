@@ -1,15 +1,16 @@
 /** T3-CUSTOM(expbkt3): Native transport enforces the existing T3 owner boundary. */
 // @effect-diagnostics nodeBuiltinImport:off
-import { PassThrough } from "node:stream";
-import * as Fs from "node:fs/promises";
-import * as Os from "node:os";
-import * as Path from "node:path";
+import * as NodeStream from "node:stream";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { AuthOrchestrationOperateScope, EnvironmentUserId, UserId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { runAcpMcpStdioBridge } from "../mcp/AcpMcpStdioBridge.ts";
@@ -330,7 +331,7 @@ it.effect("relays native stdio through the authenticated HTTP route for the loca
       ).pipe(Layer.build);
       const server = yield* HttpServer.HttpServer;
       if (!("port" in server.address)) throw new Error("TCP required");
-      const input = new PassThrough();
+      const input = new NodeStream.PassThrough();
       let output = "";
       input.end('{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n');
       yield* runAcpMcpStdioBridge({
@@ -343,7 +344,7 @@ it.effect("relays native stdio through the authenticated HTTP route for the loca
           },
         },
       });
-      expect(JSON.parse(output)).toEqual({
+      expect(Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(output)).toEqual({
         jsonrpc: "2.0",
         id: 1,
         result: { tools: [{ name: "inbox.status" }] },
@@ -370,18 +371,18 @@ describe("native stdio setup", () => {
       expect(() => nativeToolyardEndpoint(url)).toThrow();
   });
   it("reads an owner-only T3 token file and rejects readable files and symlinks", async () => {
-    const directory = await Fs.mkdtemp(Path.join(Os.tmpdir(), "t3-native-key-"));
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-native-key-"));
     try {
-      const filename = Path.join(directory, "auth");
-      await Fs.writeFile(filename, "synthetic-t3-token\n", { mode: 0o600 });
+      const filename = NodePath.join(directory, "auth");
+      await NodeFSP.writeFile(filename, "synthetic-t3-token\n", { mode: 0o600 });
       expect(await readNativeT3Token(filename)).toBe("synthetic-t3-token");
-      await Fs.chmod(filename, 0o644);
+      await NodeFSP.chmod(filename, 0o644);
       await expect(readNativeT3Token(filename)).rejects.toThrow("owner-only");
-      await Fs.chmod(filename, 0o600);
-      await Fs.symlink(filename, Path.join(directory, "symlink"));
-      await expect(readNativeT3Token(Path.join(directory, "symlink"))).rejects.toThrow();
+      await NodeFSP.chmod(filename, 0o600);
+      await NodeFSP.symlink(filename, NodePath.join(directory, "symlink"));
+      await expect(readNativeT3Token(NodePath.join(directory, "symlink"))).rejects.toThrow();
     } finally {
-      await Fs.rm(directory, { recursive: true, force: true });
+      await NodeFSP.rm(directory, { recursive: true, force: true });
     }
   });
 });

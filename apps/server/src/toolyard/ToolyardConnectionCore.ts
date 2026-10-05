@@ -1,6 +1,7 @@
 /** T3-CUSTOM(expbkt3): Environment/instance/user-isolated, server-owned federation. */
 import * as NodeCrypto from "node:crypto";
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
+import * as DateTime from "effect/DateTime";
 
 const REQUIRED_INSTANCE_CAPABILITIES = [
   "inbox.batch.v1",
@@ -515,7 +516,7 @@ export class ToolyardConnectionCore {
     return next;
   }
   private hostName() {
-    return (this.options.hostName ?? NodeOs.hostname()).slice(0, 128);
+    return (this.options.hostName ?? NodeOS.hostname()).slice(0, 128);
   }
   private publicPending(userId: string) {
     const pending = this.state.pendingConnections[this.key(userId)];
@@ -555,7 +556,7 @@ export class ToolyardConnectionCore {
         request_id: requestId,
         public_key: publicDer.subarray(-32).toString("base64"),
         host_name: this.hostName(),
-        platform: this.options.platform ?? process.platform,
+        platform: this.options.platform ?? NodeOS.platform(),
       }),
     ).toString("base64url");
     const input = `${header}.${payload}`;
@@ -655,7 +656,7 @@ export class ToolyardConnectionCore {
             origin: changesInstance || !old.enabled ? baseUrl : old.origin,
           },
           authorizationUrl: null,
-          expiresAt: new Date(this.now + 600_000).toISOString(),
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(this.now + 600_000)),
           status: "pending",
           lastError: null,
         };

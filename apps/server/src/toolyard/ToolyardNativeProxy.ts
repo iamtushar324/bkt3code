@@ -1,4 +1,6 @@
 /** T3-CUSTOM(expbkt3): Native clients use the host's user-owned connection, never its agent key. */
+import * as NodeTimers from "node:timers";
+
 export const NATIVE_MCP_REQUEST_LIMIT = 262_144;
 export const NATIVE_MCP_RESPONSE_LIMIT = 8 * 1024 * 1024;
 const ALLOWED_HEADERS = [
@@ -151,13 +153,13 @@ export function makeNativeToolyardProxy(dependencies: NativeToolyardProxyDepende
     let dispatched = false;
     let streaming = false;
     let released = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
     const controller = new AbortController();
     const abort = () => controller.abort();
     const release = () => {
       if (released) return;
       released = true;
-      if (timer) clearTimeout(timer);
+      if (timer) NodeTimers.clearTimeout(timer);
       request.signal.removeEventListener("abort", abort);
       rate.active--;
       active--;
@@ -197,7 +199,10 @@ export function makeNativeToolyardProxy(dependencies: NativeToolyardProxyDepende
       headers.set("x-toolyard-client", "cli");
       headers.set("x-t3-session-id", `native:${principal.sessionId}`);
       dispatched = true;
-      timer = setTimeout(abort, Math.max(1, Math.min(60_000, dependencies.timeoutMs ?? 60_000)));
+      timer = NodeTimers.setTimeout(
+        abort,
+        Math.max(1, Math.min(60_000, dependencies.timeoutMs ?? 60_000)),
+      );
       request.signal.addEventListener("abort", abort, { once: true });
       if (request.signal.aborted) abort();
       const response = await (dependencies.fetch ?? fetch)(destination, {
