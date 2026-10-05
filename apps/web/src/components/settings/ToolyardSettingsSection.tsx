@@ -39,6 +39,19 @@ import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 
+function checkedConsentUrl(value: string | null, baseUrl: string | null): string {
+  if (!value) throw new Error("The server has not received the consent address yet.");
+  const url = new URL(value);
+  if (
+    !baseUrl ||
+    url.protocol !== "https:" ||
+    url.origin !== new URL(baseUrl).origin ||
+    url.username ||
+    url.password
+  )
+    throw new Error("The Toolyard consent destination does not match this instance.");
+  return url.href;
+}
 interface ToolyardSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -137,7 +150,8 @@ function ToolyardSettingsContent({
   const mode = current.mode ?? status?.mode ?? "team";
   const modeChange = status?.connection === "connected" && mode !== (status.mode ?? "team");
   const canDisconnect =
-    status?.connection === "connected" && (status.mode === "api-key" || modeChange);
+    status?.connection === "connected" &&
+    (status.mode === "api-key" || status.mode === "host" || modeChange);
   const refresh = useCallback(() => appAtomRegistry.refresh(statusAtom), [statusAtom]);
   const environmentBrowserUrl = () => {
     // This server's authenticated connection owns the browser destination.
@@ -181,6 +195,11 @@ function ToolyardSettingsContent({
     if (continuation.draft) setDraft(continuation.draft);
     setNotice(continuation.message);
   }, [continuationRead, environmentId, status, userScope, draft, setDraft]);
+  useEffect(() => {
+    if (status?.pendingConnection?.status !== "pending") return;
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [status?.pendingConnection?.status, refresh]);
   useEffect(() => {
     if (!browserDraft) return;
     let attempts = 0;
@@ -233,11 +252,14 @@ function ToolyardSettingsContent({
     }
     return "";
   };
-  const save = async (remove = false, disconnect = false) => {
+  const save = async (remove = false, disconnect = false, hostAction?: "begin" | "cancel") => {
     if (!status) return;
     setBusy(true);
     setError(null);
+    let hostBrowser: ToolyardBrowserHandoffTarget | null = null;
     try {
+      if (mode === "host" && current.enabled && !remove && !disconnect && hostAction !== "cancel")
+        hostBrowser = createToolyardBrowserHandoffTarget();
       const submittedKey = apiKey;
       const submittedDraft = draft;
       const adminToken =
@@ -254,6 +276,9 @@ function ToolyardSettingsContent({
           remove,
           mode,
           ...(disconnect ? { disconnect: true } : {}),
+          ...(mode === "host" && current.enabled && !remove && !disconnect
+            ? { hostAction: hostAction ?? "begin" }
+            : {}),
           ...(mode === "api-key" && submittedKey && !remove && !disconnect
             ? { apiKey: submittedKey }
             : {}),
@@ -265,12 +290,25 @@ function ToolyardSettingsContent({
         // A newer edit remains a draft after this request completes.
         if (!disconnect && draftRef.current === submittedDraft) setDraft(null);
         if (!disconnect) setApiKey((value) => (value === submittedKey ? "" : value));
+        if (
+          hostBrowser &&
+          saved.value.pendingConnection?.status === "pending" &&
+          saved.value.pendingConnection.authorizationUrl
+        ) {
+          await hostBrowser.open(
+            checkedConsentUrl(saved.value.pendingConnection.authorizationUrl, saved.value.baseUrl),
+          );
+        }
         setNotice(
-          disconnect
-            ? "Your Toolyard connection was removed."
-            : mode === "api-key"
-              ? "Your API key connection is ready. Local decisions arrive through outbound requests."
-              : null,
+          mode === "host" && !disconnect && !remove
+            ? hostAction === "cancel"
+              ? "The connection request was cancelled."
+              : "Review the account and host in your browser. The server will receive your decision."
+            : disconnect
+              ? "Your Toolyard connection was removed."
+              : mode === "api-key"
+                ? "Your API key connection is ready. Local decisions arrive through outbound requests."
+                : null,
         );
       } else if (AsyncResult.isFailure(saved)) {
         const code = toolyardSettingsFailureCode(saved.cause);
@@ -319,7 +357,48 @@ function ToolyardSettingsContent({
         "The settings or browser request failed. Your draft remains. Select Refresh, then try again.",
       );
     } finally {
+      hostBrowser?.close();
       setBusy(false);
+    }
+  };
+  const cancelConsent = async () => {
+    if (!status?.baseUrl) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await configure({
+        environmentId,
+        input: {
+          expectedRevision: status.revision,
+          baseUrl: status.baseUrl,
+          origin: status.origin ?? "",
+          enabled: true,
+          mode: "host",
+          hostAction: "cancel",
+        },
+      });
+      refresh();
+      if (!AsyncResult.isSuccess(saved))
+        setError("The connection request could not be cancelled. Select Refresh, then try again.");
+    } catch {
+      setError("The connection request could not be cancelled. Select Refresh, then try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resumeConsent = async () => {
+    if (!status?.pendingConnection) return;
+    let browser: ToolyardBrowserHandoffTarget | null = null;
+    setError(null);
+    try {
+      browser = createToolyardBrowserHandoffTarget();
+      await browser.open(
+        checkedConsentUrl(status.pendingConnection.authorizationUrl, status.baseUrl),
+      );
+    } catch {
+      setError("The browser did not open the consent page. Select Refresh, then try again.");
+    } finally {
+      browser?.close();
     }
   };
   const open = async () => {
@@ -379,6 +458,47 @@ function ToolyardSettingsContent({
             retry it.
           </p>
         ) : null}
+        {status?.agentId ? (
+          <p className="my-2 break-all text-xs text-muted-foreground">
+            Host: {status.hostName ?? environment.label}. Agent: {status.agentId}.
+            {status.ownerId ? ` Toolyard owner: ${status.ownerId}.` : ""}
+          </p>
+        ) : null}
+        {status?.pendingConnection ? (
+          <div className="my-2 flex flex-wrap items-center gap-2">
+            <p role="status" className="text-xs text-muted-foreground">
+              {status.pendingConnection.status === "pending"
+                ? "Awaiting your Toolyard account decision."
+                : `Connection request: ${status.pendingConnection.status}.`}
+            </p>
+            {status.pendingConnection.status === "pending" ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !status.pendingConnection.authorizationUrl}
+                  onClick={() => void resumeConsent()}
+                >
+                  Open account consent
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void cancelConsent()}
+                >
+                  Cancel connection request
+                </Button>
+              </>
+            ) : null}
+            {status.pendingConnection.lastError ? (
+              <p role="alert" className="text-xs text-destructive-foreground">
+                The server could not read the decision. It will retry while the request remains
+                valid.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {status?.expiresAt ? (
           <p className="my-2 text-xs text-muted-foreground">
             Connection expires {new Date(status.expiresAt).toLocaleString()}.
@@ -399,9 +519,23 @@ function ToolyardSettingsContent({
         <>
           <SettingsRow
             title="Connection method"
-            description="Use team access or your own Toolyard API key on this server. Each user has a separate connection."
+            description="Authorize this host with your Toolyard account. Each user receives a separate agent. API keys remain a fallback."
             control={
               <div className="flex flex-wrap gap-2">
+                {status.hostConsentAllowed ? (
+                  <Button
+                    size="sm"
+                    variant={mode === "host" ? "default" : "outline"}
+                    aria-pressed={mode === "host"}
+                    disabled={busy}
+                    onClick={() => {
+                      setApiKey("");
+                      setDraft({ ...current, mode: "host", enabled: true });
+                    }}
+                  >
+                    Account consent
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant={mode === "team" ? "default" : "outline"}
@@ -431,13 +565,13 @@ function ToolyardSettingsContent({
           >
             {status.teamAvailable === false ? (
               <p className="my-2 text-xs text-muted-foreground">
-                This server has no verified team identity. Use your Toolyard API key.
+                This server has no verified team identity. Authorize your Toolyard account in the
+                browser.
               </p>
             ) : null}
             {modeChange ? (
               <p role="alert" className="my-2 text-xs text-muted-foreground">
-                Select Disconnect my account before you save a different connection method. Team
-                access requires administrator authorization.
+                Select Disconnect my account before you save a different connection method.
               </p>
             ) : null}
           </SettingsRow>
@@ -466,11 +600,20 @@ function ToolyardSettingsContent({
           ) : null}
         </>
       ) : null}
+      {mode === "host" ? (
+        <p className="px-4 py-2 text-xs text-muted-foreground">
+          Toolyard records your account as the owner of this host agent. Restricted calls still
+          require an Inbox decision.
+          {userScope === "local-user"
+            ? " All clients authorized for this local profile use the same Toolyard account."
+            : ""}
+        </p>
+      ) : null}
       {status?.administrator ? (
         <>
           <SettingsRow
             title="Hosted instance"
-            description="Use one HTTPS Toolyard instance for this server. API key access does not require a public address for your Mac."
+            description="Use one HTTPS Toolyard instance for this server. Account consent does not require a public address for your Mac."
             control={
               <Input
                 aria-label="Toolyard base URL"
@@ -507,7 +650,8 @@ function ToolyardSettingsContent({
           ) : null}
         </>
       ) : null}
-      {status && (status.administrator || mode === "api-key" || canDisconnect) ? (
+      {status &&
+      (status.administrator || mode === "api-key" || mode === "host" || canDisconnect) ? (
         <div className="flex flex-wrap gap-2 px-4 pb-4">
           <Button
             size="sm"
@@ -515,12 +659,17 @@ function ToolyardSettingsContent({
               busy ||
               modeChange ||
               (mode === "team" && status.teamAvailable === false) ||
-              (!draft && !apiKey && !status.removed) ||
-              (mode === "api-key" && !status.baseUrl && !status.administrator)
+              (mode === "host" && status.pendingConnection?.status === "pending") ||
+              (!draft && !apiKey && !status.removed && mode !== "host") ||
+              ((mode === "api-key" || mode === "host") && !status.baseUrl && !status.administrator)
             }
             onClick={() => void save()}
           >
-            {mode === "api-key" ? "Save and connect" : "Save and verify trust"}
+            {mode === "host" && current.enabled
+              ? "Connect my Toolyard account"
+              : mode === "api-key"
+                ? "Save and connect"
+                : "Save and verify trust"}
           </Button>
           <Button
             size="sm"

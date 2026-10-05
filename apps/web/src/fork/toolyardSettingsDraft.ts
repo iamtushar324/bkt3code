@@ -3,7 +3,7 @@ export interface ToolyardSettingsDraft {
   baseUrl: string;
   enabled: boolean;
   revision: number;
-  mode?: "team" | "api-key";
+  mode?: "team" | "api-key" | "host";
 }
 const prefix = "t3-toolyard-settings-draft:";
 const storage = () => {
@@ -28,7 +28,9 @@ export function readToolyardSettingsDraft(key: string): ToolyardSettingsDraft | 
           baseUrl: value.baseUrl,
           enabled: value.enabled,
           revision: value.revision,
-          ...(value.mode === "team" || value.mode === "api-key" ? { mode: value.mode } : {}),
+          ...(value.mode === "team" || value.mode === "api-key" || value.mode === "host"
+            ? { mode: value.mode }
+            : {}),
         }
       : null;
   } catch {
@@ -45,7 +47,9 @@ export function writeToolyardSettingsDraft(key: string, draft: ToolyardSettingsD
           baseUrl: draft.baseUrl,
           enabled: draft.enabled,
           revision: draft.revision,
-          ...(draft.mode === "team" || draft.mode === "api-key" ? { mode: draft.mode } : {}),
+          ...(draft.mode === "team" || draft.mode === "api-key" || draft.mode === "host"
+            ? { mode: draft.mode }
+            : {}),
         }),
       );
   } catch {

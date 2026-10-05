@@ -1,5 +1,7 @@
 // T3-CUSTOM(expbkt3): server-owned Toolyard integration and durable session callback delivery.
 import { toolyardIntegrationLayer } from "./toolyard/ToolyardIntegration.ts";
+// T3-CUSTOM(expbkt3): native clients share the host's user-owned Toolyard connection.
+import { toolyardNativeRouteLayer } from "./toolyard/ToolyardNativeHttp.ts";
 import * as SessionWebhooks from "./session-webhooks/SessionWebhookService.ts";
 import { sessionWebhookRouteLayer } from "./session-webhooks/http.ts";
 // T3-CUSTOM(expbkt3): BEGIN kept fork services composed on the native V2 runtime.
@@ -812,6 +814,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     ),
     mcpUpstreamProxyRouteLayer,
+    toolyardNativeRouteLayer, // T3-CUSTOM(expbkt3): authenticated Toolyard native endpoint.
     eventFeedRouteLayer,
     managerRouteLayer, // T3-CUSTOM(expbkt3): personal manager grant routes.
     sessionWebhookRouteLayer, // T3-CUSTOM(expbkt3): signed decision callback receiver.

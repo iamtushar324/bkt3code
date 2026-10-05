@@ -1,5 +1,8 @@
 /** T3-CUSTOM(expbkt3): Environment/instance/user-isolated, server-owned federation. */
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as DateTime from "effect/DateTime";
 
 const REQUIRED_INSTANCE_CAPABILITIES = [
   "inbox.batch.v1",
@@ -16,18 +19,28 @@ export interface ToolyardInstanceSettings {
   instanceId: string | null;
   origin: string | null;
 }
-export type ToolyardConnectionMode = "team" | "api-key";
+export type ToolyardConnectionMode = "team" | "api-key" | "host";
 interface Connection {
   mode?: ToolyardConnectionMode | undefined;
   userId?: string;
   connectionGeneration?: number;
   token?: string;
   email?: string;
+  ownerId?: string;
   agentId?: string;
   expiresAt?: string;
   version: number;
   state: ConnectionState;
   retryAfter?: number;
+}
+interface PendingHostConnection {
+  requestId: string;
+  userId: string;
+  settings: ToolyardInstanceSettings;
+  authorizationUrl: string | null;
+  expiresAt: string;
+  status: "pending" | "rejected" | "expired" | "cancelled" | "approved";
+  lastError: string | null;
 }
 interface Persisted {
   environmentId: string;
@@ -36,10 +49,13 @@ interface Persisted {
   kid: string;
   settings: ToolyardInstanceSettings;
   connections: Record<string, Connection>;
+  pendingConnections: Record<string, PendingHostConnection>;
   pendingRevocations: {
     settings: ToolyardInstanceSettings;
     token?: string;
     scope?: "user" | "environment";
+    mode?: ToolyardConnectionMode;
+    hostRequestId?: string;
     userId: string;
     attempts: number;
     retryAfter: number;
@@ -62,6 +78,8 @@ export interface CoreOptions {
   verifyUser: (userId: string) => Promise<{ email: string | null; admin: boolean }>;
   fetch?: typeof fetch;
   now?: () => number;
+  hostName?: string;
+  platform?: string;
 }
 const digest = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 export function canonicalToolyardUrl(value: string): string {
@@ -140,6 +158,7 @@ export class ToolyardConnectionCore {
           ...existing,
           trustGeneration,
           pendingRevocations: existing.pendingRevocations ?? [],
+          pendingConnections: existing.pendingConnections ?? {},
         };
         return;
       }
@@ -161,6 +180,7 @@ export class ToolyardConnectionCore {
       },
       connections: {},
       pendingRevocations: [],
+      pendingConnections: {},
     };
     await this.persist();
   }
@@ -172,8 +192,7 @@ export class ToolyardConnectionCore {
   }
   connectionMode(userId: string): ToolyardConnectionMode {
     return (
-      this.state.connections[this.key(userId)]?.mode ??
-      (userId === "local-user" ? "api-key" : "team")
+      this.state.connections[this.key(userId)]?.mode ?? (userId === "local-user" ? "host" : "team")
     );
   }
   callbackBinding(userId: string) {
@@ -182,7 +201,7 @@ export class ToolyardConnectionCore {
     if (!binding || connection?.state === "revoked" || connection?.state === "disabled")
       return null;
     const transport =
-      this.connectionMode(userId) === "api-key" ? ("pull" as const) : ("push" as const);
+      this.connectionMode(userId) !== "team" ? ("pull" as const) : ("push" as const);
     return {
       ...binding,
       origin: this.baseUrl()!,
@@ -202,7 +221,11 @@ export class ToolyardConnectionCore {
     state.trustGeneration++;
   }
   private async persistSettingsChange(change: (candidate: Persisted) => void) {
-    const candidate = { ...this.state, pendingRevocations: [...this.state.pendingRevocations] };
+    const candidate = {
+      ...this.state,
+      pendingRevocations: [...this.state.pendingRevocations],
+      pendingConnections: { ...this.state.pendingConnections },
+    };
     change(candidate);
     // Readers must not observe tentative trust while durable storage can still fail.
     await this.options.write(JSON.stringify(candidate));
@@ -322,13 +345,16 @@ export class ToolyardConnectionCore {
       mode?: ToolyardConnectionMode | undefined;
       apiKey?: string | undefined;
       disconnect?: boolean | undefined;
+      hostAction?: "begin" | "poll" | "cancel" | undefined;
     },
   ) {
     const user = await this.options.verifyUser(userId);
     if (input.disconnect) return this.disconnect(userId, input.expectedRevision);
+    if (input.mode === "host" && input.enabled && !input.remove)
+      return this.configureHost(userId, input, user.admin);
     if (input.mode === "team" && !input.remove && input.enabled) {
       const prior = this.state.connections[this.key(userId)];
-      if (prior?.mode === "api-key")
+      if (prior?.mode === "api-key" || prior?.mode === "host")
         throw new ToolyardIntegrationFailure(
           prior.state === "revoked" || prior.state === "disabled"
             ? "team_connection_reauthorization_required"
@@ -343,6 +369,13 @@ export class ToolyardConnectionCore {
     if (!user.admin) throw new ToolyardIntegrationFailure("administrator_required", 403);
     return this.serialized(async () => {
       const old = this.state.settings;
+      if (
+        input.enabled &&
+        !input.remove &&
+        input.mode !== "host" &&
+        this.state.pendingConnections[this.key(userId)]?.status === "pending"
+      )
+        throw new ToolyardIntegrationFailure("cancel_host_request_before_mode_change", 409);
       if (input.expectedRevision !== old.revision)
         throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
       if (input.remove) {
@@ -365,7 +398,12 @@ export class ToolyardConnectionCore {
         await this.persistSettingsChange((candidate) => {
           if (old.enabled) this.advanceTrustGeneration(candidate);
           candidate.settings = { ...old, enabled: false, revision: old.revision + 1 };
-          candidate.connections = {};
+          candidate.connections = Object.fromEntries(
+            Object.entries(this.state.connections).map(([key, connection]) => [
+              key,
+              this.connectionTombstone(connection, "disabled"),
+            ]),
+          );
           if (old.enabled) this.enqueueRevocation(old, userId, candidate);
         });
         await this.flushRevocationsUnlocked();
@@ -460,24 +498,333 @@ export class ToolyardConnectionCore {
       token: string(response, "token"),
       email: string(response, "email"),
       agentId: string(response, "agent_id"),
+      ...(typeof response.user_id === "string" ? { ownerId: response.user_id } : {}),
       expiresAt: string(response, "expires_at"),
       version: Number(response.credential_version),
       state: "connected",
       userId,
       mode,
-      ...(mode === "api-key"
-        ? { connectionGeneration: Number(response.connection_generation) }
-        : {}),
+      ...(mode !== "team" ? { connectionGeneration: Number(response.connection_generation) } : {}),
     };
     if (
       !Number.isSafeInteger(next.version) ||
       next.version < 1 ||
-      (mode === "api-key" &&
+      (mode !== "team" &&
         (!Number.isSafeInteger(next.connectionGeneration) || next.connectionGeneration! < 1)) ||
       !Number.isFinite(Date.parse(next.expiresAt!))
     )
       throw new ToolyardIntegrationFailure("invalid_response", 502);
     return next;
+  }
+  private hostName() {
+    return (this.options.hostName ?? NodeOS.hostname()).slice(0, 128);
+  }
+  private publicPending(userId: string) {
+    const pending = this.state.pendingConnections[this.key(userId)];
+    return pending
+      ? {
+          requestId: pending.requestId,
+          authorizationUrl: pending.authorizationUrl,
+          expiresAt: pending.expiresAt,
+          status: pending.status,
+          lastError: pending.lastError,
+        }
+      : null;
+  }
+  private hostProof(
+    userId: string,
+    requestId: string,
+    action: "begin" | "poll" | "cancel",
+    settings: ToolyardInstanceSettings,
+  ) {
+    const now = Math.floor(this.now / 1000);
+    const publicDer = NodeCrypto.createPublicKey(this.state.privateKey).export({
+      type: "spki",
+      format: "der",
+    });
+    const header = Buffer.from(
+      JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: this.state.kid }),
+    ).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({
+        iss: this.options.environmentId,
+        aud: settings.instanceId,
+        sub: userId,
+        jti: NodeCrypto.randomUUID(),
+        iat: now,
+        exp: now + 90,
+        action,
+        request_id: requestId,
+        public_key: publicDer.subarray(-32).toString("base64"),
+        host_name: this.hostName(),
+        platform: this.options.platform ?? HostProcessPlatform.defaultValue(),
+      }),
+    ).toString("base64url");
+    const input = `${header}.${payload}`;
+    return `${input}.${NodeCrypto.sign(null, Buffer.from(input), this.state.privateKey).toString("base64url")}`;
+  }
+  private enqueueHostCancellation(pending: PendingHostConnection, candidate: Persisted) {
+    if (candidate.pendingRevocations.some((job) => job.hostRequestId === pending.requestId)) return;
+    candidate.pendingRevocations.push({
+      settings: { ...pending.settings },
+      userId: pending.userId,
+      hostRequestId: pending.requestId,
+      mode: "host",
+      attempts: 0,
+      retryAfter: 0,
+      lastError: null,
+    });
+  }
+  private async configureHost(
+    userId: string,
+    input: Parameters<ToolyardConnectionCore["configure"]>[1],
+    administrator: boolean,
+  ) {
+    if (!userId.startsWith("user_") && userId !== "local-user")
+      throw new ToolyardIntegrationFailure("verified_identity_required", 403);
+    return this.serialized(async () => {
+      const old = this.state.settings;
+      if (input.expectedRevision !== old.revision)
+        throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
+      const action = input.hostAction ?? "begin";
+      if (action !== "begin") {
+        const pending = this.state.pendingConnections[this.key(userId)];
+        if (!pending) throw new ToolyardIntegrationFailure("host_request_not_found", 404);
+        if (action === "cancel" && pending.status === "pending") {
+          await this.persistSettingsChange((candidate) => {
+            candidate.pendingConnections[this.key(userId)] = {
+              ...pending,
+              status: "cancelled",
+              lastError: null,
+            };
+            this.enqueueHostCancellation(pending, candidate);
+          });
+          await this.flushRevocationsUnlocked();
+        } else if (action === "poll") await this.pollHostUnlocked(userId, pending);
+        return this.status(userId, false);
+      }
+      const baseUrl = canonicalToolyardUrl(input.baseUrl);
+      const changesInstance = !old.baseUrl || old.removed || old.baseUrl !== baseUrl;
+      if ((changesInstance || !old.enabled) && !administrator)
+        throw new ToolyardIntegrationFailure("administrator_required", 403);
+      if (old.baseUrl && !old.removed && old.baseUrl !== baseUrl)
+        throw new ToolyardIntegrationFailure("instance_binding_change_requires_removal", 409);
+      const metadata = await this.request(baseUrl, "/.well-known/toolyard-instance");
+      const capabilities = Array.isArray(metadata.capabilities) ? metadata.capabilities : [];
+      for (const capability of [
+        "connections.host-consent.v1",
+        "callbacks.pull.v1",
+        "inbox.batch.v1",
+        "callbacks.standard-webhooks.v1",
+        "dashboard.handoff.v1",
+      ])
+        if (!capabilities.includes(capability))
+          throw new ToolyardIntegrationFailure("host_consent_protocol_unavailable");
+      const instanceId = string(metadata, "instance_id");
+      if (!changesInstance && old.instanceId !== instanceId)
+        throw new ToolyardIntegrationFailure("instance_identity_changed", 409);
+      const blocksOwner = (job: Persisted["pendingRevocations"][number]) =>
+        job.settings.instanceId === instanceId &&
+        ((!job.token && !job.hostRequestId && job.scope !== "user") || job.userId === userId);
+      if (this.state.pendingRevocations.some(blocksOwner)) {
+        await this.flushRevocationsUnlocked();
+        if (this.state.pendingRevocations.some(blocksOwner))
+          throw new ToolyardIntegrationFailure("revocation_cleanup_pending", 409);
+      }
+      const key = this.key(userId, instanceId);
+      const prior = this.state.connections[key];
+      if (prior?.token && prior.mode !== "host")
+        throw new ToolyardIntegrationFailure("disconnect_before_mode_change", 409);
+      if (prior?.mode === "host" && prior.state === "connected" && prior.token)
+        return this.status(userId, false);
+      let pending = this.state.pendingConnections[key];
+      if (pending?.status === "pending" && pending.authorizationUrl) {
+        await this.pollHostUnlocked(userId, pending);
+        pending = this.state.pendingConnections[key];
+        if (pending?.status === "pending" || pending?.status === "approved")
+          return this.status(userId, false);
+      }
+      if (!pending || pending.status !== "pending" || Date.parse(pending.expiresAt) <= this.now) {
+        pending = {
+          requestId: NodeCrypto.randomUUID(),
+          userId,
+          settings: {
+            revision: changesInstance || !old.enabled ? old.revision + 1 : old.revision,
+            enabled: true,
+            removed: false,
+            baseUrl,
+            instanceId,
+            origin: changesInstance || !old.enabled ? baseUrl : old.origin,
+          },
+          authorizationUrl: null,
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(this.now + 600_000)),
+          status: "pending",
+          lastError: null,
+        };
+        const nextPending = pending;
+        await this.persistSettingsChange((candidate) => {
+          if (changesInstance || !old.enabled) {
+            this.advanceTrustGeneration(candidate);
+            candidate.settings = nextPending.settings;
+            if (changesInstance) candidate.connections = {};
+            candidate.pendingConnections = {};
+          }
+          candidate.pendingConnections[key] = nextPending;
+          candidate.connections = {
+            ...candidate.connections,
+            [key]: {
+              mode: "host",
+              userId,
+              version: prior?.version ?? 0,
+              state: prior?.state ?? "unavailable",
+            },
+          };
+        });
+      }
+      await this.beginHostUnlocked(userId, pending);
+      return this.status(userId, false);
+    });
+  }
+  private async beginHostUnlocked(userId: string, pending: PendingHostConnection) {
+    try {
+      const response = await this.request(
+        pending.settings.baseUrl!,
+        "/v1/connections/host/begin",
+        {
+          proof: this.hostProof(userId, pending.requestId, "begin", pending.settings),
+        },
+        undefined,
+        65536,
+        AbortSignal.timeout(2000),
+      );
+      if (
+        response.request_id !== pending.requestId ||
+        !["pending", "approved", "rejected", "expired", "cancelled"].includes(
+          String(response.status),
+        )
+      )
+        throw new ToolyardIntegrationFailure("invalid_host_request_response", 502);
+      const url = new URL(string(response, "authorization_url"));
+      if (url.origin !== pending.settings.baseUrl || url.username || url.password)
+        throw new ToolyardIntegrationFailure("invalid_host_authorization_destination", 502);
+      const expiresAt = string(response, "expires_at");
+      if (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) > this.now + 660_000)
+        throw new ToolyardIntegrationFailure("invalid_host_request_expiry", 502);
+      const recovered = { ...pending, authorizationUrl: url.href, expiresAt, lastError: null };
+      await this.persistSettingsChange((candidate) => {
+        candidate.pendingConnections[this.key(userId)] = recovered;
+      });
+      // Begin can recover a committed decision after its response was lost.
+      // Only the authenticated poll returns the same scoped credential.
+      if (response.status !== "pending") await this.pollHostUnlocked(userId, recovered);
+    } catch (error) {
+      await this.persistSettingsChange((candidate) => {
+        const terminal =
+          error instanceof ToolyardIntegrationFailure &&
+          (error.status === 401 ||
+            error.status === 403 ||
+            /expired|revoked|cancelled|rejected/.test(error.code));
+        if (terminal) this.enqueueHostCancellation(pending, candidate);
+        candidate.pendingConnections[this.key(userId)] = {
+          ...pending,
+          ...(terminal
+            ? { status: /expired/.test(error.code) ? ("expired" as const) : ("cancelled" as const) }
+            : {}),
+          lastError:
+            error instanceof ToolyardIntegrationFailure ? error.code : "host_request_failed",
+        };
+      });
+    }
+  }
+  private async pollHostUnlocked(userId: string, pending: PendingHostConnection) {
+    if (pending.status !== "pending" || !this.currentHostRequest(userId, pending)) return;
+    try {
+      await this.options.verifyUser(userId);
+      if (!pending.authorizationUrl) return this.beginHostUnlocked(userId, pending);
+      if (
+        !this.state.settings.enabled ||
+        this.state.settings.removed ||
+        this.state.settings.instanceId !== pending.settings.instanceId
+      )
+        return;
+      const response = await this.request(
+        pending.settings.baseUrl!,
+        "/v1/connections/host/poll",
+        {
+          proof: this.hostProof(userId, pending.requestId, "poll", pending.settings),
+        },
+        undefined,
+        65536,
+        AbortSignal.timeout(2000),
+      );
+      const status = response.status;
+      if (
+        response.request_id !== pending.requestId ||
+        (status !== "pending" &&
+          status !== "approved" &&
+          status !== "rejected" &&
+          status !== "expired" &&
+          status !== "cancelled")
+      )
+        throw new ToolyardIntegrationFailure("invalid_host_request_response", 502);
+      const connection =
+        status === "approved" ? this.decodeConnection(response, userId, "host") : null;
+      if (
+        connection &&
+        (response.instance_id !== pending.settings.instanceId || !connection.ownerId)
+      )
+        throw new ToolyardIntegrationFailure("connection_instance_or_owner_mismatch", 409);
+      if (!this.currentHostRequest(userId, pending)) return;
+      await this.persistSettingsChange((candidate) => {
+        candidate.pendingConnections[this.key(userId)] = { ...pending, status, lastError: null };
+        if (connection)
+          candidate.connections = { ...candidate.connections, [this.key(userId)]: connection };
+      });
+    } catch (error) {
+      await this.persistSettingsChange((candidate) => {
+        const terminal =
+          error instanceof ToolyardIntegrationFailure &&
+          (error.status === 401 ||
+            error.status === 403 ||
+            /expired|revoked|cancelled|rejected/.test(error.code));
+        if (terminal) this.enqueueHostCancellation(pending, candidate);
+        candidate.pendingConnections[this.key(userId)] = {
+          ...pending,
+          ...(terminal
+            ? { status: /expired/.test(error.code) ? ("expired" as const) : ("cancelled" as const) }
+            : {}),
+          lastError:
+            error instanceof ToolyardIntegrationFailure ? error.code : "host_request_failed",
+        };
+      });
+    }
+  }
+  private currentHostRequest(userId: string, pending: PendingHostConnection) {
+    const key = this.key(userId);
+    return (
+      this.state.settings.enabled &&
+      !this.state.settings.removed &&
+      this.state.settings.instanceId === pending.settings.instanceId &&
+      this.state.settings.baseUrl === pending.settings.baseUrl &&
+      this.state.pendingConnections[key]?.requestId === pending.requestId &&
+      this.state.pendingConnections[key]?.status === "pending" &&
+      this.state.connections[key]?.mode === "host"
+    );
+  }
+  private consentCursor = 0;
+  async reconcileHostConnections() {
+    return this.serialized(async () => {
+      const pending = Object.values(this.state.pendingConnections).filter(
+        (entry) => entry.status === "pending",
+      );
+      if (!pending.length) return;
+      const start = this.consentCursor % pending.length;
+      this.consentCursor = start + Math.min(5, pending.length);
+      for (let index = 0; index < Math.min(5, pending.length); index++) {
+        const request = pending[(start + index) % pending.length]!;
+        await this.pollHostUnlocked(request.userId, request);
+      }
+    });
   }
   private async configureApiKey(
     userId: string,
@@ -486,6 +833,8 @@ export class ToolyardConnectionCore {
   ) {
     return this.serialized(async () => {
       const old = this.state.settings;
+      if (this.state.pendingConnections[this.key(userId)]?.status === "pending")
+        throw new ToolyardIntegrationFailure("cancel_host_request_before_mode_change", 409);
       if (input.expectedRevision !== old.revision)
         throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
       if (input.remove) throw new ToolyardIntegrationFailure("administrator_required", 403);
@@ -518,7 +867,7 @@ export class ToolyardConnectionCore {
         throw new ToolyardIntegrationFailure("instance_identity_changed", 409);
       const blocksOwner = (job: Persisted["pendingRevocations"][number]) =>
         job.settings.instanceId === instanceId &&
-        ((!job.token && job.scope !== "user") || job.userId === userId);
+        ((!job.token && !job.hostRequestId && job.scope !== "user") || job.userId === userId);
       if (this.state.pendingRevocations.some(blocksOwner)) {
         await this.flushRevocationsUnlocked();
         if (this.state.pendingRevocations.some(blocksOwner))
@@ -554,12 +903,29 @@ export class ToolyardConnectionCore {
             instanceId,
             origin: baseUrl,
           };
-          candidate.connections = {};
+          if (changesInstance) candidate.connections = {};
         } else candidate.connections = { ...candidate.connections };
         candidate.connections[key] = next;
       });
       return this.status(userId, false);
     });
+  }
+  private connectionTombstone(
+    connection: Connection | undefined,
+    state: "revoked" | "disabled",
+  ): Connection {
+    return {
+      version: connection?.version ?? 0,
+      mode: connection?.mode ?? "team",
+      state,
+      ...(connection?.userId ? { userId: connection.userId } : {}),
+      ...(connection?.ownerId ? { ownerId: connection.ownerId } : {}),
+      ...(connection?.email ? { email: connection.email } : {}),
+      ...(connection?.agentId ? { agentId: connection.agentId } : {}),
+      ...(connection?.connectionGeneration
+        ? { connectionGeneration: connection.connectionGeneration }
+        : {}),
+    };
   }
   private async disconnect(userId: string, expectedRevision: number) {
     return this.serialized(async () => {
@@ -567,18 +933,24 @@ export class ToolyardConnectionCore {
         throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
       const key = this.key(userId);
       const prior = this.state.connections[key];
+      const pending = this.state.pendingConnections[key];
       await this.persistSettingsChange((candidate) => {
+        if (pending?.status === "pending") {
+          this.enqueueHostCancellation(pending, candidate);
+          candidate.pendingConnections[key] = { ...pending, status: "cancelled" };
+        }
         candidate.connections = {
           ...candidate.connections,
-          [key]: {
-            version: prior?.version ?? 0,
-            state: "revoked",
-            mode: prior?.mode ?? "team",
-            userId,
-          },
+          [key]: { ...this.connectionTombstone(prior, "revoked"), userId },
         };
-        if (prior?.token && prior.mode === "api-key")
-          this.enqueueApiRevocation(this.state.settings, userId, prior.token, candidate);
+        if (prior?.token && prior.mode !== "team")
+          this.enqueueApiRevocation(
+            this.state.settings,
+            userId,
+            prior.token,
+            candidate,
+            prior.mode,
+          );
         else if (prior?.token && this.state.settings.baseUrl && this.state.settings.instanceId)
           candidate.pendingRevocations.push({
             settings: { ...this.state.settings },
@@ -598,6 +970,7 @@ export class ToolyardConnectionCore {
     userId: string,
     token: string,
     state: Persisted,
+    mode: ToolyardConnectionMode = "api-key",
   ) {
     if (!settings.baseUrl || !settings.instanceId) return;
     if (state.pendingRevocations.some((job) => job.token === token)) return;
@@ -605,6 +978,7 @@ export class ToolyardConnectionCore {
       settings: { ...settings },
       userId,
       token,
+      mode,
       attempts: 0,
       retryAfter: 0,
       lastError: null,
@@ -613,8 +987,17 @@ export class ToolyardConnectionCore {
   private enqueueRevocation(settings: ToolyardInstanceSettings, userId: string, state: Persisted) {
     if (!settings.baseUrl || !settings.instanceId) return;
     for (const connection of Object.values(this.state.connections))
-      if (connection.mode === "api-key" && connection.token && connection.userId)
-        this.enqueueApiRevocation(settings, connection.userId, connection.token, state);
+      if (connection.mode !== "team" && connection.token && connection.userId)
+        this.enqueueApiRevocation(
+          settings,
+          connection.userId,
+          connection.token,
+          state,
+          connection.mode,
+        );
+    for (const pending of Object.values(this.state.pendingConnections))
+      if (pending.status === "pending") this.enqueueHostCancellation(pending, state);
+    state.pendingConnections = {};
     if (!settings.origin || settings.origin === settings.baseUrl) return;
     if (
       state.pendingRevocations.some(
@@ -638,8 +1021,17 @@ export class ToolyardConnectionCore {
     for (const job of this.state.pendingRevocations) {
       if (job.retryAfter > this.now) continue;
       try {
-        if (job.token)
-          await this.request(job.settings.baseUrl!, "/v1/connections/revoke", {}, job.token);
+        if (job.hostRequestId)
+          await this.request(job.settings.baseUrl!, "/v1/connections/host/cancel", {
+            proof: await this.hostProof(job.userId, job.hostRequestId, "cancel", job.settings),
+          });
+        else if (job.token)
+          await this.request(
+            job.settings.baseUrl!,
+            job.mode === "host" ? "/v1/connections/host/revoke" : "/v1/connections/revoke",
+            {},
+            job.token,
+          );
         else
           await this.request(job.settings.baseUrl!, "/v1/federation/revoke", {
             assertion: await this.assertion(job.userId, job.settings),
@@ -683,23 +1075,24 @@ export class ToolyardConnectionCore {
     return this.userSerialized(key, async () => {
       const prior = this.state.connections[key];
       const mode = prior?.mode ?? "team";
-      if (mode === "team" && !userId.startsWith("user_")) return null;
-      if (mode === "api-key" && !prior?.token) return null;
+      if (mode === "team" && (!userId.startsWith("user_") || settings.origin === settings.baseUrl))
+        return null;
+      if (mode !== "team" && !prior?.token) return null;
       if (prior?.state === "revoked" || prior?.state === "disabled") return null;
       if (
         prior?.token &&
         prior.state === "connected" &&
         prior.expiresAt &&
-        Date.parse(prior.expiresAt) > this.now + (mode === "api-key" ? 24 * 3600_000 : 30_000)
+        Date.parse(prior.expiresAt) > this.now + (mode !== "team" ? 24 * 3600_000 : 30_000)
       )
         return prior;
       if (prior?.retryAfter && prior.retryAfter > this.now) return null;
       try {
         const response =
-          mode === "api-key"
+          mode !== "team"
             ? await this.request(
                 settings.baseUrl!,
-                "/v1/connections/renew",
+                mode === "host" ? "/v1/connections/host/renew" : "/v1/connections/renew",
                 { expected_version: prior!.version },
                 prior!.token,
               )
@@ -710,7 +1103,7 @@ export class ToolyardConnectionCore {
         const next: Connection = {
           mode,
           userId,
-          ...(mode === "api-key"
+          ...(mode !== "team"
             ? {
                 connectionGeneration: Number(
                   response.connection_generation ?? prior?.connectionGeneration ?? 0,
@@ -720,6 +1113,7 @@ export class ToolyardConnectionCore {
           token: string(response, "token"),
           email: string(response, "email"),
           agentId: string(response, "agent_id"),
+          ...(typeof response.user_id === "string" ? { ownerId: response.user_id } : {}),
           expiresAt: string(response, "expires_at"),
           version: Number(response.credential_version),
           state: "connected",
@@ -727,11 +1121,18 @@ export class ToolyardConnectionCore {
         if (
           !Number.isSafeInteger(next.version) ||
           next.version < 1 ||
-          (mode === "api-key" &&
+          (mode !== "team" &&
             (!Number.isSafeInteger(next.connectionGeneration) || next.connectionGeneration! < 1)) ||
           !Number.isFinite(Date.parse(next.expiresAt!))
         )
           throw new ToolyardIntegrationFailure("invalid_response", 502);
+        if (
+          mode === "host" &&
+          (!next.ownerId ||
+            (prior?.ownerId && next.ownerId !== prior.ownerId) ||
+            response.instance_id !== settings.instanceId)
+        )
+          throw new ToolyardIntegrationFailure("connection_instance_or_owner_mismatch", 409);
         await this.serialized(async () => {
           if (
             this.state.settings.revision !== settings.revision ||
@@ -766,7 +1167,9 @@ export class ToolyardConnectionCore {
             candidate.connections = {
               ...candidate.connections,
               [key]: {
-                ...(state === "unavailable" && mode === "api-key" ? prior : {}),
+                ...(state === "unavailable" && mode !== "team"
+                  ? prior
+                  : this.connectionTombstone(prior, state === "disabled" ? "disabled" : "revoked")),
                 mode,
                 userId,
                 version: prior?.version ?? 0,
@@ -794,12 +1197,7 @@ export class ToolyardConnectionCore {
       await this.persistSettingsChange((candidate) => {
         candidate.connections = {
           ...candidate.connections,
-          [key]: {
-            version: prior.version,
-            state: "revoked",
-            mode: prior.mode ?? "team",
-            userId,
-          },
+          [key]: { ...this.connectionTombstone(prior, "revoked"), userId },
         };
       });
       return true;
@@ -816,9 +1214,14 @@ export class ToolyardConnectionCore {
       administrator: user.admin,
       mode: this.connectionMode(userId),
       teamAvailable: userId.startsWith("user_"),
+      hostConsentAllowed: true,
+      hostName: this.hostName(),
+      agentId: connection?.agentId ?? null,
+      ownerId: connection?.ownerId ?? null,
+      pendingConnection: this.publicPending(userId),
       apiKeyAllowed: true,
       callbackTransport:
-        this.connectionMode(userId) === "api-key" ? ("pull" as const) : ("push" as const),
+        this.connectionMode(userId) !== "team" ? ("pull" as const) : ("push" as const),
       connection: connection?.state ?? ("not_connected" as const),
       email: connection?.email ?? null,
       expiresAt: connection?.expiresAt ?? null,
@@ -829,8 +1232,13 @@ export class ToolyardConnectionCore {
     if (!connection) throw new ToolyardIntegrationFailure("connection_unavailable", 403);
     const settings = { ...this.state.settings };
     const response =
-      connection.mode === "api-key"
-        ? await this.request(settings.baseUrl!, "/v1/connections/handoff", {}, connection.token)
+      connection.mode !== "team"
+        ? await this.request(
+            settings.baseUrl!,
+            connection.mode === "host" ? "/v1/connections/host/handoff" : "/v1/connections/handoff",
+            {},
+            connection.token,
+          )
         : await this.request(settings.baseUrl!, "/v1/federation/handoff", {
             assertion: await this.assertion(userId),
             return_url: settings.origin,
@@ -860,7 +1268,7 @@ export class ToolyardConnectionCore {
       "/v1/callbacks/receivers",
       {
         ...input,
-        transport: this.connectionMode(userId) === "api-key" ? "pull" : "push",
+        transport: this.connectionMode(userId) !== "team" ? "pull" : "push",
         environment_id: this.options.environmentId,
       },
       connection.token,
@@ -905,7 +1313,7 @@ export class ToolyardConnectionCore {
     const settings = { ...this.state.settings };
     const connection = await this.credential(userId);
     if (!connection?.token) throw new ToolyardIntegrationFailure("connection_unavailable", 403);
-    if (connection.mode !== "api-key")
+    if (connection.mode === "team")
       throw new ToolyardIntegrationFailure("pull_connection_required", 403);
     try {
       const result = await this.request(

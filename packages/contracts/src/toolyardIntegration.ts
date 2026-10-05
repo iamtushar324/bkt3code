@@ -9,7 +9,22 @@ export const ToolyardIntegrationStatus = Schema.Struct({
   instanceId: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
   administrator: Schema.Boolean,
-  mode: Schema.optional(Schema.Literals(["team", "api-key"])),
+  mode: Schema.optional(Schema.Literals(["team", "api-key", "host"])),
+  hostConsentAllowed: Schema.optional(Schema.Boolean),
+  hostName: Schema.optional(Schema.String),
+  agentId: Schema.optional(Schema.NullOr(Schema.String)),
+  ownerId: Schema.optional(Schema.NullOr(Schema.String)),
+  pendingConnection: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: Schema.String,
+        authorizationUrl: Schema.NullOr(Schema.String),
+        expiresAt: Schema.String,
+        status: Schema.Literals(["pending", "rejected", "expired", "cancelled", "approved"]),
+        lastError: Schema.NullOr(Schema.String),
+      }),
+    ),
+  ),
   apiKeyAllowed: Schema.optional(Schema.Boolean),
   teamAvailable: Schema.optional(Schema.Boolean),
   callbackTransport: Schema.optional(Schema.Literals(["push", "pull"])),
@@ -25,8 +40,9 @@ export const ToolyardIntegrationConfigureInput = Schema.Struct({
   enabled: Schema.Boolean,
   adminToken: Schema.optional(Schema.String),
   remove: Schema.optional(Schema.Boolean),
-  mode: Schema.optional(Schema.Literals(["team", "api-key"])),
+  mode: Schema.optional(Schema.Literals(["team", "api-key", "host"])),
   apiKey: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
+  hostAction: Schema.optional(Schema.Literals(["begin", "poll", "cancel"])),
   disconnect: Schema.optional(Schema.Boolean),
 });
 export const ToolyardDashboardHandoff = Schema.Struct({
