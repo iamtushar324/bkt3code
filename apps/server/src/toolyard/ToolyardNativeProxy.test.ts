@@ -344,7 +344,10 @@ it.effect("relays native stdio through the authenticated HTTP route for the loca
           },
         },
       });
-      expect(Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(output)).toEqual({
+      const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        output,
+      );
+      expect(payload).toEqual({
         jsonrpc: "2.0",
         id: 1,
         result: { tools: [{ name: "inbox.status" }] },

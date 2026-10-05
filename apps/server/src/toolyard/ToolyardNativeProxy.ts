@@ -1,5 +1,6 @@
 /** T3-CUSTOM(expbkt3): Native clients use the host's user-owned connection, never its agent key. */
-import * as NodeTimers from "node:timers";
+import * as Effect from "effect/Effect";
+import type * as Fiber from "effect/Fiber";
 
 export const NATIVE_MCP_REQUEST_LIMIT = 262_144;
 export const NATIVE_MCP_RESPONSE_LIMIT = 8 * 1024 * 1024;
@@ -153,13 +154,13 @@ export function makeNativeToolyardProxy(dependencies: NativeToolyardProxyDepende
     let dispatched = false;
     let streaming = false;
     let released = false;
-    let timer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
+    let timer: Fiber.Fiber<void> | undefined;
     const controller = new AbortController();
     const abort = () => controller.abort();
     const release = () => {
       if (released) return;
       released = true;
-      if (timer) NodeTimers.clearTimeout(timer);
+      if (timer) timer.interruptUnsafe();
       request.signal.removeEventListener("abort", abort);
       rate.active--;
       active--;
@@ -199,9 +200,10 @@ export function makeNativeToolyardProxy(dependencies: NativeToolyardProxyDepende
       headers.set("x-toolyard-client", "cli");
       headers.set("x-t3-session-id", `native:${principal.sessionId}`);
       dispatched = true;
-      timer = NodeTimers.setTimeout(
-        abort,
-        Math.max(1, Math.min(60_000, dependencies.timeoutMs ?? 60_000)),
+      timer = Effect.runFork(
+        Effect.sleep(Math.max(1, Math.min(60_000, dependencies.timeoutMs ?? 60_000))).pipe(
+          Effect.andThen(Effect.sync(abort)),
+        ),
       );
       request.signal.addEventListener("abort", abort, { once: true });
       if (request.signal.aborted) abort();

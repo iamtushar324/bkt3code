@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { runAcpMcpStdioBridge } from "../mcp/AcpMcpStdioBridge.ts";
 
 export function nativeToolyardEndpoint(serverUrl: string) {
@@ -53,7 +54,7 @@ export async function runNativeToolyardCli(args: readonly string[]) {
   try {
     const endpoint = nativeToolyardEndpoint(args[1]!);
     const token = await readNativeT3Token(args[3]!);
-    const fetchImplementation = globalThis.fetch;
+    const fetchImplementation = FetchHttpClient.Fetch.defaultValue();
     await Effect.runPromise(
       runAcpMcpStdioBridge({
         endpoint,
