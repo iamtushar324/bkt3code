@@ -20,12 +20,15 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
-import { usePreparedConnection } from "../../state/session";
+import { environmentSession, usePreparedConnection } from "../../state/session";
 
 const noAdminToken = async () => null;
 function ClerkEnvironmentToolyard({ target }: { readonly target: SettingsTarget }) {
-  const { getToken } = useAuth();
-  return <EnvironmentToolyard target={target} readAdminToken={getToken} />;
+  const { getToken, userId: clerkUserId } = useAuth();
+  const viewerUserId = usePhaseSidebarViewerUserId(target.environmentId);
+  const readAdminToken = async () =>
+    viewerUserId && viewerUserId === clerkUserId ? getToken() : null;
+  return <EnvironmentToolyard target={target} readAdminToken={readAdminToken} />;
 }
 function EnvironmentToolyard({
   target,
@@ -34,14 +37,21 @@ function EnvironmentToolyard({
   readonly target: SettingsTarget;
   readonly readAdminToken?: () => Promise<string | null>;
 }) {
-  const userId = usePhaseSidebarViewerUserId(target.environmentId);
-  return (
+  const session = useAtomValue(environmentSession.sessionStateValueAtom(target.environmentId));
+  const userScope = session?.authenticated
+    ? (session.userId ?? (target.serverConfig.auth.clerk ? null : "local-user"))
+    : null;
+  return userScope ? (
     <EnvironmentToolyardContent
-      key={`${target.environmentId}:${userId}`}
+      key={`${target.environmentId}:${userScope}`}
       target={target}
       readAdminToken={readAdminToken}
-      userScope={userId ?? "unverified"}
+      userScope={userScope}
     />
+  ) : (
+    <Text className="text-muted-foreground">
+      Authenticate with this server to configure Toolyard.
+    </Text>
   );
 }
 function EnvironmentToolyardContent({
