@@ -70,6 +70,9 @@ const ATTENTION_RANK: ReadonlyArray<PhaseSidebarAttentionKind> = [
  */
 function attentionKindOf(row: PhaseSidebarRow): PhaseSidebarAttentionKind | null {
   const kind = resolvePhaseSidebarAttentionKind(row.thread);
+  // T3-CUSTOM(expbkt3): a plan held by a row that is still working is not a
+  // decision yet, so it must not hoist a parent into Plan Ready.
+  if (kind === "plan" && isBusy(row)) return null;
   if (kind !== null) return kind;
   if (row.phaseId === "needs_input") return "input";
   // T3-CUSTOM(expbkt3): same fallback for an async question and for a plan, so

@@ -27,6 +27,7 @@ import {
   buildPhaseSidebarRepositoryOptions,
   derivePhaseSidebarRepositoryKey,
   isThreadAssignedToUser,
+  phaseSidebarIsAgentLive,
   phaseSidebarThreadParticipantIds,
   // T3-CUSTOM(expbkt3): owner avatar on rows someone else started.
   phaseSidebarRowOwnerAvatarUserId,
@@ -130,39 +131,12 @@ describe("phaseSidebarRowActionsClassName", () => {
   });
 });
 
-// T3-CUSTOM(expbkt3): BEGIN — the violet Plan Ready row treatment.
+// T3-CUSTOM(expbkt3): BEGIN — a waiting plan uses the default row surface.
 describe("phase sidebar plan-ready rows", () => {
-  it("mirrors the Needs Input pulse in violet", () => {
-    const planReady = phaseSidebarRowClassName(false, false, false, true);
-
-    expect(planReady).toContain("animate-[pulse_1.25s_ease-in-out_infinite]");
-    expect(planReady).toContain("bg-violet-500/20");
-    expect(planReady).toContain("ring-violet-500/60");
-    expect(planReady).toContain("shadow-[inset_3px_0_0_0_var(--color-violet-500)");
-    expect(planReady).toContain("motion-reduce:animate-none");
-  });
-
-  it("stays visually distinct from the red Needs Input row", () => {
-    const planReady = phaseSidebarRowClassName(false, false, false, true);
-    const needsInput = phaseSidebarRowClassName(false, false, true, false);
-
-    expect(planReady).not.toContain("bg-red-500/20");
-    expect(needsInput).not.toContain("bg-violet-500/20");
-    expect(planReady).not.toBe(needsInput);
-  });
-
-  it("lets a question win the row when a plan is also waiting", () => {
-    // Both flags can be true mid-transition; the row must not carry two pulses.
-    const both = phaseSidebarRowClassName(false, false, true, true);
-
-    expect(both).toContain("bg-red-500/20");
-    expect(both).not.toContain("bg-violet-500/20");
-  });
-
   it("leaves an ordinary row unpulsed", () => {
-    expect(phaseSidebarRowClassName(false, false, false, false)).not.toContain(
-      "animate-[pulse_1.25s_ease-in-out_infinite]",
-    );
+    const row = phaseSidebarRowClassName(false, false, false);
+    expect(row).not.toContain("animate-[pulse_1.25s_ease-in-out_infinite]");
+    expect(row).not.toContain("bg-violet-500/20");
   });
 });
 // T3-CUSTOM(expbkt3): END
@@ -208,14 +182,23 @@ describe("phase sidebar work badge", () => {
     ).toEqual({ label: "Monitoring", monitoring: true });
   });
 
-  it("lets actionable Plan Ready suppress lingering background status", () => {
+  // T3-CUSTOM(expbkt3): live subagents or a monitor keep their badge, even
+  // when the row also holds a plan.
+  it("keeps background status visible on a row that holds a plan", () => {
     expect(
       resolvePhaseSidebarWorkBadge({
         phaseId: "plan_ready",
         backgroundLiveness: "working",
         executionPresentation: { active: false, label: null },
       }),
-    ).toBeNull();
+    ).toEqual({ label: "Working", monitoring: false });
+    expect(
+      resolvePhaseSidebarWorkBadge({
+        phaseId: "plan_ready",
+        backgroundLiveness: "monitoring",
+        executionPresentation: { active: false, label: null },
+      }),
+    ).toEqual({ label: "Monitoring", monitoring: true });
   });
 
   it("preserves transitional labels without calling them monitoring", () => {
@@ -739,7 +722,7 @@ describe("phase sidebar lifecycle", () => {
     ).toBe("planning");
   });
 
-  it("lets failures and actionable plans outrank lingering background liveness", () => {
+  it("lets failures outrank lingering background liveness", () => {
     expect(
       resolvePhaseSidebarPhase(
         makeThread({
@@ -748,6 +731,11 @@ describe("phase sidebar lifecycle", () => {
         }),
       ),
     ).toBe("ready");
+  });
+
+  // T3-CUSTOM(expbkt3): a session with live subagents or a monitor is not
+  // stopped, so a held plan must not file it under Plan Ready.
+  it("keeps a plan-holding thread in agent work while background work runs", () => {
     expect(
       resolvePhaseSidebarPhase(
         makeThread({
@@ -756,7 +744,24 @@ describe("phase sidebar lifecycle", () => {
           backgroundLiveness: "working",
         }),
       ),
+    ).toBe("planning");
+    expect(
+      resolvePhaseSidebarPhase(
+        makeThread({ hasActionableProposedPlan: true, backgroundLiveness: "monitoring" }),
+      ),
+    ).toBe("implementing");
+    expect(
+      resolvePhaseSidebarPhase(
+        makeThread({ hasActionableProposedPlan: true, backgroundLiveness: null }),
+      ),
     ).toBe("plan_ready");
+  });
+
+  it("treats background work as a live agent", () => {
+    expect(phaseSidebarIsAgentLive(makeThread({ backgroundLiveness: "working" }))).toBe(true);
+    expect(phaseSidebarIsAgentLive(makeThread({ backgroundLiveness: "monitoring" }))).toBe(true);
+    expect(phaseSidebarIsAgentLive(makeThread({ session: makeSession("running") }))).toBe(true);
+    expect(phaseSidebarIsAgentLive(makeThread())).toBe(false);
   });
 
   it("promotes durable and live pending questions to the first lifecycle group", () => {
@@ -948,20 +953,16 @@ describe("phase sidebar lifecycle", () => {
     ).toBe("approval");
   });
 
-  it("ranks the row highlight red over amber over violet", () => {
-    const ask = phaseSidebarRowClassName(false, false, false, false, true);
+  it("ranks the row highlight red over amber", () => {
+    const ask = phaseSidebarRowClassName(false, false, false, true);
     expect(ask).toContain("bg-amber-500/20");
-    // A question outranks a plan: only one pulse ever runs on a row.
-    const askAndPlan = phaseSidebarRowClassName(false, false, false, true, true);
-    expect(askAndPlan).toContain("bg-amber-500/20");
-    expect(askAndPlan).not.toContain("bg-violet-500/20");
-    // A parked session outranks both.
-    const inputAndAsk = phaseSidebarRowClassName(false, false, true, false, true);
+    // A parked session outranks an async question.
+    const inputAndAsk = phaseSidebarRowClassName(false, false, true, true);
     expect(inputAndAsk).toContain("bg-red-500/20");
     expect(inputAndAsk).not.toContain("bg-amber-500/20");
   });
 
-  it("keeps the work badge on an ask row, unlike plan ready", () => {
+  it("keeps the work badge on an ask row", () => {
     // The agent is still running, so the row has to keep saying so.
     expect(
       resolvePhaseSidebarWorkBadge({
