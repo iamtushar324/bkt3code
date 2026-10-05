@@ -43,6 +43,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
@@ -220,6 +221,7 @@ export const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const nativeProjection = yield* ProjectionStoreV2;
+  const projectStore = yield* ProjectStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const decodeNativeThread = Schema.decodeUnknownEffect(
     Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -976,34 +978,38 @@ export const make = Effect.gen(function* () {
       } satisfies SessionArchiveScanResult;
     }).pipe(Effect.mapError((cause) => fail("scan", cause)));
 
+  // Runs on every archive, so it reads only the named sessions and their
+  // projects, never the full active and archived shell snapshots.
   const exportHistory = (threadIds: ReadonlyArray<ThreadId>) =>
     Effect.gen(function* () {
-      const context = yield* readContext;
-      const byId = new Map(context.archivedThreads.map((thread) => [thread.id, thread] as const));
-
       const results = yield* Effect.forEach(
         threadIds,
         (threadId) =>
           Effect.gen(function* () {
-            const thread = byId.get(threadId);
-            if (thread === undefined) {
+            const thread = Option.getOrUndefined(yield* snapshots.getThreadShellById(threadId));
+            if (thread === undefined || thread.archivedAt === null) {
               return {
                 _tag: "failure" as const,
                 threadId,
                 message: "No archived session with this id.",
               };
             }
-            return yield* exportThread(shellToExportSource(thread), null, context).pipe(
-              Effect.map((exported) => ({ _tag: "success" as const, exported })),
-              Effect.catchCause((cause) =>
-                Effect.succeed({
-                  _tag: "failure" as const,
-                  threadId,
-                  message: describeCause(cause),
-                }),
-              ),
-            );
-          }),
+            const projects = yield* projectStore.listShells({ projectIds: [thread.projectId] });
+            const context: ArchiveExportContext = {
+              projectNames: new Map(projects.map((project) => [project.id, project.title])),
+              projectRoots: new Map(projects.map((project) => [project.id, project.workspaceRoot])),
+            };
+            const exported = yield* exportThread(shellToExportSource(thread), null, context);
+            return { _tag: "success" as const, exported };
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.succeed({
+                _tag: "failure" as const,
+                threadId,
+                message: describeCause(cause),
+              }),
+            ),
+          ),
         { concurrency: 2 },
       );
 
