@@ -5,6 +5,7 @@ import {
   UserId,
   type PersonalMcpIntegration,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -160,8 +161,10 @@ export const toolyardIntegrationLayer = Layer.effect(
     const users = yield* EnvironmentUserRepository;
     const environmentId = yield* environment.getEnvironmentId;
     const secretName = `toolyard-federation-${environmentId}`;
+    const platform = yield* HostProcessPlatform;
     const core = new ToolyardConnectionCore({
       environmentId,
+      platform,
       read: () =>
         Effect.runPromise(secrets.get(secretName)).then((value) =>
           Option.isSome(value) ? new TextDecoder().decode(value.value) : null,

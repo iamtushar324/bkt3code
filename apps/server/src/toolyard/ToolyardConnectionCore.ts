@@ -1,6 +1,7 @@
 /** T3-CUSTOM(expbkt3): Environment/instance/user-isolated, server-owned federation. */
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 
 const REQUIRED_INSTANCE_CAPABILITIES = [
@@ -556,7 +557,7 @@ export class ToolyardConnectionCore {
         request_id: requestId,
         public_key: publicDer.subarray(-32).toString("base64"),
         host_name: this.hostName(),
-        platform: this.options.platform ?? NodeOS.platform(),
+        platform: this.options.platform ?? HostProcessPlatform.defaultValue(),
       }),
     ).toString("base64url");
     const input = `${header}.${payload}`;
