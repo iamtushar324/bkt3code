@@ -63,7 +63,12 @@ const access = Layer.mock(OrchestrationAccessControl)({
   canAccessThread: () => Effect.succeed(true),
   canAccessProject: () => Effect.succeed(true),
 });
-const integration = Layer.mock(ToolyardIntegration)({ instanceBinding: Effect.succeed(binding) });
+const integration = Layer.mock(ToolyardIntegration)({
+  instanceBinding: Effect.succeed(binding),
+  callbackBinding: () => Effect.succeed(binding),
+  assertConnectionOwner: () => Effect.void,
+  isLocalOwner: () => Effect.succeed(false),
+});
 const users = Layer.mock(EnvironmentUserRepository)({
   get: () =>
     Effect.succeed(

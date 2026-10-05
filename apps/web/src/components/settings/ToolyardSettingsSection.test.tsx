@@ -8,6 +8,10 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { createToolyardSettingsContinuation } from "@t3tools/client-runtime/toolyard-trust-setup";
 const mocks = vi.hoisted(() => ({
   status: {
+    mode: "team" as "team" | "api-key",
+    apiKeyAllowed: true,
+    teamAvailable: true,
+    callbackTransport: "push" as "push" | "pull",
     revision: 0,
     revocationPending: 0,
     enabled: false,
@@ -116,7 +120,17 @@ beforeEach(() => {
     setInterval,
     clearInterval,
   });
-  mocks.status = { ...mocks.status, revision: 0, enabled: false, baseUrl: null, removed: false };
+  mocks.status = {
+    ...mocks.status,
+    mode: "team",
+    teamAvailable: true,
+    administrator: true,
+    revision: 0,
+    enabled: false,
+    baseUrl: null,
+    removed: false,
+    connection: "not_connected",
+  };
   mocks.userId = "user_admin";
   mocks.token.mockResolvedValue(null);
   mocks.open.mockResolvedValue(undefined);
@@ -218,3 +232,178 @@ it("does not attempt an asynchronous popup when a browser lacks fresh Clerk iden
     "signed-in browser administrator",
   );
 });
+
+it("submits a local API key once without Clerk or browser trust and clears the secret after success", async () => {
+  mocks.configure.mockImplementation(async () => {
+    mocks.status = { ...mocks.status, revision: 1, mode: "api-key" };
+    return AsyncResult.success(mocks.status);
+  });
+  await render();
+  await act(() => button("API key connection").props.onClick());
+  await act(() => {
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard base URL" })
+      .props.onChange({ target: { value: "https://toolyard.test" } });
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard API key" })
+      .props.onChange({ target: { value: "ag_test.local-secret" } });
+  });
+  expect(JSON.stringify(readToolyardSettingsDraft(key))).not.toContain("local-secret");
+  await act(() => button("Save and connect").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    mode: "api-key",
+    apiKey: "ag_test.local-secret",
+    enabled: true,
+  });
+  expect(mocks.token).not.toHaveBeenCalled();
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(renderer.root.findByProps({ "aria-label": "Toolyard API key" }).props.value).toBe("");
+  expect(readToolyardSettingsDraft(key)).toBeNull();
+});
+it.each(["invalid_api_key", "invalid_assertion"])(
+  "retains public drafts and a retryable key after %s, then Discard clears both",
+  async (code) => {
+    mocks.configure.mockResolvedValue(failure(code));
+    await render();
+    await act(() => button("API key connection").props.onClick());
+    await act(() =>
+      renderer.root
+        .findByProps({ "aria-label": "Toolyard API key" })
+        .props.onChange({ target: { value: "ag_test.secret" } }),
+    );
+    await act(() => button("Save and connect").props.onClick());
+    expect(readToolyardSettingsDraft(key)?.mode).toBe("api-key");
+    expect(renderer.root.findByProps({ role: "alert" }).children.join("")).toContain(
+      "Toolyard refused this API key",
+    );
+    expect(renderer.root.findByProps({ "aria-label": "Toolyard API key" }).props.value).toBe(
+      "ag_test.secret",
+    );
+    expect(mocks.open).not.toHaveBeenCalled();
+    await act(() => button("Discard").props.onClick());
+    expect(readToolyardSettingsDraft(key)).toBeNull();
+    expect(renderer.root.findAllByProps({ "aria-label": "Toolyard API key" })).toHaveLength(0);
+  },
+);
+it("restores the public API mode after reload without recovering the secret", async () => {
+  await render();
+  await act(() => button("API key connection").props.onClick());
+  await act(() =>
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard API key" })
+      .props.onChange({ target: { value: "ag_test.secret" } }),
+  );
+  await act(() => renderer.unmount());
+  await render();
+  expect(renderer.root.findByProps({ "aria-label": "Toolyard API key" }).props.value).toBe("");
+  expect(readToolyardSettingsDraft(key)?.mode).toBe("api-key");
+});
+it("clears a secret when the authenticated user changes", async () => {
+  await render();
+  await act(() => button("API key connection").props.onClick());
+  await act(() =>
+    renderer.root
+      .findByProps({ "aria-label": "Toolyard API key" })
+      .props.onChange({ target: { value: "ag_test.secret" } }),
+  );
+  mocks.userId = "user_other";
+  await act(() => renderer.update(<ToolyardSettingsSection />));
+  await act(() => button("API key connection").props.onClick());
+  expect(renderer.root.findByProps({ "aria-label": "Toolyard API key" }).props.value).toBe("");
+});
+it("disconnects only the current account through the user action", async () => {
+  mocks.status = {
+    ...mocks.status,
+    administrator: false,
+    mode: "api-key",
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    connection: "connected",
+  };
+  mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
+  await render();
+  await act(() => button("Disconnect my account").props.onClick());
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    disconnect: true,
+    mode: "api-key",
+    remove: false,
+  });
+  expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
+  expect(button("Remove instance")).toBeUndefined();
+});
+
+it("retains a public edit made while a successful Save request is pending", async () => {
+  let complete!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  mocks.configure.mockImplementation(async () => {
+    await pending;
+    mocks.status = {
+      ...mocks.status,
+      revision: 1,
+      enabled: true,
+      baseUrl: "https://toolyard.test",
+    };
+    return AsyncResult.success(mocks.status);
+  });
+  await render();
+  await edit();
+  await act(() => button("Save and verify trust").props.onClick());
+  expect(mocks.configure).toHaveBeenCalledOnce();
+  await act(() =>
+    renderer.root.findByProps({ "aria-label": "Toolyard base URL" }).props.onChange({
+      target: { value: "https://later-draft.test" },
+    }),
+  );
+  await act(async () => {
+    complete();
+    await pending;
+  });
+  expect(readToolyardSettingsDraft(key)?.baseUrl).toBe("https://later-draft.test");
+  expect(renderer.root.findByProps({ "aria-label": "Toolyard base URL" }).props.value).toBe(
+    "https://later-draft.test",
+  );
+});
+it("disables team access when the server has no verified team identity", async () => {
+  mocks.status = { ...mocks.status, mode: "api-key", teamAvailable: false };
+  await render();
+  expect(button("Team connection").props.disabled).toBe(true);
+  expect(button("API key connection").props.disabled).toBe(false);
+  expect(mocks.token).not.toHaveBeenCalled();
+});
+it.each([
+  ["api-key", "team", "Team connection", "Save and verify trust"],
+  ["team", "api-key", "API key connection", "Save and connect"],
+] as const)(
+  "keeps the %s disconnect action after the draft selects %s",
+  async (savedMode, nextMode, choice, saveLabel) => {
+    mocks.status = {
+      ...mocks.status,
+      mode: savedMode,
+      administrator: false,
+      enabled: true,
+      baseUrl: "https://toolyard.test",
+      connection: "connected",
+    };
+    mocks.configure.mockImplementation(async () => {
+      mocks.status = { ...mocks.status, connection: "revoked" };
+      return AsyncResult.success(mocks.status);
+    });
+    await render();
+    await act(() => button(choice).props.onClick());
+    expect(button(saveLabel).props.disabled).toBe(true);
+    expect(button("Disconnect my account").props.disabled).toBe(false);
+    expect(renderer.root.findByProps({ role: "alert" }).children.join("")).toContain(
+      "Disconnect my account",
+    );
+    await act(() => button("Disconnect my account").props.onClick());
+    expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+      disconnect: true,
+      remove: false,
+    });
+    expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
+    expect(readToolyardSettingsDraft(key)?.mode).toBe(nextMode);
+    expect(button("Remove instance")).toBeUndefined();
+  },
+);

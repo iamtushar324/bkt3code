@@ -31,6 +31,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): external MCP on/off switch.
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
+import { managedToolyardActor } from "../toolyard/ToolyardIntegration.ts"; // T3-CUSTOM(expbkt3): local Toolyard profiles retain the authenticated local boundary.
 import { configuredUpstreamServers } from "./McpUpstreamConfiguration.ts"; // T3-CUSTOM(expbkt3): read-only configuration inspection.
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts"; // T3-CUSTOM(expbkt3): personal MCP integrations + external tokens.
 
@@ -293,10 +294,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           { actorUserId, threadId: request.threadId },
         );
       }
-      const personalProfile =
-        actorUserId === null || options.loadPersonalProfile === undefined
+      // T3-CUSTOM(expbkt3): a Clerk-free local transport owns the same local-user profile as Settings.
+      const profileActor = managedToolyardActor(actorUserId);
+      let personalProfile =
+        profileActor === null || options.loadPersonalProfile === undefined
           ? undefined
-          : yield* options.loadPersonalProfile(actorUserId);
+          : yield* options.loadPersonalProfile(profileActor);
+      if (actorUserId === null && personalProfile)
+        personalProfile = {
+          ...personalProfile,
+          integrations: personalProfile.integrations.filter(
+            (integration) => integration.id === "toolyard",
+          ),
+        };
       // T3-CUSTOM(expbkt3): background agents observe sessions; the bridge owns guarded writes.
       // Browser/device access retains the normal provider policy. Personal upstream integrations
       // enforce their own policy independently of the native T3 coordination capabilities.
@@ -487,10 +497,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       Effect.gen(function* () {
         const actorUserId = request.actorUserId ?? null;
         const loadProfile = options.loadPersonalProfileForInspection ?? options.loadPersonalProfile;
-        const profile =
-          actorUserId === null || loadProfile === undefined
+        // T3-CUSTOM(expbkt3): inspect the authenticated local profile without changing orchestration identity.
+        const profileActor = managedToolyardActor(actorUserId);
+        let profile =
+          profileActor === null || loadProfile === undefined
             ? undefined
-            : yield* loadProfile(actorUserId);
+            : yield* loadProfile(profileActor);
+        if (actorUserId === null && profile)
+          profile = {
+            ...profile,
+            integrations: profile.integrations.filter(
+              (integration) => integration.id === "toolyard",
+            ),
+          };
         return configuredUpstreamServers({
           endpoint,
           actorUserId,

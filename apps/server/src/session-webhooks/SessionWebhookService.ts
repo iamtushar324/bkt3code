@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): durable, owner-bound session webhook lifecycle and receipts. */
-import { CommandId, EnvironmentUserId, MessageId, ThreadId, UserId } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, UserId } from "@t3tools/contracts";
 import {
   SessionWebhookError,
   SessionWebhookDeliveryHistory,
@@ -16,9 +16,9 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
-import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
 import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandReceiptStoreV2,
@@ -94,18 +94,21 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const secrets = yield* ServerSecretStore;
   const access = yield* OrchestrationAccessControl;
-  const users = yield* EnvironmentUserRepository;
   const projections = yield* ProjectionStoreV2;
+  const projects = yield* ProjectStoreV2;
   const orchestrator = yield* OrchestratorV2;
   const receipts = yield* CommandReceiptStoreV2;
   const integration = yield* ToolyardIntegration;
   const lifecycleLock = yield* Semaphore.make(1);
   const dispatchLock = yield* Semaphore.make(1);
+  const pullLock = yield* Semaphore.make(1);
+  let pullCursor: string | null = null;
+  let retirementCursor: string | null = null;
   let queueCursor: QueueCursor | null = null;
   const requireOwner = Effect.fn("sessionWebhook.requireOwner")(function* (userId: UserId) {
-    const user = yield* users.get(EnvironmentUserId.make(userId));
-    if (Option.isNone(user) || user.value.status !== "active")
-      return yield* fail(403, "owner-disabled");
+    yield* integration
+      .assertConnectionOwner(userId)
+      .pipe(Effect.mapError(() => fail(403, "owner-disabled")));
   });
   const requireDestination = Effect.fn("sessionWebhook.requireDestination")(function* (
     userId: UserId,
@@ -113,10 +116,14 @@ export const make = Effect.gen(function* () {
   ) {
     yield* requireOwner(userId);
     const shell = yield* projections.getThreadShell(threadId);
+    const localOwner = yield* integration.isLocalOwner(userId);
+    const project = shell && localOwner ? yield* projects.get(shell.projectId) : Option.none();
     if (
       !shell ||
-      !(yield* access.canAccessThread(userId, threadId)) ||
-      !(yield* access.canAccessProject(userId, shell.projectId))
+      (localOwner
+        ? shell.ownerUserId != null || Option.isNone(project) || project.value.ownerUserId != null
+        : !(yield* access.canAccessThread(userId, threadId)) ||
+          !(yield* access.canAccessProject(userId, shell.projectId)))
     )
       return yield* fail(403, "destination-unauthorized-or-deleted");
     if (
@@ -146,14 +153,14 @@ export const make = Effect.gen(function* () {
     return yield* Effect.gen(function* () {
       if (row.callback_ref === null) return { deliveryHistory: [], deliveryHistoryError: null };
       yield* requireOwner(UserId.make(row.owner_user_id));
-      const binding = yield* integration.instanceBinding;
+      const binding = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
       if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding)
         return { deliveryHistory: [], deliveryHistoryError: "integration-disabled-or-replaced" };
       const inspection = yield* integration.inspectCallback(
         UserId.make(row.owner_user_id),
         row.callback_ref,
       );
-      const current = yield* integration.instanceBinding;
+      const current = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
       if (!current || !current.enabled || receiverTrustBinding(current) !== row.trust_binding)
         return { deliveryHistory: [], deliveryHistoryError: "integration-disabled-or-replaced" };
       const deliveryHistory = yield* decodeDeliveryHistory(
@@ -244,7 +251,7 @@ export const make = Effect.gen(function* () {
   });
   const create = Effect.fn("sessionWebhook.create")(function* (userId: UserId, threadId: ThreadId) {
     yield* requireDestination(userId, threadId);
-    const binding = yield* integration.instanceBinding;
+    const binding = yield* integration.callbackBinding(userId);
     if (!binding || !binding.enabled) return yield* fail(409, "toolyard-integration-disabled");
     const existing =
       (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE owner_user_id=${userId} AND thread_id=${threadId} AND instance_id=${binding.instanceId} AND trust_binding=${receiverTrustBinding(binding)} AND status IN ('active','registering') ORDER BY created_at LIMIT 1`)[0];
@@ -255,13 +262,17 @@ export const make = Effect.gen(function* () {
     if (!existing)
       yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,status,created_at,updated_at) VALUES(${id},${userId},${threadId},${binding.instanceId},${receiverTrustBinding(binding)},'registering',${time},${time})`;
     const registration = yield* integration.registerCallback(userId, {
-      destination: new URL(`/api/session-webhooks/${id}`, binding.callbackOrigin).toString(),
+      ...(binding.transport === "pull"
+        ? { transport: "pull" as const, environment_id: binding.environmentId }
+        : {
+            destination: new URL(`/api/session-webhooks/${id}`, binding.callbackOrigin).toString(),
+          }),
       secret: secretText(secret),
       client_receiver_id: id,
     });
     // Access and instance binding can change during the external registration call.
     yield* requireDestination(userId, threadId);
-    const current = yield* integration.instanceBinding;
+    const current = yield* integration.callbackBinding(userId);
     if (
       !current ||
       !current.enabled ||
@@ -274,8 +285,8 @@ export const make = Effect.gen(function* () {
   const retireReplacedReceiver = Effect.fn("sessionWebhook.retireReplacedReceiver")(function* (
     row: WebhookRow,
   ) {
-    const binding = yield* integration.instanceBinding;
-    if (!binding || receiverTrustBinding(binding) === row.trust_binding) return;
+    const binding = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
+    if (binding && receiverTrustBinding(binding) === row.trust_binding) return;
     // A durable replacement can never reconcile an operation against the retired receiver.
     yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -288,7 +299,7 @@ export const make = Effect.gen(function* () {
   });
   const synchronizeReceiver = Effect.fn("sessionWebhook.syncReceiver")(function* (row: WebhookRow) {
     if (!row.pending_action || !row.callback_ref) return;
-    const binding = yield* integration.instanceBinding;
+    const binding = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
     if (!binding) return;
     if (receiverTrustBinding(binding) !== row.trust_binding)
       return yield* retireReplacedReceiver(row);
@@ -367,7 +378,7 @@ export const make = Effect.gen(function* () {
     if (!isId(id)) return yield* fail(404, "webhook-not-found");
     const row = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
     if (!row || row.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
-    const binding = yield* integration.instanceBinding;
+    const binding = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
     if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding)
       return yield* fail(410, "integration-disabled-or-replaced");
     const secret = yield* secrets.get(keyName(id));
@@ -419,7 +430,9 @@ export const make = Effect.gen(function* () {
         }
         const current = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
         if (current?.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
-        const currentBinding = yield* integration.instanceBinding;
+        const currentBinding = yield* integration.callbackBinding(
+          UserId.make(current.owner_user_id),
+        );
         if (
           !currentBinding ||
           !currentBinding.enabled ||
@@ -439,13 +452,55 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
-  const drain = Effect.fn("sessionWebhook.drain")(function* () {
-    const binding = yield* integration.instanceBinding;
-    if (binding) {
-      const stale =
-        yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE status IN ('active','registering') AND trust_binding<>${receiverTrustBinding(binding)} LIMIT 20`;
-      for (const row of stale) yield* lifecycleLock.withPermits(1)(retireReplacedReceiver(row));
+  const pull = Effect.fn("sessionWebhook.pull")(function* () {
+    // A rotating bounded batch prevents a disconnected or busy destination from starving others.
+    const after = (cursor: string | null) => sql<WebhookRow>`SELECT * FROM session_webhooks
+      WHERE status='active' AND callback_ref IS NOT NULL
+        AND (${cursor} IS NULL OR id>${cursor}) ORDER BY id LIMIT 10`;
+    let rows = yield* after(pullCursor);
+    if (rows.length === 0 && pullCursor !== null) rows = yield* after(null);
+    for (const row of rows) {
+      pullCursor = row.id;
+      yield* Effect.gen(function* () {
+        const owner = UserId.make(row.owner_user_id);
+        yield* requireOwner(owner);
+        const binding = yield* integration.callbackBinding(owner);
+        if (
+          !binding ||
+          binding.transport !== "pull" ||
+          receiverTrustBinding(binding) !== row.trust_binding
+        )
+          return;
+        const result = yield* integration.pullCallback(owner, row.callback_ref!);
+        for (const event of result.events.slice(0, 10)) {
+          // The same admission transaction is used for push and pull. A lost acknowledgement
+          // retrieves the original content again and reuses the persisted command ID.
+          if (event.event_id !== event.headers["webhook-id"])
+            return yield* fail(400, "invalid-callback-event-id");
+          yield* receive(row.id, event.body, {
+            id: event.headers["webhook-id"],
+            timestamp: event.headers["webhook-timestamp"],
+            signature: event.headers["webhook-signature"],
+          });
+          yield* integration.ackCallback(owner, row.callback_ref!, event.event_id);
+        }
+      }).pipe(
+        Effect.timeoutOption("2 seconds"),
+        // Outages, invalid signatures and conflicting content remain unacknowledged remotely.
+        Effect.catch(() => Effect.void),
+      );
     }
+  });
+  const drain = Effect.fn("sessionWebhook.drain")(function* () {
+    const after = (cursor: string | null) => sql<WebhookRow>`SELECT * FROM session_webhooks
+      WHERE status IN ('active','registering') AND (${cursor} IS NULL OR id>${cursor}) ORDER BY id LIMIT 20`;
+    let active = yield* after(retirementCursor);
+    if (active.length === 0 && retirementCursor !== null) active = yield* after(null);
+    retirementCursor = active.at(-1)?.id ?? null;
+    for (const row of active)
+      yield* lifecycleLock
+        .withPermits(1)(retireReplacedReceiver(row))
+        .pipe(Effect.catch(() => Effect.void));
     const updates =
       yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE pending_action IS NOT NULL AND sync_attempts<20 AND (next_sync_at IS NULL OR next_sync_at<=${now()}) LIMIT 20`;
     for (const row of updates)
@@ -511,7 +566,7 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (Option.isNone(destination)) continue;
-      const binding = yield* integration.instanceBinding;
+      const binding = yield* integration.callbackBinding(UserId.make(row.owner_user_id));
       if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding) {
         yield* terminal("integration-disabled-or-replaced");
         continue;
@@ -582,6 +637,8 @@ export const make = Effect.gen(function* () {
         .withPermits(1)(update(userId, id, action, expectedRevision, allowedThreadId))
         .pipe(Effect.flatMap((updated) => inspect(userId, updated.id, allowedThreadId))),
     receive,
+    pull: () =>
+      pullLock.withPermits(1)(pull()).pipe(Effect.timeoutOption("5 seconds"), Effect.asVoid),
     drain: () => dispatchLock.withPermits(1)(drain()),
   };
 });
@@ -595,6 +652,13 @@ export const layer = Layer.effect(SessionWebhookService, make).pipe(
 export const workerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const service = yield* SessionWebhookService;
+    yield* service.pull().pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Session webhook pull will retry after a connection error."),
+      ),
+      Effect.repeat(Schedule.spaced("5 seconds")),
+      Effect.forkScoped,
+    );
     yield* service.drain().pipe(
       Effect.catch(() =>
         Effect.logWarning("Session webhook dispatch will retry after a storage or runtime error."),

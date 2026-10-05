@@ -70,6 +70,7 @@ import {
   activeToolyardStatus,
   activeToolyardConfigure,
   activeToolyardHandoff,
+  managedToolyardActor,
 } from "./toolyard/ToolyardIntegration.ts";
 import { SessionWebhookService } from "./session-webhooks/SessionWebhookService.ts";
 
@@ -880,40 +881,40 @@ export const makeForkWsHandlers = ({
     [WS_METHODS.toolyardIntegrationStatus]: () =>
       observeRpcEffect(
         WS_METHODS.toolyardIntegrationStatus,
-        actorUserId === null
+        managedToolyardActor(actorUserId) === null
           ? Effect.fail(
               new PersonalMcpSettingsError({
                 operation: "toolyard",
                 message: "verified_identity_required",
               }),
             )
-          : activeToolyardStatus(actorUserId),
+          : activeToolyardStatus(managedToolyardActor(actorUserId)!),
         { "rpc.aggregate": "toolyard" },
       ),
     [WS_METHODS.toolyardIntegrationConfigure]: (input) =>
       observeRpcEffect(
         WS_METHODS.toolyardIntegrationConfigure,
-        actorUserId === null
+        managedToolyardActor(actorUserId) === null
           ? Effect.fail(
               new PersonalMcpSettingsError({
                 operation: "toolyard",
                 message: "verified_identity_required",
               }),
             )
-          : activeToolyardConfigure(actorUserId, input),
+          : activeToolyardConfigure(managedToolyardActor(actorUserId)!, input),
         { "rpc.aggregate": "toolyard" },
       ),
     [WS_METHODS.toolyardDashboardHandoff]: () =>
       observeRpcEffect(
         WS_METHODS.toolyardDashboardHandoff,
-        actorUserId === null
+        managedToolyardActor(actorUserId) === null
           ? Effect.fail(
               new PersonalMcpSettingsError({
                 operation: "toolyard",
                 message: "verified_identity_required",
               }),
             )
-          : activeToolyardHandoff(actorUserId),
+          : activeToolyardHandoff(managedToolyardActor(actorUserId)!),
         { "rpc.aggregate": "toolyard" },
       ),
     [WS_METHODS.personalMcpConnectToolyard]: (input) =>

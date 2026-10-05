@@ -111,13 +111,22 @@ another user's key.
 Bifrost integrations normally use `x-bf-vk`. Bearer, `x-api-key`, and validated
 custom-header authentication are also supported.
 
-toolyard is built in: every signed-in user has a `toolyard` integration that T3
-connects on their behalf through the Beknown Google sign-in, and agents see its
-tools as `mcp__toolyard__*`. There is no key to paste. **Settings → Experiments →
-toolyard** shows whether it is connected and as whom, and offers Reconnect when
-your toolyard access changed (for example after your toolyard account or agent
-was re-enabled). Bifrost stays available alongside it under **My managed MCP
-integrations**.
+Toolyard is built in. On a team server, T3 connects each eligible user through
+their team identity. Agents see the tools as `mcp__toolyard__*`.
+
+For a local server without team access, open **Settings → Experiments → Toolyard**
+on that server. Select **API key connection**. Enter the hosted Toolyard URL and
+your Toolyard agent API key, then select **Save and connect**. T3 keeps a separate
+credential on the server. The key field is not saved in browser drafts.
+Each user has a separate connection. On a shared server, an administrator sets
+the instance URL before users connect their own keys.
+
+Local decision events arrive through outbound requests. Your Mac does not need
+a public address, and the browser can be closed. The server must remain online.
+**Open Toolyard** opens your Inbox in the default browser through a short-lived,
+single-use handoff. **Disconnect my account** removes your API key connection.
+Revoked access does not return automatically. Bifrost remains available under
+**My managed MCP integrations**.
 
 ## Tools
 

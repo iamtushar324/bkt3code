@@ -3,6 +3,7 @@ export interface ToolyardSettingsDraft {
   baseUrl: string;
   enabled: boolean;
   revision: number;
+  mode?: "team" | "api-key";
 }
 const prefix = "t3-toolyard-settings-draft:";
 const storage = () => {
@@ -23,7 +24,12 @@ export function readToolyardSettingsDraft(key: string): ToolyardSettingsDraft | 
       typeof value.enabled === "boolean" &&
       typeof value.revision === "number" &&
       Number.isSafeInteger(value.revision)
-      ? (value as ToolyardSettingsDraft)
+      ? {
+          baseUrl: value.baseUrl,
+          enabled: value.enabled,
+          revision: value.revision,
+          ...(value.mode === "team" || value.mode === "api-key" ? { mode: value.mode } : {}),
+        }
       : null;
   } catch {
     return null;
@@ -32,7 +38,16 @@ export function readToolyardSettingsDraft(key: string): ToolyardSettingsDraft | 
 export function writeToolyardSettingsDraft(key: string, draft: ToolyardSettingsDraft | null) {
   try {
     if (draft === null) storage()?.removeItem(key);
-    else storage()?.setItem(key, JSON.stringify(draft));
+    else
+      storage()?.setItem(
+        key,
+        JSON.stringify({
+          baseUrl: draft.baseUrl,
+          enabled: draft.enabled,
+          revision: draft.revision,
+          ...(draft.mode === "team" || draft.mode === "api-key" ? { mode: draft.mode } : {}),
+        }),
+      );
   } catch {
     /* The current component retains drafts when storage is unavailable. */
   }

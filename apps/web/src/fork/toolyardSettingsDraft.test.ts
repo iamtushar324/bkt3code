@@ -46,3 +46,31 @@ it("retains the in-memory path when browser storage is unavailable", () => {
   expect(readToolyardSettingsDraft("draft")).toBeNull();
   expect(() => clearToolyardSettingsDrafts()).not.toThrow();
 });
+
+it("stores and recovers only public fields even when a caller includes credentials", () => {
+  const values = new Map<string, string>();
+  const store = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  };
+  vi.stubGlobal("window", { sessionStorage: store });
+  const draft = {
+    baseUrl: "https://toolyard.test",
+    enabled: true,
+    revision: 1,
+    mode: "api-key" as const,
+    apiKey: "never-store-this",
+    adminToken: "also-secret",
+  };
+  writeToolyardSettingsDraft("api", draft);
+  expect(store.getItem("api")).not.toContain("secret");
+  expect(store.getItem("api")).not.toContain("never-store-this");
+  store.setItem("api", JSON.stringify(draft));
+  expect(readToolyardSettingsDraft("api")).toEqual({
+    baseUrl: draft.baseUrl,
+    enabled: true,
+    revision: 1,
+    mode: "api-key",
+  });
+});

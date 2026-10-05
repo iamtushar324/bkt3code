@@ -27,7 +27,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
 import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
-import type { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { OrchestratorV2, OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import {
@@ -54,13 +54,14 @@ function scenario<E>(
   test: (
     h: Effect.Success<ReturnType<typeof harness>>,
   ) => Effect.Effect<void, E, SqlClient.SqlClient>,
+  mode: "push" | "pull" = "push",
 ) {
   return Effect.gen(function* () {
     yield* migration;
-    yield* test(yield* harness());
+    yield* test(yield* harness(mode));
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 }
-const harness = () =>
+const harness = (mode: "push" | "pull" = "push") =>
   Effect.gen(function* () {
     const historyEntered = yield* Deferred.make<void>();
     const twoHistoriesEntered = yield* Deferred.make<void>();
@@ -77,8 +78,22 @@ const harness = () =>
       archived: false,
       deleted: false,
       integrationEnabled: true,
+      pullMode: mode === "pull",
+      localOwner: false,
+      ownedDestination: true,
+      projectOwner: null as UserId | null,
+      pullAckOutage: false,
+      pullReads: 0,
+      pullAcks: [] as string[],
+      pullQueue: [] as Array<{
+        event_id: string;
+        body: string;
+        headers: { "webhook-id": string; "webhook-timestamp": string; "webhook-signature": string };
+      }>,
+      registeredInputs: [] as Array<unknown>,
       instanceId: "instance_1",
       trustGeneration: 0,
+      connectionGeneration: 1,
       lostReceipt: false,
       rotationOutage: false,
       historyOutage: false,
@@ -108,7 +123,7 @@ const harness = () =>
       ({
         id,
         projectId: ProjectId.make("project_1"),
-        ownerUserId: owner,
+        ownerUserId: state.ownedDestination ? owner : null,
         memberUserIds: [],
         archivedAt: state.archived ? DateTime.nowUnsafe() : null,
         deletedAt: state.deleted ? DateTime.nowUnsafe() : null,
@@ -177,13 +192,49 @@ const harness = () =>
               environmentId: "env_1",
               origin: "https://toolyard.example",
               callbackOrigin: "https://t3.example",
-              enabled: true,
+              enabled: true as const,
             }
           : null,
       ),
-      registerCallback: () =>
+      callbackBinding: () =>
+        Effect.sync(() =>
+          state.integrationEnabled
+            ? {
+                instanceId: state.instanceId,
+                trustGeneration: state.trustGeneration,
+                environmentId: "env_1",
+                origin: "https://toolyard.example",
+                callbackOrigin: "https://t3.example",
+                enabled: true as const,
+                transport: state.pullMode ? ("pull" as const) : ("push" as const),
+                agentId: "agent_local",
+                connectionGeneration: state.connectionGeneration,
+              }
+            : null,
+        ),
+      assertConnectionOwner: () =>
+        state.userEnabled
+          ? Effect.void
+          : Effect.fail(
+              new PersonalMcpSettingsError({ operation: "test", message: "owner-disabled" }),
+            ),
+      isLocalOwner: () => Effect.succeed(state.localOwner),
+      pullCallback: () =>
+        Effect.sync(() => {
+          state.pullReads++;
+          return { events: state.pullQueue };
+        }),
+      ackCallback: (_userId, _ref, id) =>
+        Effect.gen(function* () {
+          state.pullAcks.push(id);
+          if (state.pullAckOutage)
+            return yield* new PersonalMcpSettingsError({ operation: "test", message: "lost-ack" });
+          state.pullQueue = state.pullQueue.filter((event) => event.event_id !== id);
+        }),
+      registerCallback: (_userId, input) =>
         Effect.sync(() => {
           state.registrations++;
+          state.registeredInputs.push(input);
           return { callback_ref: `cb_${state.registrations}`, revision: 1 };
         }),
       inspectCallback: () =>
@@ -254,7 +305,10 @@ const harness = () =>
           projections,
           eventSink,
           {
-            get: () => Effect.succeed(Option.some({ id: ProjectId.make("project_1") })),
+            get: () =>
+              Effect.succeed(
+                Option.some({ id: ProjectId.make("project_1"), ownerUserId: state.projectOwner }),
+              ),
           } as unknown as ProjectStoreV2["Service"],
         );
         if (command.type !== "message.dispatch") return yield* Effect.die("unexpected command");
@@ -286,6 +340,12 @@ const harness = () =>
       Layer.succeed(EnvironmentUserRepository, userService),
       Layer.succeed(OrchestrationAccessControl, accessService),
       Layer.succeed(ProjectionStoreV2, projections),
+      Layer.succeed(ProjectStoreV2, {
+        get: () =>
+          Effect.succeed(
+            Option.some({ id: ProjectId.make("project_1"), ownerUserId: state.projectOwner }),
+          ),
+      } as unknown as ProjectStoreV2["Service"]),
       Layer.succeed(ToolyardIntegration, integration),
       Layer.succeed(CommandReceiptStoreV2, {
         getByCommandId: (id: typeof CommandId.Type) =>
@@ -320,12 +380,29 @@ const harness = () =>
         signature: `v1,${NodeCrypto.createHmac("sha256", secret).update(`${payload.event_id}.${timestamp}.${body}`).digest("base64")}`,
       });
     };
+    const enqueue = (payload = event()) => {
+      const body = encodeJson(payload);
+      const timestamp = String(Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000));
+      const secret = secrets.get(`session-webhook-${webhook.id}`)!;
+      const envelope = {
+        event_id: payload.event_id,
+        body,
+        headers: {
+          "webhook-id": payload.event_id,
+          "webhook-timestamp": timestamp,
+          "webhook-signature": `v1,${NodeCrypto.createHmac("sha256", secret).update(`${payload.event_id}.${timestamp}.${body}`).digest("base64")}`,
+        },
+      };
+      state.pullQueue.push(envelope);
+      return envelope;
+    };
     return {
       service,
       state,
       webhook,
       event,
       receive,
+      enqueue,
       historyEntered,
       twoHistoriesEntered,
       fourHistoriesEntered,
@@ -336,6 +413,193 @@ const harness = () =>
   });
 describe("durable session webhooks", () => {
   it.effect(
+    "registers pull without a public URL and persists signed events before acknowledgement",
+    () =>
+      scenario(
+        (h) =>
+          Effect.gen(function* () {
+            assert.deepStrictEqual(h.state.registeredInputs[0], {
+              transport: "pull",
+              environment_id: "env_1",
+              secret: `whsec_${Buffer.alloc(32, 5).toString("base64")}`,
+              client_receiver_id: h.webhook.id,
+            });
+            h.enqueue();
+            yield* h.service.pull();
+            const sql = yield* SqlClient.SqlClient;
+            const stored = yield* sql`SELECT state FROM session_webhook_events`;
+            assert.strictEqual(stored.length, 1);
+            assert.strictEqual(stored[0]?.state, "queued");
+            assert.deepStrictEqual(h.state.pullAcks, ["evt_1"]);
+            assert.strictEqual(h.state.dispatches, 0);
+            yield* h.service.drain();
+            assert.strictEqual(h.state.dispatches, 1);
+          }),
+        "pull",
+      ),
+  );
+  it.effect("recovers lost pull acknowledgement across restart without another notification", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          h.enqueue();
+          h.state.pullAckOutage = true;
+          yield* h.service.pull();
+          yield* h.service.drain();
+          assert.strictEqual(h.state.dispatches, 1);
+          h.state.pullAckOutage = false;
+          const restarted = yield* h.restart();
+          yield* Effect.all([restarted.pull(), restarted.pull()], { concurrency: 2 });
+          yield* restarted.drain();
+          assert.strictEqual(h.state.dispatches, 1);
+          assert.strictEqual(h.state.pullQueue.length, 0);
+          assert.deepStrictEqual(h.state.pullAcks, ["evt_1", "evt_1"]);
+        }),
+      "pull",
+    ),
+  );
+  it.effect("does not acknowledge invalid signatures or reused IDs with changed content", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          const invalid = h.enqueue();
+          invalid.headers["webhook-signature"] = "v1,AAAA";
+          yield* h.service.pull();
+          assert.deepStrictEqual(h.state.pullAcks, []);
+          h.state.pullQueue = [];
+          h.enqueue();
+          yield* h.service.pull();
+          h.enqueue({ ...h.event(), data: { ...h.event().data, overall_note: "changed" } });
+          yield* h.service.pull();
+          assert.deepStrictEqual(h.state.pullAcks, ["evt_1"]);
+          yield* h.service.drain();
+          assert.strictEqual(h.state.dispatches, 1);
+        }),
+      "pull",
+    ),
+  );
+  it.effect(
+    "acks a durable queued pull event while busy and never resumes a paused destination",
+    () =>
+      scenario(
+        (h) =>
+          Effect.gen(function* () {
+            h.state.busy = true;
+            h.enqueue();
+            yield* h.service.pull();
+            yield* h.service.drain();
+            assert.deepStrictEqual(h.state.pullAcks, ["evt_1"]);
+            assert.strictEqual(h.state.dispatches, 0);
+            h.state.busy = false;
+            h.state.paused = true;
+            yield* h.service.drain();
+            h.state.paused = false;
+            yield* h.service.drain();
+            assert.strictEqual(h.state.dispatches, 0);
+            assert.strictEqual(
+              (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0]?.state,
+              "terminal",
+            );
+          }),
+        "pull",
+      ),
+  );
+  it.effect("stops pull on disabled owners and caps a receiver batch at ten events", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          for (let i = 0; i < 11; i++) h.enqueue(h.event(`evt_${i}`));
+          h.state.userEnabled = false;
+          yield* h.service.pull();
+          assert.strictEqual(h.state.pullReads, 0);
+          h.state.userEnabled = true;
+          yield* h.service.pull();
+          assert.strictEqual(h.state.pullAcks.length, 10);
+          yield* h.service.pull();
+          assert.strictEqual(h.state.pullAcks.length, 11);
+        }),
+      "pull",
+    ),
+  );
+
+  it.effect("rejects a mismatched envelope ID before durable admission or acknowledgement", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          const envelope = h.enqueue();
+          envelope.event_id = "evt_wrong";
+          yield* h.service.pull();
+          const sql = yield* SqlClient.SqlClient;
+          assert.strictEqual((yield* sql`SELECT * FROM session_webhook_events`).length, 0);
+          assert.deepStrictEqual(h.state.pullAcks, []);
+        }),
+      "pull",
+    ),
+  );
+  it.effect("stops an obsolete pull binding without automatic receiver revival", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          h.enqueue();
+          h.state.pullMode = false;
+          yield* h.service.pull();
+          assert.strictEqual(h.state.pullReads, 0);
+          yield* h.service.drain();
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "disabled");
+          h.state.pullMode = true;
+          yield* h.service.pull();
+          yield* h.service.drain();
+          assert.strictEqual(h.state.pullReads, 0);
+          assert.strictEqual(h.state.dispatches, 0);
+        }),
+      "pull",
+    ),
+  );
+  it.effect("admits only verified local owners on unowned local destinations", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          h.state.localOwner = true;
+          h.state.ownedDestination = false;
+          h.state.access = false;
+          h.enqueue();
+          yield* h.service.pull();
+          yield* h.service.drain();
+          assert.strictEqual(h.state.dispatches, 1);
+          h.state.projectOwner = stranger;
+          const rejected = yield* h.service
+            .create(owner, ThreadId.make("local-foreign-project"))
+            .pipe(Effect.flip);
+          assert.strictEqual(errorDetail(rejected), "destination-unauthorized-or-deleted");
+          h.state.projectOwner = null;
+          h.state.ownedDestination = true;
+          const owned = yield* h.service
+            .create(owner, ThreadId.make("local-owned-session"))
+            .pipe(Effect.flip);
+          assert.strictEqual(errorDetail(owned), "destination-unauthorized-or-deleted");
+        }),
+      "pull",
+    ),
+  );
+  it.effect("does not accept the local unowned destination exception on a team server", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          h.state.ownedDestination = false;
+          h.state.access = false;
+          h.enqueue();
+          yield* h.service.pull();
+          yield* h.service.drain();
+          assert.strictEqual(h.state.dispatches, 0);
+          assert.strictEqual(
+            (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0]?.state,
+            "terminal",
+          );
+        }),
+      "pull",
+    ),
+  );
+  it.effect(
     "retires obsolete active and registering receivers without events or lifecycle actions",
     () =>
       scenario((h) =>
@@ -345,7 +609,7 @@ describe("durable session webhooks", () => {
           yield* sql`INSERT INTO session_webhooks(id,owner_user_id,thread_id,instance_id,trust_binding,status,revision,created_at,updated_at) SELECT ${registeringId},owner_user_id,thread_id,instance_id,trust_binding,'registering',revision,created_at,updated_at FROM session_webhooks WHERE id=${h.webhook.id}`;
           h.state.integrationEnabled = false;
           yield* h.service.drain();
-          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "active");
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "disabled");
           h.state.integrationEnabled = true;
           h.state.trustGeneration = 1;
           yield* h.service.drain();
@@ -431,6 +695,30 @@ describe("durable session webhooks", () => {
           assert.strictEqual(h.state.dispatches, 0);
         }),
       ),
+  );
+  it.effect("retires pull callbacks after an explicit connection lifecycle change", () =>
+    scenario(
+      (h) =>
+        Effect.gen(function* () {
+          h.enqueue();
+          yield* h.service.pull();
+          h.state.connectionGeneration = 2;
+          const replacement = yield* h.service.create(owner, threadId);
+          assert.notStrictEqual(replacement.id, h.webhook.id);
+          assert.notStrictEqual(replacement.callbackRef, h.webhook.callbackRef);
+          yield* h.service.drain();
+          const old = yield* h.service.inspect(owner, h.webhook.id);
+          assert.strictEqual(old.status, "disabled");
+          assert.strictEqual(old.deliveries[0]?.state, "terminal");
+          assert.strictEqual(old.deliveries[0]?.terminalReason, "integration-disabled-or-replaced");
+          assert.strictEqual(h.state.dispatches, 0);
+          h.state.connectionGeneration = 1;
+          yield* h.service.drain();
+          assert.strictEqual(h.state.dispatches, 0);
+          assert.strictEqual((yield* h.service.inspect(owner, h.webhook.id)).status, "disabled");
+        }),
+      "pull",
+    ),
   );
   it.effect("bounds a hanging history inspection and preserves its local receipt", () =>
     scenario((h) =>

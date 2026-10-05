@@ -73,17 +73,22 @@ function EnvironmentToolyardContent({
     baseUrl: string;
     enabled: boolean;
     revision: number;
+    mode?: "team" | "api-key";
   } | null>(null);
+  const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [browserDraft, setBrowserDraft] = useState<ToolyardSettingsDraft | null>(null);
+  const [browserDraft, setBrowserDraft] = useState<
+    (ToolyardSettingsDraft & { mode?: "team" | "api-key" }) | null
+  >(null);
   useEffect(() => {
     if (browserDraft && status && toolyardCommittedDraftMatches(browserDraft, status)) {
       setDraft((value) =>
         value &&
         value.baseUrl === browserDraft.baseUrl &&
         value.enabled === browserDraft.enabled &&
-        value.revision === browserDraft.revision
+        value.revision === browserDraft.revision &&
+        value.mode === browserDraft.mode
           ? null
           : value,
       );
@@ -96,11 +101,17 @@ function EnvironmentToolyardContent({
     enabled: status?.enabled ?? false,
     revision: status?.revision ?? 0,
   };
-  const save = async (remove = false) => {
+  const mode = current.mode ?? status?.mode ?? "team";
+  const modeChange = status?.connection === "connected" && mode !== (status.mode ?? "team");
+  const canDisconnect =
+    status?.connection === "connected" && (status.mode === "api-key" || modeChange);
+  const save = async (remove = false, disconnect = false) => {
     setBusy(true);
     setError(null);
     try {
-      const adminToken = await readAdminToken();
+      const submittedKey = apiKey;
+      const submittedDraft = draft;
+      const adminToken = mode === "team" && !disconnect ? await readAdminToken() : null;
       const publicUrl = target.serverConfig.settings.experimental.externalMcp.publicUrl;
       const origin =
         status?.origin ??
@@ -115,14 +126,29 @@ function EnvironmentToolyardContent({
           origin,
           enabled: current.enabled,
           remove,
+          mode,
+          ...(disconnect ? { disconnect: true } : {}),
+          ...(mode === "api-key" && submittedKey && !remove && !disconnect
+            ? { apiKey: submittedKey }
+            : {}),
           ...(adminToken ? { adminToken } : {}),
         },
       });
       appAtomRegistry.refresh(atom);
-      if (AsyncResult.isSuccess(saved)) setDraft(null);
-      else {
+      if (AsyncResult.isSuccess(saved)) {
+        // A newer edit remains a draft after this request completes.
+        if (!disconnect) {
+          setDraft((value) => (value === submittedDraft ? null : value));
+          setApiKey((value) => (value === submittedKey ? "" : value));
+        }
+      } else {
         const code = toolyardSettingsFailureCode(saved.cause);
-        if (!remove && !adminToken && code === "admin_trust_registration_required") {
+        if (
+          mode === "team" &&
+          !remove &&
+          !adminToken &&
+          code === "admin_trust_registration_required"
+        ) {
           const url = createToolyardSettingsContinuation(
             prepared?.httpBaseUrl ?? "",
             target.environmentId,
@@ -135,7 +161,12 @@ function EnvironmentToolyardContent({
           setError(
             "Complete the administrator trust setup in your browser. Then select Refresh status. Your draft remains.",
           );
-        } else setError(toolyardSettingsFailureMessage(code));
+        } else
+          setError(
+            toolyardSettingsFailureMessage(
+              mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
+            ),
+          );
       }
     } catch {
       setError("The server trust registration failed. Your draft remains.");
@@ -193,6 +224,69 @@ function EnvironmentToolyardContent({
           <Text className="p-2 text-foreground">Open Toolyard</Text>
         </Pressable>
       </View>
+      {status?.apiKeyAllowed ? (
+        <>
+          <Text className="font-semibold text-foreground">Connection method</Text>
+          <View className="flex-row flex-wrap gap-2">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: mode === "team" }}
+              disabled={busy || status.teamAvailable === false}
+              onPress={() => {
+                setApiKey("");
+                setDraft({ ...current, mode: "team" });
+              }}
+            >
+              <Text className="p-2 text-foreground">Team connection</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: mode === "api-key" }}
+              disabled={busy}
+              onPress={() => {
+                setApiKey("");
+                setDraft({ ...current, mode: "api-key", enabled: true });
+              }}
+            >
+              <Text className="p-2 text-foreground">API key connection</Text>
+            </Pressable>
+          </View>
+          {status.teamAvailable === false ? (
+            <Text className="text-sm text-foreground-muted">
+              This server has no verified team identity. Use your Toolyard API key.
+            </Text>
+          ) : null}
+          {modeChange ? (
+            <Text accessibilityRole="alert" className="text-sm text-foreground-muted">
+              Select Disconnect my account before you save a different connection method. Team
+              access requires administrator authorization.
+            </Text>
+          ) : null}
+          {mode === "api-key" ? (
+            <>
+              <Text className="text-sm text-foreground-muted">
+                Use your own Toolyard agent API key. Decisions arrive through outbound requests.
+              </Text>
+              <TextInput
+                accessibilityLabel="Toolyard API key"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="off"
+                className="rounded-lg border border-border p-3 text-foreground"
+                value={apiKey}
+                placeholder="Enter your Toolyard API key"
+                onChangeText={setApiKey}
+              />
+              {!status.administrator && !status.baseUrl ? (
+                <Text className="text-foreground-muted">
+                  An administrator must set the Toolyard URL first.
+                </Text>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : null}
       {status?.administrator ? (
         <>
           <TextInput
@@ -212,25 +306,47 @@ function EnvironmentToolyardContent({
               onValueChange={(enabled) => setDraft({ ...current, enabled })}
             />
           </View>
-          <View className="flex-row flex-wrap gap-2">
+        </>
+      ) : null}
+      {status && (status.administrator || mode === "api-key" || canDisconnect) ? (
+        <View className="flex-row flex-wrap gap-2">
+          <Pressable
+            accessibilityRole="button"
+            disabled={
+              busy ||
+              modeChange ||
+              (mode === "team" && status.teamAvailable === false) ||
+              (!draft && !apiKey && !status.removed) ||
+              (mode === "api-key" && !status.baseUrl && !status.administrator)
+            }
+            onPress={() => void save()}
+          >
+            <Text className="p-2 text-foreground">
+              {mode === "api-key" ? "Save and connect" : "Save and verify trust"}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy || (!draft && !apiKey)}
+            onPress={() => {
+              setDraft(null);
+              setApiKey("");
+              setError(null);
+              setBrowserDraft(null);
+            }}
+          >
+            <Text className="p-2 text-foreground">Discard</Text>
+          </Pressable>
+          {canDisconnect ? (
             <Pressable
               accessibilityRole="button"
-              disabled={busy || !draft}
-              onPress={() => void save()}
+              disabled={busy}
+              onPress={() => void save(false, true)}
             >
-              <Text className="p-2 text-foreground">Save and verify trust</Text>
+              <Text className="p-2 text-danger-foreground">Disconnect my account</Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy || !draft}
-              onPress={() => {
-                setDraft(null);
-                setError(null);
-                setBrowserDraft(null);
-              }}
-            >
-              <Text className="p-2 text-foreground">Discard</Text>
-            </Pressable>
+          ) : null}
+          {status.administrator ? (
             <Pressable
               accessibilityRole="button"
               disabled={busy || !status.baseUrl || status.removed}
@@ -238,8 +354,8 @@ function EnvironmentToolyardContent({
             >
               <Text className="p-2 text-danger-foreground">Remove instance</Text>
             </Pressable>
-          </View>
-        </>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );

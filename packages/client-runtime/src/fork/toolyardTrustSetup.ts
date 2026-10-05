@@ -150,6 +150,34 @@ export function toolyardCommittedDraftMatches(
   );
 }
 const errorMessages: Record<string, string> = {
+  api_key_required: "Enter your Toolyard agent API key, then select Save and connect.",
+  invalid_api_key: "Toolyard refused this API key. Check the key and its account status.",
+  api_key_connection_conflict:
+    "This API key belongs to another connection. Use a key for your own account.",
+  connection_revoked: "Toolyard revoked this connection. T3 will not restore it automatically.",
+  disconnect_before_mode_change:
+    "Select Disconnect my account before you save a different connection method. Your draft remains.",
+  team_connection_reauthorization_required:
+    "An administrator must authorize team access after an API key connection. Your draft remains.",
+  revocation_cleanup_pending:
+    "Toolyard permission cleanup is pending. T3 will retry it before this connection can resume.",
+  api_key_protocol_unavailable:
+    "This Toolyard instance does not support API key connections. Ask its administrator to update it.",
+  instance_identity_changed:
+    "The Toolyard instance identity changed. Remove the previous instance before you register this one.",
+  connection_instance_identity_mismatch:
+    "Toolyard returned a different instance identity. T3 refused the connection.",
+  instance_unavailable:
+    "Toolyard did not respond. Your draft remains. Select Refresh, then try again.",
+  connection_changed:
+    "Your connection changed during this request. Your draft remains. Select Refresh, then try again.",
+  integration_disabled:
+    "The administrator disabled Toolyard on this server. Ask the administrator to enable it.",
+  use_instance_disable_or_disconnect:
+    "Disable the server integration or select Disconnect my account to stop your access.",
+  verified_identity_required:
+    "T3 could not verify your user identity. Authenticate with this server before you connect Toolyard.",
+  team_identity_required: "This server has no verified team identity. Select API key connection.",
   admin_trust_registration_required:
     "Complete the trust setup in the default browser. Your desktop draft remains.",
   admin_token_identity_mismatch:
