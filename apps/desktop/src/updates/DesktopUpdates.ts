@@ -409,11 +409,12 @@ export const make = Effect.gen(function* () {
     const allowsPrerelease = channel === "nightly";
     // T3-CUSTOM(expbkt3): BEGIN - the fork ships two apps from one release
     // repository, so the string handed to electron-updater is the brand's
-    // ("staging-nightly" / "production-nightly"), not the contract-level
-    // channel. GitHubProvider matches it against each release tag's first
-    // prerelease identifier, which is what keeps a staging build invisible to a
-    // production app. The contract channel is unchanged, so the settings UI and
-    // the persisted setting keep their existing "latest" | "nightly" values.
+    // ("stage-nightly" / "production-nightly"), not the contract-level
+    // channel. It names the manifest the app reads (`<channel>-mac.yml`), and
+    // apps built before the fixed update feed match it against each release
+    // tag's first prerelease identifier. The contract channel is unchanged, so
+    // the settings UI and the persisted setting keep their existing
+    // "latest" | "nightly" values.
     const brandChannel = resolveRuntimeBrand()?.updateChannel;
     const updaterChannel = allowsPrerelease ? (brandChannel ?? channel) : channel;
     yield* electronUpdater.setChannel(updaterChannel);

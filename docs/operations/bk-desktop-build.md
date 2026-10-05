@@ -14,7 +14,7 @@ The **updater cache is a third isolation axis**, and an easy one to miss. It liv
 
 The encrypted desktop connection catalog follows the same isolation boundary. BK builds store it inside their own Application Support directory (`bkt3code` or `bkt3code-staging`) instead of the shared T3 home, because Electron safe-storage ciphertext from one app identity cannot be decrypted by the other. The older shared catalog is left untouched.
 
-Both are Apple Silicon (`arm64`) only, code signed, **keyless**, and published as prereleases on [`beknown-work/bkt3code`](https://github.com/beknown-work/bkt3code/releases). The identity in use during the current trial is an Apple Development certificate, not the self-signed root this document otherwise describes — see [Current identity is a test certificate](#current-identity-is-a-test-certificate).
+Both are Apple Silicon (`arm64`) only, code signed, **keyless**, and published as prereleases on [`iamtushar324/bkt3code`](https://github.com/iamtushar324/bkt3code/releases) (formerly `beknown-work/bkt3code`, which GitHub redirects). The identity in use during the current trial is an Apple Development certificate, not the self-signed root this document otherwise describes — see [Current identity is a test certificate](#current-identity-is-a-test-certificate).
 
 ## How it runs
 
@@ -85,14 +85,16 @@ Staging therefore pairs by pasting the credential into the pairing screen, which
 
 ## What keeps the two apps apart
 
-One repository holds both apps' releases, and the **updater channel** is the only thing separating them. electron-updater's `GitHubProvider` walks the releases feed and takes the first release whose `semver.prerelease(tag)[0]` equals the running app's channel, then reads `<channel>-mac.yml` from it. So the channel has to be the version's first prerelease identifier:
+One repository holds both apps' releases, plus the mobile builds. Each app reads its update from its **own fixed release** through electron-updater's generic provider, never from the releases feed:
 
-| App        | Version                               | Channel              | Manifest                     |
-| ---------- | ------------------------------------- | -------------------- | ---------------------------- |
-| Staging    | `X.Y.Z-stage-nightly.YYYYMMDD.N`      | `stage-nightly`      | `stage-nightly-mac.yml`      |
-| Production | `X.Y.Z-production-nightly.YYYYMMDD.N` | `production-nightly` | `production-nightly-mac.yml` |
+| App        | Version                               | Channel              | Feed release            | Manifest                     |
+| ---------- | ------------------------------------- | -------------------- | ----------------------- | ---------------------------- |
+| Staging    | `X.Y.Z-stage-nightly.YYYYMMDD.N`      | `stage-nightly`      | `bk-desktop-staging`    | `stage-nightly-mac.yml`      |
+| Production | `X.Y.Z-production-nightly.YYYYMMDD.N` | `production-nightly` | `bk-desktop-production` | `production-nightly-mac.yml` |
 
-A staging release is therefore invisible to a production app, and vice versa.
+The feed release holds only the manifest. After each dated release is public, the publisher uploads that build's manifest to the feed release with every payload URL made absolute, pointing into the dated release. A staging build never touches the production feed, and vice versa.
+
+**Why not the releases feed.** `GitHubProvider` reads `releases.atom`, which lists only the ten newest releases, and walks it for a tag whose `semver.prerelease(tag)[0]` equals the app's channel. Staging and mobile builds publish many times a day, so they pushed every production build out of those ten, and production apps silently stopped finding updates (October 2026). Apps built before the fixed feed still use `GitHubProvider`. They pick up the first fixed-feed build only while it is among the ten newest releases; an app that misses that window needs one manual install.
 The old `staging-nightly` releases from `expbkmain` are also invisible to the
 new `stage-nightly` app. Install the first `stage-nightly` DMG manually over the
 existing Stage BK T3 Code installation; its bundle identity and profile path
@@ -272,19 +274,19 @@ If a publish fails partway, it leaves a **draft** holding that version's tag. Th
 
 Release notes record the signing identity as a **fingerprint of the designated requirement**, never the raw string. This repository is public and an Apple-issued certificate embeds the developer's email and Team ID in its common name; publishing the raw requirement would put that on every release. The fingerprint answers "did the signing identity change between builds?", which is the operational question. For the raw value, run `codesign -dr -` against the app.
 
-Once a version is published, **never replace its ZIP or manifest.** Clients cache by version; a mutated asset is undetectable and unfixable from their side. Publish a higher version instead.
+Once a version is published, **never replace its ZIP or manifest.** Clients cache by version; a mutated asset is undetectable and unfixable from their side. Publish a higher version instead. The feed release's manifest is the one exception: it is a pointer, and the publisher replaces it on every build. Never delete the feed release, or every installed app stops updating. If the feed step fails after the dated release is public, use **Re-run failed jobs**: the publisher finds the dated release published from the same commit and only repoints the feed. It refuses to point the feed at a version older than the one it serves, because the apps allow downgrades.
 
 After publishing, confirm the upstream pipeline did not fire and that npm is untouched:
 
 ```sh
-gh run list --repo beknown-work/bkt3code --workflow release.yml -L 3
+gh run list --repo iamtushar324/bkt3code --workflow release.yml -L 3
 npm view t3 dist-tags
 ```
 
 ## Installing (send this to teammates)
 
 1. Install the `BK Code Signing` certificate and set it to **Always Trust** (one-time).
-2. Download the `.dmg` from the [latest prerelease](https://github.com/beknown-work/bkt3code/releases) — `BK T3 Code` for day-to-day work, `Stage BK T3 Code` to try `stage`.
+2. Download the `.dmg` from the [latest prerelease](https://github.com/iamtushar324/bkt3code/releases) — `BK T3 Code` for day-to-day work, `Stage BK T3 Code` to try `stage`.
 3. Drag it to Applications.
 4. Builds are not notarised, so macOS quarantines them. Clear that once per app:
    ```sh
@@ -343,7 +345,7 @@ Before advertising automatic updates on a channel, prove all of these. Nothing h
 
 Check, in order:
 
-1. The release exists and is a **prerelease** with the right manifest asset for that channel.
+1. The feed release (`bk-desktop-production` or `bk-desktop-staging`) holds the channel manifest, and that manifest names the newest version. Its URLs must point into a dated release that exists.
 2. The version is strictly newer than the installed one _within the same channel_.
 3. The installed app and the update are signed with the **same** certificate. Compare `codesign -dr - "/Applications/BK T3 Code.app"` against the built app and against the release notes; the designated requirements must be identical.
 
