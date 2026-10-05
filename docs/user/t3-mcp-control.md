@@ -17,7 +17,7 @@ VITE_T3_EXPERIMENTAL_CONTROL_CENTER=true pnpm exec vp run --filter @t3tools/web 
 ```
 
 The server endpoint is always `/mcp`; external operator authentication remains
-disabled until it is enabled in **Settings → Experiments → External T3 MCP
+disabled until it is enabled in **Settings → BK Add-ons → External T3 MCP
 control**.
 
 Experimental builds also expose **Settings → Active Projects** for editing the
@@ -27,7 +27,7 @@ and removing a T3 project without deleting its files.
 
 ## Connect an external agent
 
-1. Open Settings → Experiments.
+1. Open Settings → BK Add-ons.
 2. Enable **External MCP server**.
 3. Enable **My external access**.
 4. Rotate your personal API token and copy it immediately. T3 stores only its
@@ -94,7 +94,7 @@ restarts/resumes the provider generation with the new identity before sending th
 turn. This prevents a long-lived ACP process from retaining the previous user's
 MCP authority.
 
-Managed integrations are configured under **Settings → Experiments → My managed
+Managed integrations are configured under **Settings → BK Add-ons → My managed
 MCP integrations**. Each integration can be assigned to every provider instance
 or an explicit list, and may carry a tool allowlist. Calls use:
 
@@ -114,7 +114,7 @@ custom-header authentication are also supported.
 Toolyard is built in. On a team server, T3 connects each eligible user through
 their team identity. Agents see the tools as `mcp__toolyard__*`.
 
-For a local server without team access, open **Settings → Experiments → Toolyard**
+For a local server without team access, open **Settings → BK Add-ons → Toolyard**
 on that server. Select **API key connection**. Enter the hosted Toolyard URL and
 your Toolyard agent API key, then select **Save and connect**. T3 keeps a separate
 credential on the server. The key field is not saved in browser drafts.

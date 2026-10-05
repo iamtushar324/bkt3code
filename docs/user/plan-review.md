@@ -8,14 +8,14 @@ When an agent proposes a plan, you can open it in a side panel, comment on exact
 lines, edit it, and send the result back — without the agent re-reading the whole
 plan every round.
 
-Turn it on or off in **Settings → Experiments → Native plan review**. It is on
+Turn it on or off in **Settings → BK Add-ons → Native plan review**. It is on
 by default. While it is off, a plan stays an ordinary plan card in the
 conversation.
 
 ## Opening a plan
 
 By default a plan opens for review as soon as it is ready. Turn that off with
-**Settings → Experiments → Open a ready plan automatically**; the plan then waits
+**Settings → BK Add-ons → Open a ready plan automatically**; the plan then waits
 behind the entry points below, which appear once an agent has proposed a plan
 that has not been implemented yet:
 

@@ -107,7 +107,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   // T3-CUSTOM(expbkt3): fork-only settings sections.
   "/settings/project-access": "Project Access",
   "/settings/claude-account-access": "Claude Account Access",
-  "/settings/experiments": "Experiments",
+  "/settings/experiments": "BK Add-ons",
   "/settings/archived": "Archive",
 };
 
@@ -879,6 +879,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
   },
+  // T3-CUSTOM(expbkt3): BEGIN — BK Add-ons retains the Experiments route and search aliases.
+  {
+    id: "toolyard",
+    title: "Toolyard",
+    to: "/settings/experiments",
+    searchTerms: ["experiments bk add-ons addons account consent agent host connection api key"],
+  },
+  {
+    id: "session-webhooks",
+    title: "Session callbacks",
+    to: "/settings/experiments",
+    searchTerms: ["experiments bk add-ons addons webhook delivery history retry notification"],
+  },
+  // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): server-wide plan submission tool experiment.
   {
     id: "plan-submission-tool",
@@ -1121,6 +1135,8 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        // T3-CUSTOM(expbkt3): retain the old section search name for every add-on.
+        ...(item.to === "/settings/experiments" ? ["experiments experimental"] : []),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

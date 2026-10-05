@@ -269,7 +269,7 @@ agent token through `UserMcpProfileStore.setIntegrationCredential` with the
 connected email and time. Neither token is logged or returned; the client gets
 `{connected, email?, error?}`. toolyard rotates the agent token on every
 successful call, which is why the client connects only while T3 holds none and
-why Settings → Experiments → toolyard offers an explicit Reconnect instead of
+why Settings → BK Add-ons → toolyard offers an explicit Reconnect instead of
 reconnecting on its own. toolyard's refusals (`not_org_member`, `user_disabled`,
 `agent_disabled`, …) come back as codes and are worded in
 `fork/toolyardConnect.ts`; a code that list does not know still reaches the

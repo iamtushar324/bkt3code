@@ -1,7 +1,5 @@
-// T3-CUSTOM(expbkt3): server-owned Toolyard connection.
-import { ToolyardSettingsSection } from "./ToolyardSettingsSection";
-// T3-CUSTOM(expbkt3): owner-bound session callbacks.
-import { SessionWebhookSettingsSection } from "../../fork/SessionWebhookSettingsSection";
+// T3-CUSTOM(expbkt3): BK Add-ons groups server-owned connections and callbacks.
+import { BkAddonsIntegrationsSection } from "../../fork/BkAddonsIntegrationsSection";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
@@ -50,10 +48,8 @@ export function ExperimentsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      {/* T3-CUSTOM(expbkt3): agent callback destinations and delivery history. */}
-      <SessionWebhookSettingsSection />
-      {/* T3-CUSTOM(expbkt3): instance trust and automatic connection. */}
-      <ToolyardSettingsSection />
+      {/* T3-CUSTOM(expbkt3): connections and callbacks remain in the Experiments route. */}
+      <BkAddonsIntegrationsSection />
       <SettingsSection title="Experimental features">
         {/* T3-CUSTOM(expbkt3): BEGIN — native plan review. */}
         <SettingsRow

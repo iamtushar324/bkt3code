@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./bk-toolyard-presentation": "./src/fork/toolyardConnectionPresentation.ts",
+    "./bk-session-callback-presentation": "./src/fork/sessionCallbackPresentation.ts",
     "./toolyard-trust-setup": "./src/fork/toolyardTrustSetup.ts",
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
