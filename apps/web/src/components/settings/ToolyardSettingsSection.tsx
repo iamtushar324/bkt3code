@@ -1,14 +1,13 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
-import { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useCurrentUserId } from "../../state/identity";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { readPreparedConnection } from "../../state/session";
+import { currentClerkUserAtom } from "../../state/identity";
+import { readPreparedConnection, useEnvironmentSessionState } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readTeamClerkToken } from "../../state/teamIdentityToken";
@@ -26,7 +25,6 @@ import {
   pendingToolyardSettingsContinuation,
   clearToolyardSettingsContinuation,
 } from "../../fork/toolyardSettingsContinuation";
-import { readBkManagedEnvironment } from "../../fork/managedEnvironment";
 import {
   createToolyardSettingsContinuation,
   readToolyardSettingsContinuation,
@@ -35,22 +33,69 @@ import {
   toolyardSettingsFailureMessage,
   toolyardSettingsOrigin,
 } from "@t3tools/client-runtime/toolyard-trust-setup";
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
 
+interface ToolyardSettingsEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly serverConfig: ServerConfig;
+}
 export function ToolyardSettingsSection() {
-  const primary = usePrimaryEnvironmentId();
-  const userId = useCurrentUserId();
-  return (
-    <ToolyardSettingsContent key={`${primary}:${userId}`} userScope={userId ?? "unverified"} />
+  const { connectedEnvironments } = useSettingsScope();
+  return connectedEnvironments.length === 0 ? (
+    <SettingsSection title="Toolyard">
+      <p className="text-sm text-muted-foreground">
+        Connect a selected server to configure Toolyard.
+      </p>
+    </SettingsSection>
+  ) : (
+    connectedEnvironments.map((environment) =>
+      environment.serverConfig ? (
+        <EnvironmentToolyardSettings
+          key={environment.environmentId}
+          environment={{ ...environment, serverConfig: environment.serverConfig }}
+        />
+      ) : null,
+    )
   );
 }
-function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) {
-  const primary = usePrimaryEnvironmentId();
-  const environmentId = primary ?? EnvironmentId.make("unavailable");
+function EnvironmentToolyardSettings({
+  environment,
+}: {
+  readonly environment: ToolyardSettingsEnvironment;
+}) {
+  const { data: session } = useEnvironmentSessionState(environment.environmentId);
+  // The selected server verifies the user. Primary-server identity cannot select this credential.
+  const userScope = session?.authenticated
+    ? (session.userId ?? (environment.serverConfig.auth.clerk ? null : "local-user"))
+    : null;
+  return userScope ? (
+    <ToolyardSettingsContent
+      key={`${environment.environmentId}:${userScope}`}
+      environment={environment}
+      userScope={userScope}
+    />
+  ) : (
+    <SettingsSection title={`Toolyard — ${environment.label}`}>
+      <p className="text-sm text-muted-foreground">
+        Authenticate with this server to configure Toolyard.
+      </p>
+    </SettingsSection>
+  );
+}
+function ToolyardSettingsContent({
+  environment,
+  userScope,
+}: {
+  readonly environment: ToolyardSettingsEnvironment;
+  readonly userScope: string;
+}) {
+  const environmentId = environment.environmentId;
+  const clerkUserId = useAtomValue(currentClerkUserAtom);
   const target = useMemo(
     () => ({ environmentId, input: { userScope } }),
     [environmentId, userScope],
@@ -63,20 +108,22 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     "Toolyard settings",
   );
   const handoff = useAtomCommand(serverEnvironment.openToolyardDashboard, "Open Toolyard");
-  const publicMcpUrl = usePrimarySettings(
-    (settings) => settings.experimental.externalMcp.publicUrl,
-  );
+  const publicMcpUrl = environment.serverConfig.settings.experimental.externalMcp.publicUrl;
   const draftKey = toolyardDraftKey(environmentId, userScope);
   const [draft, setDraftState] = useState<ToolyardSettingsDraft | null>(() =>
     readToolyardSettingsDraft(draftKey),
   );
+  const draftRef = useRef(draft);
   const setDraft = useCallback(
     (value: ToolyardSettingsDraft | null) => {
+      draftRef.current = value;
       writeToolyardSettingsDraft(draftKey, value);
       setDraftState(value);
     },
     [draftKey],
   );
+  // The submitted key never enters a persisted draft or browser continuation.
+  const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -87,19 +134,36 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     enabled: status?.enabled ?? false,
     revision: status?.revision ?? 0,
   };
+  const mode = current.mode ?? status?.mode ?? "team";
+  const modeChange = status?.connection === "connected" && mode !== (status.mode ?? "team");
+  const canDisconnect =
+    status?.connection === "connected" && (status.mode === "api-key" || modeChange);
   const refresh = useCallback(() => appAtomRegistry.refresh(statusAtom), [statusAtom]);
   const environmentBrowserUrl = () => {
-    // The authenticated primary connection owns the browser destination. MCP settings do not.
-    const prepared = primary ? readPreparedConnection(primary) : null;
+    // This server's authenticated connection owns the browser destination.
+    const prepared = readPreparedConnection(environmentId);
     return prepared?.httpBaseUrl && toolyardSettingsOrigin(prepared.httpBaseUrl)
       ? prepared.httpBaseUrl
       : null;
   };
   useEffect(() => {
-    if (continuationRead || !primary || !status || !userScope.startsWith("user_")) return;
+    if (continuationRead || !status || !userScope.startsWith("user_")) return;
+    const fragment = pendingToolyardSettingsContinuation() ?? window.location.hash;
+    // Multiple selected servers must not consume another server's public continuation.
+    if (fragment.startsWith("#toolyard-settings=")) {
+      try {
+        const payload = JSON.parse(
+          decodeURIComponent(fragment.slice("#toolyard-settings=".length)),
+        ) as { environmentId?: unknown };
+        if (typeof payload.environmentId === "string" && payload.environmentId !== environmentId)
+          return;
+      } catch {
+        // The bounded decoder below explains malformed links without applying their contents.
+      }
+    }
     const continuation = readToolyardSettingsContinuation(
-      pendingToolyardSettingsContinuation() ?? window.location.hash,
-      primary,
+      fragment,
+      environmentId,
       userScope,
       window.location.origin,
       draft,
@@ -116,7 +180,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     );
     if (continuation.draft) setDraft(continuation.draft);
     setNotice(continuation.message);
-  }, [continuationRead, primary, status, userScope, draft, setDraft]);
+  }, [continuationRead, environmentId, status, userScope, draft, setDraft]);
   useEffect(() => {
     if (!browserDraft) return;
     let attempts = 0;
@@ -138,7 +202,8 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
       draft &&
       draft.baseUrl === browserDraft.baseUrl &&
       draft.enabled === browserDraft.enabled &&
-      draft.revision === browserDraft.revision
+      draft.revision === browserDraft.revision &&
+      draft.mode === browserDraft.mode
     )
       setDraft(null);
     setBrowserDraft(null);
@@ -147,7 +212,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
   const origin = () => {
     if (status?.origin) return status.origin;
     // Direct web access names the verified server, even when a copied config is stale.
-    const prepared = primary ? readPreparedConnection(primary) : null;
+    const prepared = readPreparedConnection(environmentId);
     if (prepared) {
       try {
         const actual = new URL(prepared.httpBaseUrl);
@@ -157,12 +222,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
         /* Remote/relay uses the server's configured public endpoint below. */
       }
     }
-    for (const value of [
-      environmentBrowserUrl(),
-      publicMcpUrl,
-      readBkManagedEnvironment()?.httpBaseUrl,
-      window.location.origin,
-    ]) {
+    for (const value of [environmentBrowserUrl(), publicMcpUrl]) {
       if (!value) continue;
       try {
         const url = new URL(value);
@@ -173,28 +233,49 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     }
     return "";
   };
-  const save = async (remove = false) => {
-    if (!primary || !status) return;
+  const save = async (remove = false, disconnect = false) => {
+    if (!status) return;
     setBusy(true);
     setError(null);
     try {
-      const adminToken = await readTeamClerkToken();
+      const submittedKey = apiKey;
+      const submittedDraft = draft;
+      const adminToken =
+        mode === "team" && !disconnect && clerkUserId === userScope
+          ? await readTeamClerkToken()
+          : null;
       const saved = await configure({
-        environmentId: primary,
+        environmentId,
         input: {
           expectedRevision: current.revision,
           baseUrl: current.baseUrl,
           origin: origin(),
           enabled: current.enabled,
           remove,
+          mode,
+          ...(disconnect ? { disconnect: true } : {}),
+          ...(mode === "api-key" && submittedKey && !remove && !disconnect
+            ? { apiKey: submittedKey }
+            : {}),
           ...(adminToken ? { adminToken } : {}),
         },
       });
       refresh();
-      if (AsyncResult.isSuccess(saved)) setDraft(null);
-      else if (AsyncResult.isFailure(saved)) {
+      if (AsyncResult.isSuccess(saved)) {
+        // A newer edit remains a draft after this request completes.
+        if (!disconnect && draftRef.current === submittedDraft) setDraft(null);
+        if (!disconnect) setApiKey((value) => (value === submittedKey ? "" : value));
+        setNotice(
+          disconnect
+            ? "Your Toolyard connection was removed."
+            : mode === "api-key"
+              ? "Your API key connection is ready. Local decisions arrive through outbound requests."
+              : null,
+        );
+      } else if (AsyncResult.isFailure(saved)) {
         const code = toolyardSettingsFailureCode(saved.cause);
         if (
+          mode === "team" &&
           code === "admin_trust_registration_required" &&
           !adminToken &&
           !remove &&
@@ -209,7 +290,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
           }
           const url = createToolyardSettingsContinuation(
             destination,
-            primary,
+            environmentId,
             userScope,
             current,
             Date.now(),
@@ -228,7 +309,9 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
           setError(
             code === "admin_trust_registration_required" && !adminToken
               ? "Use a signed-in browser administrator account to verify server trust. Your draft remains."
-              : toolyardSettingsFailureMessage(code),
+              : toolyardSettingsFailureMessage(
+                  mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
+                ),
           );
       }
     } catch {
@@ -240,13 +323,12 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     }
   };
   const open = async () => {
-    if (!primary) return;
     setBusy(true);
     setError(null);
     let browser: ToolyardBrowserHandoffTarget | null = null;
     try {
       browser = createToolyardBrowserHandoffTarget();
-      const response = await handoff({ environmentId: primary, input: {} });
+      const response = await handoff({ environmentId, input: {} });
       if (!AsyncResult.isSuccess(response)) {
         setError("Toolyard could not create a browser handoff. Check the connection status.");
         return;
@@ -261,7 +343,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
     }
   };
   return (
-    <SettingsSection title="Toolyard">
+    <SettingsSection title={`Toolyard — ${environment.label}`}>
       <SettingsRow
         title="Connection"
         description="T3 owns your connection on this server. Credentials stay on the server. Toolyard asks you for each Inbox decision."
@@ -313,11 +395,82 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
           </p>
         ) : null}
       </SettingsRow>
+      {status?.apiKeyAllowed ? (
+        <>
+          <SettingsRow
+            title="Connection method"
+            description="Use team access or your own Toolyard API key on this server. Each user has a separate connection."
+            control={
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant={mode === "team" ? "default" : "outline"}
+                  aria-pressed={mode === "team"}
+                  disabled={busy || status.teamAvailable === false}
+                  onClick={() => {
+                    setApiKey("");
+                    setDraft({ ...current, mode: "team" });
+                  }}
+                >
+                  Team connection
+                </Button>
+                <Button
+                  size="sm"
+                  variant={mode === "api-key" ? "default" : "outline"}
+                  aria-pressed={mode === "api-key"}
+                  disabled={busy}
+                  onClick={() => {
+                    setApiKey("");
+                    setDraft({ ...current, mode: "api-key", enabled: true });
+                  }}
+                >
+                  API key connection
+                </Button>
+              </div>
+            }
+          >
+            {status.teamAvailable === false ? (
+              <p className="my-2 text-xs text-muted-foreground">
+                This server has no verified team identity. Use your Toolyard API key.
+              </p>
+            ) : null}
+            {modeChange ? (
+              <p role="alert" className="my-2 text-xs text-muted-foreground">
+                Select Disconnect my account before you save a different connection method. Team
+                access requires administrator authorization.
+              </p>
+            ) : null}
+          </SettingsRow>
+          {mode === "api-key" ? (
+            <SettingsRow
+              title="Your API key"
+              description="Enter a Toolyard agent API key. T3 stores a separate server credential. Decisions can arrive while your browser is closed."
+              control={
+                <Input
+                  aria-label="Toolyard API key"
+                  type="password"
+                  autoComplete="off"
+                  className="w-full sm:w-80"
+                  value={apiKey}
+                  placeholder="Enter your Toolyard API key"
+                  onChange={(event) => setApiKey(event.target.value)}
+                />
+              }
+            >
+              {!status.administrator && !status.baseUrl ? (
+                <p role="alert" className="my-2 text-xs text-muted-foreground">
+                  An administrator must set the Toolyard URL for this server first.
+                </p>
+              ) : null}
+            </SettingsRow>
+          ) : null}
+        </>
+      ) : null}
       {status?.administrator ? (
         <>
           <SettingsRow
             title="Hosted instance"
-            description="Use one HTTPS Toolyard instance for this environment. A replacement requires a new server trust registration."
+            description="Use one HTTPS Toolyard instance for this server. API key access does not require a public address for your Mac."
             control={
               <Input
                 aria-label="Toolyard base URL"
@@ -330,7 +483,7 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
           />
           <SettingsRow
             title="Enable integration"
-            description="Enable automatic access for eligible team members. Disable it to stop new Toolyard requests."
+            description="Enable Toolyard access on this server. Disable it to stop new Toolyard requests."
             control={
               <Switch
                 aria-label="Enable Toolyard integration"
@@ -352,27 +505,48 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
               </Button>
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2 px-4 pb-4">
-            <Button
-              size="sm"
-              disabled={busy || (!draft && !status.removed)}
-              onClick={() => void save()}
-            >
-              Save and verify trust
-            </Button>
+        </>
+      ) : null}
+      {status && (status.administrator || mode === "api-key" || canDisconnect) ? (
+        <div className="flex flex-wrap gap-2 px-4 pb-4">
+          <Button
+            size="sm"
+            disabled={
+              busy ||
+              modeChange ||
+              (mode === "team" && status.teamAvailable === false) ||
+              (!draft && !apiKey && !status.removed) ||
+              (mode === "api-key" && !status.baseUrl && !status.administrator)
+            }
+            onClick={() => void save()}
+          >
+            {mode === "api-key" ? "Save and connect" : "Save and verify trust"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || (!draft && !apiKey)}
+            onClick={() => {
+              setDraft(null);
+              setApiKey("");
+              setError(null);
+              setNotice(null);
+              setBrowserDraft(null);
+            }}
+          >
+            Discard
+          </Button>
+          {canDisconnect ? (
             <Button
               size="sm"
               variant="outline"
-              disabled={busy || !draft}
-              onClick={() => {
-                setDraft(null);
-                setError(null);
-                setNotice(null);
-                setBrowserDraft(null);
-              }}
+              disabled={busy}
+              onClick={() => void save(false, true)}
             >
-              Discard
+              Disconnect my account
             </Button>
+          ) : null}
+          {status.administrator ? (
             <Button
               size="sm"
               variant="outline"
@@ -381,8 +555,8 @@ function ToolyardSettingsContent({ userScope }: { readonly userScope: string }) 
             >
               Remove instance
             </Button>
-          </div>
-        </>
+          ) : null}
+        </div>
       ) : null}
     </SettingsSection>
   );

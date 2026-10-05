@@ -26,6 +26,7 @@ import { makeUpstreamRejectionTracker, rejectionKey } from "./UpstreamRejectionT
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
 import {
   hasManagedToolyardRuntime,
+  managedToolyardActor,
   managedToolyardCredentialForUrl,
   retireManagedToolyardCredential,
 } from "../toolyard/ToolyardIntegration.ts";
@@ -166,11 +167,12 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
     if (
       !invocation ||
       invocation.principal !== "provider-session" ||
-      invocation.actorUserId === null
+      managedToolyardActor(invocation.actorUserId) === null ||
+      (invocation.actorUserId === null && integrationId !== TOOLYARD_MCP_INTEGRATION_ID)
     ) {
       return unauthorized("A user-bound T3 provider credential is required.");
     }
-    const actorUserId = invocation.actorUserId;
+    const actorUserId = managedToolyardActor(invocation.actorUserId)!;
 
     const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(actorUserId).pipe(
       Effect.catch(() => Effect.succeed(undefined)),
@@ -193,7 +195,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       integrationId === TOOLYARD_MCP_INTEGRATION_ID && hasManagedToolyardRuntime()
         ? managedToolyardCredentialForUrl(actorUserId, integration.url)
         : UserMcpProfileStore.getActiveIntegrationCredential(
-            invocation.actorUserId,
+            actorUserId,
             PersonalMcpIntegrationId.make(integration.id),
           )
     ).pipe(Effect.catch(() => Effect.succeed(undefined)));

@@ -9,6 +9,10 @@ export const ToolyardIntegrationStatus = Schema.Struct({
   instanceId: Schema.NullOr(Schema.String),
   origin: Schema.NullOr(Schema.String),
   administrator: Schema.Boolean,
+  mode: Schema.optional(Schema.Literals(["team", "api-key"])),
+  apiKeyAllowed: Schema.optional(Schema.Boolean),
+  teamAvailable: Schema.optional(Schema.Boolean),
+  callbackTransport: Schema.optional(Schema.Literals(["push", "pull"])),
   connection: Schema.Literals(["connected", "not_connected", "unavailable", "revoked", "disabled"]),
   email: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(Schema.String),
@@ -21,6 +25,9 @@ export const ToolyardIntegrationConfigureInput = Schema.Struct({
   enabled: Schema.Boolean,
   adminToken: Schema.optional(Schema.String),
   remove: Schema.optional(Schema.Boolean),
+  mode: Schema.optional(Schema.Literals(["team", "api-key"])),
+  apiKey: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
+  disconnect: Schema.optional(Schema.Boolean),
 });
 export const ToolyardDashboardHandoff = Schema.Struct({
   url: Schema.String,

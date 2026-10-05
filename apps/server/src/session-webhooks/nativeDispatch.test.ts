@@ -47,6 +47,7 @@ const binding = {
   environmentId: "env_1",
   origin: "https://toolyard.example",
   callbackOrigin: "https://t3.example",
+  transport: "push" as const,
   enabled: true as const,
   trustGeneration: 0,
 };
@@ -63,7 +64,12 @@ const access = Layer.mock(OrchestrationAccessControl)({
   canAccessThread: () => Effect.succeed(true),
   canAccessProject: () => Effect.succeed(true),
 });
-const integration = Layer.mock(ToolyardIntegration)({ instanceBinding: Effect.succeed(binding) });
+const integration = Layer.mock(ToolyardIntegration)({
+  instanceBinding: Effect.succeed(binding),
+  callbackBinding: () => Effect.succeed(binding),
+  assertConnectionOwner: () => Effect.void,
+  isLocalOwner: () => Effect.succeed(false),
+});
 const users = Layer.mock(EnvironmentUserRepository)({
   get: () =>
     Effect.succeed(

@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { ServerConfig } from "../config.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
@@ -54,6 +55,21 @@ export const ToolyardCallbackInspection = Schema.Struct({
 });
 export type ToolyardCallbackInspection = typeof ToolyardCallbackInspection.Type;
 const decodeCallbackInspection = Schema.decodeUnknownEffect(ToolyardCallbackInspection);
+const decodePullEvents = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    events: Schema.Array(
+      Schema.Struct({
+        event_id: HistoryIdentifier,
+        body: Schema.String.check(Schema.isMaxLength(524288)),
+        headers: Schema.Struct({
+          "webhook-id": HistoryIdentifier,
+          "webhook-timestamp": Schema.String.check(Schema.isMaxLength(64)),
+          "webhook-signature": Schema.String.check(Schema.isMaxLength(4096)),
+        }),
+      }),
+    ).check(Schema.isMaxLength(10)),
+  }),
+);
 export class ToolyardIntegration extends Context.Service<
   ToolyardIntegration,
   {
@@ -62,6 +78,36 @@ export class ToolyardIntegration extends Context.Service<
       userId: UserId,
       input: ToolyardConfigureInput,
     ) => Effect.Effect<ToolyardStatus, PersonalMcpSettingsError>;
+    assertConnectionOwner: (userId: UserId) => Effect.Effect<void, PersonalMcpSettingsError>;
+    isLocalOwner: (userId: UserId) => Effect.Effect<boolean>;
+    callbackBinding: (
+      userId: UserId,
+    ) => Effect.Effect<
+      ReturnType<ToolyardConnectionCore["callbackBinding"]>,
+      PersonalMcpSettingsError
+    >;
+    pullCallback: (
+      userId: UserId,
+      ref: string,
+    ) => Effect.Effect<
+      {
+        events: readonly {
+          event_id: string;
+          body: string;
+          headers: {
+            "webhook-id": string;
+            "webhook-timestamp": string;
+            "webhook-signature": string;
+          };
+        }[];
+      },
+      PersonalMcpSettingsError
+    >;
+    ackCallback: (
+      userId: UserId,
+      ref: string,
+      eventId: string,
+    ) => Effect.Effect<void, PersonalMcpSettingsError>;
     handoff: (
       userId: UserId,
     ) => Effect.Effect<{ url: string; expiresAt: string }, PersonalMcpSettingsError>;
@@ -75,7 +121,13 @@ export class ToolyardIntegration extends Context.Service<
     } | null>;
     registerCallback: (
       userId: UserId,
-      input: { destination: string; secret: string; client_receiver_id: string },
+      input: {
+        destination?: string;
+        transport?: "push" | "pull";
+        secret: string;
+        client_receiver_id: string;
+        environment_id?: string;
+      },
     ) => Effect.Effect<{ callback_ref: string; revision: number }, PersonalMcpSettingsError>;
     inspectCallback: (
       userId: UserId,
@@ -92,11 +144,18 @@ export class ToolyardIntegration extends Context.Service<
     ) => Effect.Effect<{ revision: number }, PersonalMcpSettingsError>;
   }
 >()("t3/toolyard/ToolyardIntegration") {}
+let localOwnerEnabled = false;
+/** The authenticated local transport already owns this fixed profile. No Clerk user is fabricated. */
+export const managedToolyardActor = (userId: UserId | null) =>
+  userId ?? (localOwnerEnabled ? UserId.make("local-user") : null);
 let activeCore: ToolyardConnectionCore | undefined;
 export const toolyardIntegrationLayer = Layer.effect(
   ToolyardIntegration,
   Effect.gen(function* () {
     const secrets = yield* ServerSecretStore;
+    const config = yield* ServerConfig;
+    const isLocalOwner = (userId: string) =>
+      config.clerkAuth === undefined && userId === "local-user";
     const environment = yield* ServerEnvironmentIdentity;
     const users = yield* EnvironmentUserRepository;
     const environmentId = yield* environment.getEnvironmentId;
@@ -109,6 +168,7 @@ export const toolyardIntegrationLayer = Layer.effect(
         ),
       write: (value) => Effect.runPromise(secrets.set(secretName, new TextEncoder().encode(value))),
       verifyUser: async (userId) => {
+        if (isLocalOwner(userId)) return { email: null, admin: true };
         const user = await Effect.runPromise(users.get(EnvironmentUserId.make(userId)));
         if (Option.isNone(user) || user.value.status !== "active" || !userId.startsWith("user_"))
           throw new ToolyardIntegrationFailure("verified_active_identity_required", 403);
@@ -117,17 +177,46 @@ export const toolyardIntegrationLayer = Layer.effect(
     });
     yield* call(() => core.initialize());
     activeCore = core;
+    localOwnerEnabled = config.clerkAuth === undefined;
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (activeCore === core) activeCore = undefined;
+        if (activeCore === core) {
+          activeCore = undefined;
+          localOwnerEnabled = false;
+        }
       }),
     );
-    yield* call(() => core.reconcileRevocations()).pipe(
+    yield* call(async () => {
+      await core.reconcileRevocations();
+      await core.reconcileCredentials();
+    }).pipe(
       Effect.catch(() => Effect.void),
       Effect.repeat(Schedule.spaced("1 minute")),
       Effect.forkScoped,
     );
     return ToolyardIntegration.of({
+      assertConnectionOwner: (userId) => call(() => core.assertConnectionOwner(userId)),
+      isLocalOwner: (userId) => Effect.succeed(isLocalOwner(userId)),
+      callbackBinding: (userId) =>
+        call(async () => {
+          await core.assertConnectionOwner(userId);
+          return core.callbackBinding(userId);
+        }),
+      pullCallback: (userId, ref) =>
+        Effect.tryPromise({
+          try: (signal) => core.pullCallback(userId, ref, signal),
+          catch: failure,
+        }).pipe(
+          Effect.flatMap(decodePullEvents),
+          Effect.mapError(
+            () =>
+              new PersonalMcpSettingsError({
+                operation: "pull-callback",
+                message: "callback_pull_unavailable_or_invalid",
+              }),
+          ),
+        ),
+      ackCallback: (userId, ref, eventId) => call(() => core.ackCallback(userId, ref, eventId)),
       status: (userId) => call(() => core.status(userId)),
       configure: (userId, input) => call(() => core.configure(userId, input)),
       handoff: (userId) => call(() => core.handoff(userId)),

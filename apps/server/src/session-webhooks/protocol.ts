@@ -211,6 +211,9 @@ export const receiverTrustBinding = (binding: {
   origin: string;
   callbackOrigin: string;
   trustGeneration?: number;
+  transport?: "push" | "pull";
+  agentId?: string | null;
+  connectionGeneration?: number;
 }) =>
   callbackFingerprint(
     JSON.stringify([
@@ -220,5 +223,8 @@ export const receiverTrustBinding = (binding: {
       binding.callbackOrigin,
       // Preserve existing receiver bindings until the first durable trust lifecycle change.
       ...((binding.trustGeneration ?? 0) === 0 ? [] : [binding.trustGeneration]),
+      ...(binding.transport === "pull"
+        ? ["pull", binding.agentId, binding.connectionGeneration]
+        : []),
     ]),
   );

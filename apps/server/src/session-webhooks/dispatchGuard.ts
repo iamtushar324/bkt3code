@@ -1,14 +1,9 @@
 /** T3-CUSTOM(expbkt3): webhook admission is checked inside the native thread command lock. */
-import {
-  EnvironmentUserId,
-  type OrchestrationV2ServerCommand,
-  type UserId,
-} from "@t3tools/contracts";
+import { type OrchestrationV2ServerCommand, type UserId } from "@t3tools/contracts";
 import { SessionWebhookError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
 import { isOwnerOrMember } from "../orchestration-v2/accessRules.ts";
 import type { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import {
@@ -64,17 +59,23 @@ export const assertSessionWebhookDispatch = Effect.fn("sessionWebhook.assertDisp
     command.text !== decisionNotification(parseDecisionCallback(event.payload, event.event_id))
   )
     return yield* reject("invalid-webhook-command");
-  const binding = yield* (yield* ToolyardIntegration).instanceBinding;
+  const integration = yield* ToolyardIntegration;
+  const binding = yield* integration.callbackBinding(actorUserId);
   if (!binding || !binding.enabled || receiverTrustBinding(binding) !== row.trust_binding)
     return yield* reject("integration-disabled-or-replaced");
-  const user = yield* (yield* EnvironmentUserRepository).get(EnvironmentUserId.make(actorUserId));
-  if (Option.isNone(user) || user.value.status !== "active") return yield* reject("owner-disabled");
+  yield* integration
+    .assertConnectionOwner(actorUserId)
+    .pipe(Effect.mapError(() => reject("owner-disabled")));
 
+  const localOwner = yield* integration.isLocalOwner(actorUserId);
   const shell = yield* projections.getThreadShell(command.threadId);
+  const project = shell ? yield* projects.get(shell.projectId) : Option.none();
   if (
     !shell ||
-    !isOwnerOrMember(shell, actorUserId) ||
-    Option.isNone(yield* projects.get(shell.projectId))
+    Option.isNone(project) ||
+    (localOwner
+      ? shell.ownerUserId != null || project.value.ownerUserId != null
+      : !isOwnerOrMember(shell, actorUserId))
   )
     return yield* reject("destination-unauthorized-or-deleted");
   const restartCancelled = yield* managerThreadRestartCancelled(shell, events);
@@ -100,7 +101,6 @@ export const assertSessionWebhookDispatch = Effect.fn("sessionWebhook.assertDisp
 export const makeSessionWebhookDispatchGuard = Effect.gen(function* () {
   const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const integration = yield* Effect.serviceOption(ToolyardIntegration);
-  const users = yield* Effect.serviceOption(EnvironmentUserRepository);
 
   return (
     command: OrchestrationV2ServerCommand,
@@ -110,7 +110,7 @@ export const makeSessionWebhookDispatchGuard = Effect.gen(function* () {
     events: EventSinkV2["Service"],
     projects: ProjectStoreV2["Service"],
   ) => {
-    if (Option.isNone(sql) || Option.isNone(integration) || Option.isNone(users))
+    if (Option.isNone(sql) || Option.isNone(integration))
       return Effect.fail(
         new SessionWebhookError({ status: 503, detail: "webhook-runtime-unavailable" }),
       );
@@ -124,7 +124,6 @@ export const makeSessionWebhookDispatchGuard = Effect.gen(function* () {
     ).pipe(
       Effect.provideService(SqlClient.SqlClient, sql.value),
       Effect.provideService(ToolyardIntegration, integration.value),
-      Effect.provideService(EnvironmentUserRepository, users.value),
     );
   };
 });

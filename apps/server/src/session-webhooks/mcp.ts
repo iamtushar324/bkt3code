@@ -7,6 +7,7 @@ import { McpServer, Tool, Toolkit } from "effect/unstable/ai";
 import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
 import { hasUserWideScope } from "../mcp/mcpSessionTarget.ts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
+import { managedToolyardActor } from "../toolyard/ToolyardIntegration.ts";
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
@@ -52,12 +53,16 @@ export const SessionWebhookToolkit = Toolkit.make(
 const actor = (capability: "t3.read" | "t3.control") =>
   Effect.gen(function* () {
     const scope = yield* McpInvocationContext;
-    if (scope.actorUserId === null || !scope.capabilities.has(capability))
+    const userId =
+      scope.principal === "provider-session"
+        ? managedToolyardActor(scope.actorUserId)
+        : scope.actorUserId;
+    if (userId === null || !scope.capabilities.has(capability))
       return yield* new OrchestratorMcpFailure({
         code: "capability_denied",
         message: `An authenticated user with ${capability} and session access is required.`,
       });
-    return { ...scope, actorUserId: UserId.make(scope.actorUserId) };
+    return { ...scope, actorUserId: UserId.make(userId) };
   });
 const failure = (error: unknown) =>
   new OrchestratorMcpFailure({
