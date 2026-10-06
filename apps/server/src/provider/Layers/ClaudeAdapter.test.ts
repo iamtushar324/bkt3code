@@ -5076,6 +5076,100 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("announces a between-turns rejection once the CLI's own turn fails on it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const { runtimeEvents, runtimeEventsFiber, drainSdkMessages } =
+        yield* observeUsageLimitEvents(adapter, harness.query);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const nowMs = yield* Clock.currentTimeMillis;
+      const resetsAt = Math.floor(nowMs / 1000) + 2 * 60 * 60;
+      const rateLimitInfo = {
+        status: "rejected",
+        rateLimitType: "five_hour",
+        resetsAt,
+        overageStatus: "rejected",
+        isUsingOverage: false,
+      };
+      const rateLimitEvent = (uuid: string, info: object) =>
+        ({
+          type: "rate_limit_event",
+          rate_limit_info: info,
+          session_id: "sdk-session-idle-limit",
+          uuid,
+        }) as unknown as SDKMessage;
+      const failedParentResponse = (uuid: string) =>
+        ({
+          type: "assistant",
+          session_id: "sdk-session-idle-limit",
+          uuid,
+          parent_tool_use_id: null,
+          error: "rate_limit",
+          message: {
+            id: `message-${uuid}`,
+            model: "<synthetic>",
+            content: [{ type: "text", text: "You've hit your session limit" }],
+          },
+        }) as unknown as SDKMessage;
+      const endTurn = (uuid: string) =>
+        ({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          stop_reason: "stop_sequence",
+          errors: [],
+          session_id: "sdk-session-idle-limit",
+          uuid,
+        }) as unknown as SDKMessage;
+      const warnings = () => runtimeEvents.filter((event) => event.type === "runtime.warning");
+
+      // A recovery between turns drops the held rejection.
+      harness.query.emit(rateLimitEvent("idle-rejected-recovered", rateLimitInfo));
+      harness.query.emit(
+        rateLimitEvent("idle-allowed", { status: "allowed", rateLimitType: "five_hour", resetsAt }),
+      );
+      harness.query.emit(failedParentResponse("assistant-after-recovery"));
+      harness.query.emit(endTurn("result-after-recovery"));
+      yield* drainSdkMessages;
+      assert.equal(warnings().length, 0);
+
+      // A background agent hits the limit with no turn running: still no row.
+      harness.query.emit(rateLimitEvent("idle-rejected", rateLimitInfo));
+      yield* drainSdkMessages;
+      assert.equal(warnings().length, 0);
+
+      // The CLI wakes for a turn of its own, which fails on that rejection.
+      harness.query.emit(failedParentResponse("assistant-limited"));
+      harness.query.emit(failedParentResponse("assistant-limited-repeat"));
+      yield* drainSdkMessages;
+
+      assert.equal(warnings().length, 1);
+      const warning = warnings()[0];
+      assert.match(
+        warning?.type === "runtime.warning" ? warning.payload.message : "",
+        /^Claude usage limit reached\. This turn is paused until the 5-hour limit resets in 2h\.$/,
+      );
+      // The account-rotation listener reads the limit from this detail.
+      assert.deepEqual(
+        warning?.type === "runtime.warning" ? warning.payload.detail : undefined,
+        rateLimitInfo,
+      );
+      assert.isDefined(warning?.turnId);
+
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("drops an unusable Claude reset time, not the row or the session", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

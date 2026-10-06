@@ -468,6 +468,8 @@ interface ClaudeSessionContext {
   lastThreadStartedId: string | undefined;
   /** Limits already announced for the running turn, keyed `window:resetsAt`. */
   announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
+  // T3-CUSTOM(expbkt3): a blocking rejection that landed between turns, held for the CLI's next turn.
+  idleRateLimitRejection?: SDKRateLimitInfo | undefined;
   stopped: boolean;
 }
 
@@ -2545,6 +2547,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN claim a rejection held from between turns.
+  // A background agent or monitor can hit the limit while no turn runs; the
+  // CLI then wakes for a turn of its own that fails on it. Raising the usage
+  // warning here, as an in-turn rejection does, is what moves an Auto thread
+  // to another Claude account (`claudeHardLimitRotation.expbkt3.ts`).
+  const announceHeldRateLimitRejection = Effect.fn("announceHeldRateLimitRejection")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    const info = context.idleRateLimitRejection;
+    const turnState = context.turnState;
+    if (info === undefined || turnState === undefined) return;
+    context.idleRateLimitRejection = undefined;
+    const limitKey = `${info.rateLimitType ?? "unknown"}:${info.resetsAt ?? "unknown"}`;
+    if (context.announcedUsageLimits?.turnId !== turnState.turnId) {
+      context.announcedUsageLimits = { turnId: turnState.turnId, keys: new Set() };
+    }
+    if (context.announcedUsageLimits.keys.has(limitKey)) return;
+    context.announcedUsageLimits.keys.add(limitKey);
+    const names = options?.scopedLimitNames
+      ? yield* Ref.get(options.scopedLimitNames)
+      : { overageIncluded: undefined };
+    const notice = describeClaudeUsageLimit(info, Date.parse(yield* nowIso), names);
+    yield* emitRuntimeWarning(context, notice, info);
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const emitThreadTokenUsage = Effect.fn("emitThreadTokenUsage")(function* (
     context: ClaudeSessionContext,
     usage: ThreadTokenUsageSnapshot | undefined,
@@ -3457,6 +3485,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Limited retries may only carry an assistant error, without a new window
       // event. Later parent responses replace this evidence if the turn recovers.
       context.turnState.latestAssistantRateLimited = message.error === "rate_limit";
+      // T3-CUSTOM(expbkt3): this turn failed on a rejection that landed between turns.
+      if (message.error === "rate_limit") yield* announceHeldRateLimitRejection(context);
       // The CLI can report authentication failure before ending the turn as a
       // generic API error, so retain that evidence for the result fallback.
       if (message.error === "authentication_failed") {
@@ -4121,6 +4151,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           context.turnState.rejectedRateLimitTypes.delete(limitType);
         }
       }
+      // T3-CUSTOM(expbkt3): BEGIN hold a between-turns rejection for the turn
+      // that fails on it (announceHeldRateLimitRejection); any recovery drops it.
+      if (!blocked) context.idleRateLimitRejection = undefined;
+      else if (context.turnState === undefined) context.idleRateLimitRejection = rateLimitInfo;
+      // T3-CUSTOM(expbkt3): END
       if (blocked && context.turnState !== undefined) {
         // Tracked per turn as a set of limit identities, not as the rendered
         // row: a parked window re-fires while the remaining wait shrinks, and a
