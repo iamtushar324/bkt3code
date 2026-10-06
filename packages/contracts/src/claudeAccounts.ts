@@ -161,9 +161,9 @@ export type ClaudeAccountAccessList = typeof ClaudeAccountAccessList.Type;
 export const ClaudeAccountsAccessSetInput = ClaudeAccountAccessEntry;
 export type ClaudeAccountsAccessSetInput = typeof ClaudeAccountsAccessSetInput.Type;
 
-/** `experimental.claudeAccountProfiles` server settings. Off by default. */
+/** `experimental.claudeAccountProfiles` server settings. On by default; set `enabled: false` to turn it off. */
 export const ClaudeAccountProfilesSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Path to `claude-autoswitch`; empty means `~/.local/bin/claude-autoswitch`. */
   autoswitchPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Badge label overrides by profile name, e.g. `{ "agent": "a" }`. */
