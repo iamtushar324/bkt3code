@@ -33,6 +33,7 @@ const ClaudeRateLimitType = Schema.Literals([
   "seven_day",
   "seven_day_opus",
   "seven_day_sonnet",
+  "seven_day_overage_included",
   "overage",
 ]);
 export type ClaudeRateLimitType = typeof ClaudeRateLimitType.Type;

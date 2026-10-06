@@ -16,7 +16,9 @@
  * - the **hard-limit path**: an account-wide rejection (`five_hour`,
  *   `seven_day`) marks the account exhausted and moves every Auto thread off
  *   it as they start; a model-scoped one (`seven_day_opus`, …) moves only the
- *   affected Auto thread. Pinned threads get a notice instead;
+ *   affected Auto thread. Pinned threads get a notice instead. An Auto
+ *   thread whose window resets within five minutes keeps its account: the
+ *   session stops and the thread continues there once the window resets;
  * - **access per user**: an account with no users assigned is open to
  *   everyone; once an admin assigns users, only they may use it. Placement
  *   avoids the accounts the thread's owner may not use, a pin to one fails,
@@ -49,6 +51,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -93,6 +96,10 @@ const PENDING_PLACEMENT_WINDOW_MS = 90_000;
 /** How long an exhausted mark lasts when Claude did not say when the window resets. */
 const DEFAULT_EXHAUSTED_MS = 60 * 60 * 1000;
 const MAX_HANDLED_CONDITIONS = 256;
+/** A limit that resets within this long is waited out on the same account instead of moving. */
+export const RESET_WAIT_THRESHOLD_MS = 5 * 60 * 1000;
+/** Margin after the reset so the status poll sees the account free before the thread continues. */
+export const RESET_WAIT_BUFFER_MS = 60 * 1000;
 const SNAPSHOT_CHANGE = "\u0000snapshot";
 /** The fields the CLI's `sessions/<pid>.json` carries that the live-session index needs. */
 const decodeSessionFile = Schema.decodeUnknownEffect(
@@ -315,6 +322,13 @@ export const make = Effect.gen(function* () {
    */
   const movedAwaitingTurn = new Set<ThreadId>();
   const handledConditions = new Set<string>();
+  /**
+   * Auto threads waiting out a window that resets soon, each with the timer
+   * that continues it. A thread leaves the set just before its continue turn
+   * is sent, so that turn's own start does not cancel anything.
+   */
+  const waitingForReset = new Set<ThreadId>();
+  const resetWaits = yield* FiberMap.make<ThreadId>();
   /**
    * Live Claude session id -> the account it runs on, from each account's
    * `sessions/<pid>.json` (the CLI writes one at start and never removes it).
@@ -1111,6 +1125,15 @@ export const make = Effect.gen(function* () {
       yield* announce(threadId);
     });
 
+  /** Drops a pending wait-for-reset; `true` when there was one. */
+  const cancelResetWait = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (!waitingForReset.delete(threadId)) return false;
+      yield* FiberMap.remove(resetWaits, threadId);
+      yield* Effect.logInfo("claude.account.reset-wait-cancelled", { threadId });
+      return true;
+    });
+
   const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({
     threadId,
     mode,
@@ -1152,6 +1175,7 @@ export const make = Effect.gen(function* () {
       yield* repository
         .setMode({ threadId, mode, updatedAt })
         .pipe(Effect.mapError(internal("setThreadMode")));
+      yield* cancelResetWait(threadId);
       notices.delete(threadId);
       movedAwaitingTurn.delete(threadId);
       yield* pruneExhausted;
@@ -1184,12 +1208,12 @@ export const make = Effect.gen(function* () {
       ? `Continue where you left off — this thread moved to Claude account ${to} because ${from} hit its usage limit.`
       : `Continue where you left off — this thread moved to Claude account ${to} because ${from} has no ${scope} allowance left.`;
 
-  const dispatchContinueTurn = (
-    threadId: ThreadId,
-    from: string,
-    to: string,
-    scope: string | undefined,
-  ) =>
+  const continueAfterResetText = (profile: string, scope: string | undefined) =>
+    scope === undefined
+      ? `Continue where you left off — Claude account ${profile} has reset its usage limit.`
+      : `Continue where you left off — Claude account ${profile} has reset its ${scope} allowance.`;
+
+  const dispatchContinueTurn = (threadId: ThreadId, text: string) =>
     Effect.gen(function* () {
       const shell = yield* query.getThreadShellById(threadId);
       if (Option.isNone(shell)) return;
@@ -1206,7 +1230,7 @@ export const make = Effect.gen(function* () {
           message: {
             messageId: MessageId.make(`claude-account-move:${messageUuid}`),
             role: "user",
-            text: continueText(from, to, scope),
+            text,
             attachments: [],
           },
           modelSelection: shell.value.modelSelection,
@@ -1308,6 +1332,39 @@ export const make = Effect.gen(function* () {
         return true;
       }
 
+      // A window that resets within the threshold is cheaper to wait out than
+      // to leave: the thread keeps its account and its cache, and continues
+      // there once the window resets. The timer lives in memory, so a restart
+      // in between leaves the notice and a stopped thread.
+      const nowMs = yield* Clock.currentTimeMillis;
+      const resetMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
+      if (!Number.isNaN(resetMs) && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
+        const continueAtMs = Math.max(resetMs, nowMs) + RESET_WAIT_BUFFER_MS;
+        const continueAt = isoFromUnixSeconds(continueAtMs / 1000);
+        notices.set(
+          threadId,
+          `${profile} resets at ${formatResetClock(resetsAt)} — this thread continues on it at ${formatResetClock(continueAt)}.`,
+        );
+        waitingForReset.add(threadId);
+        yield* stopSessionQuietly(threadId, "hard-limit-reset-wait");
+        yield* FiberMap.run(
+          resetWaits,
+          threadId,
+          Effect.gen(function* () {
+            yield* Effect.sleep(Duration.millis(continueAtMs - nowMs));
+            if (!waitingForReset.delete(threadId)) return;
+            notices.delete(threadId);
+            yield* pruneExhausted;
+            yield* Effect.logInfo("claude.account.reset-wait-continue", { threadId, profile });
+            yield* dispatchContinueTurn(threadId, continueAfterResetText(profile, scope));
+            yield* announce(threadId);
+          }),
+        );
+        yield* Effect.logInfo("claude.account.reset-wait", { threadId, profile, continueAt });
+        yield* announce(threadId);
+        return true;
+      }
+
       const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
       if (moved._tag === "Failure") {
         notices.set(threadId, moved.failure.detail);
@@ -1325,7 +1382,7 @@ export const make = Effect.gen(function* () {
       notices.delete(threadId);
       movedAwaitingTurn.add(threadId);
       yield* stopSessionQuietly(threadId, "hard-limit");
-      yield* dispatchContinueTurn(threadId, profile, moved.success.profile, scope);
+      yield* dispatchContinueTurn(threadId, continueText(profile, moved.success.profile, scope));
       yield* announce(threadId);
       return true;
     });
@@ -1364,6 +1421,11 @@ export const make = Effect.gen(function* () {
       switch (event.type) {
         case "turn.started": {
           activeTurns.add(event.threadId);
+          // Someone sent a message during the wait: their turn replaces the continue.
+          if (yield* cancelResetWait(event.threadId)) {
+            notices.delete(event.threadId);
+            yield* announce(event.threadId);
+          }
           // The first turn on the new account: from here a rejection is real.
           if (movedAwaitingTurn.delete(event.threadId)) yield* announce(event.threadId);
           return;
@@ -1403,6 +1465,7 @@ export const make = Effect.gen(function* () {
       }
       if (event.type !== "thread.deleted") return;
       const threadId = event.payload.threadId;
+      yield* cancelResetWait(threadId);
       threadProfiles.delete(threadId);
       notices.delete(threadId);
       pendingRestart.delete(threadId);
