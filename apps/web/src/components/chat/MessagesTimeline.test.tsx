@@ -260,10 +260,12 @@ function stubDomGlobals() {
 }
 
 beforeEach(stubDomGlobals);
+// T3-CUSTOM(expbkt3): the stage deploy job runs every package's tests on one runner, where
+// this import has taken over 30 s; the CI web job, which runs alone, needs far less.
 beforeAll(async () => {
   Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
   ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
-}, 30_000);
+}, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
