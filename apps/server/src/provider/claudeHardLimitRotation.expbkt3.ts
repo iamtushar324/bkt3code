@@ -1,8 +1,12 @@
 /**
  * T3-CUSTOM(expbkt3): rotate Claude after an authoritative usage rejection.
  *
- * The provider event retains Claude's typed rate-limit message in `raw`. This
- * listener delegates the machine-global election to the host-owned autoswitch
+ * The trigger is the adapter's usage-limit `runtime.warning`, which carries
+ * Claude's `rate_limit_info` as its detail. The adapter raises it only for a
+ * rejection that blocks the running turn: overage that absorbs the rejection
+ * stays quiet, and every limit type is covered. (`account.rate-limits.updated`
+ * is not a trigger: it is dropped for rejections that carry no utilization.)
+ * This listener delegates the machine-global election to the host-owned autoswitch
  * command and stops only the emitting thread after a validated switched result.
  * It never reads, copies, logs, or moves account credentials.
  */
@@ -33,20 +37,18 @@ const ClaudeRateLimitType = Schema.Literals([
   "seven_day",
   "seven_day_opus",
   "seven_day_sonnet",
+  "seven_day_overage_included",
   "overage",
 ]);
 export type ClaudeRateLimitType = typeof ClaudeRateLimitType.Type;
 
-const ClaudeRateLimitMessage = Schema.Struct({
-  type: Schema.Literal("rate_limit_event"),
-  rate_limit_info: Schema.Struct({
-    status: Schema.Literals(["allowed", "allowed_warning", "rejected"]),
-    rateLimitType: Schema.optional(ClaudeRateLimitType),
-    resetsAt: Schema.optional(Schema.Number),
-    overageResetsAt: Schema.optional(Schema.Number),
-  }),
+const ClaudeRateLimitInfo = Schema.Struct({
+  status: Schema.Literals(["allowed", "allowed_warning", "rejected"]),
+  rateLimitType: Schema.optional(ClaudeRateLimitType),
+  resetsAt: Schema.optional(Schema.Number),
+  overageResetsAt: Schema.optional(Schema.Number),
 });
-const decodeClaudeRateLimitMessage = Schema.decodeUnknownOption(ClaudeRateLimitMessage);
+const decodeClaudeRateLimitInfo = Schema.decodeUnknownOption(ClaudeRateLimitInfo);
 
 const ClaudeAutoswitchHostResult = Schema.Union([
   Schema.Struct({
@@ -102,18 +104,12 @@ export interface ClaudeHardLimitRotationDependencies {
 }
 
 function hardLimitCondition(event: ProviderRuntimeEvent): ClaudeHardLimitCondition | null {
-  if (
-    event.provider !== "claudeAgent" ||
-    event.type !== "account.rate-limits.updated" ||
-    event.raw?.source !== "claude.sdk.message" ||
-    event.raw.messageType !== "rate_limit_event"
-  ) {
-    return null;
-  }
+  if (event.provider !== "claudeAgent" || event.type !== "runtime.warning") return null;
 
-  const decoded = decodeClaudeRateLimitMessage(event.raw.payload);
+  // Other warnings carry other details (or none) and do not decode.
+  const decoded = decodeClaudeRateLimitInfo(event.payload.detail);
   if (Option.isNone(decoded)) return null;
-  const info = decoded.value.rate_limit_info;
+  const info = decoded.value;
   if (info.status !== "rejected" || info.rateLimitType === undefined) return null;
 
   const resetAt =

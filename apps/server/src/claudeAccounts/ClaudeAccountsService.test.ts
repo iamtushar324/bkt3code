@@ -1275,6 +1275,139 @@ describe("ClaudeAccountsService hard limits", () => {
     }),
   );
 
+  // The test clock starts at the epoch, so these resets are minutes away.
+  const resetInTwoMinutes = 120;
+
+  scenario(
+    "waits out a limit that resets within five minutes, then continues on the same account",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-reset-wait");
+        yield* service.resolveForSession(threadId);
+        const placementsBefore = harness.placeCalls.length;
+        const { seen } = yield* watchThreadInto(service, threadId);
+
+        assert.isTrue(
+          yield* service.handleHardLimit({
+            threadId,
+            rateLimitType: "five_hour",
+            resetAt: resetInTwoMinutes,
+          }),
+        );
+        assert.deepEqual(harness.stoppedThreads, [threadId]);
+        assert.equal(harness.dispatched.length, 0);
+        const waiting = yield* service.getThread(threadId);
+        assert.equal(
+          waiting.notice,
+          "tushar resets at 00:02 UTC — this thread continues on it at 00:03 UTC.",
+        );
+        assert.equal(waiting.resolvedProfile, "tushar");
+        assert.equal(harness.placeCalls.length, placementsBefore);
+
+        yield* TestClock.adjust("3 minutes");
+        yield* takeUntil(seen, (view) => view.notice === undefined);
+        assert.equal(harness.dispatched.length, 1);
+        const { command, actorUserId } = harness.dispatched[0]!;
+        assert.equal(actorUserId, owner);
+        if (command.type === "thread.turn.start") {
+          assert.equal(
+            command.message.text,
+            "Continue where you left off — Claude account tushar has reset its usage limit.",
+          );
+        }
+        const resumed = yield* service.resolveForSession(threadId);
+        assert.equal(resumed?.profile, "tushar");
+        assert.equal(resumed?.reason, "sticky");
+
+        // Claude still refuses with the old reset: no second wait, the thread moves.
+        yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: resetInTwoMinutes,
+        });
+        assert.equal(harness.dispatched.length, 2);
+        assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+      }),
+  );
+
+  scenario(
+    "drops the wait as soon as a message is accepted for the thread",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-reset-wait-message");
+        yield* service.resolveForSession(threadId);
+        const { seen } = yield* watchThreadInto(service, threadId);
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: resetInTwoMinutes,
+        });
+
+        yield* PubSub.publish(harness.domainEvents, {
+          type: "thread.turn-start-requested",
+          payload: { threadId },
+        } as unknown as OrchestrationEvent);
+        yield* takeUntil(seen, (view) => view.notice === undefined);
+        yield* TestClock.adjust("10 minutes");
+        assert.equal(harness.dispatched.length, 0);
+      }),
+  );
+
+  scenario("drops the wait when someone sends a message before the reset", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const threadId = ThreadId.make("thread-reset-wait-interrupted");
+      yield* service.resolveForSession(threadId);
+      const { seen } = yield* watchThreadInto(service, threadId);
+      yield* service.handleHardLimit({
+        threadId,
+        rateLimitType: "five_hour",
+        resetAt: resetInTwoMinutes,
+      });
+
+      yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+      yield* takeUntil(seen, (view) => view.notice === undefined);
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(harness.dispatched.length, 0);
+    }),
+  );
+
+  scenario("drops the wait when the thread's account mode changes", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const threadId = ThreadId.make("thread-reset-wait-mode");
+      yield* service.resolveForSession(threadId);
+      yield* service.handleHardLimit({
+        threadId,
+        rateLimitType: "five_hour",
+        resetAt: resetInTwoMinutes,
+      });
+      yield* service.setThreadMode({ threadId, mode: { kind: "profile", profile: "agent" } });
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(harness.dispatched.length, 0);
+    }),
+  );
+
+  scenario("moves instead when the reset is more than five minutes away", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const threadId = ThreadId.make("thread-reset-too-far");
+      yield* service.resolveForSession(threadId);
+      yield* service.handleHardLimit({
+        threadId,
+        rateLimitType: "five_hour",
+        resetAt: 5 * 60 + 1,
+      });
+      assert.equal(harness.dispatched.length, 1);
+      assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+    }),
+  );
+
   scenario(
     "declines the rejection while the feature is off",
     { enabled: false },
