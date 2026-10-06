@@ -4,7 +4,7 @@ import { create, type ReactTestInstance, type ReactTestRenderer } from "react-te
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { PersonalMcpSettingsError, ThreadId, type SessionWebhookView } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 const mocks = vi.hoisted(() => ({
   webhooks: new Map<string, ReadonlyArray<object>>(),
   sessionUsers: new Map<string, string | null>(),

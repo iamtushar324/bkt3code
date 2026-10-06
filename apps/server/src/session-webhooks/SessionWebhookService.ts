@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): durable, owner-bound session webhook lifecycle and receipts. */
 import { CommandId, MessageId, ThreadId, UserId } from "@t3tools/contracts";
 import {
@@ -14,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";

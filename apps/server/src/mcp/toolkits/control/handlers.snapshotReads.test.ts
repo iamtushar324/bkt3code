@@ -72,9 +72,13 @@ it.effect("lists sessions without materializing the full projection snapshot", (
       principal: "external-operator",
       actorUserId: null,
       environmentId: EnvironmentId.make("environment-session-list"),
-      threadId,
-      providerSessionId: "provider-session-list",
-      providerInstanceId: ProviderInstanceId.make("codex"),
+      requestNamespace: "external-operator",
+      thread: undefined,
+      client: {
+        sessionId: "external-operator",
+        label: "External MCP operator",
+        runtimeModeCeiling: "full-access",
+      },
       capabilities: new Set(["t3.read"]),
       issuedAt: 1,
     };

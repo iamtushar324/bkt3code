@@ -12,14 +12,17 @@ import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   ProjectContentMatch,
+  ProjectEntry,
   ProjectEntryKind,
+  ThreadId,
+  TurnItemId,
   VcsListRefsInput, // T3-CUSTOM(expbkt3): exact remote-ref query input.
   VcsListRefsResult,
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 // T3-CUSTOM(expbkt3): BEGIN — search this device's cache for unreachable hosts.
@@ -41,6 +44,7 @@ const PROJECT_CONTENT_SEARCH_LIMIT = 500;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
+const EMPTY_PROJECT_ENTRIES: ReadonlyArray<ProjectEntry> = [];
 const EMPTY_CONTENT_MATCHES: ReadonlyArray<ProjectContentMatch> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
@@ -124,6 +128,8 @@ export function useThreadSearch(
   query: string,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  /** The settled query `matches` came from; it only changes when results do. */
+  readonly query: string;
   readonly isPending: boolean;
 } {
   const normalizedQuery = query.trim();
@@ -163,6 +169,7 @@ export function useThreadSearch(
       : cachedMatches.length === 0
         ? result.matches
         : [...result.matches, ...cachedMatches],
+    query: settledQuery ?? "",
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
 }
@@ -357,7 +364,7 @@ export function useProjectPathSearch(
   );
 
   return {
-    entries: result.data?.entries ?? [],
+    entries: result.data?.entries ?? EMPTY_PROJECT_ENTRIES,
     error: result.error,
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
@@ -455,4 +462,23 @@ export function useCheckpointDiff(
     turnTarget === null ? null : orchestrationEnvironment.turnDiff(turnTarget),
   );
   return fullThreadTarget === null ? turn : fullThread;
+}
+
+/** Full input and output of one timeline item, fetched only while its row is open. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly itemId: TurnItemId;
+    readonly revision: string;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, itemId: target.itemId, revision: target.revision },
+        }),
+  );
 }

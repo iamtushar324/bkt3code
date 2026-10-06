@@ -15,9 +15,13 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   principal: "provider-session",
   actorUserId,
   environmentId: EnvironmentId.make("environment-control-test"),
-  threadId: ThreadId.make("thread-current"),
-  providerSessionId: "provider-session-control-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-control-test",
+  thread: {
+    threadId: ThreadId.make("thread-current"),
+    providerSessionId: "provider-session-control-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["t3.read", "t3.control", "t3.plan", "t3.session.create"]),
   issuedAt: 1,
 };

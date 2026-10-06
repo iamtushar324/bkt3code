@@ -9,7 +9,7 @@ import {
   DEFAULT_PHASE_SIDEBAR_GROUPING,
   type PhaseSidebarGroupingPreferences,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";

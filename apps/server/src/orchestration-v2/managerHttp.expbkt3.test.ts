@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): manager routes use native V2 persistence and run receipts. */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -21,16 +22,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import * as Registry from "../mcp/McpSessionRegistry.ts";
 import * as Profiles from "../mcp/UserMcpProfileStore.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layer as OrchestrationEventStoreLive } from "../persistence/OrchestrationEventStore.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { layer as OrchestrationCommandReceiptRepositoryLive } from "../persistence/OrchestrationCommandReceipts.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -41,7 +42,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as Recovery from "./ProviderRuntimeRecoveryService.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { managerRouteLayer } from "./managerHttp.expbkt3.ts";
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const owner = UserId.make("owner");
@@ -69,9 +70,13 @@ const registryLayer = Layer.effect(
                   principal: "external-user" as const,
                   actorUserId: actor.userId,
                   environmentId: EnvironmentId.make("test"),
-                  threadId: ThreadId.make("external"),
-                  providerSessionId: "external",
-                  providerInstanceId: ProviderInstanceId.make("external"),
+                  requestNamespace: `external-user:${actor.userId}`,
+                  thread: undefined,
+                  client: {
+                    sessionId: `external-user:${actor.userId}`,
+                    label: "External MCP user",
+                    runtimeModeCeiling: "full-access" as const,
+                  },
                   issuedAt: 0,
                   capabilities: new Set(["t3.read", "t3.control"] as const),
                 }
@@ -96,9 +101,9 @@ const adapter = {
   openSession: () => Effect.die("HTTP contract tests must not start provider processes"),
 } as ProviderAdapterV2Shape;
 const database = SqlitePersistenceMemory;
-const native = makeOrchestratorV2ReplayLayerWithRegistry(
+const native = layerWithRegistry(
   { name: "manager-http" },
-  ProviderAdapterRegistry.makeLayer([adapter]),
+  ProviderAdapterRegistry.layerFromAdapters([adapter]),
   { databaseLayer: database, runEffectWorker: false },
 );
 const stores = Layer.mergeAll(

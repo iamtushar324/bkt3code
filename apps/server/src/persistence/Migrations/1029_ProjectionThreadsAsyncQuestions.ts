@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // T3-CUSTOM(expbkt3): async Codex questions are discoverable but never block.
 export default Effect.gen(function* () {

@@ -11,7 +11,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 // T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
 // which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
@@ -35,7 +35,7 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 
-const CliRuntimeLayer = Layer.mergeAll(
+const layerCliRuntime = Layer.mergeAll(
   NodeServices.layer,
   NetService.layer,
   ForgejoCliSelfContainedLive,
@@ -101,7 +101,7 @@ describe("pair tailscale local target", () => {
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 
 const provideCliTestLayers = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provide(effect, Layer.mergeAll(CliRuntimeLayer, TestConsole.layer));
+  Effect.provide(effect, Layer.mergeAll(layerCliRuntime, TestConsole.layer));
 
 // Console output accumulates across CLI runs within a test, and each
 // Console.log call is one entry — so the latest command's output is the last

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { MigrationsLive } from "../persistence/Migrations.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as AgentUiRenders from "../persistence/AgentUiRenders.ts";
 import * as AgentUiServiceModule from "./AgentUiService.ts";
 import { AgentUiService } from "./AgentUiService.ts";

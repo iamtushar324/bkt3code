@@ -54,7 +54,7 @@ import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsSer
 // T3-CUSTOM(expbkt3): user presence for agents deciding how to reach the human.
 import { resolvePresenceTarget } from "../../../presence/presenceTarget.ts";
 import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -130,6 +130,20 @@ const requireCapability = Effect.fn("T3ControlToolkit.requireCapability")(functi
     });
   }
   return scope;
+});
+
+/** Tools that act on the caller's own session; an external caller has none. */
+const requireOwnThreadId = Effect.fn("T3ControlToolkit.requireOwnThreadId")(function* (
+  operation: string,
+  scope: McpInvocationContext.McpInvocationScope,
+) {
+  if (scope.thread === undefined) {
+    return yield* new T3ControlToolError({
+      operation,
+      message: "This tool acts on the calling T3 session, so it needs an agent running inside one.",
+    });
+  }
+  return scope.thread.threadId;
 });
 
 const requireExternalOperator = Effect.fn("T3ControlToolkit.requireExternalOperator")(function* (
@@ -219,7 +233,7 @@ const resolveCreatedSessionParent = Effect.fn("T3ControlToolkit.resolveCreatedSe
       return requestedParentId;
     }
 
-    return scope.principal === "provider-session" ? scope.threadId : null;
+    return scope.thread?.threadId ?? null;
   },
 );
 
@@ -293,8 +307,7 @@ const resolveCreatedSessionTags = (input: {
 }): ReadonlyArray<UserId> => {
   const explicit = input.explicitTagUserIds;
   const inherit = input.inheritParentTags ?? explicit.length === 0;
-  const sourceThreadId =
-    input.scope.principal === "provider-session" ? input.scope.threadId : input.parentThreadId;
+  const sourceThreadId = input.scope.thread?.threadId ?? input.parentThreadId;
   const source =
     inherit && sourceThreadId !== null
       ? input.threads.find((candidate) => candidate.id === sourceThreadId)
@@ -507,7 +520,7 @@ const handlers = {
         (scope.actorUserId !== null
           ? thread.ownerUserId === scope.actorUserId ||
             thread.memberUserIds.includes(scope.actorUserId)
-          : thread.id === scope.threadId),
+          : thread.id === scope.thread?.threadId),
     );
     const projects = new Map(
       [...shell.projects, ...(archived?.projects ?? [])].map((project) => [
@@ -594,7 +607,8 @@ const handlers = {
                       thread.memberUserIds.includes(actorUserId)),
                 )
               : snapshot.threads.some(
-                  (thread) => thread.id === scope.threadId && thread.projectId === project.id,
+                  (thread) =>
+                    thread.id === scope.thread?.threadId && thread.projectId === project.id,
                 )),
         )
         .map((project) => [project.id, project]),
@@ -1401,10 +1415,11 @@ const handlers = {
   t3_show_ui: Effect.fn("T3ControlToolkit.showUi")(function* (input) {
     const operation = "show-ui";
     const scope = yield* requireCapability(operation, "t3.read");
+    const threadId = yield* requireOwnThreadId(operation, scope);
     const agentUi = yield* AgentUiService;
     const handle = yield* agentUi
       .show({
-        threadId: scope.threadId,
+        threadId,
         title: input.title,
         html: input.html,
         url: input.url,
@@ -1430,10 +1445,9 @@ const handlers = {
   t3_list_comments: Effect.fn("T3ControlToolkit.listComments")(function* (input) {
     const operation = "list-comments";
     const scope = yield* requireCapability(operation, "t3.read");
+    const threadId = yield* requireOwnThreadId(operation, scope);
     const threadComments = yield* ThreadCommentsService;
-    const snapshot = yield* threadComments
-      .snapshot(scope.threadId)
-      .pipe(mapControlError(operation));
+    const snapshot = yield* threadComments.snapshot(threadId).pipe(mapControlError(operation));
     const status = input.status ?? "open";
     const comments = snapshot.comments.filter(
       (comment) => status === "all" || comment.status === status,
@@ -1449,13 +1463,14 @@ const handlers = {
   t3_reply_comment: Effect.fn("T3ControlToolkit.replyComment")(function* (input) {
     const operation = "reply-comment";
     const scope = yield* requireCapability(operation, "t3.read");
+    const threadId = yield* requireOwnThreadId(operation, scope);
     const threadComments = yield* ThreadCommentsService;
     const commentId = yield* decodeThreadCommentId(input.commentId).pipe(
       mapControlError(operation),
     );
     const comment = yield* threadComments
       .agentReply({
-        threadId: scope.threadId,
+        threadId,
         commentId,
         body: input.body,
         addressed: input.addressed,

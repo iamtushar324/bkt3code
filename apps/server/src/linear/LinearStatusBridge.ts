@@ -16,7 +16,7 @@
 import type { LinearIssueStatusSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 /** The bridge's public origin. Its read API is service-authenticated, not per-user. */
 export const LINEAR_STATUS_BRIDGE_URL = "https://bkt3automations.dev.beknown.live" as const;

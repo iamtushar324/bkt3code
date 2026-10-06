@@ -5,7 +5,7 @@
 // synced: "have *I* seen this" is per device, and mobile has no client-settings
 // sync to hang it on. Pruning lives in phaseSidebarPreferences.ts.
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";

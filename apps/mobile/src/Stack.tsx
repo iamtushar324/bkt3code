@@ -52,6 +52,7 @@ import { ThreadUsageSheet } from "./features/threadusage/ThreadUsageSheet";
 import { EnvironmentAppearanceSheet } from "./features/environments/EnvironmentAppearanceSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
+import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -570,6 +571,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadQueue",
   "ThreadReviewComment",
   "ThreadDevicePreview",
+  "ThreadBrowserPreview",
   "ThreadSettingsSheet",
   // T3-CUSTOM(expbkt3): fork sheets that float over the workspace.
   "ThreadPlanReviewComment",
@@ -723,6 +725,17 @@ const RootStackConfig = createNativeStackNavigator({
     ThreadDevicePreview: createNativeStackScreen({
       screen: DevicePreviewRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/devices`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
+        autoHideHomeIndicator: true,
+        navigationBarHidden: true,
+      },
+    }),
+    ThreadBrowserPreview: createNativeStackScreen({
+      screen: BrowserPreviewRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/browser`,
       options: {
         presentation: "fullScreenModal",
         headerShown: false,

@@ -1,7 +1,7 @@
 // T3-CUSTOM(expbkt3): durable worktree bootstrap progress and per-project
 // creation defaults. Fork migrations are allocated from 1000 upward.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { describe, expect, it } from "@effect/vitest";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";

@@ -9,7 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Stream from "effect/Stream";
-import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationEventStore } from "../persistence/OrchestrationEventStore.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { isActiveExternalGrant } from "../mcp/UserMcpProfileStore.ts";
@@ -135,7 +135,9 @@ export const assertManagerBootstrapDispatch = Effect.fn("manager.assertBootstrap
     } else {
       const existing = yield* projections.getThread(command.threadId).pipe(
         Effect.map(Option.some),
-        Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(Option.none())),
+        Effect.catchTags({
+          ProjectionStoreThreadNotFoundError: () => Effect.succeed(Option.none()),
+        }),
       );
       if (Option.isSome(existing)) return yield* reject("manager-paused");
       if (command.type !== "thread.create") return yield* reject("manager-paused");

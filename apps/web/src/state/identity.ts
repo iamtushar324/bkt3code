@@ -10,7 +10,7 @@
  */
 import type { UserId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 // T3-CUSTOM(expbkt3): identity for clients that pair instead of signing in.

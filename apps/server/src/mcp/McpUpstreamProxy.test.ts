@@ -3,12 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BIFROST_MCP_URL, ThreadId, TOOLYARD_MCP_URL } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import {
-  HttpClient,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as McpUpstreamProxy from "./McpUpstreamProxy.ts";
 

@@ -4,7 +4,7 @@
 // lives in phaseSidebarPreferences.ts so it stays testable without pulling
 // react-native onto the import graph.
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { resolvePhaseSidebarEnabled } from "./phaseSidebarPreferences";

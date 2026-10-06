@@ -26,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
@@ -106,7 +106,7 @@ it.effect(
         TurnItemPositionStore.layer,
       ).pipe(Layer.provide(database));
       const sink = EventSink.layerFromStores.pipe(Layer.provide(Layer.merge(stores, database)));
-      const registry = ProviderAdapterRegistry.makeLayer([
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
         {
           instanceId,
           driver,

@@ -11,7 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 
 import { makePullRequestWatchOwnerExecution } from "../orchestration-v2/forkPullRequestWatchIdentity.expbkt3.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
@@ -19,6 +19,7 @@ import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixt
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -189,6 +190,8 @@ it.effect(
               resolve: () => Effect.succeed(null),
             }),
             Layer.mock(PullRequestFilesViewed.PullRequestFilesViewedRepository)({}),
+            // Merge settings are read only by merge actions, which this test never runs.
+            Layer.mock(ServerSettings.ServerSettingsService)({}),
             SourceControlRateLimit.layer,
             Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
               Layer.provide(KeyValueStore.layerMemory),

@@ -1,6 +1,6 @@
 // T3-CUSTOM(expbkt3): migration 1003 adds durable, exact execution intent and recovery audit.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

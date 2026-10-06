@@ -4,10 +4,10 @@
  * hundred large schemas into every provider prompt.
  */
 import { type AuthEnvironmentScope, WsRpcGroup } from "@t3tools/contracts";
-import { Tool } from "effect/unstable/ai";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+import { Tool } from "effect/ai";
+import type * as Rpc from "effect/rpc/Rpc";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 
 import { requiredScopeForRpcMethod } from "../../../auth/RpcAuthorization.ts";
 
@@ -50,7 +50,17 @@ export const webUiVirtualToolName = (method: string): string =>
     .replace(/_+/g, "_")
     .toLowerCase();
 
-const rpcWithProps = (method: WebUiRpcMethod): Rpc.AnyWithProps => {
+/**
+ * The schema half of an RPC definition. `Rpc.AnyWithProps` also erases the
+ * middleware set, and the group's `RpcScopeAuthorization` (which provides no
+ * services) is not assignable to its erased middleware type.
+ */
+export type WebUiRpcDefinition = Pick<
+  Rpc.AnyWithProps,
+  "payloadSchema" | "successSchema" | "errorSchema"
+>;
+
+const rpcWithProps = (method: WebUiRpcMethod): WebUiRpcDefinition => {
   const rpc = WsRpcGroup.requests.get(method);
   if (!rpc) throw new Error(`Unknown authenticated web RPC: ${method}`);
   return rpc;
@@ -116,5 +126,5 @@ export const isWebUiVirtualToolAuthorized = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ): boolean => scopes.includes(tool.requiredScope);
 
-export const webUiRpcDefinition = (method: WebUiRpcMethod): Rpc.AnyWithProps =>
+export const webUiRpcDefinition = (method: WebUiRpcMethod): WebUiRpcDefinition =>
   rpcWithProps(method);

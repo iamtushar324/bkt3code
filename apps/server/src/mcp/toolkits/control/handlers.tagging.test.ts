@@ -44,13 +44,31 @@ function makeScope(
     principal: "provider-session",
     actorUserId: prompter,
     environmentId: EnvironmentId.make("environment-tagging"),
-    threadId: callerThreadId,
-    providerSessionId: "provider-session-tagging",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    requestNamespace: "provider-session-tagging",
+    thread: {
+      threadId: callerThreadId,
+      providerSessionId: "provider-session-tagging",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
     capabilities: new Set(["t3.read", "t3.control", "t3.session.create"]),
     issuedAt: 1,
     ...overrides,
   };
+}
+
+/** External principals are client callers with no session of their own. */
+function makeExternalScope(
+  principal: "external-user" | "external-operator",
+): McpInvocationContext.McpInvocationScope {
+  const requestNamespace =
+    principal === "external-user" ? `external-user:${prompter}` : "external-operator";
+  return makeScope({
+    principal,
+    requestNamespace,
+    thread: undefined,
+    client: { sessionId: requestNamespace, label: principal, runtimeModeCeiling: "full-access" },
+  });
 }
 
 const resolveTags = (input: {
@@ -103,19 +121,25 @@ it("tags nobody but the owner when inheritance is refused", () => {
 });
 
 it("inherits from the explicit parent for a caller with no session of its own", () => {
-  // An external-user token's threadId is synthetic, so the named parent is the
-  // only real audience available.
-  const scope = makeScope({ principal: "external-user" });
+  // An external-user token has no session of its own, so the named parent is
+  // the only real audience available.
+  const scope = makeExternalScope("external-user");
   expect(resolveTags({ scope, parentThreadId: detachedParentId })).toEqual([outsider]);
 });
 
 it("tags nobody when an external caller names no parent", () => {
-  const scope = makeScope({ principal: "external-operator" });
+  const scope = makeExternalScope("external-operator");
   expect(resolveTags({ scope })).toEqual([]);
 });
 
 it("ignores a source session that is no longer visible in the snapshot", () => {
-  const scope = makeScope({ threadId: ThreadId.make("thread-archived") });
+  const scope = makeScope({
+    thread: {
+      threadId: ThreadId.make("thread-archived"),
+      providerSessionId: "provider-session-tagging",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+  });
   expect(resolveTags({ scope })).toEqual([]);
 });
 

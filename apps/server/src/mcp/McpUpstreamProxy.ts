@@ -19,7 +19,7 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { makeUpstreamRejectionTracker, rejectionKey } from "./UpstreamRejectionTracker.ts";
@@ -167,11 +167,14 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
     if (
       !invocation ||
       invocation.principal !== "provider-session" ||
+      invocation.thread === undefined ||
       managedToolyardActor(invocation.actorUserId) === null ||
       (invocation.actorUserId === null && integrationId !== TOOLYARD_MCP_INTEGRATION_ID)
     ) {
       return unauthorized("A user-bound T3 provider credential is required.");
     }
+    // Bound once: the guard's narrowing does not reach the callbacks below.
+    const thread = invocation.thread;
     const actorUserId = managedToolyardActor(invocation.actorUserId)!;
 
     const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(actorUserId).pipe(
@@ -183,7 +186,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
         candidate.enabled &&
         candidate.credentialConfigured &&
         (candidate.providerInstanceIds.length === 0 ||
-          candidate.providerInstanceIds.includes(invocation.providerInstanceId)),
+          candidate.providerInstanceIds.includes(thread.providerInstanceId)),
     );
     if (!integration) {
       return HttpServerResponse.jsonUnsafe(
@@ -245,7 +248,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       authMode: integration.authMode,
       customHeaderName: integration.customHeaderName,
       credential,
-      threadId: invocation.threadId,
+      threadId: thread.threadId,
       integrationId,
     });
 
@@ -310,8 +313,8 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       Effect.tap(() =>
         Effect.logInfo("personal MCP request proxied", {
           actorUserId: invocation.actorUserId,
-          providerSessionId: invocation.providerSessionId,
-          providerInstanceId: invocation.providerInstanceId,
+          providerSessionId: thread.providerSessionId,
+          providerInstanceId: thread.providerInstanceId,
           integrationId,
         }),
       ),
@@ -319,7 +322,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
         Effect.logWarning("personal MCP upstream request failed", {
           cause,
           actorUserId: invocation.actorUserId,
-          providerSessionId: invocation.providerSessionId,
+          providerSessionId: thread.providerSessionId,
           integrationId,
         }).pipe(
           Effect.as(

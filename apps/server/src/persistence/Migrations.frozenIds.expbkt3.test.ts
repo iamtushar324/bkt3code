@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledger", (it) => {
@@ -19,6 +19,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         [1043, "OrchestrationV2"],
         [1044, "RemoveRedundantProjectionIndexes"],
         [1045, "SessionWebhooks"],
+        [1046, "ScheduledTaskWebhooks"],
+        [1047, "WebhookRelayDeliveries"],
       ]);
       const after = yield* sql<{
         migration_id: number;

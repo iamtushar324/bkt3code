@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): Read-only provider configuration and stable comparison, without credentials. */
 import {
   BIFROST_MCP_INTEGRATION_ID,

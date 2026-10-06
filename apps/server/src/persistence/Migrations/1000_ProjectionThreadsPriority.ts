@@ -1,7 +1,7 @@
 // T3-CUSTOM(expbkt3): session priority (P0..P4) stored as a nullable integer.
 // NULL means "unprioritised", 0 is the highest priority.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -5,7 +5,7 @@
 // keeps showing what the agent actually produced at that point in the thread.
 // Bodies live here instead of on the activity payload, which is capped.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

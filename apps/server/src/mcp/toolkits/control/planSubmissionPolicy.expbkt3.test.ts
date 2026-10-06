@@ -17,8 +17,8 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpServer } from "effect/unstable/ai";
-import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
+import { McpProtocol, McpServer } from "effect/ai";
+import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
@@ -28,7 +28,7 @@ import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/A
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
 import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
 import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
@@ -65,9 +65,13 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   principal: "provider-session",
   actorUserId: null,
   environmentId: EnvironmentId.make("environment-plan-policy-test"),
-  threadId,
-  providerSessionId: "provider-session-plan-policy-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-plan-policy-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session-plan-policy-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["t3.read", "t3.control", "t3.plan"]),
   issuedAt: 1,
 };

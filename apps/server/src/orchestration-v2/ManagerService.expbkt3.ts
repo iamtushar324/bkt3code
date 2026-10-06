@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationEventStore } from "../persistence/OrchestrationEventStore.ts";
 import { isOwnerOrMember } from "./accessRules.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { EventSinkV2 } from "./EventSink.ts";

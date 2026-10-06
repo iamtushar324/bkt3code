@@ -16,7 +16,7 @@ import * as Ref from "effect/Ref";
 import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { MigrationsLive } from "../persistence/Migrations.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as PlanReviewDocuments from "../persistence/PlanReviewDocuments.ts";
 import * as PlanReviewServiceModule from "./PlanReviewService.ts";
 import { derivePlanTitle, PlanReviewService } from "./PlanReviewService.ts";

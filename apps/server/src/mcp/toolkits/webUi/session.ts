@@ -21,7 +21,7 @@ export const makeWebUiAuthenticatedSession = (
     invocation.principal === "external-operator" ||
     (invocation.principal === "provider-session" && actorUserId === null);
   return {
-    sessionId: AuthSessionId.make(`mcp-web-ui:${invocation.providerSessionId}`),
+    sessionId: AuthSessionId.make(`mcp-web-ui:${invocation.requestNamespace}`),
     userId: actorUserId === null ? null : EnvironmentUserId.make(actorUserId),
     subject:
       actorUserId === null

@@ -81,10 +81,10 @@ it.layer(TestLayer)("codename worktree branch allocation", (it) => {
 
       const codename = path.basename(created.worktree.path);
       assert.equal(isWorktreeCodename(codename), true);
-      assert.equal(created.worktree.refName, `t3code/${codename}`);
+      assert.equal(created.worktree.refName, `t3/${codename}`);
       assert.equal(
         yield* git(created.worktree.path, ["branch", "--show-current"]),
-        `t3code/${codename}`,
+        `t3/${codename}`,
       );
     }),
   );
@@ -120,7 +120,7 @@ it.layer(TestLayer)("codename worktree branch allocation", (it) => {
       const secondCodename = path.basename(second.worktree.path);
 
       assert.notEqual(secondCodename, firstCodename);
-      assert.equal(second.worktree.refName, `t3code/${secondCodename}`);
+      assert.equal(second.worktree.refName, `t3/${secondCodename}`);
     }),
   );
 
@@ -149,7 +149,7 @@ it.layer(TestLayer)("codename worktree branch allocation", (it) => {
       const secondCodename = path.basename(second.worktree.path);
 
       assert.notEqual(secondCodename, firstCodename);
-      assert.equal(second.worktree.refName, `t3code/${secondCodename}`);
+      assert.equal(second.worktree.refName, `t3/${secondCodename}`);
     }),
   );
 

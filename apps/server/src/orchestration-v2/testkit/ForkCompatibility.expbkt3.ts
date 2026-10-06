@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
+import { layer as OrchestrationEventStoreLive } from "../../persistence/OrchestrationEventStore.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityResolver.ts";
 import * as ProjectStore from "../ProjectStore.ts";
@@ -19,14 +19,14 @@ import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { planProjectCommand } from "../ProjectCommands.ts";
 import { OrchestrationEngineLive } from "../Layers/OrchestrationEngine.ts";
 import { ProjectionSnapshotQueryLive } from "../Layers/ProjectionSnapshotQuery.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerWithRegistry } from "./ProviderReplayHarness.ts";
 
 export function makeForkCompatibilityTestLayer(name: string) {
   const registry = Layer.mock(ProviderAdapterRegistryV2)({
     get: () => Effect.die("Provider execution is outside this test."),
     list: () => Effect.succeed([ProviderInstanceId.make("codex")]),
   });
-  const runtime = makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry, {
+  const runtime = layerWithRegistry({ name }, registry, {
     runEffectWorker: false,
     databaseLayer: SqlitePersistenceMemory,
   });

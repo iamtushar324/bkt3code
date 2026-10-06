@@ -20,7 +20,7 @@ import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/A
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { PullRequestsToolkitHandlersLive } from "./handlers.ts";
+import * as PullRequestsHandlers from "./handlers.ts";
 import { PullRequestsToolkit, type PullRequestTargetInput } from "./tools.ts";
 
 const SELF = ThreadId.make("self");
@@ -77,15 +77,31 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
     ),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
-    Effect.provide(PullRequestsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+    Effect.provide(PullRequestsHandlers.layer.pipe(Layer.provide(dependencies))),
   );
   const scope: McpInvocationContext.McpInvocationScope = {
     principal,
     actorUserId: principal === "external-user" ? ACTOR : null,
     environmentId: EnvironmentId.make("environment-one"),
-    threadId: SELF,
-    providerSessionId: "provider-one",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    requestNamespace:
+      principal === "provider-session"
+        ? "provider-one"
+        : principal === "external-user"
+          ? `external-user:${ACTOR}`
+          : "external-operator",
+    // Only a provider session has a thread; external principals are client callers.
+    thread:
+      principal === "provider-session"
+        ? {
+            threadId: SELF,
+            providerSessionId: "provider-one",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }
+        : undefined,
+    client:
+      principal === "provider-session"
+        ? undefined
+        : { sessionId: principal, label: principal, runtimeModeCeiling: "full-access" },
     capabilities: new Set(["pull-requests"]),
     issuedAt: 1,
   };
@@ -105,7 +121,7 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
 });
 
 describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork access", (name) => {
-  const input = { url: "https://github.com/example/repository/pull/12", sessionId: TARGET };
+  const input = { url: "https://github.com/example/repository/pull/12", threadId: TARGET };
 
   it.effect("applies an external user's watch to the authorized session", () =>
     Effect.gen(function* () {
@@ -146,10 +162,8 @@ describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork 
     Effect.gen(function* () {
       const harness = yield* makeHarness("external-operator");
       const failure = yield* harness.call(name, { url: input.url }).pipe(Effect.flip);
-      expect(failure).toMatchObject({
-        _tag: "PullRequestSessionTargetError",
-        message: "sessionId is required for a user-wide MCP call.",
-      });
+      // A client caller has no thread of its own to fall back to.
+      expect(failure).toMatchObject({ _tag: "PullRequestThreadRequiredError" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );

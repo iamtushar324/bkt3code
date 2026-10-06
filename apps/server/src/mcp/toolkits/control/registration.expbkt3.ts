@@ -1,7 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { McpSchema, McpServer, Toolkit } from "effect/unstable/ai";
+import { McpSchema, McpServer, Toolkit } from "effect/ai";
 
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import { T3ControlToolkit, T3SubmitPlanTool } from "./tools.ts";

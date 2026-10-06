@@ -14,7 +14,7 @@ import {
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type * as UserMcpProfileStore from "../mcp/UserMcpProfileStore.ts";
 import type { LinearIssueStatusCache } from "./LinearIssueStatusCache.ts";

@@ -12,7 +12,7 @@ import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessC
 import { ClerkDirectory } from "../auth/ClerkDirectory.ts";
 import { checkCommandAccess } from "../orchestration-v2/commandAccess.ts";
 import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.expbkt3.ts";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
@@ -20,6 +20,7 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
@@ -37,7 +38,7 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
 });
 
-export const projectHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "projects",
   Effect.fnUntraced(function* (handlers) {
@@ -70,6 +71,7 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
                     ),
                   ).pipe(Effect.map((visible) => ({ ...snapshot, projects: visible.flat() }))),
             ),
+            traceLocalHandlerWork,
             Effect.catch((cause) => failEnvironmentInternal("project_snapshot_failed", cause)),
           );
         }),
@@ -81,15 +83,19 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           // T3-CUSTOM(expbkt3): ownership, member changes and metadata use the same gate.
           const actor = yield* currentActor;
-          const admin = actor === null ? false : yield* directory.isOrgAdmin(actor);
+          const admin =
+            actor === null ? false : yield* directory.isOrgAdmin(actor).pipe(traceLocalHandlerWork);
           const allowed = yield* checkCommandAccess(access, actor, admin, args.payload).pipe(
+            traceLocalHandlerWork,
             Effect.catch((cause) => failEnvironmentInternal("project_mutation_failed", cause)),
           );
           if (!allowed) return yield* failEnvironmentInvalidRequest("invalid_command");
           const operation = projectMutationOperation(projects, args.payload).pipe(
             Effect.provideService(CurrentOrchestrationActorUserId, actor),
           );
-          return yield* startup.enqueueCommand(operation).pipe(Effect.catch(failProjectMutation));
+          return yield* startup
+            .enqueueCommand(operation)
+            .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));
         }),
       );
   }),

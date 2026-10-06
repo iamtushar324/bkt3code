@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -15,8 +15,9 @@ layer("055_OrchestrationV2", (it) => {
         migrationManifest.map(([id]) => id),
         [
           ...Array.from({ length: 45 }, (_, index) => index + 1),
-          // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045.
-          ...Array.from({ length: 46 }, (_, index) => 1000 + index),
+          // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045 and
+          // upstream's scheduled-task webhook migrations (57-58) at 1046-1047.
+          ...Array.from({ length: 48 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -32,6 +33,8 @@ layer("055_OrchestrationV2", (it) => {
         [1043, "OrchestrationV2"],
         [1044, "RemoveRedundantProjectionIndexes"],
         [1045, "SessionWebhooks"], // T3-CUSTOM(expbkt3): durable callback schema.
+        [1046, "ScheduledTaskWebhooks"],
+        [1047, "WebhookRelayDeliveries"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -60,6 +63,8 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1043, name: "OrchestrationV2" },
         { migration_id: 1044, name: "RemoveRedundantProjectionIndexes" },
         { migration_id: 1045, name: "SessionWebhooks" }, // T3-CUSTOM(expbkt3): append, never rewrite.
+        { migration_id: 1046, name: "ScheduledTaskWebhooks" },
+        { migration_id: 1047, name: "WebhookRelayDeliveries" },
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.

@@ -28,6 +28,7 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 // T3-CUSTOM(expbkt3): tagging a session other than the credential's own.
 import { resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
+import { assertTargetWithinLimits } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -39,9 +40,12 @@ import {
   PullRequestNotOpenError,
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
+  PullRequestWatchFromSubagentError,
   PullRequestThreadNotFoundError,
   // T3-CUSTOM(expbkt3): named-session authorization failure.
   PullRequestSessionTargetError,
+  PullRequestThreadAboveLimitsError,
+  PullRequestThreadRequiredError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
 } from "./tools.ts";
@@ -172,27 +176,71 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestListFailedError
       | typeof PullRequestWatchFailedError,
-    // T3-CUSTOM(expbkt3): the session being tagged, when the caller names one.
     requested: ThreadId | undefined,
   ) {
-    yield* McpInvocationContext.requireMcpCapability("pull-requests");
-    // T3-CUSTOM(expbkt3): an in-session agent still gets its own thread and
-    // nothing else; an external one names the session, authorized exactly the
-    // way the control tools authorize a named session.
-    const threadId = yield* resolveMcpSessionTarget({
-      requested,
-      capability: "pull-requests",
-    }).pipe(
-      Effect.mapError((error) => new PullRequestSessionTargetError({ message: error.message })),
-    );
+    const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+    // T3-CUSTOM(expbkt3): a thread other than the caller's own is authorized exactly the
+    // way the control tools authorize a named session (team access, user-wide scopes).
+    const threadId =
+      requested === undefined || requested === scope.thread?.threadId
+        ? scope.thread?.threadId
+        : yield* resolveMcpSessionTarget({ requested, capability: "pull-requests" }).pipe(
+            Effect.mapError(
+              (error) => new PullRequestSessionTargetError({ message: error.message }),
+            ),
+          );
+    if (threadId === undefined) {
+      return yield* new PullRequestThreadRequiredError();
+    }
     const thread = yield* engine
       .getThreadShell(threadId)
       .pipe(Effect.map(Option.fromNullishOr))
       .pipe(Effect.mapError((cause) => new Failure({ cause })));
-    if (Option.isNone(thread)) {
+    if (Option.isNone(thread) || thread.value.deletedAt !== null) {
       return yield* new PullRequestThreadNotFoundError({ threadId });
     }
     return thread.value;
+  });
+
+  /**
+   * A thread whose pull requests the caller may change: its own, or one that
+   * runs within the caller's modes.
+   */
+  const requireWritableThread = Effect.fn("PullRequestsToolkit.requireWritableThread")(function* (
+    Failure:
+      | typeof PullRequestLinkFailedError
+      | typeof PullRequestUnlinkFailedError
+      | typeof PullRequestWatchFailedError,
+    requested: ThreadId | undefined,
+  ) {
+    const thread = yield* requireThread(Failure, requested);
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (thread.id === scope.thread?.threadId) return thread;
+    const limits =
+      scope.thread === undefined
+        ? {
+            runtimeMode: scope.client?.runtimeModeCeiling ?? ("approval-required" as const),
+            interactionMode: "default" as const,
+          }
+        : yield* engine.getThreadShell(scope.thread.threadId).pipe(
+            Effect.mapError((cause) => new Failure({ cause })),
+            Effect.map((caller) =>
+              // A thread caller changes other threads only while its own run is live.
+              caller === null ||
+              caller.archivedAt !== null ||
+              caller.activeRunId === null ||
+              caller.providerInstanceId !== scope.thread?.providerInstanceId
+                ? undefined
+                : { runtimeMode: caller.runtimeMode, interactionMode: caller.interactionMode },
+            ),
+          );
+    if (limits === undefined) {
+      return yield* new PullRequestThreadAboveLimitsError({ threadId: thread.id });
+    }
+    yield* assertTargetWithinLimits(limits, thread).pipe(
+      Effect.mapError(() => new PullRequestThreadAboveLimitsError({ threadId: thread.id })),
+    );
+    return thread;
   });
 
   const projectOf = (
@@ -232,18 +280,21 @@ const make = Effect.gen(function* () {
     input: PullRequestTargetInput,
     watching: boolean,
   ) {
-    // T3-CUSTOM(expbkt3): watch tools use the same named-session authorization as PR links.
-    const thread = yield* requireThread(PullRequestWatchFailedError, input.sessionId);
+    const thread = yield* requireWritableThread(PullRequestWatchFailedError, input.threadId);
     const project = yield* projectOf(thread, PullRequestWatchFailedError);
     const target = yield* resolveTarget(input, project);
     const watchedLink = (shell: OrchestrationV2ThreadShell) =>
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
+    if (watching && thread.lineage.relationshipToParent === "subagent") {
+      return yield* new PullRequestWatchFromSubagentError();
+    }
     const before = watchedLink(thread);
-    const state = before?.snapshot?.state;
-    if (watching && state !== undefined && state !== "open") {
-      return yield* new PullRequestNotOpenError({ state });
+    // A merged pull request cannot reopen. A closed one can, and its saved state may be stale,
+    // so the watch starts and its first read ends it if the host still says closed.
+    if (watching && before?.snapshot?.state === "merged") {
+      return yield* new PullRequestNotOpenError({ state: "merged" });
     }
     yield* engine
       .dispatch({
@@ -257,8 +308,7 @@ const make = Effect.gen(function* () {
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
-    // T3-CUSTOM(expbkt3): read the authorized target again after the command commits.
-    const after = yield* requireThread(PullRequestWatchFailedError, input.sessionId);
+    const after = yield* requireThread(PullRequestWatchFailedError, thread.id);
     return {
       host: target.host,
       repository: target.repository,
@@ -272,8 +322,7 @@ const make = Effect.gen(function* () {
   return PullRequestsToolkit.of({
     link_pull_request: (input) =>
       Effect.gen(function* () {
-        // T3-CUSTOM(expbkt3): sessionId targets another session; undefined is self.
-        const thread = yield* requireThread(PullRequestLinkFailedError, input.sessionId);
+        const thread = yield* requireWritableThread(PullRequestLinkFailedError, input.threadId);
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
         const existing = threadPullRequestsOf(thread).find((link) =>
@@ -303,8 +352,7 @@ const make = Effect.gen(function* () {
       }),
     unlink_pull_request: (input) =>
       Effect.gen(function* () {
-        // T3-CUSTOM(expbkt3): sessionId targets another session; undefined is self.
-        const thread = yield* requireThread(PullRequestUnlinkFailedError, input.sessionId);
+        const thread = yield* requireWritableThread(PullRequestUnlinkFailedError, input.threadId);
         const project = yield* projectOf(thread, PullRequestUnlinkFailedError);
         const target = yield* resolveTarget(input, project);
         if (!threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, target)))
@@ -335,15 +383,13 @@ const make = Effect.gen(function* () {
           wasLinked,
         };
       }),
-    // T3-CUSTOM(expbkt3): BEGIN — sessionId targets another session.
     list_thread_pull_requests: (input) =>
-      requireThread(PullRequestListFailedError, input.sessionId).pipe(
+      requireThread(PullRequestListFailedError, input.threadId).pipe(
         Effect.map(listThreadPullRequests),
       ),
-    // T3-CUSTOM(expbkt3): END
     watch_pull_request: (input) => setWatching(input, true),
     unwatch_pull_request: (input) => setWatching(input, false),
   });
 });
 
-export const PullRequestsToolkitHandlersLive = PullRequestsToolkit.toLayer(make);
+export const layer = PullRequestsToolkit.toLayer(make);

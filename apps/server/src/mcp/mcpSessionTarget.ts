@@ -65,10 +65,16 @@ export const resolveMcpSessionTarget = Effect.fn("mcp.resolveSessionTarget")(fun
     }
     return options.requested;
   }
-  if (options.requested !== undefined && options.requested !== scope.threadId) {
+  // A client caller without user-wide scope has no own session to fall back to.
+  if (scope.thread === undefined) {
+    return yield* new McpSessionTargetError({
+      message: "This MCP credential is not bound to a T3 session.",
+    });
+  }
+  if (options.requested !== undefined && options.requested !== scope.thread.threadId) {
     return yield* new McpSessionTargetError({
       message: "An in-session agent may only control its own T3 session.",
     });
   }
-  return scope.threadId;
+  return scope.thread.threadId;
 });

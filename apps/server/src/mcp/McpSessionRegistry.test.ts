@@ -14,8 +14,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -61,7 +61,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     expect(token.length).toBeGreaterThan(20);
 
     const resolved = yield* registry.resolve(token);
-    expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.thread?.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(
       // T3-CUSTOM(expbkt3): assert the complete authorized scope set, including retained fork capabilities.
       new Set([
@@ -230,7 +230,7 @@ it.effect("keeps a login-bound provider credential valid for the whole login", (
     // Far beyond both the old idle window and the unbound backstop lifetime,
     // with no intervening MCP traffic at all.
     timestamp += 5_000_000;
-    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+    expect((yield* registry.resolve(token))?.thread?.threadId).toBe(threadId);
   }),
 );
 
@@ -571,7 +571,8 @@ it.effect("resolves a personal external token only while the external endpoint i
     const resolved = yield* registry.resolve("t3usr_personal-token");
     expect(resolved?.principal).toBe("external-user");
     expect(resolved?.actorUserId).toBe(userId);
-    expect(resolved?.threadId).toBe(`external-user:${userId}`);
+    expect(resolved?.thread).toBeUndefined();
+    expect(resolved?.requestNamespace).toBe(`external-user:${userId}`);
     expect(resolved?.capabilities.has("t3.session.create")).toBe(true);
 
     endpointEnabled = false;
@@ -701,7 +702,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
       yield* registry.touch(threadId);
     }
 
-    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+    expect((yield* registry.resolve(token))?.thread?.threadId).toBe(threadId);
   }),
 );
 

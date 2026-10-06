@@ -23,7 +23,7 @@ import { shortToolyardId } from "@t3tools/client-runtime/bk-toolyard-presentatio
 import { toolyardSettingsFailureCode } from "@t3tools/client-runtime/toolyard-trust-setup";
 import type { SessionWebhookView } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useMemo, useState } from "react";
 import { Alert, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";

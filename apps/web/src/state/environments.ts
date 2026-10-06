@@ -8,6 +8,7 @@ import { localEnvironmentAppearanceDefaults } from "../fork/localEnvironmentAppe
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
@@ -58,7 +59,7 @@ function projectEnvironmentPresentation(
     connectionLabel: presentation.entry.target.label,
     appearance,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
-    relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
+    relayManaged: hasRelayRoute(presentation.entry),
   };
 }
 // T3-CUSTOM(expbkt3): END

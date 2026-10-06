@@ -13,8 +13,8 @@ import * as Effect from "effect/Effect";
 // T3-CUSTOM(expbkt3): resolve the bound operator.
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   annotateEnvironmentRequest,
@@ -23,7 +23,8 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
+import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
   buildBoundedThreadProjection,
@@ -42,7 +43,7 @@ import { projectThreadProjectionForWire } from "./WireProjection.ts";
 import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import { ClerkDirectory } from "../auth/ClerkDirectory.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { discoverPullRequestLinks } from "../sourceControl/PullRequestLinkDiscovery.ts";
 import { filterReadModel, filterShellSnapshot } from "./accessRules.ts";
@@ -87,7 +88,7 @@ function selectHistoryPageFromCursorOrError(
  * compressible and cacheable — and then resume the WebSocket subscription via
  * `afterSequence`.
  */
-export const orchestrationHttpApiLayer = HttpApiBuilder.group(
+export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
@@ -325,6 +326,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             return yield* loadShellSnapshot().pipe(
+              traceLocalHandlerWork,
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_snapshot_failed", cause),
               ),
@@ -339,7 +341,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             const snapshot = yield* loadThreadSnapshot(
               args.params.threadId,
               "orchestration_thread_snapshot_failed",
-            );
+            ).pipe(traceLocalHandlerWork);
             return {
               snapshotSequence: snapshot.snapshotSequence,
               projection: snapshot.projection,
@@ -351,7 +353,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-            const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId);
+            const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId).pipe(
+              traceLocalHandlerWork,
+            );
             const bounded = buildBoundedThreadProjection({
               projection: snapshot.projection,
               snapshotSequence: snapshot.snapshotSequence,
@@ -385,7 +389,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
               args.params.threadId,
               anchorItemId,
               ThreadId.make(decodedCursor.st),
-            );
+            ).pipe(traceLocalHandlerWork);
             const pageOrError = selectHistoryPageFromCursorOrError({
               items: snapshot.projection.visibleTurnItems,
               cursor: args.query.cursor,

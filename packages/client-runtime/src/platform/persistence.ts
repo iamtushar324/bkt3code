@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { ConnectionRegistration } from "../connection/catalog.ts";
-import type { ConnectionTarget } from "../connection/model.ts";
+import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 // T3-CUSTOM(expbkt3): BEGIN — exact payload shared across client surfaces.
 import type { QueuedThreadMessage } from "../outbox/model.ts";
 // T3-CUSTOM(expbkt3): END
@@ -24,6 +24,7 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "list-targets",
       "list-disabled-targets",
       "register-connection",
+      "set-connection-routes",
       "remove-connection",
       "set-connection-enabled",
       "load-shell",
@@ -60,10 +61,23 @@ export class ConnectionTargetStore extends Context.Service<
 export class ConnectionRegistrationStore extends Context.Service<
   ConnectionRegistrationStore,
   {
+    /**
+     * Saves one route's records and sets the environment's full route list,
+     * preferred first. Records of routes missing from `routes` are dropped.
+     */
     readonly register: (
       registration: ConnectionRegistration,
+      routes: ReadonlyArray<PersistedConnectionTarget>,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
-    readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** Reorders or drops routes without adding one. `routes` must not be empty. */
+    readonly setRoutes: (
+      environmentId: EnvironmentId,
+      routes: ReadonlyArray<PersistedConnectionTarget>,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** Forgets the environment and every route it had. */
+    readonly remove: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,

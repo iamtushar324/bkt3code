@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { MigrationsLive } from "./Migrations.ts";
-import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "./Sqlite.ts";
 import * as ThreadWorkspaceGroups from "./ThreadWorkspaceGroups.ts";
 import { ThreadWorkspaceGroupRepository } from "./ThreadWorkspaceGroups.ts";
 

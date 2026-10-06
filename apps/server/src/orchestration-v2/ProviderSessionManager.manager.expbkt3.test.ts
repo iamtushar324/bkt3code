@@ -148,7 +148,7 @@ function fixture(provider = "codex") {
       Layer.mergeAll(
         IdAllocator.layer,
         FileSystem.layerNoop({}),
-        ProviderAdapterRegistry.makeSingleLayer(adapter),
+        ProviderAdapterRegistry.layerSingle(adapter),
         Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
         Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -406,7 +406,10 @@ it.effect.each([false, true])(
       const original = yield* manager.open(f.open);
       const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
       f.state.upstreamServers = [toolyardServer()];
-      const start = original.startTurn({ threadId: f.threadId } as never);
+      const start = original.startTurn({
+        threadId: f.threadId,
+        modelSelection: { model: "test-model" },
+      } as never);
       if (race) f.state.onInspect = start.pipe(Effect.orDie);
       else yield* start;
       expect(yield* manager.open(f.open)).toBe(original);

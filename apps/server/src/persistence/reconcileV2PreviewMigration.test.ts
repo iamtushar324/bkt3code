@@ -4,7 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 
@@ -13,6 +13,8 @@ const pendingV2Migrations = [
   [1043, "OrchestrationV2"],
   [1044, "RemoveRedundantProjectionIndexes"],
   [1045, "SessionWebhooks"],
+  [1046, "ScheduledTaskWebhooks"],
+  [1047, "WebhookRelayDeliveries"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -51,6 +53,8 @@ describe("fork V2 ledger upgrade", () => {
       assert.deepStrictEqual(yield* runMigrations(), [
         pendingV2Migrations[1],
         pendingV2Migrations[2],
+        pendingV2Migrations[3],
+        pendingV2Migrations[4],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -66,10 +70,13 @@ describe("fork V2 ledger upgrade", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 1042 });
       const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      // Effect 4.0.1's Migrator treats a constraint error on its ledger insert as "another run
+      // holds the lock" and returns no migrations, and RAISE(ABORT) is a constraint error. A
+      // trigger that writes to a missing table fails the insert with a plain SQL error instead.
       yield* sql`
         CREATE TRIGGER fail_v2_upgrade BEFORE INSERT ON effect_sql_migrations
         WHEN NEW.name = 'OrchestrationV2'
-        BEGIN SELECT RAISE(ABORT, 'injected failure'); END
+        BEGIN INSERT INTO injected_failure_missing_table VALUES (1); END
       `;
       assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
       assert.deepStrictEqual(

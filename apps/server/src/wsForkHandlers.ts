@@ -38,7 +38,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import type * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
 // T3-CUSTOM(expbkt3): Claude account access per user checks ids against the org.
@@ -61,7 +61,7 @@ import { resolveLinearIssueStatuses } from "./linear/LinearIssueResolver.ts";
 import { sharedLinearIssueStatusCache } from "./linear/LinearIssueStatusCache.ts";
 import { linearStatusBridgeToken, makeLinearStatusBridge } from "./linear/LinearStatusBridge.ts";
 import type { SessionArchiveServiceShape } from "./sessionArchive/SessionArchiveService.ts";
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
 // T3-CUSTOM(expbkt3): Claude account profiles per thread.
 import type * as ClaudeAccountsService from "./claudeAccounts/ClaudeAccountsService.ts";
 // T3-CUSTOM(expbkt3): toolyard auto-connect

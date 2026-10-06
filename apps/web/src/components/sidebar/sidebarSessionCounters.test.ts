@@ -55,6 +55,7 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     worktreePath: null,
     sourceControlProfileId: null,
     latestRun: null,
+    goal: null,
     createdAt: "2026-07-26T00:00:00.000Z",
     updatedAt: "2026-07-26T00:00:00.000Z",
     archivedAt: null,
