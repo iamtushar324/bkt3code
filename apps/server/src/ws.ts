@@ -35,6 +35,8 @@ import { githubSshRemoteToHttps } from "./sourceControl/GitHubRemoteUrl.ts";
 import { redactBackgroundPolicySnapshot } from "./presence/backgroundPolicyRedaction.expbkt3.ts";
 // T3-CUSTOM(expbkt3): END
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): access-denied secret answers report a missing request.
+import { SecretRequestError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 
@@ -2316,7 +2318,9 @@ const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getTurnItem,
-            threadManagement.getTurnItem(input).pipe(
+            // T3-CUSTOM(expbkt3): a turn item holds tool output, so it needs thread access.
+            requireThreadAccess(input.threadId).pipe(
+              Effect.andThen(threadManagement.getTurnItem(input)),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationV2GetThreadProjectionError({
@@ -2624,10 +2628,19 @@ const layerWsRpc = (
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
-          observeRpcEffect(WS_METHODS.secretsAnswerRequest, secretRequests.answer(input), {
-            "rpc.aggregate": "secrets",
-            "orchestration_v2.thread_id": input.threadId,
-          }),
+          observeRpcEffect(
+            WS_METHODS.secretsAnswerRequest,
+            // T3-CUSTOM(expbkt3): only members who can access the thread answer its secret
+            // requests; a denied caller sees the same reason as a missing request.
+            requireThreadAccess(input.threadId).pipe(
+              Effect.mapError(() => new SecretRequestError({ reason: "not_found" })),
+              Effect.andThen(secretRequests.answer(input)),
+            ),
+            {
+              "rpc.aggregate": "secrets",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           observeRpcEffect(
             WS_METHODS.scheduledTasksListWebhookDeliveries,

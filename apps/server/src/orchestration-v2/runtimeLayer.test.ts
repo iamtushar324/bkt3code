@@ -28,6 +28,7 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  UserId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -2673,6 +2674,113 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ]);
         }
       }),
+  );
+
+  // T3-CUSTOM(expbkt3): each watch read runs with its thread owner's source-control
+  // credentials, so threads with different owners never share one read.
+  it.effect("reads a watched pull request once per thread owner", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("pr-watch-owners-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch owners",
+        workspaceRoot: "/workspace/watch-owners",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      const owners = [UserId.make("user-watch-owner-a"), UserId.make("user-watch-owner-b")];
+      const threadIds = owners.map((_, index) =>
+        ThreadId.make(`runtime-pull-request-watch-owner-${index}`),
+      );
+      for (const [index, owner] of owners.entries()) {
+        const threadId = threadIds[index]!;
+        yield* orchestrator.dispatch(
+          {
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`create:${threadId}`),
+            threadId,
+            projectId,
+            title: "Watch owners",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          },
+          { actorUserId: owner },
+        );
+        const shell = yield* orchestrator.getThreadShell(threadId);
+        assert.equal(shell?.ownerUserId, owner);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`watch:${threadId}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 10,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/10", source: "agent" },
+        });
+      }
+      const readOwners: Array<string | null> = [];
+      let reads = 0;
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(SourceControlProfileService)({
+              resolveThreadExecutionContext: (_threadId, ownerUserId) =>
+                Effect.sync(() => {
+                  readOwners.push(ownerUserId);
+                  return null;
+                }),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Effect.sync(() => {
+                  reads += 1;
+                  return {
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 10,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    state: "open" as const,
+                    checks: [],
+                  };
+                }),
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      assert.equal(reads, 2);
+      assert.deepEqual([...new Set(readOwners)].toSorted(), [...owners].toSorted());
+      // The suite shares one store: end these watches so later sweeps do not read them.
+      for (const threadId of threadIds) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`unwatch:${threadId}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 10,
+          watching: false,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/10", source: "agent" },
+        });
+      }
+    }),
   );
 
   it.effect("reports how long an ended watch was quiet", () =>

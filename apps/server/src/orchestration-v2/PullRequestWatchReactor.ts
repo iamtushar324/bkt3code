@@ -243,7 +243,8 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
   const withOwnerExecution = yield* makePullRequestWatchOwnerExecution; // T3-CUSTOM(expbkt3): capture the fork identity services.
-  // T3-CUSTOM(expbkt3): a group's host reads run with its first thread owner's credentials.
+  // T3-CUSTOM(expbkt3): a group's host reads run with its owner's credentials; groups are
+  // split by owner and source-control profile, so every target in a group shares them.
   const ownerRead = <A, E, R>(group: WatchGroup, read: Effect.Effect<A, E, R>) =>
     withOwnerExecution(group.targets[0]!.thread.id, read);
   const bootedAt = yield* Clock.currentTimeMillis;
@@ -610,7 +611,8 @@ export const make = Effect.gen(function* () {
       }
       // Grouped per project too: each project reads through its own checkout, so one that cannot
       // read the pull request must not end another project's watches.
-      const key = `${target.thread.projectId} ${threadPullRequestKeyOf(target.link)}`;
+      // T3-CUSTOM(expbkt3): one group per owner and profile, so reads never borrow credentials.
+      const key = `${target.thread.projectId} ${target.thread.ownerUserId ?? ""} ${target.thread.sourceControlProfileId ?? ""} ${threadPullRequestKeyOf(target.link)}`;
       byPullRequest.set(key, [...(byPullRequest.get(key) ?? []), target]);
     }
     const groups = [...byPullRequest].map(([key, members]): WatchGroup => ({

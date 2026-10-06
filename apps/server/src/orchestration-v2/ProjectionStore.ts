@@ -162,7 +162,15 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pullRequests"
+  // T3-CUSTOM(expbkt3): watch reads run with the thread owner's source-control credentials.
+  | "ownerUserId"
+  | "sourceControlProfileId"
 >;
 
 /**
@@ -5399,6 +5407,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               settledOverride: thread.settledOverride,
               settledAt: thread.settledAt,
               pullRequests: thread.pullRequests ?? [],
+              // T3-CUSTOM(expbkt3): watch reads run with the thread owner's credentials.
+              ownerUserId: thread.ownerUserId ?? null,
+              sourceControlProfileId: thread.sourceControlProfileId ?? null,
             })),
           ),
         );
@@ -5883,6 +5894,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
+                // T3-CUSTOM(expbkt3): watch reads run with the thread owner's credentials.
+                ownerUserId: thread.ownerUserId ?? null,
+                sourceControlProfileId: thread.sourceControlProfileId ?? null,
               })),
           ),
         ),
