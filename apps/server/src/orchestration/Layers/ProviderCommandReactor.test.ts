@@ -4364,6 +4364,74 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
+  it("marks answers to a stopped session as stale so clients close the request", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-stopped"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "stopped",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.approval.respond",
+        commandId: CommandId.make("cmd-approval-respond-stopped"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: asApprovalRequestId("approval-request-stopped"),
+        decision: "accept",
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.user-input.respond",
+        commandId: CommandId.make("cmd-user-input-respond-stopped"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: asApprovalRequestId("user-input-request-stopped"),
+        answers: { sandbox_mode: "workspace-write" },
+        createdAt: now,
+      }),
+    );
+
+    const findFailure = async (kind: string) => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return thread?.activities.find((activity) => activity.kind === kind);
+    };
+    await waitFor(
+      async () =>
+        (await findFailure("provider.approval.respond.failed")) !== undefined &&
+        (await findFailure("provider.user-input.respond.failed")) !== undefined,
+    );
+
+    expect((await findFailure("provider.approval.respond.failed"))?.payload).toMatchObject({
+      requestId: "approval-request-stopped",
+      detail: expect.stringContaining("Stale pending approval request: approval-request-stopped"),
+    });
+    expect((await findFailure("provider.user-input.respond.failed"))?.payload).toMatchObject({
+      requestId: "user-input-request-stopped",
+      detail: expect.stringContaining(
+        "Stale pending user-input request: user-input-request-stopped",
+      ),
+    });
+    expect(harness.respondToRequest).not.toHaveBeenCalled();
+    expect(harness.respondToUserInput).not.toHaveBeenCalled();
+  });
+
   effectIt.effect("stops a provider session without reading unrelated message bodies", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness({ unreadableHistory: true }));
