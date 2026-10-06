@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import {
   MESSAGE_SENDER_EMAIL_KEY,
   SESSION_IDENTITY_RUNTIME,

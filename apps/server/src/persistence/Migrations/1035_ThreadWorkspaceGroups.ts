@@ -11,7 +11,7 @@
 // worktree to be observed. `ready` records that the worktree now exists on disk,
 // so a joiner can skip creation instead of racing its sibling for it.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -31,7 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import * as ThreadClaudeAccountRepo from "../persistence/ThreadClaudeAccount.ts";
 import * as ClaudeAccountProfileAccessRepo from "../persistence/ClaudeAccountProfileAccess.ts";

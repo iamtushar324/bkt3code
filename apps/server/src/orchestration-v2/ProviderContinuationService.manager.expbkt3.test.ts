@@ -148,7 +148,7 @@ it.effect.each(
     );
     const layer = Layer.merge(
       ProviderContinuationRequests.layer,
-      ProviderContinuationService.workerLive.pipe(Layer.provide(dependencies)),
+      ProviderContinuationService.layer.pipe(Layer.provide(dependencies)),
     );
     yield* Effect.gen(function* () {
       const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;

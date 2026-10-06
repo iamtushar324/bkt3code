@@ -3,7 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { BIFROST_MCP_INTEGRATION_ID, UserId } from "@t3tools/contracts";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import { parseLinearToolResult, resolveLinearIssueStatuses } from "./LinearIssueResolver.ts";
 import { makeLinearIssueStatusCache } from "./LinearIssueStatusCache.ts";

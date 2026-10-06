@@ -8,7 +8,7 @@ import * as Stream from "effect/Stream";
 
 import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "./orchestration-v2/ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { filterNativeShellStream } from "./wsV2Visibility.expbkt3.ts";
 
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -16,7 +16,7 @@ const registry = Layer.mock(ProviderAdapterRegistryV2)({
   get: () => Effect.die("Provider execution is outside this visibility test."),
   list: () => Effect.succeed([providerInstanceId]),
 });
-const TestLayer = makeOrchestratorV2ReplayLayerWithRegistry(
+const TestLayer = ProviderReplayHarness.layerWithRegistry(
   { name: "live-member-visibility" },
   registry,
   { runEffectWorker: false },

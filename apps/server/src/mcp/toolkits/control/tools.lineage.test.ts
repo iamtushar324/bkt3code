@@ -5,7 +5,7 @@
 // description is the only guidance a calling model gets — actually say when to
 // reach for them.
 import { expect, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { T3ControlToolkit } from "./tools.ts";
 

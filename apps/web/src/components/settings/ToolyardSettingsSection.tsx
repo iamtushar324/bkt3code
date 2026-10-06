@@ -1,7 +1,7 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

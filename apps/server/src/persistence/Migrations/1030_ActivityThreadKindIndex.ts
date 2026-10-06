@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // T3-CUSTOM(expbkt3): execution snapshots read request/resolution kinds, not tool history.
 export default Effect.gen(function* () {

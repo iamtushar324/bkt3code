@@ -6,7 +6,7 @@
 // candidate row. The marker table lets the one-time admin-reassignment repair
 // record that it is done instead of re-running on every boot forever.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

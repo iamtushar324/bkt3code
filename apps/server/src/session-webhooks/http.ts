@@ -8,7 +8,7 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { SessionWebhookError } from "@t3tools/contracts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
 import { MAX_CALLBACK_BYTES } from "./protocol.ts";

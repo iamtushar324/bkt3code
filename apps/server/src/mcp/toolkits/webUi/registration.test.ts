@@ -1,8 +1,8 @@
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/contracts";
+import { EnvironmentId, UserId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { WebUiRpcCallRequest } from "./bridge.ts";
@@ -12,9 +12,13 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   principal: "external-user",
   actorUserId: UserId.make("user-web-ui-registration-test"),
   environmentId: EnvironmentId.make("environment-web-ui-registration-test"),
-  threadId: ThreadId.make("thread-web-ui-registration-test"),
-  providerSessionId: "provider-session-web-ui-registration-test",
-  providerInstanceId: ProviderInstanceId.make("external-user"),
+  requestNamespace: "external-user:user-web-ui-registration-test",
+  thread: undefined,
+  client: {
+    sessionId: "external-user:user-web-ui-registration-test",
+    label: "External MCP user",
+    runtimeModeCeiling: "full-access",
+  },
   capabilities: new Set(["t3.read", "t3.control"]),
   issuedAt: 1,
 };
@@ -70,9 +74,9 @@ it.effect("registers four compact tools while listing the complete virtual surfa
       expect(listed.structuredContent).toMatchObject({
         ok: true,
         // T3-CUSTOM(expbkt3): registration exposes native V2 methods and all retained fork RPCs.
-        rpcCount: 226,
-        streamCount: 31,
-        matchedCount: 226,
+        rpcCount: 230,
+        streamCount: 30,
+        matchedCount: 230,
       });
 
       const schema = yield* withInvocation(

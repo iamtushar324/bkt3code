@@ -6,7 +6,7 @@
  * to be the truth, while different threads never queue behind each other.
  */
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,

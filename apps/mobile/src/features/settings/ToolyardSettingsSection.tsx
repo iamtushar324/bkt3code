@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/expo";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { usePhaseSidebarViewerUserId } from "../phasesidebar/usePhaseSidebarRows";
 import * as Option from "effect/Option";
-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   toolyardConnectionPresentation,

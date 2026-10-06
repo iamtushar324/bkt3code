@@ -14,7 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -34,9 +34,13 @@ const scope = (
   principal: "provider-session",
   actorUserId,
   environmentId: EnvironmentId.make("environment-presence"),
-  threadId: ownThreadId,
-  providerSessionId: "provider-session",
-  providerInstanceId: ProviderInstanceId.make("claude"),
+  requestNamespace: "provider-session",
+  thread: {
+    threadId: ownThreadId,
+    providerSessionId: "provider-session",
+    providerInstanceId: ProviderInstanceId.make("claude"),
+  },
+  client: undefined,
   capabilities: new Set(["t3.read"]),
   issuedAt: 1,
   ...overrides,
@@ -50,7 +54,13 @@ const tokens = new Map<string, McpInvocationContext.McpInvocationScope>([
     "external",
     scope({
       principal: "external-user",
-      threadId: ThreadId.make("external-user:user-actor"),
+      requestNamespace: "external-user:user-actor",
+      thread: undefined,
+      client: {
+        sessionId: "external-user:user-actor",
+        label: "External MCP user",
+        runtimeModeCeiling: "full-access",
+      },
       capabilities: new Set(["t3.read", "t3.session.create"]),
     }),
   ],

@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { runAcpMcpStdioBridge } from "../mcp/AcpMcpStdioBridge.ts";
 import { makeNativeToolyardAuthenticator, makeNativeToolyardRoute } from "./ToolyardNativeHttp.ts";

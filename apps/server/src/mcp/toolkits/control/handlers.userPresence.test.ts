@@ -23,9 +23,13 @@ const invocation = (
   principal: "provider-session",
   actorUserId: UserId.make("user-agent-owner"),
   environmentId: EnvironmentId.make("environment-presence-test"),
-  threadId: ownThreadId,
-  providerSessionId: "provider-session-presence-test",
-  providerInstanceId: ProviderInstanceId.make("claude"),
+  requestNamespace: "provider-session-presence-test",
+  thread: {
+    threadId: ownThreadId,
+    providerSessionId: "provider-session-presence-test",
+    providerInstanceId: ProviderInstanceId.make("claude"),
+  },
+  client: undefined,
   capabilities: new Set(["t3.read"]),
   issuedAt: 1,
   ...overrides,
@@ -103,7 +107,13 @@ it.effect("defaults a user-bound provider credential to its own session too", ()
 
     const external = invocation({
       principal: "external-user",
-      threadId: ThreadId.make("external-user:user-agent-owner"),
+      requestNamespace: "external-user:user-agent-owner",
+      thread: undefined,
+      client: {
+        sessionId: "external-user:user-agent-owner",
+        label: "External MCP user",
+        runtimeModeCeiling: "full-access",
+      },
       capabilities: new Set(["t3.read", "t3.session.create"]),
     });
     const error = yield* Effect.flip(__testing.userPresence({}).pipe(provide(service, external)));

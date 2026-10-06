@@ -3,7 +3,7 @@ import { AuthOrchestrationOperateScope, type EnvironmentUserId, UserId } from "@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { EnvironmentAuth } from "../auth/EnvironmentAuth.ts";
 import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { resolveActiveMcpCredential } from "../mcp/McpSessionRegistry.ts";
@@ -36,7 +36,7 @@ export function makeNativeToolyardAuthenticator(dependencies: {
       : undefined;
     if (invocation) {
       if (invocation.principal !== "external-user" || !invocation.actorUserId) return null;
-      return { userId: invocation.actorUserId, sessionId: invocation.providerSessionId };
+      return { userId: invocation.actorUserId, sessionId: invocation.requestNamespace };
     }
     const session = await dependencies.authenticateSession(request);
     if (!session.scopes.includes(AuthOrchestrationOperateScope)) return null;

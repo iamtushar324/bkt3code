@@ -9,11 +9,11 @@ import { UserId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ClaudeAccountProfileAccess from "./ClaudeAccountProfileAccess.ts";
 import { ClaudeAccountProfileAccessRepository } from "./ClaudeAccountProfileAccess.ts";
-import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "./Sqlite.ts";
 import { MigrationsLive } from "./Migrations.ts";
 
 const barsha = UserId.make("user-barsha");

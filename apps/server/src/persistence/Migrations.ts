@@ -8,9 +8,9 @@
  * schema is always up to date before the application starts.
  */
 
-import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 // T3-CUSTOM(expbkt3): compatibility for fork service test layers.
 import * as Layer from "effect/Layer";
 
@@ -159,6 +159,11 @@ import Migration1042 from "./Migrations/1042_ClaudeAccountProfileAccess.ts";
 // T3-CUSTOM(expbkt3): upstream V2 starts above the frozen fork migration ledger.
 import Migration1043 from "./Migrations/055_OrchestrationV2.ts";
 import Migration1044 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 57-58. The legacy fork
+// block (33-42) and the shipped 1000+ lane already occupy those slots, so they
+// register at the next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1046 from "./Migrations/057_ScheduledTaskWebhooks.ts";
+import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -309,6 +314,9 @@ const migrationEntries = [
   [1044, "RemoveRedundantProjectionIndexes", Migration1044],
   // T3-CUSTOM(expbkt3): durable session callback delivery.
   [1045, "SessionWebhooks", Migration1045],
+  // T3-CUSTOM(expbkt3): upstream 57-58 remapped above the shipped 1045 migration.
+  [1046, "ScheduledTaskWebhooks", Migration1046],
+  [1047, "WebhookRelayDeliveries", Migration1047],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

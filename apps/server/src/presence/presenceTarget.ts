@@ -22,9 +22,10 @@ export const resolvePresenceTarget = Effect.fn("presence.resolveTarget")(functio
   if (
     requested === undefined &&
     scope.principal === "provider-session" &&
+    scope.thread !== undefined &&
     scope.capabilities.has("t3.read")
   ) {
-    return scope.threadId;
+    return scope.thread.threadId;
   }
   return yield* resolveMcpSessionTarget({ requested, capability: "t3.read" });
 });

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): Standard Webhooks framing and the fixed Toolyard notification contract. */
 import * as NodeCrypto from "node:crypto";
 

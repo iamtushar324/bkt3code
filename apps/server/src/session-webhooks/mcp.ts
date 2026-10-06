@@ -3,8 +3,8 @@ import { ThreadId, UserId, OrchestratorMcpFailure, SessionWebhookView } from "@t
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpServer, Tool, Toolkit } from "effect/unstable/ai";
-import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
+import { McpServer, Tool, Toolkit } from "effect/ai";
+import { McpInvocationContext, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { hasUserWideScope } from "../mcp/mcpSessionTarget.ts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
 import { managedToolyardActor } from "../toolyard/ToolyardIntegration.ts";
@@ -64,6 +64,18 @@ const actor = (capability: "t3.read" | "t3.control") =>
       });
     return { ...scope, actorUserId: UserId.make(userId) };
   });
+/** The only session a caller without user-wide scope may touch; `undefined` means any it can see. */
+const confinedThreadId = (scope: McpInvocationScope) =>
+  hasUserWideScope(scope)
+    ? Effect.succeed(undefined)
+    : scope.thread === undefined
+      ? Effect.fail(
+          new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "This MCP credential is not bound to a T3 session.",
+          }),
+        )
+      : Effect.succeed(scope.thread.threadId);
 const failure = (error: unknown) =>
   new OrchestratorMcpFailure({
     code: "invalid_request",
@@ -85,22 +97,26 @@ export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
       });
     if (
       input.sessionId !== undefined &&
-      input.sessionId !== scope.threadId &&
+      input.sessionId !== scope.thread?.threadId &&
       !hasUserWideScope(scope)
     )
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
         message: "An in-session agent may only control its own T3 session.",
       });
+    const threadId = input.sessionId ?? scope.thread?.threadId;
+    if (threadId === undefined)
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: "sessionId is required for a caller without its own T3 session.",
+      });
     const service = yield* SessionWebhookService;
-    return yield* service
-      .create(scope.actorUserId, input.sessionId ?? scope.threadId)
-      .pipe(Effect.mapError(failure));
+    return yield* service.create(scope.actorUserId, threadId).pipe(Effect.mapError(failure));
   }),
   t3_session_webhook_inspect: Effect.fn(function* (input) {
     const scope = yield* actor("t3.read");
     return yield* (yield* SessionWebhookService)
-      .inspect(scope.actorUserId, input.id, hasUserWideScope(scope) ? undefined : scope.threadId)
+      .inspect(scope.actorUserId, input.id, yield* confinedThreadId(scope))
       .pipe(Effect.mapError(failure));
   }),
   t3_session_webhook_disable: Effect.fn(function* (input) {
@@ -111,7 +127,7 @@ export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
         input.id,
         "disable",
         input.expectedRevision,
-        hasUserWideScope(scope) ? undefined : scope.threadId,
+        yield* confinedThreadId(scope),
       )
       .pipe(Effect.mapError(failure));
   }),
@@ -123,7 +139,7 @@ export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
         input.id,
         "rotate",
         input.expectedRevision,
-        hasUserWideScope(scope) ? undefined : scope.threadId,
+        yield* confinedThreadId(scope),
       )
       .pipe(Effect.mapError(failure));
   }),
@@ -135,7 +151,7 @@ export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
         input.id,
         "remove",
         input.expectedRevision,
-        hasUserWideScope(scope) ? undefined : scope.threadId,
+        yield* confinedThreadId(scope),
       )
       .pipe(Effect.mapError(failure));
   }),

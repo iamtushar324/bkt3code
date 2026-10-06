@@ -13,6 +13,7 @@ export * from "./environmentAppearance.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";
+export * from "./desktopBrowser.ts";
 export * from "./desktopAppActivation.ts";
 export * from "./remoteAccess.ts";
 export * from "./ipc.ts";
@@ -35,6 +36,7 @@ export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
+// T3-CUSTOM(expbkt3): per-user T3 automation and MCP integration schemas.
 export * from "./personalMcp.ts";
 // T3-CUSTOM(expbkt3): lifecycle-row Linear issue status schemas
 export * from "./linearIssue.ts";
@@ -87,6 +89,7 @@ export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
+export * from "./secretRequest.ts";
 
 // T3-CUSTOM(expbkt3): BEGIN — retained V1 wire schemas for fork adapters and legacy data import.
 export {

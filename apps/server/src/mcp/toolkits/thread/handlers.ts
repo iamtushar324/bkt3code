@@ -1,5 +1,7 @@
 // T3-CUSTOM(expbkt3): project searches also respect per-thread ownership.
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
+import { requireForkProjectAccess } from "../../forkAccess.expbkt3.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -13,9 +15,10 @@ import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import {
+  dispatchFailure,
   newCommandId,
   readCaller,
-  readMutationCaller,
+  readFullAccessCaller,
   readThread,
   readWritableThread,
   unavailable,
@@ -47,7 +50,7 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   const { threads, projection } = yield* readWritableThread(threadId);
   const result = yield* threads
     .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
-    .pipe(Effect.mapError(unavailable));
+    .pipe(Effect.mapError(dispatchFailure));
   return { sequence: result.sequence };
 });
 
@@ -77,26 +80,27 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
     });
   return { ...context, request, item };
 });
-export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+export const layer = ThreadToolkit.toLayer({
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readMutationCaller();
-      if (
-        caller.archivedAt !== null ||
-        caller.runtimeMode !== "full-access" ||
-        caller.interactionMode !== "default"
-      )
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: "Running a scheduled task requires a live full-access/default thread.",
-        });
+      yield* readFullAccessCaller(
+        "Running a scheduled task requires a live full-access/default thread or a full-access client.",
+      );
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId && task.projectId === caller.projectId))
+      if (!tasks.some((task) => task.id === input.taskId))
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: "The task was not found in the calling project.",
+          message: "The scheduled task was not found.",
         });
+      // T3-CUSTOM(expbkt3): #15219 dropped the calling-project bound; team access replaces it.
+      const forkTask = tasks.find((task) => task.id === input.taskId);
+      if (forkTask !== undefined)
+        yield* requireForkProjectAccess(
+          yield* Effect.serviceOption(OrchestrationAccessControl),
+          yield* McpInvocationContext.McpInvocationContext,
+          forkTask.projectId,
+        );
       const { task } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(Effect.mapError(unavailable));
@@ -113,10 +117,17 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
       // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
       const { caller, scope } = yield* readCaller();
       const access = yield* Effect.serviceOption(OrchestrationAccessControl);
+      const { projectId: requested, ...query } = input;
+      // Like the other project tools, an omitted project means the caller's own; a client
+      // outside a thread searches every project.
+      const projectId = requested ?? caller?.projectId;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
-      const result = yield* threadSearch.search(input).pipe(Effect.mapError(unavailable));
+      const result = yield* threadSearch.search(query).pipe(Effect.mapError(unavailable));
       // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
-      const matches = result.matches.filter((match) => match.projectId === caller.projectId);
+      const matches =
+        projectId === undefined
+          ? result.matches
+          : result.matches.filter((match) => match.projectId === projectId);
       const visible = yield* Effect.forEach(matches, (match) =>
         (scope.actorUserId === null || scope.principal === "external-operator"
           ? Effect.succeed(true)
@@ -131,7 +142,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
     }),
   t3_thread_fork: (input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readWritableThread();
+      const { threads, projection } = yield* readWritableThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);
       const result = yield* threads
@@ -145,23 +156,24 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           createdBy: "agent",
           creationSource: "mcp",
         })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence, targetThreadId };
     }),
   t3_thread_merge_back: (input) =>
     Effect.gen(function* () {
-      const { threads, caller } = yield* readWritableThread(input.targetThreadId);
-      const result = yield* threads
+      const context = yield* readWritableThread(input.targetThreadId);
+      const source = yield* readWritableThread(input.sourceThreadId);
+      const result = yield* context.threads
         .dispatch({
           type: "thread.merge_back",
           commandId: yield* newCommandId(),
-          sourceThreadId: caller.id,
+          sourceThreadId: source.projection.thread.id,
           targetThreadId: input.targetThreadId,
           sourcePoint: input.sourcePoint,
           createdBy: "agent",
           creationSource: "mcp",
         })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence, targetThreadId: input.targetThreadId };
     }),
   t3_thread_transfers: (input) =>
@@ -195,7 +207,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
       const {
         threads,
         projection: { thread },
-      } = yield* readWritableThread();
+      } = yield* readWritableThread(input.threadId);
       const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
         .dispatch({
@@ -204,7 +216,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           commandId: yield* newCommandId(),
           modelSelection: input.modelSelection,
         })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };
     }),
   t3_pending_request_list: (input) =>
@@ -232,7 +244,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           requestId: input.requestId,
           answers: input.answers,
         })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };
     }),
   t3_queue_list: (input) =>
@@ -313,7 +325,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         default:
           command = { ...common, type: `thread.${input.action}` };
       }
-      const result = yield* threads.dispatch(command).pipe(Effect.mapError(unavailable));
+      const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };
     }),
 });

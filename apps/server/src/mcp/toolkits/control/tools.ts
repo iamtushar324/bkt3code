@@ -19,7 +19,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
@@ -33,7 +33,7 @@ import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsService.ts";
 // T3-CUSTOM(expbkt3): user presence for agents deciding how to reach the human.
 import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

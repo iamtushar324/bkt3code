@@ -6,7 +6,7 @@
 // alike — and only the last of those should be reconnected. This table records
 // what the user wanted, written at the moment that intent is known.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

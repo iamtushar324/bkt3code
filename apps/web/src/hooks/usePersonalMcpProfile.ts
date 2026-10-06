@@ -8,7 +8,7 @@ import {
   type PersonalMcpProfileUpdate,
   type PersonalMcpToolyardConnectResult,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useCallback, useMemo } from "react";
 

@@ -9,7 +9,7 @@
 // Forward-only and additive: every existing row reads as 0, so every credential
 // already in a live database keeps redeeming exactly as it does today.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

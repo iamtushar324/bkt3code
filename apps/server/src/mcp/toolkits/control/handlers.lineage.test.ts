@@ -32,13 +32,31 @@ function makeScope(
     principal: "provider-session",
     actorUserId,
     environmentId: EnvironmentId.make("environment-lineage"),
-    threadId: callerThreadId,
-    providerSessionId: "provider-session-lineage",
-    providerInstanceId: ProviderInstanceId.make("codex"),
+    requestNamespace: "provider-session-lineage",
+    thread: {
+      threadId: callerThreadId,
+      providerSessionId: "provider-session-lineage",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
     capabilities: new Set(["t3.read", "t3.control", "t3.session.create"]),
     issuedAt: 1,
     ...overrides,
   };
+}
+
+/** External principals are client callers with no session of their own. */
+function makeExternalScope(
+  principal: "external-user" | "external-operator",
+): McpInvocationContext.McpInvocationScope {
+  const requestNamespace =
+    principal === "external-user" ? `external-user:${actorUserId}` : "external-operator";
+  return makeScope({
+    principal,
+    requestNamespace,
+    thread: undefined,
+    client: { sessionId: requestNamespace, label: principal, runtimeModeCeiling: "full-access" },
+  });
 }
 
 const accessControl = OrchestrationAccessControl.of({
@@ -84,16 +102,16 @@ it.effect("creates a top-level session when createAsChild is false", () =>
 
 it.effect("never parents an external-user token to its synthetic scope", () =>
   Effect.gen(function* () {
-    // scope.threadId is not a session the user is working in, so defaulting to
-    // it would build one giant bogus tree.
-    const scope = makeScope({ principal: "external-user" });
+    // The token has no session the user is working in, so there is nothing to
+    // default to; inventing one would build one giant bogus tree.
+    const scope = makeExternalScope("external-user");
     expect(yield* resolve({ scope })).toBe(null);
   }),
 );
 
 it.effect("never parents an external operator implicitly", () =>
   Effect.gen(function* () {
-    const scope = makeScope({ principal: "external-operator" });
+    const scope = makeExternalScope("external-operator");
     expect(yield* resolve({ scope })).toBe(null);
   }),
 );
@@ -132,7 +150,7 @@ it.effect("refuses a contradictory createAsChild:false plus parentSessionId", ()
 
 it.effect("lets an external operator name a parent without an access check", () =>
   Effect.gen(function* () {
-    const scope = makeScope({ principal: "external-operator" });
+    const scope = makeExternalScope("external-operator");
     expect(yield* resolve({ scope, parentSessionId: closedParentId })).toBe(closedParentId);
   }),
 );

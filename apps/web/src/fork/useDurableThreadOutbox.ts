@@ -2,7 +2,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef, ChatAttachment, UploadChatAttachment } from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "@t3tools/client-runtime/outbox";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 import { durableThreadOutbox, threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";

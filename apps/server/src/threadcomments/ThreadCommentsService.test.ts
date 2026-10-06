@@ -22,7 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { MigrationsLive } from "../persistence/Migrations.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ThreadComments from "../persistence/ThreadComments.ts";
 import { ThreadCommentsRepository } from "../persistence/ThreadComments.ts";
 import * as ThreadCommentsServiceModule from "./ThreadCommentsService.ts";

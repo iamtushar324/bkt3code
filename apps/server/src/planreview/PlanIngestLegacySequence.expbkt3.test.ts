@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -17,8 +17,8 @@ import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/Projection
 import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { legacyActivities } from "../orchestration-v2/legacyProjection.expbkt3.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layer as OrchestrationEventStoreLive } from "../persistence/OrchestrationEventStore.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as PlanReviewDocuments from "../persistence/PlanReviewDocuments.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as PlanIngestListener from "./PlanIngestListener.ts";

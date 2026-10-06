@@ -14,7 +14,7 @@ import type {
 
 import { makeDayFormatter } from "./usageAggregation.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
-import { addTotals, type UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "./usageTranscripts.ts";
 
 const EMPTY_TOTALS: UsageTokenTotals = {
   uncachedInputTokens: 0,
@@ -25,7 +25,8 @@ const EMPTY_TOTALS: UsageTokenTotals = {
 };
 
 interface MutableRow {
-  totals: UsageTokenTotals;
+  // Summed in place, as usageAggregation.ts does since upstream dropped addTotals (#15149).
+  totals: { -readonly [K in keyof UsageTokenTotals]: number };
   costUsd: number;
   cacheSavingsUsd: number;
   records: number;
@@ -41,7 +42,7 @@ interface MutableModelRow extends MutableRow {
 
 function emptyRow(): MutableRow {
   return {
-    totals: EMPTY_TOTALS,
+    totals: { ...EMPTY_TOTALS },
     costUsd: 0,
     cacheSavingsUsd: 0,
     records: 0,
@@ -87,7 +88,12 @@ export function aggregateThreadUsage(input: {
     const priced = priceUsage(input.rates, record, input.priceOverrides);
     const savings = cacheSavingsUsd(input.rates, record, input.priceOverrides);
     const apply = (row: MutableRow) => {
-      row.totals = addTotals(row.totals, record.totals);
+      const totals = row.totals;
+      totals.uncachedInputTokens += record.totals.uncachedInputTokens;
+      totals.cachedInputTokens += record.totals.cachedInputTokens;
+      totals.cacheCreationTokens += record.totals.cacheCreationTokens;
+      totals.outputTokens += record.totals.outputTokens;
+      totals.reasoningTokens += record.totals.reasoningTokens;
       row.costUsd += priced.costUsd;
       row.cacheSavingsUsd += savings;
       row.records += 1;

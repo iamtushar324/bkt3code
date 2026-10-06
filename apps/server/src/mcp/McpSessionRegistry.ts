@@ -13,6 +13,8 @@ import {
   type PersonalMcpSettingsError,
   type UserId,
 } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): fork credential fingerprints still hash synchronously with node:crypto.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- fork fingerprints run in plain synchronous helpers; Effect Crypto is effectful.
 import * as NodeCrypto from "node:crypto";
 // T3-CUSTOM(expbkt3): END
 import * as Clock from "effect/Clock";
@@ -23,8 +25,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream"; // T3-CUSTOM(expbkt3): watch auth session changes to revoke credentials on logout.
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as SessionStore from "../auth/SessionStore.ts"; // T3-CUSTOM(expbkt3): tie MCP credentials to logins.
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -76,6 +78,7 @@ export interface McpSessionRegistryShape {
     request: Pick<McpCredentialRequest, "actorUserId" | "providerInstanceId">,
   ) => Effect.Effect<ReadonlyArray<McpProviderSession.McpUpstreamServerConfig> | undefined>;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
+  // T3-CUSTOM(expbkt3): external-user/operator credentials resolve to thread-less client scopes.
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpInvocationScope | undefined>;
@@ -96,9 +99,10 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("t3/mcp/McpSessionRegistry") {}
 
+/** Registry credentials always belong to a provider session, so their scope has a thread. */
 interface CredentialRecord {
   readonly tokenHash: string;
-  readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly scope: McpInvocationContext.McpThreadInvocationScope;
   // T3-CUSTOM(expbkt3): BEGIN — a credential's lifetime is now tied to the login(s) that
   // produced it, not just liveness pings.
   /**
@@ -327,18 +331,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       ]);
       if (actorUserId !== null && request.backgroundGrantHash === undefined)
         capabilities.add("t3.session.create");
-      const scope: McpInvocationContext.McpInvocationScope = {
-        principal: "provider-session",
+      const scope: McpInvocationContext.McpThreadInvocationScope = {
+        principal: "provider-session", // T3-CUSTOM(expbkt3): control-plane principal.
         // T3-CUSTOM(expbkt3): derived credentials retain grant identity, never the original token.
         ...(request.backgroundGrantHash === undefined
           ? {}
           : { backgroundGrantHash: request.backgroundGrantHash }),
-        actorUserId,
+        actorUserId, // T3-CUSTOM(expbkt3): control-plane actor identity.
         environmentId,
-        threadId: ThreadId.make(request.threadId),
-        providerSessionId,
-        providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities,
+        requestNamespace: providerSessionId,
+        thread: {
+          threadId: ThreadId.make(request.threadId),
+          providerSessionId,
+          providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+        },
+        client: undefined,
+        capabilities, // T3-CUSTOM(expbkt3): fork capability policy computed above.
         issuedAt,
       };
       // T3-CUSTOM(expbkt3): issue and inspection share the exact current configuration.
@@ -354,7 +362,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         // credential. Issuing a new one — the user-handoff path — must strand
         // the previous holder.
         for (const [existingHash, existingRecord] of next) {
-          if (existingRecord.scope.threadId === scope.threadId) next.delete(existingHash);
+          if (existingRecord.scope.thread.threadId === scope.thread.threadId)
+            next.delete(existingHash);
         }
         next.set(tokenHash, {
           tokenHash,
@@ -368,17 +377,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       return {
         config: {
           environmentId,
-          threadId: scope.threadId,
+          threadId: scope.thread.threadId,
           providerSessionId,
-          providerInstanceId: scope.providerInstanceId,
-          actorUserId,
+          providerInstanceId: scope.thread.providerInstanceId,
+          actorUserId, // T3-CUSTOM(expbkt3): control-plane actor identity.
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
           upstreamServers,
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
         },
-        expiresAt,
+        expiresAt, // T3-CUSTOM(expbkt3): fork credentials carry their expiry.
       };
     },
   );
@@ -431,13 +440,21 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           ? undefined
           : yield* options.resolveExternalUserToken(rawToken);
       if (externalUser) {
+        // T3-CUSTOM(expbkt3): an external principal is a client caller with no thread
+        // of its own, so every tool needs an explicit target. Its sessions are
+        // bounded by team access control, not by a runtime-mode ceiling.
+        const requestNamespace = `external-user:${externalUser.userId}`;
         return {
           principal: "external-user",
           actorUserId: externalUser.userId,
           environmentId,
-          threadId: ThreadId.make(`external-user:${externalUser.userId}`),
-          providerSessionId: `external-user:${externalUser.userId}`,
-          providerInstanceId: ProviderInstanceId.make("external-user"),
+          requestNamespace,
+          thread: undefined,
+          client: {
+            sessionId: requestNamespace,
+            label: "External MCP user",
+            runtimeModeCeiling: "full-access",
+          },
           // T3-CUSTOM(expbkt3): an external agent that may already rename a
           // session and dispatch its commands may also tag its pull requests.
           capabilities: new Set([
@@ -461,9 +478,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         principal: "external-operator",
         actorUserId: null,
         environmentId,
-        threadId: ThreadId.make("external-operator"),
-        providerSessionId: "external-operator",
-        providerInstanceId: ProviderInstanceId.make("external-operator"),
+        requestNamespace: "external-operator",
+        thread: undefined,
+        client: {
+          sessionId: "external-operator",
+          label: "External MCP operator",
+          runtimeModeCeiling: "full-access",
+        },
         capabilities: new Set(["pull-requests", "t3.read", "t3.control", "t3.plan"]),
         issuedAt: timestamp,
       } satisfies McpInvocationContext.McpInvocationScope;
@@ -477,7 +498,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const current = pruneDead(records, timestamp);
         const next = new Map(current);
         for (const [tokenHash, record] of current) {
-          if (record.scope.threadId === threadId) {
+          if (record.scope.thread.threadId === threadId) {
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }
         }
@@ -525,11 +546,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
-        yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
+        yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
       },
     ),
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
-      yield* revokeWhere((record) => record.scope.threadId === threadId);
+      yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
     }),
     // T3-CUSTOM(expbkt3): Logging out (or revoking a client) must immediately
     // unauthorize the provider MCP credentials that login produced. A

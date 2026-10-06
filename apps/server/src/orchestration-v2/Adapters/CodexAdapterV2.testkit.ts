@@ -180,26 +180,26 @@ export function makeReplayServerConfig(
   });
 }
 
-export function makeCodexProviderAdapterRegistryReplayLayer(input: {
+export function layer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
 }) {
-  const replayLayer =
+  const layerReplay =
     input.driver === undefined
       ? CodexReplay.layerReplay(input.transcript)
       : CodexReplay.layerReplayWithDriver(input.driver);
   // T3-CUSTOM(expbkt3): each isolated runtime owns its recorded handshake, responses and native thread history.
   const isolated = isolatedCodexReplayTranscripts(input.transcript);
-  const isolatedLayers = new Map<string, typeof replayLayer>();
+  const isolatedLayers = new Map<string, typeof layerReplay>();
   let nextIsolatedRuntime = 0;
-  const replayClientFactoryLayer = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
+  const layerReplayClientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
     open: (openInput) =>
       Effect.gen(function* () {
         // T3-CUSTOM(expbkt3): assign the recording at first open, then retain that app thread's cursor.
         let runtimeReplayLayer = isolatedLayers.get(openInput.threadId);
         if (runtimeReplayLayer === undefined) {
           const recording = isolated?.[nextIsolatedRuntime];
-          if (recording === undefined) runtimeReplayLayer = replayLayer;
+          if (recording === undefined) runtimeReplayLayer = layerReplay;
           else {
             const driver = yield* CodexReplay.makeReplayDriver(
               recording,
@@ -228,11 +228,11 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
         );
       }),
   });
-  const serverConfigLayer = Layer.effect(
+  const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  const registryLayer = ProviderAdapterRegistry.makeDriverLayer({
+  const layerRegistry = ProviderAdapterRegistry.layerFromDrivers({
     drivers: [CodexAdapterV2.CodexAdapterV2Driver],
     configMap: {
       [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
@@ -242,15 +242,15 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        replayClientFactoryLayer,
-        serverConfigLayer,
+        layerReplayClientFactory,
+        layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,
       ),
     ),
   );
 
-  return registryLayer;
+  return layerRegistry;
 }
 
 const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
@@ -291,9 +291,7 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
                   Effect.promise((signal) => replayGate.beforeEmit(entry.label, signal)),
               },
         );
-        return yield* Layer.build(
-          makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
-        );
+        return yield* Layer.build(layer({ transcript, driver }));
       }),
     );
   },

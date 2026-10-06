@@ -3,7 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { runAcpMcpStdioBridge } from "../mcp/AcpMcpStdioBridge.ts";
 
 export function nativeToolyardEndpoint(serverUrl: string) {

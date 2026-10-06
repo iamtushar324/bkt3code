@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): only a user's explicit personal MCP grant authenticates this bridge surface. */
 import { CommandId, ThreadId } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -5,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { McpSessionRegistry } from "../mcp/McpSessionRegistry.ts";
 import { parseEventFeedQuery } from "./eventFeedHttp.expbkt3.ts";
 import * as Manager from "./ManagerService.expbkt3.ts";

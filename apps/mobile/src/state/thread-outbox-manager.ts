@@ -3,7 +3,7 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { recordThreadOutboxFailureUnsafe } from "@t3tools/client-runtime/outbox";
 // T3-CUSTOM(expbkt3): END
 import * as Schema from "effect/Schema";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   flattenQueuedThreadMessages,

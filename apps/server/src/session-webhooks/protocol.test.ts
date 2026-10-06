@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): signed envelope and fixed notification trust boundary. */
 import * as NodeCrypto from "node:crypto";
 import { describe, it, expect } from "vite-plus/test";

@@ -13,9 +13,9 @@ import {
 import * as Effect from "effect/Effect";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { CurrentOrchestrationActorUserId } from "./forkActor.expbkt3.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters } from "./ProviderAdapterRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { legacyActivities } from "./legacyProjection.expbkt3.ts";
 import { legacyActivityItem } from "./ForkLegacyHistory.expbkt3.ts";
 import { forkHasPendingAsyncUserInput } from "./forkAsyncInput.expbkt3.ts";
@@ -23,7 +23,7 @@ import { forkHasPendingAsyncUserInput } from "./forkAsyncInput.expbkt3.ts";
 const actor = UserId.make("user:owner");
 const member = UserId.make("user:member");
 const providerInstanceId = ProviderInstanceId.make("codex");
-const registry = makeLayer([
+const registry = layerFromAdapters([
   {
     instanceId: providerInstanceId,
     driver: ProviderDriverKind.make("codex"),
@@ -32,11 +32,9 @@ const registry = makeLayer([
     openSession: () => Effect.die("Provider execution is outside this test."),
   },
 ]);
-const TestLayer = makeOrchestratorV2ReplayLayerWithRegistry(
-  { name: "fork-preservation" },
-  registry,
-  { runEffectWorker: false },
-);
+const TestLayer = layerWithRegistry({ name: "fork-preservation" }, registry, {
+  runEffectWorker: false,
+});
 
 it.layer(TestLayer)("fork native dispatch", (it) => {
   it.effect(

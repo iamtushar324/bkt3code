@@ -10,7 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 import {
   McpInvocationContext,
   type McpCapability,
@@ -30,10 +30,25 @@ const scope = (
   principal,
   actorUserId: principal === "external-operator" ? null : owner,
   environmentId: EnvironmentId.make("webhook-tool-environment"),
-  threadId:
-    principal === "provider-session" ? currentSession : ThreadId.make(`external-user:${owner}`),
-  providerSessionId: "webhook-tool-provider-session",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace:
+    principal === "provider-session"
+      ? "webhook-tool-provider-session"
+      : principal === "external-user"
+        ? `external-user:${owner}`
+        : "external-operator",
+  // Only a provider session has a thread; external principals are client callers.
+  thread:
+    principal === "provider-session"
+      ? {
+          threadId: currentSession,
+          providerSessionId: "webhook-tool-provider-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        }
+      : undefined,
+  client:
+    principal === "provider-session"
+      ? undefined
+      : { sessionId: principal, label: principal, runtimeModeCeiling: "full-access" },
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });

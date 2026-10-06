@@ -26,6 +26,8 @@ it.effect.each([true, false])(
       const original = {
         id: messageId,
         role: "user",
+        text: "Original prompt",
+        attachments: [],
         sentByUserId: UserId.make("original-actor"),
         ...(background ? { backgroundGrantHash: "original-grant" } : {}),
       };
@@ -53,8 +55,10 @@ it.effect.each([true, false])(
                   },
                 ],
                 providerTurns: [],
+                attempts: [],
               }
             : {}),
+          ...(fields.includes("turnItems") ? { turnItems: [] } : {}),
         } as never),
       );
       yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
@@ -63,6 +67,7 @@ it.effect.each([true, false])(
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadRecords: records,
               dispatch,
+              recoverDelegatedTask: () => Effect.void,
             }),
             ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
           ),

@@ -1,6 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - fork code still hashes with node:crypto; moving it to Effect Crypto (#16377) is a follow-up.
 /** T3-CUSTOM(expbkt3): durable receiver, access boundaries and receipt recovery. */
 import { NodeHttpServer } from "@effect/platform-node";
-import { HttpRouter, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpRouter, HttpClient, HttpClientRequest } from "effect/http";
 import { it, assert } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 import * as NodeCrypto from "node:crypto";
@@ -22,7 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";

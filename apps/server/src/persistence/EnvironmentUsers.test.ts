@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "./Sqlite.ts";
 import * as EnvironmentUsers from "./EnvironmentUsers.ts";
 
 const repositoryLayer = EnvironmentUsers.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));

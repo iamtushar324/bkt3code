@@ -2,6 +2,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -22,7 +23,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -409,9 +410,9 @@ export const layer: Layer.Layer<
       });
       const backgroundAllowed = grantCheck.pipe(
         Effect.as(true),
-        Effect.catchTag("BackgroundTurnDenied", (cause) =>
-          denyBackgroundStart(cause.detail).pipe(Effect.as(false)),
-        ),
+        Effect.catchTags({
+          BackgroundTurnDenied: (cause) => denyBackgroundStart(cause.detail).pipe(Effect.as(false)),
+        }),
       );
       if (backgroundTurn && message.text.trimStart().startsWith("/")) {
         yield* denyBackgroundStart("Native control commands are unavailable to background turns.");
@@ -682,11 +683,11 @@ export const layer: Layer.Layer<
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
-          const sourceProviderTurn = sourceProjection.providerTurns.find(
-            (candidate) =>
-              candidate.id === sourceAttempt?.providerTurnId ||
-              candidate.runAttemptId === sourceAttempt?.id,
-          );
+          const sourceProviderTurn =
+            latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
+            sourceProjection.providerTurns.find(
+              (candidate) => candidate.id === sourceAttempt?.providerTurnId,
+            );
           if (sourceRun === undefined || sourceProviderThread === undefined) {
             return yield* new ProviderTurnStartError({
               runId,
@@ -1023,6 +1024,7 @@ export const layer: Layer.Layer<
         run,
         projection.runs,
         projection.providerTurns,
+        projection.attempts,
       );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
@@ -1037,9 +1039,7 @@ export const layer: Layer.Layer<
             .map((candidate) => candidate.id),
         ),
         run,
-        runAttemptIds: projection.attempts
-          .filter((candidate) => candidate.runId === run.id)
-          .map((candidate) => candidate.id),
+        attempts: projection.attempts,
       });
       const restartNote =
         restartCancelledWork.length === 0
@@ -1312,6 +1312,13 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
+        // Legacy accepted attempts have no native id. They count only before
+        // a replacement, while no accepted attempt records a native identity.
+        nativeThreadHasTurns:
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,

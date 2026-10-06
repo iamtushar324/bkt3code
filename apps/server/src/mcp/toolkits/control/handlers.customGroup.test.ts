@@ -33,9 +33,13 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   principal: "provider-session",
   actorUserId,
   environmentId: EnvironmentId.make("environment-groups"),
-  threadId: sessionId,
-  providerSessionId: "provider-session-groups",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-groups",
+  thread: {
+    threadId: sessionId,
+    providerSessionId: "provider-session-groups",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["t3.read", "t3.control"]),
   issuedAt: 1,
 };

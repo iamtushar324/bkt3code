@@ -16,7 +16,7 @@
  *
  * @module fork/managedPrimaryHttp
  */
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpClientRequest } from "effect/http";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 import { readManagedPrimaryAccessToken } from "./managedPrimaryCredential";

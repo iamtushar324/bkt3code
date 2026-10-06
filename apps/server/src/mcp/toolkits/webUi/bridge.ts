@@ -11,10 +11,10 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { Headers } from "effect/unstable/http";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcMessage from "effect/unstable/rpc/RpcMessage";
-import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+import { Headers } from "effect/http";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcMessage from "effect/rpc/RpcMessage";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 
 import * as ServerSelfUpdate from "../../../cloud/selfUpdate.ts";
 import { makeAuthenticatedWsRpcHandlerLayer } from "../../../ws.ts";

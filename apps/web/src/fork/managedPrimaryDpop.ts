@@ -22,7 +22,7 @@
 import * as Effect from "effect/Effect";
 
 import {
-  browserCryptoLayer,
+  layer as browserCryptoLayer,
   createBrowserDpopProof,
   generateBrowserDpopKey,
   readStoredBrowserDpopKey,

@@ -12,7 +12,7 @@ import type { OrchestrationUser, UserId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";

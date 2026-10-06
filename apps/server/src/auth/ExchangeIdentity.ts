@@ -125,12 +125,13 @@ export const resolveExchangeIdentity = (input: {
       administrativeGrant: verified.administrativeGrant,
       identitySource: "token",
     })),
-    Effect.catchTag("ClerkAuthError", (error) =>
-      // A verified identity that is simply outside the organization is a decision,
-      // not a failed guess at the token format. Retrying it against the other
-      // verifier would either fail confusingly or, worse, admit someone the org
-      // gate just turned away.
-      error.reason === "not_org_member" ? input.onNotOrgMember() : viaRelayAudience(token),
-    ),
+    Effect.catchTags({
+      ClerkAuthError: (error) =>
+        // A verified identity that is simply outside the organization is a decision,
+        // not a failed guess at the token format. Retrying it against the other
+        // verifier would either fail confusingly or, worse, admit someone the org
+        // gate just turned away.
+        error.reason === "not_org_member" ? input.onNotOrgMember() : viaRelayAudience(token),
+    }),
   );
 };

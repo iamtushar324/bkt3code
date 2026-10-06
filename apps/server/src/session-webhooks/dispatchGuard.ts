@@ -3,7 +3,7 @@ import { type OrchestrationV2ServerCommand, type UserId } from "@t3tools/contrac
 import { SessionWebhookError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { isOwnerOrMember } from "../orchestration-v2/accessRules.ts";
 import type { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import {

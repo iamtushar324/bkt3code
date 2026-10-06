@@ -1,0 +1,13 @@
+# T3-CUSTOM(expbkt3): upstream vendors these as gitlinks under .repos/ without a root
+# .gitmodules. Upstream CI sparse-checks-out without .repos/, but fork workflows check out
+# the full tree, and actions/checkout fails on gitlinks it cannot map. Never initialized.
+[submodule ".repos/alchemy-effect/submodules/distilled"]
+	path = .repos/alchemy-effect/submodules/distilled
+	url = https://github.com/alchemy-run/distilled.git
+	update = none
+	ignore = all
+[submodule ".repos/alchemy-effect/submodules/floci"]
+	path = .repos/alchemy-effect/submodules/floci
+	url = https://github.com/alchemy-run/floci.git
+	update = none
+	ignore = all

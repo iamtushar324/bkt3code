@@ -18,8 +18,8 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
 import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { ToolyardIntegration } from "../toolyard/ToolyardIntegration.ts";
@@ -31,7 +31,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   callbackCommandId,
   callbackFingerprint,
@@ -85,9 +85,9 @@ const users = Layer.mock(EnvironmentUserRepository)({
       }),
     ),
 });
-const native = makeOrchestratorV2ReplayLayerWithRegistry(
+const native = ProviderReplayHarness.layerWithRegistry(
   { name: "session-webhook-native" },
-  ProviderAdapterRegistry.makeLayer([adapter]),
+  ProviderAdapterRegistry.layerFromAdapters([adapter]),
   { databaseLayer: SqlitePersistenceMemory, runEffectWorker: false },
 ).pipe(Layer.provide(Layer.mergeAll(access, integration, users)));
 const services = Layer.mergeAll(native, ProjectionStore.layer, CommandReceiptStore.layer).pipe(

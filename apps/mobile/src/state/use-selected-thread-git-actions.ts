@@ -13,7 +13,7 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
 // T3-CUSTOM(expbkt3): source-control identity — resolve the acting profile.

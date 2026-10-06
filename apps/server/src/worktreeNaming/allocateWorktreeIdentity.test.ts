@@ -14,7 +14,7 @@ describe("chooseWorktreeIdentity", () => {
   it("uses one codename for the directory and prefixed branch", () => {
     const identity = chooseWorktreeIdentity(input);
 
-    expect(identity.branchName).toBe(`t3code/${identity.directoryName}`);
+    expect(identity.branchName).toBe(`t3/${identity.directoryName}`);
     expect(identity.branchName).not.toBe(input.seed);
   });
 
@@ -30,7 +30,7 @@ describe("chooseWorktreeIdentity", () => {
     });
 
     expect(afterLocalCollision.directoryName).not.toBe(first.directoryName);
-    expect(afterLocalCollision.branchName).toBe(`t3code/${afterLocalCollision.directoryName}`);
+    expect(afterLocalCollision.branchName).toBe(`t3/${afterLocalCollision.directoryName}`);
     expect(afterRemoteCollision).toEqual(afterLocalCollision);
   });
 });
