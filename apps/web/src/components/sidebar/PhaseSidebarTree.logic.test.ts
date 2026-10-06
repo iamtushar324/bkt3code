@@ -71,6 +71,8 @@ function makeRow(
     readonly archived?: boolean;
     readonly pendingApproval?: boolean;
     readonly unread?: boolean;
+    // T3-CUSTOM(expbkt3): the row holds an actionable plan.
+    readonly plan?: boolean;
   } = {},
 ): PhaseSidebarRow {
   const thread = makeThread(id, {
@@ -85,6 +87,7 @@ function makeRow(
       : {}),
     ...(options.archived ? { archivedAt: now } : {}),
     ...(options.pendingApproval ? { hasPendingApprovals: true } : {}),
+    ...(options.plan ? { hasActionableProposedPlan: true } : {}),
   });
   return {
     thread,
@@ -388,6 +391,20 @@ describe("resolvePhaseSidebarTreePhase", () => {
 
     expect(tree[0]?.descendantAttention).toBe("plan");
     expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("plan_ready");
+  });
+
+  it("does not hoist a plan whose session is still working", () => {
+    // Subagents or a monitor still run, so the parent must read as working.
+    const tree = buildPhaseSidebarTree(
+      [
+        makeRow("parent", { phaseId: "ready" }),
+        makeRow("child", { parent: "parent", phaseId: "implementing", plan: true }),
+      ],
+      { compareSiblings: byId },
+    );
+
+    expect(tree[0]?.descendantAttention).toBeNull();
+    expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("implementing");
   });
 
   it("still goes red when the subtree holds both a plan and a question", () => {

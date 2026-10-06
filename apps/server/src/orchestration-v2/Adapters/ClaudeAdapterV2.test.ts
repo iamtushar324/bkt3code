@@ -23,6 +23,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ProviderApprovalDecision,
+  type ProviderRuntimeEvent,
   ProviderSessionId,
   ProviderTurnId,
   RunAttemptId,
@@ -59,6 +60,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { observeForkProviderEvents } from "../../provider/ForkProviderSessions.expbkt3.ts"; // T3-CUSTOM(expbkt3): account rotation trigger.
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -2579,6 +2581,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
       assert.lengthOf(notices(), 3);
       assert.notEqual(notices()[0]?.id, notices()[2]?.id);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  // T3-CUSTOM(expbkt3): Claude account rotation reacts to this fork event.
+  it.effect("sends the account-rotation trigger for a rejection in a turn and between turns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const triggers: Array<ProviderRuntimeEvent> = [];
+      yield* observeForkProviderEvents((event) =>
+        Effect.sync(() => {
+          if (event.type === "account.rate-limits.updated") triggers.push(event);
+        }),
+      );
+      const now = yield* DateTime.now;
+      const resetsAt = Math.floor(DateTime.toEpochMillis(now) / 1000) + 7_200;
+      // The frame bkt3 streamed on 2026-10-06: no top-level utilization, the
+      // fraction only under unifiedWindows, overage switched off.
+      const rejection = (uuid: string, rateLimitType: "five_hour" | "seven_day_opus") =>
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType,
+            resetsAt,
+            overageStatus: "rejected",
+            isUsingOverage: false,
+            unifiedWindows: { [rateLimitType]: { utilization: 1.02, resetsAt } },
+          },
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-rotation-trigger"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(rejection("00000000-0000-4000-8000-000000000701", "five_hour"));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "Paused." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      // A background agent hits the limit while no turn runs.
+      yield* harness.offerAndWait(rejection("00000000-0000-4000-8000-000000000703", "five_hour"));
+      // A model-scoped window has no account ring, but it still rotates.
+      yield* harness.offerAndWait(
+        rejection("00000000-0000-4000-8000-000000000704", "seven_day_opus"),
+      );
+
+      assert.deepEqual(
+        triggers.map((event) =>
+          event.type === "account.rate-limits.updated"
+            ? [event.raw?.messageType, event.payload.limits.windows.map((window) => window.id)]
+            : [],
+        ),
+        [
+          ["rate_limit_event", ["five_hour"]],
+          ["rate_limit_event", ["five_hour"]],
+          ["rate_limit_event", []],
+        ],
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 

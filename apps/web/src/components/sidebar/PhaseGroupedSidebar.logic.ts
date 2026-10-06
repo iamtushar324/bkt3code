@@ -86,10 +86,6 @@ export function phaseSidebarRowClassName(
   isActive: boolean,
   isSelected: boolean,
   needsUserInput: boolean,
-  // T3-CUSTOM(expbkt3): a plan waiting on a human gets the Needs Input
-  // treatment in violet — same geometry, different hue, so the two read as
-  // siblings rather than as one urgent state.
-  planReady = false,
   // T3-CUSTOM(expbkt3): an async question, in amber. It sits between the two:
   // someone asked, but the agent kept working, so it is not the red emergency.
   askPending = false,
@@ -116,12 +112,6 @@ export function phaseSidebarRowClassName(
     !needsUserInput &&
       askPending &&
       "animate-[pulse_1.25s_ease-in-out_infinite] bg-amber-500/20 text-foreground ring-1 ring-inset ring-amber-500/60 shadow-[inset_3px_0_0_0_var(--color-amber-500),0_0_14px_rgba(245,158,11,0.22)] hover:bg-amber-500/30 motion-reduce:animate-none",
-    // T3-CUSTOM(expbkt3): the violet mirror, for a plan the human has to decide
-    // on. A question always wins the row, so this never stacks with the red one.
-    !needsUserInput &&
-      !askPending &&
-      planReady &&
-      "animate-[pulse_1.25s_ease-in-out_infinite] bg-violet-500/20 text-foreground ring-1 ring-inset ring-violet-500/60 shadow-[inset_3px_0_0_0_var(--color-violet-500),0_0_14px_rgba(139,92,246,0.22)] hover:bg-violet-500/30 motion-reduce:animate-none",
   );
 }
 

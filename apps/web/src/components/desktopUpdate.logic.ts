@@ -10,7 +10,7 @@ const DESKTOP_RELEASE_TAG_URL = `${DESKTOP_RELEASE_HISTORY_URL}/tag`;
 
 // T3-CUSTOM(expbkt3): BEGIN - a fork build updates from the fork's releases, so
 // pointing "Read more" at upstream's tags 404s on every fork version.
-const BK_DESKTOP_RELEASE_TAG_URL = "https://github.com/beknown-work/bkt3code/releases/tag";
+const BK_DESKTOP_RELEASE_TAG_URL = "https://github.com/iamtushar324/bkt3code/releases/tag";
 
 function resolveDesktopReleaseTagBaseUrl(): string {
   return isBkManagedPrimary() ? BK_DESKTOP_RELEASE_TAG_URL : DESKTOP_RELEASE_TAG_URL;

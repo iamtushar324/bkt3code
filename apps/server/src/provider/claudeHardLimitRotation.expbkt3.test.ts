@@ -38,8 +38,10 @@ function rateLimitEvent(input: {
   readonly eventId: string;
   readonly threadId: ThreadId;
   readonly status: "allowed" | "allowed_warning" | "rejected";
-  readonly rateLimitType?: "five_hour" | "seven_day";
+  readonly rateLimitType?: "five_hour" | "seven_day" | "seven_day_overage_included";
   readonly resetsAt?: number;
+  /** Further `rate_limit_info` fields the CLI streams (overage, unifiedWindows). */
+  readonly info?: Readonly<Record<string, unknown>>;
 }): ProviderRuntimeEvent {
   return {
     type: "account.rate-limits.updated",
@@ -62,6 +64,7 @@ function rateLimitEvent(input: {
           status: input.status,
           ...(input.rateLimitType ? { rateLimitType: input.rateLimitType } : {}),
           ...(input.resetsAt ? { resetsAt: input.resetsAt } : {}),
+          ...input.info,
         },
       },
     },
@@ -196,6 +199,62 @@ describe("Claude authoritative hard-limit handling", () => {
       });
 
       assert.equal(electionRequests, 0);
+    }),
+  );
+
+  it.effect("acts on the rejection bkt3 streamed, but not on one that overage absorbs", () =>
+    Effect.gen(function* () {
+      const electionRequests: Array<string> = [];
+      const recycledThreads: Array<ThreadId> = [];
+      yield* runClaudeHardLimitRotation(
+        Stream.make(
+          // Provisioned overage carries the request, so the thread keeps running.
+          rateLimitEvent({
+            eventId: "overage-absorbs",
+            threadId: unrelatedThread,
+            status: "rejected",
+            rateLimitType: "five_hour",
+            resetsAt: 1_791_294_000,
+            info: { overageStatus: "allowed", isUsingOverage: true },
+          }),
+          // The frame bkt3 streamed on 2026-10-06 when an account hit its 5-hour
+          // limit between turns: overage off, the fraction only under unifiedWindows.
+          rateLimitEvent({
+            eventId: "bkt3-rejection",
+            threadId: affectedThread,
+            status: "rejected",
+            rateLimitType: "five_hour",
+            resetsAt: 1_791_294_000,
+            info: {
+              overageStatus: "rejected",
+              overageDisabledReason: "group_zero_credit_limit",
+              isUsingOverage: false,
+              unifiedWindows: { five_hour: { utilization: 1.02, resetsAt: 1_791_294_000 } },
+            },
+          }),
+          rateLimitEvent({
+            eventId: "model-bucket",
+            threadId: unrelatedThread,
+            status: "rejected",
+            rateLimitType: "seven_day_overage_included",
+            resetsAt: 1_791_838_800,
+          }),
+        ),
+        {
+          requestElection: (rateLimitType) =>
+            Effect.sync(() => {
+              electionRequests.push(rateLimitType);
+              return { status: "switched" } as const;
+            }),
+          recycleSession: (threadId) =>
+            Effect.sync(() => {
+              recycledThreads.push(threadId);
+            }),
+        },
+      );
+
+      assert.deepEqual(electionRequests, ["five_hour", "seven_day_overage_included"]);
+      assert.deepEqual(recycledThreads, [affectedThread, unrelatedThread]);
     }),
   );
 
