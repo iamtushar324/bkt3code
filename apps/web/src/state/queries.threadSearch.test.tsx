@@ -15,6 +15,13 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
     String(atom.label?.[0]).includes("empty") ? { matches: [], isLoading: false } : searchResults,
 }));
 
+// T3-CUSTOM(expbkt3): the fork's offline search reads environment presentations, which
+// the blanket useAtomValue mock above cannot answer. No environment is unreachable here.
+vi.mock("./environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./environments")>()),
+  useEnvironments: () => ({ presentationById: new Map() }),
+}));
+
 const environmentIds = [EnvironmentId.make("local")];
 type ThreadSearch = ReturnType<typeof useThreadSearch>;
 
