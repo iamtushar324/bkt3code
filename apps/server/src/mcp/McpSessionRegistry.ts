@@ -387,7 +387,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
         },
-        expiresAt,
+        expiresAt, // T3-CUSTOM(expbkt3): fork credentials carry their expiry.
       };
     },
   );

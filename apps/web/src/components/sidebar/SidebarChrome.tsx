@@ -131,8 +131,8 @@ export function SidebarBrandWidthProbe({
 }
 
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
-  const { environments } = useEnvironments();
   // T3-CUSTOM(expbkt3): BEGIN — derive experimental global unsettled/running counters.
+  const { environments } = useEnvironments();
   const threads = useThreadShells();
   const serverConfigs = useServerConfigs();
   const stageLabel = useEnvironmentStageLabel();
@@ -154,12 +154,12 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
     return () => window.clearTimeout(id);
   }, [counts.nextSnoozeWakeAt]);
-  // T3-CUSTOM(expbkt3): END
   const syncing = environments.some(
     (environment) =>
       environment.connection.phase === "connecting" ||
       environment.connection.phase === "reconnecting",
   );
+  // T3-CUSTOM(expbkt3): END
 
   return (
     // T3-CUSTOM(expbkt3): the brand link sits inside a flex row that also carries

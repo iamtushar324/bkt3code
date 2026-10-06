@@ -1,10 +1,6 @@
 #!/usr/bin/env node
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
-if (process.argv.includes("--version")) {
-  process.stdout.write("claude 2.1.219\n");
-  process.exit(0);
-}
 // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
 if (process.argv.includes("auth") && process.argv.includes("status")) {
   process.stdout.write(
@@ -14,6 +10,10 @@ if (process.argv.includes("auth") && process.argv.includes("status")) {
       account: { email: "test@example.com" },
     }) + "\n",
   );
+  process.exit(0);
+}
+if (process.argv.includes("--version")) {
+  process.stdout.write("claude 2.1.219\n");
   process.exit(0);
 }
 const lines = NodeReadline.createInterface({ input: process.stdin });
