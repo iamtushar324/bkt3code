@@ -25,7 +25,7 @@ const originalChannel = process.env[BK_MANAGED_CHANNEL_ENV_VAR];
 // Set once, before any Config read. Effect's default ConfigProvider snapshots
 // process.env on first use, so a per-test assignment would be silently ignored
 // by every test after the first.
-process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY = "beknown-work/bkt3code";
+process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY = "pingdotgg/t3code";
 
 function withBkBrand(variant?: "staging" | "production"): void {
   process.env[DESKTOP_BRAND_ENV_VAR] = "bk";
@@ -130,24 +130,25 @@ describe("updater channel in the publish config", () => {
     }),
   );
 
-  it.effect("gives each fork app its own channel, which separates their updates", () =>
+  it.effect("points each fork app at its own fixed update-feed release", () =>
     Effect.gen(function* () {
-      // Both apps publish into one repository. electron-updater picks a release
-      // by matching semver.prerelease(tag)[0] against the running app's channel,
-      // so these strings are the entire isolation mechanism — and they must
-      // equal the version's first prerelease identifier.
+      // The releases feed lists only the ten newest releases, and staging and
+      // mobile builds pushed every production build out of it. A fixed URL per
+      // app cannot be crowded out, and the channel names the manifest file.
       withBkBrand("staging");
-      expect(yield* publishConfig("0.0.17-stage-nightly.20260413.42")).toMatchObject({
-        owner: "beknown-work",
-        repo: "bkt3code",
-        releaseType: "prerelease",
+      expect(yield* publishConfig("0.0.17-stage-nightly.20260413.42")).toEqual({
+        provider: "generic",
+        url: "https://github.com/iamtushar324/bkt3code/releases/download/bk-desktop-staging",
         channel: "stage-nightly",
+        useMultipleRangeRequest: false,
       });
 
       withBkBrand("production");
-      expect(yield* publishConfig("0.0.17-production-nightly.20260413.42")).toMatchObject({
-        releaseType: "prerelease",
+      expect(yield* publishConfig("0.0.17-production-nightly.20260413.42")).toEqual({
+        provider: "generic",
+        url: "https://github.com/iamtushar324/bkt3code/releases/download/bk-desktop-production",
         channel: "production-nightly",
+        useMultipleRangeRequest: false,
       });
     }),
   );

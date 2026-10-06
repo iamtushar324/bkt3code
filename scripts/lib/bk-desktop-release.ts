@@ -11,12 +11,14 @@
  *    nightly-form version, and versions must increase, or teammates never see
  *    the update.
  *
- * 2. **Two apps share one release repository.** `GitHubProvider` in
- *    electron-updater picks the newest release whose `semver.prerelease(tag)[0]`
- *    equals the running app's channel, then reads `<channel>-mac.yml` from it.
- *    So the channel has to be the version's *first* prerelease identifier:
- *    `X.Y.Z-stage-nightly.YYYYMMDD.N` and `X.Y.Z-production-nightly.…`. A
- *    staging release is then simply invisible to a production app.
+ * 2. **Two apps share one release repository.** Each app reads
+ *    `<channel>-mac.yml` from its own fixed release (`updateFeedTag` in
+ *    `./bk-desktop-brand.ts`), which the publish script repoints at every new
+ *    build with {@link rewriteManifestForUpdateFeed}. The channel is still the
+ *    version's *first* prerelease identifier — `X.Y.Z-stage-nightly.YYYYMMDD.N`
+ *    and `X.Y.Z-production-nightly.…` — because apps built before the fixed
+ *    feed use `GitHubProvider`, which matches it against each release tag in
+ *    the releases feed.
  *
  * 3. **The release pipeline must not fire.** `.github/workflows/release.yml`
  *    triggers on tags `v*.*.*` with `!v*-nightly.*` excluded, and it has no
@@ -30,10 +32,14 @@
 
 import * as DateTime from "effect/DateTime";
 
-import { BK_DESKTOP_BRANDS, type BkDesktopVariant } from "./bk-desktop-brand.ts";
+import {
+  BK_DESKTOP_BRANDS,
+  BK_DESKTOP_UPDATE_REPOSITORY,
+  type BkDesktopVariant,
+} from "./bk-desktop-brand.ts";
 
 /** Repository the fork publishes desktop prereleases to. */
-export const BK_DESKTOP_RELEASE_REPOSITORY = "beknown-work/bkt3code";
+export const BK_DESKTOP_RELEASE_REPOSITORY = BK_DESKTOP_UPDATE_REPOSITORY;
 
 /** Nightly-form version: `X.Y.Z-<channel>-nightly.YYYYMMDD.N`. */
 const NIGHTLY_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)-(stage|production)-nightly\.(\d{8})\.(\d+)$/;
@@ -59,6 +65,24 @@ export function updateChannelForVariant(variant: BkDesktopVariant): string {
  */
 export function updateManifestFileName(variant: BkDesktopVariant): string {
   return `${updateChannelForVariant(variant)}-mac.yml`;
+}
+
+/**
+ * Rewrites a built `<channel>-mac.yml` so it can be served from the fixed
+ * update-feed release.
+ *
+ * electron-builder writes payload names relative to the manifest. The feed
+ * release holds only the manifest, so each relative `url:` and `path:` becomes
+ * an absolute download URL in the dated release `releaseTag`. electron-updater
+ * resolves an absolute URL as is, and finds the `.blockmap` beside it.
+ */
+export function rewriteManifestForUpdateFeed(manifestText: string, releaseTag: string): string {
+  const base = `https://github.com/${BK_DESKTOP_RELEASE_REPOSITORY}/releases/download/${releaseTag}`;
+  return manifestText.replace(
+    /^([ \t]*(?:- )?(?:url|path):[ \t]*)(\S+)[ \t]*$/gm,
+    (line, prefix: string, value: string) =>
+      /^https?:\/\//.test(value) ? line : `${prefix}${base}/${value}`,
+  );
 }
 
 /**

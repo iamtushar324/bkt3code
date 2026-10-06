@@ -5457,7 +5457,8 @@ export function makeClaudeAdapterV2(
             const update = claudeRateLimitEventToUpdate(rateLimitInfo, names);
             const now = yield* DateTime.now;
             // T3-CUSTOM(expbkt3): hard-limit rotation and per-account windows keep their typed SDK source.
-            if (update)
+            // A rejection is the rotation trigger even when it names no drawable window.
+            if (update || rateLimitInfo.status === "rejected")
               yield* emitForkProviderEvent({
                 eventId: EventId.make(
                   `claude-account-limit:${sessionProviderId}:${DateTime.toEpochMillis(now)}`,
@@ -5467,7 +5468,7 @@ export function makeClaudeAdapterV2(
                 threadId: sessionAppThreadId,
                 createdAt: DateTime.formatIso(now),
                 type: "account.rate-limits.updated",
-                payload: { limits: update },
+                payload: { limits: update ?? { windows: [] } }, // T3-CUSTOM(expbkt3): see above.
                 raw: {
                   source: "claude.sdk.message",
                   messageType: "rate_limit_event",

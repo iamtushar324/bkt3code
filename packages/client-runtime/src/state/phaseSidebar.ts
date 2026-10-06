@@ -320,8 +320,8 @@ export interface PhaseSidebarWorkBadge {
  * Foreground execution keeps its provider label (for example, Running),
  * background agent fleets read as Working, and only watch loops read as
  * Monitoring. Monitoring is steady and therefore does not trigger row
- * shimmer. Plan Ready remains actionable and outranks lingering background
- * liveness.
+ * shimmer. T3-CUSTOM(expbkt3): background liveness outranks a held plan, so a
+ * row whose subagents or monitor still run never reads as stopped.
  */
 export function resolvePhaseSidebarWorkBadge(input: {
   readonly phaseId: PhaseSidebarPhaseId;
@@ -334,8 +334,6 @@ export function resolvePhaseSidebarWorkBadge(input: {
   if (input.executionPresentation.active && input.executionPresentation.label !== null) {
     return { label: input.executionPresentation.label, monitoring: false };
   }
-
-  if (input.phaseId === "plan_ready") return null;
 
   if (input.backgroundLiveness === "working") {
     return { label: "Working", monitoring: false };
@@ -980,6 +978,22 @@ export function phaseSidebarIsExecutionActive(thread: Pick<ThreadShell, "runtime
   );
 }
 
+/**
+ * T3-CUSTOM(expbkt3): is the agent alive in any form — a foreground turn, or
+ * subagents and watch loops a settled turn left behind? A plan is only "ready
+ * to decide" once all of it has stopped; before that the row must read as
+ * working, not as parked.
+ */
+export function phaseSidebarIsAgentLive(
+  thread: Pick<ThreadShell, "session" | "backgroundLiveness">,
+): boolean {
+  return (
+    phaseSidebarIsExecutionActive(thread) ||
+    thread.backgroundLiveness === "working" ||
+    thread.backgroundLiveness === "monitoring"
+  );
+}
+
 // T3-CUSTOM(expbkt3): "ask" and "plan" are attention too — both wait on a human.
 export type PhaseSidebarAttentionKind = "input" | "approval" | "error" | "ask" | "plan";
 
@@ -1041,25 +1055,30 @@ export function resolvePhaseSidebarPhase(
     return thread.interactionMode === "plan" ? "planning" : "implementing";
   }
 
-  // Sidebar V2's reliability ordering: a failure or an actionable plan must
-  // not be hidden by liveness that can linger while background work winds
-  // down. Those states keep their ordinary group and attention treatment.
+  // Sidebar V2's reliability ordering: a failure must not be hidden by
+  // liveness that can linger while background work winds down.
+  if (hasFailure) {
+    // T3-CUSTOM(expbkt3): a failure still files a held plan under Plan Ready.
+    return thread.hasActionableProposedPlan ? "plan_ready" : "ready";
+  }
+
+  // A settled foreground turn can still own native subagents, workflows, or
+  // watch scripts. Keep it among agent-work rows until the authoritative
+  // server projection clears instead of prematurely dropping it into Ready.
   //
+  // T3-CUSTOM(expbkt3): checked before Plan Ready. A session whose subagents or
+  // monitor are still running is not stopped, so filing it under Plan Ready
+  // made it look parked while it was still working.
+  if (thread.backgroundLiveness === "working" || thread.backgroundLiveness === "monitoring") {
+    return thread.interactionMode === "plan" ? "planning" : "implementing";
+  }
+
   // T3-CUSTOM(expbkt3): Plan Ready means a plan is waiting for a human, in any
   // interaction mode. `t3_submit_plan` never changes interactionMode, so gating
   // this on plan mode hid every plan submitted from a default-mode turn. A
   // settled turn holding an actionable plan outranks a failure: the row's whole
   // job is the decision, and the failure still flies its own badge.
   if (thread.hasActionableProposedPlan) return "plan_ready";
-
-  if (hasFailure) return "ready";
-
-  // A settled foreground turn can still own native subagents, workflows, or
-  // watch scripts. Keep it among agent-work rows until the authoritative
-  // server projection clears instead of prematurely dropping it into Ready.
-  if (thread.backgroundLiveness === "working" || thread.backgroundLiveness === "monitoring") {
-    return thread.interactionMode === "plan" ? "planning" : "implementing";
-  }
 
   // T3-CUSTOM(expbkt3): an idle plan-mode thread with nothing to decide is just
   // idle. It used to land in Plan Ready, which made the group unscannable — the

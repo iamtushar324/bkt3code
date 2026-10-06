@@ -126,6 +126,23 @@ function makeWindow(
   };
 }
 
+// T3-CUSTOM(expbkt3): BEGIN
+/**
+ * The CLI drops the top-level `utilization` on a `rejected` event and keeps
+ * the per-window fractions under `unifiedWindows`, which the pinned SDK
+ * typings do not declare yet, so it is read structurally.
+ */
+function unifiedWindowUtilization(info: SDKRateLimitInfo, type: string | undefined) {
+  if (!type) return undefined;
+  const windows = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof windows !== "object" || windows === null) return undefined;
+  const window = (windows as Record<string, unknown>)[type];
+  if (typeof window !== "object" || window === null) return undefined;
+  const utilization = (window as { readonly utilization?: unknown }).utilization;
+  return typeof utilization === "number" ? utilization : undefined;
+}
+// T3-CUSTOM(expbkt3): END
+
 /**
  * Utilization is a 0–1 fraction on the streamed event. An overage-included
  * event before any probe has named the bucket is dropped: guessing a name
@@ -136,10 +153,12 @@ export function claudeRateLimitEventToUpdate(
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
+  // T3-CUSTOM(expbkt3): a rejected event carries its fraction only under `unifiedWindows`.
+  const utilization = info.utilization ?? unifiedWindowUtilization(info, type);
+  if (!type || typeof utilization !== "number") {
     return undefined;
   }
-  const usedPercent = info.utilization * 100;
+  const usedPercent = utilization * 100;
   const resetsAt = isoFromEpochSeconds(info.resetsAt);
   if (type in WINDOWS) {
     return { windows: [makeWindow(type, usedPercent, resetsAt)] };

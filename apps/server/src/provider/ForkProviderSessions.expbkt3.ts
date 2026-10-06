@@ -19,6 +19,20 @@ const listeners = new Set<(event: ProviderRuntimeEvent) => Effect.Effect<void>>(
 export const emitForkProviderEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
   Effect.forEach(listeners, (listener) => listener(event), { discard: true });
 
+/** Observes fork events for the life of the scope, without the session layer (adapter tests). */
+export const observeForkProviderEvents = (
+  listener: (event: ProviderRuntimeEvent) => Effect.Effect<void>,
+) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      listeners.add(listener);
+    }),
+    () =>
+      Effect.sync(() => {
+        listeners.delete(listener);
+      }),
+  );
+
 export class ForkProviderSessions extends Context.Service<
   ForkProviderSessions,
   {
