@@ -160,18 +160,13 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 >;
 
 /** The thread fields pull request sync reads, for a thread with at least one link. */
+// T3-CUSTOM(expbkt3): BEGIN — watch reads run with the thread owner's source-control credentials.
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  | "id"
-  | "projectId"
-  | "lineage"
-  | "settledOverride"
-  | "settledAt"
-  | "pullRequests"
-  // T3-CUSTOM(expbkt3): watch reads run with the thread owner's source-control credentials.
-  | "ownerUserId"
-  | "sourceControlProfileId"
->;
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+> &
+  Pick<OrchestrationV2AppThread, "ownerUserId" | "sourceControlProfileId">;
+// T3-CUSTOM(expbkt3): END
 
 /**
  * Thread activity needed by settlement, without transcript or fork history.
