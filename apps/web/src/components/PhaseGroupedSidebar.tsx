@@ -168,6 +168,7 @@ import {
   phaseSidebarWorktreeRowProps,
   resolvePhaseSidebarWorktreeView,
   phaseSidebarIsExecutionActive,
+  phaseSidebarIsAgentLive,
   resolvePhaseSidebarAttentionKind,
   resolvePhaseSidebarAttentionPriority,
   resolvePhaseSidebarCheckoutMetadata,
@@ -1175,7 +1176,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // still moving, so flashing it would cry wolf. This reads execution directly
   // rather than the phase id, because a thread holding a plan *and* a question
   // is filed under Ask and its plan is still perfectly decidable.
-  const planReady = attentionKind === "plan" && !phaseSidebarIsExecutionActive(row.thread);
+  const planReady = attentionKind === "plan" && !phaseSidebarIsAgentLive(row.thread);
   // T3-CUSTOM(expbkt3): BEGIN — signals the stock sidebar carries and this one
   // dropped. Each reads a field already on the row.
   const isPinned = row.thread.pinnedAt != null;
@@ -1569,13 +1570,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       <button
         ref={rowRef}
         type="button"
-        className={phaseSidebarRowClassName(
-          active,
-          selected,
-          needsUserInput,
-          planReady,
-          hasAsyncQuestion,
-        )}
+        className={phaseSidebarRowClassName(active, selected, needsUserInput, hasAsyncQuestion)}
         aria-current={active ? "page" : undefined}
         aria-expanded={hasChildren ? treeExpanded : undefined}
         data-attention={
