@@ -985,7 +985,7 @@ export function phaseSidebarIsExecutionActive(thread: Pick<ThreadShell, "runtime
  * working, not as parked.
  */
 export function phaseSidebarIsAgentLive(
-  thread: Pick<ThreadShell, "session" | "backgroundLiveness">,
+  thread: Pick<ThreadShell, "runtime" | "backgroundLiveness">,
 ): boolean {
   return (
     phaseSidebarIsExecutionActive(thread) ||

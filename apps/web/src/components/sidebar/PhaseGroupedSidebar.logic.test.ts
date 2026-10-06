@@ -784,7 +784,7 @@ describe("phase sidebar lifecycle", () => {
   it("treats background work as a live agent", () => {
     expect(phaseSidebarIsAgentLive(makeThread({ backgroundLiveness: "working" }))).toBe(true);
     expect(phaseSidebarIsAgentLive(makeThread({ backgroundLiveness: "monitoring" }))).toBe(true);
-    expect(phaseSidebarIsAgentLive(makeThread({ session: makeSession("running") }))).toBe(true);
+    expect(phaseSidebarIsAgentLive(makeThread({ runtime: makeSession("running") }))).toBe(true);
     expect(phaseSidebarIsAgentLive(makeThread())).toBe(false);
   });
 
