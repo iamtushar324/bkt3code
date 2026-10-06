@@ -29,7 +29,7 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 // T3-CUSTOM(expbkt3): BEGIN - fork desktop brand (bundle id, name, icon, artifact).
-import { resolveBkDesktopBrand } from "./lib/bk-desktop-brand.ts";
+import { bkDesktopUpdateFeedUrl, resolveBkDesktopBrand } from "./lib/bk-desktop-brand.ts";
 import { resolveBkSigningIdentity } from "./lib/bk-desktop-signing.ts";
 // T3-CUSTOM(expbkt3): END
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
@@ -2601,6 +2601,25 @@ export function resolveDesktopRuntimeDependencies(
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
   updateChannel: "latest" | "nightly",
 ) {
+  // T3-CUSTOM(expbkt3): BEGIN - a fork app reads its manifest from one fixed
+  // release, not from the releases feed. The feed lists only the ten newest
+  // releases, and staging and mobile builds in the same repository push
+  // production builds out of it. The generic provider reads
+  // `<channel>-mac.yml` under `url`. See scripts/lib/bk-desktop-brand.ts.
+  // GitHub answers a multi-range request with 501, which GitHubProvider knows
+  // and the generic provider does not, so without the flag every differential
+  // download falls back to the full ZIP.
+  const brand = resolveDesktopBrandOverride();
+  if (brand && updateChannel === "nightly") {
+    return {
+      provider: "generic",
+      url: bkDesktopUpdateFeedUrl(brand),
+      channel: brand.updateChannel,
+      useMultipleRangeRequest: false,
+    };
+  }
+  // T3-CUSTOM(expbkt3): END
+
   const env = yield* Config.all({
     updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
@@ -2615,22 +2634,12 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   const [owner, repo, ...rest] = rawRepo.split("/");
   if (!owner || !repo || rest.length > 0) return undefined;
 
-  // T3-CUSTOM(expbkt3): BEGIN - the fork ships two apps out of this one
-  // repository, so the channel is the brand's, not the literal "nightly".
-  // That name becomes the manifest asset (`<channel>-mac.yml`) and must equal
-  // the first prerelease identifier of the version, which is what
-  // electron-updater's GitHubProvider matches on. See
-  // scripts/lib/bk-desktop-brand.ts.
-  const brandChannel = resolveDesktopBrandOverride()?.updateChannel;
-  // T3-CUSTOM(expbkt3): END
-
   return {
     provider: "github",
     owner,
     repo,
     releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    // T3-CUSTOM(expbkt3): brandChannel when a fork brand is active, else upstream's.
-    ...(updateChannel === "nightly" ? { channel: brandChannel ?? ("nightly" as const) } : {}),
+    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
   };
 });
 

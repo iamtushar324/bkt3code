@@ -45,8 +45,8 @@ export const BK_DESKTOP_BRAND_ID = "bk";
 
 export type DesktopBrandId = "upstream" | "bk";
 
-/** Repository whose GitHub releases the fork's desktop updater reads. */
-export const BK_DESKTOP_UPDATE_REPOSITORY = "beknown-work/bkt3code";
+/** Repository whose GitHub releases hold the fork's desktop builds. */
+export const BK_DESKTOP_UPDATE_REPOSITORY = "iamtushar324/bkt3code";
 
 /**
  * The fork ships one app per managed environment, so `stage` and `bkmain`
@@ -88,13 +88,20 @@ export interface DesktopBrand {
    * electron-updater channel, and therefore the manifest asset name
    * (`<updateChannel>-mac.yml`) and the version's first prerelease identifier.
    *
-   * This is what keeps the two apps apart inside one release repository.
-   * `GitHubProvider.getLatestVersion` walks the releases feed and takes the
-   * first release whose `semver.prerelease(tag)[0]` equals the running app's
-   * channel, so a staging build is invisible to a production app and vice
-   * versa. See `scripts/lib/bk-desktop-release.ts` for the version format.
+   * The app reads `<updateChannel>-mac.yml` from {@link updateFeedTag}'s
+   * release. See `scripts/lib/bk-desktop-release.ts` for the version format.
    */
   readonly updateChannel: string;
+  /**
+   * Tag of the fixed GitHub release this app's updater reads. The publish
+   * script replaces its manifest after every build.
+   *
+   * The app does not search the releases feed. That feed lists only the ten
+   * newest releases, and the staging and mobile builds that share this
+   * repository pushed every production build out of it, so production apps
+   * stopped finding updates.
+   */
+  readonly updateFeedTag: string;
   /**
    * OS-level URL scheme this app registers as a handler for, or `null` to
    * register none.
@@ -147,6 +154,7 @@ export const BK_DESKTOP_BRANDS: Readonly<Record<BkDesktopVariant, DesktopBrand>>
     linuxIconPng: BK_BRAND_ASSET_PATHS.universalIconPng,
     windowsIconIco: BK_BRAND_ASSET_PATHS.windowsIconIco,
     updateChannel: "production-nightly",
+    updateFeedTag: "bk-desktop-production",
     deepLinkScheme: "t3code",
   },
   staging: {
@@ -169,6 +177,7 @@ export const BK_DESKTOP_BRANDS: Readonly<Record<BkDesktopVariant, DesktopBrand>>
     linuxIconPng: BK_BRAND_ASSET_PATHS.universalIconPng,
     windowsIconIco: BK_BRAND_ASSET_PATHS.windowsIconIco,
     updateChannel: "stage-nightly",
+    updateFeedTag: "bk-desktop-staging",
     deepLinkScheme: null,
   },
 };
@@ -183,6 +192,11 @@ export const BK_DESKTOP_BRAND: DesktopBrand = BK_DESKTOP_BRANDS[BK_DESKTOP_DEFAU
 
 export function isBkDesktopBrandId(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === BK_DESKTOP_BRAND_ID;
+}
+
+/** Base URL electron-updater's generic provider reads a brand's manifest from. */
+export function bkDesktopUpdateFeedUrl(brand: DesktopBrand): string {
+  return `https://github.com/${BK_DESKTOP_UPDATE_REPOSITORY}/releases/download/${brand.updateFeedTag}`;
 }
 
 /** Resolves the brand from a build environment, defaulting to upstream. */

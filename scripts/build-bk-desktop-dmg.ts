@@ -38,7 +38,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   BK_DESKTOP_BRAND_ID,
   BK_DESKTOP_BRANDS,
-  BK_DESKTOP_UPDATE_REPOSITORY,
   DESKTOP_BRAND_ENV_VAR,
 } from "./lib/bk-desktop-brand.ts";
 import { BK_SIGNING_IDENTITY_ENV_VAR, resolveBkSigningIdentity } from "./lib/bk-desktop-signing.ts";
@@ -347,8 +346,6 @@ const runBuild = Effect.fn("runBuild")(function* (options: {
     // and — via resolveBkDesktopVariant — selects which of the two fork apps
     // this is: bundle id, product name, user-data directory and updater channel.
     [BK_MANAGED_CHANNEL_ENV_VAR]: options.managedChannel,
-    // Points electron-updater at the fork's releases instead of upstream's.
-    T3CODE_DESKTOP_UPDATE_REPOSITORY: BK_DESKTOP_UPDATE_REPOSITORY,
     VITE_T3_EXPERIMENTAL_CONTROL_CENTER: "true",
     // Scrubbed, not merely omitted: `...process.env` above would otherwise carry
     // an inherited key straight into the bundle, which is exactly the accident

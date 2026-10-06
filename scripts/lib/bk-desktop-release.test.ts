@@ -1,6 +1,8 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { BK_DESKTOP_BRANDS } from "./bk-desktop-brand.ts";
+
 import {
   compareNightlyVersions,
   composeNightlyVersion,
@@ -10,6 +12,7 @@ import {
   parseNightlyVersion,
   resolveNewestNightlyVersion,
   resolveNextCounter,
+  rewriteManifestForUpdateFeed,
   tagFromVersion,
   updateChannelForVariant,
   updateManifestFileName,
@@ -254,5 +257,55 @@ describe("release asset selection", () => {
     expect(isNightlyReleaseAsset("nightly-mac.yml", "staging")).toBe(false);
     expect(isNightlyReleaseAsset("builder-debug.yml", "staging")).toBe(false);
     expect(isNightlyReleaseAsset("BK T3 Code.app", "staging")).toBe(false);
+  });
+});
+
+describe("fixed update feed", () => {
+  const tag = "v0.0.43-production-nightly.20261002.4";
+  const zip = "BK-T3-Code-0.0.43-production-nightly.20261002.4-arm64.zip";
+  const dmg = "BK-T3-Code-0.0.43-production-nightly.20261002.4-arm64.dmg";
+  const base = `https://github.com/iamtushar324/bkt3code/releases/download/${tag}`;
+  // As electron-builder writes it, from the real 20261002.4 release.
+  const manifest = [
+    "version: 0.0.43-production-nightly.20261002.4",
+    "files:",
+    `  - url: ${zip}`,
+    "    sha512: 2JJc==",
+    "    size: 140050571",
+    `  - url: ${dmg}`,
+    "    sha512: ut4w==",
+    "    size: 145750515",
+    `path: ${zip}`,
+    "sha512: 2JJc==",
+    "releaseDate: '2026-10-02T21:48:15.265Z'",
+    "",
+  ].join("\n");
+
+  it("points every payload at the dated release and keeps the rest", () => {
+    // The feed release holds only the manifest, so a relative name would 404.
+    expect(rewriteManifestForUpdateFeed(manifest, tag)).toBe(
+      manifest
+        .replace(`  - url: ${zip}`, `  - url: ${base}/${zip}`)
+        .replace(`  - url: ${dmg}`, `  - url: ${base}/${dmg}`)
+        .replace(`path: ${zip}`, `path: ${base}/${zip}`),
+    );
+  });
+
+  it("is idempotent, so a manifest rewritten twice still resolves", () => {
+    const once = rewriteManifestForUpdateFeed(manifest, tag);
+    expect(rewriteManifestForUpdateFeed(once, tag)).toBe(once);
+  });
+
+  it("keeps feed tags out of version ordering and the release workflow", () => {
+    // The feed releases share the repository with the dated ones. Version
+    // resolution must not read them as builds, and release.yml (tags v*.*.*)
+    // must not fire for them.
+    for (const brand of Object.values(BK_DESKTOP_BRANDS)) {
+      expect(parseNightlyVersion(brand.updateFeedTag)).toBeUndefined();
+      expect(brand.updateFeedTag.startsWith("v")).toBe(false);
+    }
+    expect(
+      resolveNewestNightlyVersion([BK_DESKTOP_BRANDS.production.updateFeedTag, tag], "production"),
+    ).toMatchObject({ counter: 4 });
   });
 });

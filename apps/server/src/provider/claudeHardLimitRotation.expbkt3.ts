@@ -1,7 +1,11 @@
 /**
  * T3-CUSTOM(expbkt3): rotate Claude after an authoritative usage rejection.
  *
- * The provider event retains Claude's typed rate-limit message in `raw`. This
+ * The provider event retains Claude's typed rate-limit message in `raw`. The
+ * V2 adapter sends one for every rejection, in a turn or between turns (a
+ * background agent can hit the limit while no turn runs), even when it names
+ * no window the account rings can draw. A rejection that provisioned overage
+ * absorbs does not block the thread, so it is not a trigger. This
  * listener delegates the machine-global election to the host-owned autoswitch
  * command and stops only the emitting thread after a validated switched result.
  * It never reads, copies, logs, or moves account credentials.
@@ -33,6 +37,7 @@ const ClaudeRateLimitType = Schema.Literals([
   "seven_day",
   "seven_day_opus",
   "seven_day_sonnet",
+  "seven_day_overage_included",
   "overage",
 ]);
 export type ClaudeRateLimitType = typeof ClaudeRateLimitType.Type;
@@ -44,6 +49,9 @@ const ClaudeRateLimitMessage = Schema.Struct({
     rateLimitType: Schema.optional(ClaudeRateLimitType),
     resetsAt: Schema.optional(Schema.Number),
     overageResetsAt: Schema.optional(Schema.Number),
+    overageStatus: Schema.optional(Schema.String),
+    isUsingOverage: Schema.optional(Schema.Boolean),
+    overageInUse: Schema.optional(Schema.Boolean),
   }),
 });
 const decodeClaudeRateLimitMessage = Schema.decodeUnknownOption(ClaudeRateLimitMessage);
@@ -115,6 +123,13 @@ function hardLimitCondition(event: ProviderRuntimeEvent): ClaudeHardLimitConditi
   if (Option.isNone(decoded)) return null;
   const info = decoded.value.rate_limit_info;
   if (info.status !== "rejected" || info.rateLimitType === undefined) return null;
+  // The same rule the adapter uses for its usage-limit notice: overage carries the request.
+  const overageAllowed =
+    info.overageStatus === "allowed" ||
+    info.overageStatus === "allowed_warning" ||
+    info.isUsingOverage === true ||
+    info.overageInUse === true;
+  if (overageAllowed) return null;
 
   const resetAt =
     info.rateLimitType === "overage" ? (info.overageResetsAt ?? info.resetsAt) : info.resetsAt;

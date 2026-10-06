@@ -52,9 +52,12 @@ import {
   isReleaseWorkflowSafeTag,
   parseNightlyVersion,
   resolveNewestNightlyVersion,
+  rewriteManifestForUpdateFeed,
   tagFromVersion,
   updateChannelForVariant,
   updateManifestFileName,
+  versionFromTag,
+  type ParsedNightlyVersion,
 } from "./lib/bk-desktop-release.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
@@ -85,6 +88,7 @@ export class GhCommandFailedError extends Schema.TaggedError<GhCommandFailedErro
       "create-release",
       "view-release",
       "publish-release",
+      "update-feed",
     ]),
     exitCode: Schema.Number,
     stderrTail: Schema.String,
@@ -327,6 +331,23 @@ export class BuiltAppNotFoundError extends Schema.TaggedError<BuiltAppNotFoundEr
       `Could not extract a signed .app from the update ZIP in ${this.releaseDir}. ` +
       `That ZIP is the Squirrel.Mac payload, so without it there is nothing to verify ` +
       `and nothing worth publishing — rebuild with scripts/build-bk-desktop-dmg.ts.`
+    );
+  }
+}
+
+export class UpdateFeedWouldMoveBackwardError extends Schema.TaggedError<UpdateFeedWouldMoveBackwardError>()(
+  "UpdateFeedWouldMoveBackwardError",
+  {
+    feedTag: Schema.String,
+    version: Schema.String,
+    feedVersion: Schema.String,
+  },
+) {
+  override get message(): string {
+    return (
+      `Update feed ${this.feedTag} already serves ${this.feedVersion}, which is newer than ` +
+      `${this.version}. Installed apps allow downgrades, so repointing it would move every ` +
+      `app back. The dated release is public; the feed is unchanged.`
     );
   }
 }
@@ -709,6 +730,144 @@ const assertDraftAssetsComplete = Effect.fn("assertDraftAssetsComplete")(functio
   }
 });
 
+/**
+ * Points the app's fixed update-feed release at the build just published.
+ *
+ * Runs only after the dated release is public, because the rewritten manifest
+ * links to that release's ZIP. The feed release holds nothing but the
+ * manifest, so `--clobber` swaps one small file. A client that checks during
+ * the swap gets a 404 and tries again at its next check.
+ *
+ * If this step fails, the dated release is still public but the app does not
+ * see it. The next successful publish repoints the feed.
+ */
+const publishUpdateFeed = Effect.fn("publishUpdateFeed")(function* (input: {
+  readonly variant: BkManagedChannel;
+  readonly releaseDir: string;
+  readonly manifest: string;
+  readonly tag: string;
+  readonly version: ParsedNightlyVersion;
+  readonly targetSha: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const brand = BK_DESKTOP_BRANDS[input.variant];
+  const feedTag = brand.updateFeedTag;
+
+  const manifestText = yield* fs.readFileString(path.join(input.releaseDir, input.manifest));
+  const feedDir = yield* fs.makeTempDirectoryScoped();
+  const feedManifest = path.join(feedDir, input.manifest);
+  yield* fs.writeFileString(feedManifest, rewriteManifestForUpdateFeed(manifestText, input.tag));
+
+  const notes = [
+    `Update feed for **${brand.productName}**: the app reads \`${input.manifest}\` from this release. Do not delete it.`,
+    ``,
+    `Every publish replaces the manifest. It now points at [${input.tag}](https://github.com/${BK_DESKTOP_RELEASE_REPOSITORY}/releases/tag/${input.tag}).`,
+  ].join("\n");
+
+  const existing = yield* runGh([
+    "release",
+    "view",
+    feedTag,
+    "--repo",
+    BK_DESKTOP_RELEASE_REPOSITORY,
+    "--json",
+    "tagName",
+  ]);
+  if (existing.exitCode === 0) {
+    // Apps run with allowDowngrade on, so an older build in the feed would be
+    // offered to every app. Two publishes of one channel can overlap when a
+    // dispatch builds it from another branch.
+    const current = yield* runGh([
+      "release",
+      "download",
+      feedTag,
+      "--repo",
+      BK_DESKTOP_RELEASE_REPOSITORY,
+      "--pattern",
+      input.manifest,
+      "--output",
+      "-",
+    ]);
+    const feedVersion = /^version:\s*(\S+)\s*$/m.exec(current.stdout)?.[1];
+    const parsedFeedVersion = feedVersion ? parseNightlyVersion(feedVersion) : undefined;
+    if (
+      current.exitCode === 0 &&
+      feedVersion &&
+      parsedFeedVersion &&
+      compareNightlyVersions(input.version, parsedFeedVersion) < 0
+    ) {
+      return yield* new UpdateFeedWouldMoveBackwardError({
+        feedTag,
+        version: versionFromTag(input.tag),
+        feedVersion,
+      });
+    }
+  }
+
+  const steps: ReadonlyArray<ReadonlyArray<string>> =
+    existing.exitCode === 0
+      ? [
+          [
+            "release",
+            "upload",
+            feedTag,
+            "--repo",
+            BK_DESKTOP_RELEASE_REPOSITORY,
+            "--clobber",
+            feedManifest,
+          ],
+          ["release", "edit", feedTag, "--repo", BK_DESKTOP_RELEASE_REPOSITORY, "--notes", notes],
+        ]
+      : [
+          [
+            "release",
+            "create",
+            feedTag,
+            "--repo",
+            BK_DESKTOP_RELEASE_REPOSITORY,
+            // A prerelease is never marked "Latest", and apps built before the
+            // fixed feed skip this tag because it has no channel.
+            "--prerelease",
+            "--target",
+            input.targetSha,
+            "--title",
+            `${brand.productName} update feed`,
+            "--notes",
+            notes,
+            feedManifest,
+          ],
+        ];
+  for (const args of steps) {
+    const result = yield* runGh(args);
+    if (result.exitCode !== 0) {
+      return yield* new GhCommandFailedError({
+        operation: "update-feed",
+        exitCode: result.exitCode,
+        stderrTail: result.stderr.trim() || result.stdout.trim(),
+      });
+    }
+  }
+
+  // The draft wording of this error tells the reader to delete the release,
+  // which for the feed would stop every installed app from updating.
+  yield* assertDraftAssetsComplete(feedTag, [feedManifest]).pipe(
+    Effect.catchTags({
+      IncompleteReleaseUploadError: (error) =>
+        Effect.fail(
+          new GhCommandFailedError({
+            operation: "update-feed",
+            exitCode: 0,
+            stderrTail:
+              `${error.asset} on ${feedTag} is incomplete (${error.detail}). ` +
+              `Re-run the publish job. Do not delete ${feedTag}.`,
+          }),
+        ),
+    }),
+  );
+  yield* Console.log(`Update feed ${feedTag} now points at ${input.tag}.`);
+});
+
 const command = Command.make(
   "publish-bk-desktop-dmg",
   {
@@ -780,7 +939,34 @@ const command = Command.make(
       const releases = yield* listPublishedTags();
       const existing = releases.find((release) => release.tagName.trim() === tag);
       if (existing && !existing.isDraft) {
-        return yield* new ReleaseTagAlreadyExistsError({ tag });
+        // "Re-run failed jobs" after the feed step failed lands here: the dated
+        // release is public, so only the feed still needs this build.
+        const target = yield* runGh([
+          "release",
+          "view",
+          tag,
+          "--repo",
+          BK_DESKTOP_RELEASE_REPOSITORY,
+          "--json",
+          "targetCommitish",
+        ]);
+        const targetCommitish =
+          target.exitCode === 0
+            ? (yield* decodeGhReleaseTarget(target.stdout)).targetCommitish.trim().toLowerCase()
+            : undefined;
+        if (targetCommitish !== targetSha) {
+          return yield* new ReleaseTagAlreadyExistsError({ tag });
+        }
+        yield* Console.log(`${tag} is already published from ${targetSha}; repointing the feed.`);
+        if (dryRun) return;
+        return yield* publishUpdateFeed({
+          variant,
+          releaseDir: path.resolve(repoRoot, releaseDir),
+          manifest,
+          tag,
+          version: parsed,
+          targetSha,
+        });
       }
       if (existing?.isDraft) {
         // A draft holding this tag is the wreckage of an earlier failed publish,
@@ -887,7 +1073,10 @@ const command = Command.make(
       }
 
       if (dryRun) {
-        yield* Console.log(`\nDry run — would publish prerelease ${tag} targeting ${targetSha}.`);
+        yield* Console.log(
+          `\nDry run — would publish prerelease ${tag} targeting ${targetSha}, ` +
+            `then point update feed ${brand.updateFeedTag} at it.`,
+        );
         return;
       }
 
@@ -944,6 +1133,14 @@ const command = Command.make(
       }
 
       yield* Console.log(published.stdout.trim());
+      yield* publishUpdateFeed({
+        variant,
+        releaseDir: resolvedReleaseDir,
+        manifest,
+        tag,
+        version: parsed,
+        targetSha,
+      });
       yield* Console.log(
         `\nPublished prerelease ${tag} at ${targetSha}. Confirm release.yml did not run:\n` +
           `  gh run list --repo ${BK_DESKTOP_RELEASE_REPOSITORY} --workflow release.yml -L 3`,
