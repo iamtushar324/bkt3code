@@ -1320,6 +1320,41 @@ describe("ClaudeAccountsService hard limits", () => {
         const resumed = yield* service.resolveForSession(threadId);
         assert.equal(resumed?.profile, "tushar");
         assert.equal(resumed?.reason, "sticky");
+
+        // Claude still refuses with the old reset: no second wait, the thread moves.
+        yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: resetInTwoMinutes,
+        });
+        assert.equal(harness.dispatched.length, 2);
+        assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+      }),
+  );
+
+  scenario(
+    "drops the wait as soon as a message is accepted for the thread",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-reset-wait-message");
+        yield* service.resolveForSession(threadId);
+        const { seen } = yield* watchThreadInto(service, threadId);
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: resetInTwoMinutes,
+        });
+
+        yield* PubSub.publish(harness.domainEvents, {
+          type: "thread.turn-start-requested",
+          payload: { threadId },
+        } as unknown as OrchestrationEvent);
+        yield* takeUntil(seen, (view) => view.notice === undefined);
+        yield* TestClock.adjust("10 minutes");
+        assert.equal(harness.dispatched.length, 0);
       }),
   );
 

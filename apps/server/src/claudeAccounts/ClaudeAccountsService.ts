@@ -1296,10 +1296,8 @@ export const make = Effect.gen(function* () {
       // once. Accounts often share a reset instant (5-hour windows are
       // hour-aligned), so the account is part of the key. Without a reset time
       // nothing identifies the rejection, so every copy is judged on its own.
-      if (
-        resetsAt !== undefined &&
-        !rememberCondition(`${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`)
-      ) {
+      const conditionKey = `${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`;
+      if (resetsAt !== undefined && !rememberCondition(conditionKey)) {
         return true;
       }
 
@@ -1338,8 +1336,10 @@ export const make = Effect.gen(function* () {
       // in between leaves the notice and a stopped thread.
       const nowMs = yield* Clock.currentTimeMillis;
       const resetMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
-      if (!Number.isNaN(resetMs) && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
-        const continueAtMs = Math.max(resetMs, nowMs) + RESET_WAIT_BUFFER_MS;
+      // A reset already in the past while Claude still refuses is not worth
+      // another wait: the thread moves instead.
+      if (resetMs > nowMs && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
+        const continueAtMs = resetMs + RESET_WAIT_BUFFER_MS;
         const continueAt = isoFromUnixSeconds(continueAtMs / 1000);
         notices.set(
           threadId,
@@ -1353,6 +1353,9 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* Effect.sleep(Duration.millis(continueAtMs - nowMs));
             if (!waitingForReset.delete(threadId)) return;
+            // The continue asks the same account again, so a fresh rejection
+            // carrying the same reset is real, not a copy of this one.
+            handledConditions.delete(conditionKey);
             notices.delete(threadId);
             yield* pruneExhausted;
             yield* Effect.logInfo("claude.account.reset-wait-continue", { threadId, profile });
@@ -1451,6 +1454,15 @@ export const make = Effect.gen(function* () {
       // asynchronously, so the provider's own `turn.completed` usually arrives
       // while the shell still reads "running". The settled session is the
       // reliable moment to finish a deferred account change.
+      // A message accepted during a wait replaces the continue, even before
+      // its turn reaches the provider.
+      if (event.type === "thread.turn-start-requested") {
+        if (yield* cancelResetWait(event.payload.threadId)) {
+          notices.delete(event.payload.threadId);
+          yield* announce(event.payload.threadId);
+        }
+        return;
+      }
       if (event.type === "thread.session-set") {
         const session = event.payload.session;
         if (

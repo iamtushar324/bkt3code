@@ -34,14 +34,25 @@ const affectedThread = ThreadId.make("affected-thread");
 const unrelatedThread = ThreadId.make("unrelated-thread");
 const encoder = new TextEncoder();
 
-function rateLimitEvent(input: {
+/**
+ * What the adapter emits for a rate-limit message: always the raw
+ * `account.rate-limits.updated`, plus the usage-limit `runtime.warning` when
+ * the rejection blocks the turn (`blocking`, the default for `rejected`).
+ */
+function rateLimitEvents(input: {
   readonly eventId: string;
   readonly threadId: ThreadId;
   readonly status: "allowed" | "allowed_warning" | "rejected";
-  readonly rateLimitType?: "five_hour" | "seven_day";
+  readonly rateLimitType?: "five_hour" | "seven_day" | "seven_day_opus";
   readonly resetsAt?: number;
-}): ProviderRuntimeEvent {
-  return {
+  readonly blocking?: boolean;
+}): ReadonlyArray<ProviderRuntimeEvent> {
+  const info = {
+    status: input.status,
+    ...(input.rateLimitType ? { rateLimitType: input.rateLimitType } : {}),
+    ...(input.resetsAt ? { resetsAt: input.resetsAt } : {}),
+  };
+  const update: ProviderRuntimeEvent = {
     type: "account.rate-limits.updated",
     eventId: EventId.make(input.eventId),
     provider: claude,
@@ -58,14 +69,21 @@ function rateLimitEvent(input: {
         type: "rate_limit_event",
         session_id: "claude-session",
         uuid: input.eventId,
-        rate_limit_info: {
-          status: input.status,
-          ...(input.rateLimitType ? { rateLimitType: input.rateLimitType } : {}),
-          ...(input.resetsAt ? { resetsAt: input.resetsAt } : {}),
-        },
+        rate_limit_info: info,
       },
     },
   };
+  if (input.status !== "rejected" || input.blocking === false) return [update];
+  const warning: ProviderRuntimeEvent = {
+    type: "runtime.warning",
+    eventId: EventId.make(`${input.eventId}-warning`),
+    provider: claude,
+    providerInstanceId: claudeInstance,
+    threadId: input.threadId,
+    createdAt: "2026-08-20T13:15:49.000Z",
+    payload: { message: "Claude usage limit reached.", detail: info },
+  };
+  return [update, warning];
 }
 
 function commandHandle(input: {
@@ -115,7 +133,7 @@ describe("Claude authoritative hard-limit handling", () => {
       Effect.gen(function* () {
         const electionRequests: Array<string> = [];
         const recycledThreads: Array<ThreadId> = [];
-        const hardLimit = rateLimitEvent({
+        const hardLimit = rateLimitEvents({
           eventId: "hard-limit-1",
           threadId: affectedThread,
           status: "rejected",
@@ -125,13 +143,13 @@ describe("Claude authoritative hard-limit handling", () => {
 
         yield* runClaudeHardLimitRotation(
           Stream.fromIterable([
-            hardLimit,
-            { ...hardLimit, eventId: EventId.make("hard-limit-copy") },
-            {
-              ...hardLimit,
+            ...hardLimit,
+            ...hardLimit.map((event) => ({ ...event, eventId: EventId.make("hard-limit-copy") })),
+            ...hardLimit.map((event) => ({
+              ...event,
               eventId: EventId.make("hard-limit-other-thread"),
               threadId: unrelatedThread,
-            },
+            })),
           ]),
           {
             requestElection: (rateLimitType) =>
@@ -155,18 +173,36 @@ describe("Claude authoritative hard-limit handling", () => {
     Effect.gen(function* () {
       let electionRequests = 0;
       const events: ReadonlyArray<ProviderRuntimeEvent> = [
-        rateLimitEvent({
+        ...rateLimitEvents({
           eventId: "warning",
           threadId: affectedThread,
           status: "allowed_warning",
           rateLimitType: "five_hour",
           resetsAt: 1_776_725_705,
         }),
-        rateLimitEvent({
+        ...rateLimitEvents({
           eventId: "missing-type",
           threadId: affectedThread,
           status: "rejected",
         }),
+        // Overage absorbs this rejection: the turn keeps running, no warning.
+        ...rateLimitEvents({
+          eventId: "overage-absorbed",
+          threadId: affectedThread,
+          status: "rejected",
+          rateLimitType: "five_hour",
+          resetsAt: 1_776_725_705,
+          blocking: false,
+        }),
+        {
+          type: "runtime.warning",
+          eventId: EventId.make("other-warning"),
+          provider: claude,
+          providerInstanceId: claudeInstance,
+          threadId: affectedThread,
+          createdAt: "2026-08-20T13:16:00.000Z",
+          payload: { message: "Something else", detail: { status: "rejected" } },
+        },
         {
           type: "runtime.error",
           eventId: EventId.make("provider-error"),
@@ -210,15 +246,23 @@ describe("Claude authoritative hard-limit handling", () => {
         }> = [];
         let electionRequests = 0;
         yield* runClaudeHardLimitRotation(
-          Stream.make(
-            rateLimitEvent({
+          Stream.fromIterable([
+            ...rateLimitEvents({
               eventId: "hook-handled",
               threadId: affectedThread,
               status: "rejected",
               rateLimitType: "five_hour",
               resetsAt: 1_776_725_705,
             }),
-          ),
+            // Model-scoped rejections carry no window the usage rings know.
+            ...rateLimitEvents({
+              eventId: "hook-handled-opus",
+              threadId: affectedThread,
+              status: "rejected",
+              rateLimitType: "seven_day_opus",
+              resetsAt: 1_776_725_705,
+            }),
+          ]),
           {
             requestElection: () =>
               Effect.sync(() => {
@@ -238,6 +282,7 @@ describe("Claude authoritative hard-limit handling", () => {
 
         assert.deepEqual(handledByHook, [
           { threadId: affectedThread, rateLimitType: "five_hour", resetAt: 1_776_725_705 },
+          { threadId: affectedThread, rateLimitType: "seven_day_opus", resetAt: 1_776_725_705 },
         ]);
         assert.equal(electionRequests, 0);
       }),
@@ -247,7 +292,7 @@ describe("Claude authoritative hard-limit handling", () => {
     Effect.gen(function* () {
       const electionRequests: Array<string> = [];
       const recycledThreads: Array<ThreadId> = [];
-      const hardLimit = rateLimitEvent({
+      const hardLimit = rateLimitEvents({
         eventId: "hook-declined",
         threadId: affectedThread,
         status: "rejected",
@@ -256,8 +301,8 @@ describe("Claude authoritative hard-limit handling", () => {
       });
       yield* runClaudeHardLimitRotation(
         Stream.fromIterable([
-          hardLimit,
-          { ...hardLimit, eventId: EventId.make("hook-declined-copy") },
+          ...hardLimit,
+          ...hardLimit.map((event) => ({ ...event, eventId: EventId.make("hook-declined-copy") })),
         ]),
         {
           requestElection: (rateLimitType) =>
@@ -291,8 +336,8 @@ describe("Claude authoritative hard-limit handling", () => {
       for (const [index, outcome] of outcomes.entries()) {
         let recycled = false;
         yield* runClaudeHardLimitRotation(
-          Stream.make(
-            rateLimitEvent({
+          Stream.fromIterable(
+            rateLimitEvents({
               eventId: `unconfirmed-${index}`,
               threadId: affectedThread,
               status: "rejected",
