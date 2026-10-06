@@ -71,9 +71,6 @@ jobs:
             --upstream-sha "$upstream_sha" \
             --github-env "$GITHUB_ENV"
 
-      - name: Align package versions to upstream nightly
-        run: node scripts/update-release-package-versions.ts "$APP_VERSION"
-
       - name: Ensure Electron runtime is installed
         run: pnpm exec vp run --filter @t3tools/desktop ensure:electron
 
@@ -89,8 +86,18 @@ jobs:
       - name: Typecheck
         run: pnpm exec vp run typecheck
 
+      # Upstream's server browser tests launch a real headless Chromium (#15328).
+      - name: Install Chromium for server browser integration tests
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
       - name: Test
         run: pnpm exec vp run test
+
+      # Tests run against the committed package versions, as in upstream CI; some
+      # upstream tests read the release channel from the version. Only the build
+      # artifacts carry the nightly version.
+      - name: Align package versions to upstream nightly
+        run: node scripts/update-release-package-versions.ts "$APP_VERSION"
 
       # The Clerk publishable key must be baked in here or the deployed SPA runs
       # with team mode silently off.
