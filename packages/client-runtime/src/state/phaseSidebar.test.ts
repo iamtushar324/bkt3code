@@ -531,7 +531,11 @@ describe("buildPhaseSidebarRows", () => {
         }),
         makeThread({
           id: ThreadId.make("fork"),
-          lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: "fork" },
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "fork",
+          },
         }),
       ],
       projects: [project],
