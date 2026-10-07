@@ -747,7 +747,10 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
     Effect.gen(function* () {
-      const outcome = yield* client.status(yield* rankInput);
+      const input = yield* rankInput;
+      let outcome = yield* client.status(input);
+      // A switcher swapped back to an older one rejects the ranking flags.
+      if (outcome.kind === "unavailable" && input !== undefined) outcome = yield* client.status();
       if (outcome.kind === "ok") {
         yield* adoptStatus(outcome.value);
       } else {
@@ -913,11 +916,15 @@ export const make = Effect.gen(function* () {
       const rates = lastStatus?.place_rule
         ? fiveHourRates(fiveHourHistory, yield* Clock.currentTimeMillis)
         : undefined;
-      const outcome = yield* client.place({
+      let outcome = yield* client.place({
         pending,
         avoid: [...avoidSet],
         ...(rates ? { rates } : {}),
       });
+      // An older switcher knows `--pending` and `--avoid` but not `--rates`.
+      if (outcome.kind === "unavailable" && rates !== undefined) {
+        outcome = yield* client.place({ pending, avoid: [...avoidSet] });
+      }
       if (outcome.kind !== "ok") {
         // `available` tracks `--status` alone; a failed `--place` only logs.
         yield* Effect.logWarning("claude.account.place-failed", {
