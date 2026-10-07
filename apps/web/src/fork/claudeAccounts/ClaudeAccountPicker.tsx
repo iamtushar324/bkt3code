@@ -6,7 +6,9 @@
  * Claude mark with the account's badge letter and its weekly % used; the
  * menu offers "Auto (account)" (the default: the server places the thread)
  * or any account by hand, each with its live usage, laid out like the
- * Claude Accounts dashboard.
+ * Claude Accounts dashboard. Rows follow Auto's order for the next new
+ * session (#1 = next pick). The chosen mode carries the theme's primary
+ * colour; under Auto, the account this thread runs on gets a lighter tint.
  */
 import {
   CLAUDE_ACCOUNT_MODE_AUTO,
@@ -47,8 +49,10 @@ import {
   accountRows,
   AUTO_ACCOUNT_LABEL,
   autoRowDetail,
+  isAutoMode,
   modeEquals,
   PENDING_RESTART_HINT,
+  spaceLine,
   SWITCH_RESTARTS_SESSION_HINT,
   switchRestartsSession,
   triggerTooltip,
@@ -93,6 +97,14 @@ const TAG_VARIANT: Record<AccountTagTone, "error" | "warning" | "outline"> = {
   warn: "warning",
   muted: "outline",
 };
+
+/** The chosen mode (Auto, or a pinned account): the theme's primary colour. */
+const CHOSEN_ITEM_CLASS =
+  "data-checked:bg-primary/12 data-checked:shadow-[inset_2px_0_0_var(--primary)]";
+/** The account an Auto thread runs on: a lighter tint of the same colour. */
+const AUTO_CURRENT_ROW_CLASS =
+  "bg-primary/6 shadow-[inset_2px_0_0_color-mix(in_srgb,var(--primary)_45%,transparent)]";
+const CHIP_CLASS = "shrink-0 rounded-full px-1.5 text-3xs leading-4 whitespace-nowrap";
 
 /** The Claude mark with the account's badge letter at its corner. */
 function AccountMark(props: {
@@ -158,13 +170,34 @@ function TagPill({ tag }: { readonly tag: AccountTag }) {
 }
 
 /**
- * One account, laid out like a dashboard card: the name line, then its status
- * line (tag and recovery) only when there is something to say, then the meters.
+ * One account, laid out like a dashboard card: the name line (with its place
+ * in Auto's order), then its status line (tag and recovery) only when there is
+ * something to say, then its space to reset, then the meters.
  */
-function AccountRow({ row }: { readonly row: AccountRowView }) {
+function AccountRow(props: {
+  readonly row: AccountRowView;
+  /** Some row carries a pick number, so every row keeps the number column. */
+  readonly numbered: boolean;
+  /** An Auto thread runs on this account. */
+  readonly autoCurrent: boolean;
+  /** The chip on Auto's next pick: `next new session`, or `Auto would pick` when pinned. */
+  readonly nextLabel: string;
+}) {
+  const { row } = props;
+  const indent = props.numbered ? "ps-11" : "ps-5.5";
   return (
     <span className="grid w-full min-w-0 gap-1 py-0.5">
       <span className="flex min-w-0 items-center gap-1.5">
+        {props.numbered ? (
+          <span
+            className={cn(
+              "w-4 shrink-0 text-2xs tabular-nums",
+              row.pick === 1 ? "font-semibold text-primary" : "text-muted-foreground",
+            )}
+          >
+            {row.pick === null ? "" : `#${row.pick}`}
+          </span>
+        ) : null}
         <AccountMark label={row.shortLabel} auto={false} indicatorBackground="var(--popover)" />
         <span className="shrink-0 font-medium text-sm">{row.name}</span>
         {row.current ? <span className="sr-only">(this thread)</span> : null}
@@ -174,14 +207,22 @@ function AccountRow({ row }: { readonly row: AccountRowView }) {
           </span>
         ) : null}
         <span className="ms-auto flex shrink-0 items-center gap-1">
+          {props.autoCurrent ? (
+            <span className={cn(CHIP_CLASS, "bg-primary/16 text-primary")}>Auto · this thread</span>
+          ) : null}
+          {row.pick === 1 ? (
+            <span className={cn(CHIP_CLASS, "border border-primary/55 text-primary")}>
+              {props.nextLabel}
+            </span>
+          ) : null}
           {row.sessions > 0 ? (
             <span className="text-muted-foreground text-2xs tabular-nums">{`in use · ${row.sessions}`}</span>
           ) : null}
-          <MenuRadioItemIndicator />
+          <MenuRadioItemIndicator className="text-primary" />
         </span>
       </span>
       {row.tag || row.recoversIn ? (
-        <span className="flex min-w-0 items-center gap-1.5 ps-5.5">
+        <span className={cn("flex min-w-0 items-center gap-1.5", indent)}>
           {row.tag ? <TagPill tag={row.tag} /> : null}
           {row.recoversIn ? (
             <span className="shrink-0 text-muted-foreground text-2xs tabular-nums">
@@ -190,8 +231,13 @@ function AccountRow({ row }: { readonly row: AccountRowView }) {
           ) : null}
         </span>
       ) : null}
+      {row.space && !row.disabled ? (
+        <span className={cn("truncate text-2xs text-muted-foreground tabular-nums", indent)}>
+          {spaceLine(row.space)}
+        </span>
+      ) : null}
       {row.windows.length > 0 ? (
-        <span className="grid grid-cols-3 gap-3 ps-5.5">
+        <span className={cn("grid grid-cols-3 gap-3", indent)}>
           {row.windows.map((win) => (
             <span key={win.id} className="grid min-w-0 gap-0.5">
               <span className="flex min-w-0 items-baseline justify-between gap-1 text-2xs">
@@ -252,8 +298,9 @@ function UsageRing(props: { readonly radius: number; readonly used: number | nul
 /**
  * The composer trigger: outer ring = 5-hour use, inner ring = weekly use,
  * quiet grey until 75% (yellow) and 90% (red); the account letter sits in
- * the centre ("A" while Auto has not placed the thread yet). A small blue dot
- * at the top right means Auto chose the account; a pinned account has none.
+ * the centre ("A" while Auto has not placed the thread yet). Under Auto the
+ * letter and a small dot at the top right take the theme's primary colour; a
+ * pinned account has neither.
  */
 function UsageRings(props: {
   readonly fiveHourUsed: number | null;
@@ -272,7 +319,7 @@ function UsageRings(props: {
         dominantBaseline="central"
         fontSize="6.8"
         fontWeight="600"
-        className="fill-muted-foreground"
+        className={props.auto ? "fill-primary" : "fill-muted-foreground"}
       >
         {props.label}
       </text>
@@ -282,7 +329,7 @@ function UsageRings(props: {
           cy="3.4"
           r="2.3"
           strokeWidth="1.2"
-          className="fill-info stroke-background"
+          className="fill-primary stroke-background"
         />
       ) : null}
     </svg>
@@ -312,6 +359,8 @@ function ClaudeAccountPickerMenu(props: {
   const tooltip = triggerTooltip(view);
   const mode = account?.mode ?? CLAUDE_ACCOUNT_MODE_AUTO;
   const rows = accountRows(snapshot, account, now);
+  const auto = isAutoMode(account);
+  const numbered = rows.some((row) => row.pick !== null);
   const unavailable = unavailableLine(snapshot);
   const hoveredSwitches =
     hoveredValue !== null && switchRestartsSession(account, valueMode(hoveredValue));
@@ -374,18 +423,21 @@ function ClaudeAccountPickerMenu(props: {
         >
           <MenuRadioItem
             value={AUTO_VALUE}
+            className={CHOSEN_ITEM_CLASS}
             closeOnClick
             onMouseEnter={() => setHoveredValue(AUTO_VALUE)}
             onFocus={() => setHoveredValue(AUTO_VALUE)}
           >
             <span className="flex w-full items-center gap-2 py-0.5">
               <span className="grid min-w-0 flex-1 gap-0.5">
-                <span className="font-medium text-sm">{AUTO_ACCOUNT_LABEL}</span>
+                <span className="font-medium text-sm in-data-checked:text-primary">
+                  {AUTO_ACCOUNT_LABEL}
+                </span>
                 <span className="truncate text-muted-foreground text-2xs">
-                  {autoRowDetail(account)}
+                  {autoRowDetail(account, rows)}
                 </span>
               </span>
-              <MenuRadioItemIndicator />
+              <MenuRadioItemIndicator className="text-primary" />
             </span>
           </MenuRadioItem>
           {rows.length > 0 ? <MenuSeparator /> : null}
@@ -396,12 +448,17 @@ function ClaudeAccountPickerMenu(props: {
                 key={row.name}
                 value={value}
                 disabled={row.disabled}
-                className={cn(row.current && "bg-accent/40")}
+                className={cn(CHOSEN_ITEM_CLASS, auto && row.current && AUTO_CURRENT_ROW_CLASS)}
                 closeOnClick
                 onMouseEnter={() => setHoveredValue(value)}
                 onFocus={() => setHoveredValue(value)}
               >
-                <AccountRow row={row} />
+                <AccountRow
+                  row={row}
+                  numbered={numbered}
+                  autoCurrent={auto && row.current}
+                  nextLabel={auto ? "next new session" : "Auto would pick"}
+                />
               </MenuRadioItem>
             );
           })}

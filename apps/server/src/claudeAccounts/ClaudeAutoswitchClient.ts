@@ -60,6 +60,14 @@ export const SwitcherProfile = Schema.Struct({
   headroom_per_day: Schema.optionalKey(NullableNumber),
   age_sec: Schema.optionalKey(NullableNumber),
   sessions: Schema.optionalKey(NullableNumber),
+  // `space-share-v1` placement figures; absent from older switchers.
+  space_to_reset: Schema.optionalKey(NullableNumber),
+  space_per_day: Schema.optionalKey(NullableNumber),
+  five_hour_rate: Schema.optionalKey(NullableNumber),
+  five_hour_full_in: Schema.optionalKey(NullableNumber),
+  place_rank: Schema.optionalKey(NullableNumber),
+  place_score: Schema.optionalKey(NullableNumber),
+  guard_ok: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
 });
 export type SwitcherProfile = typeof SwitcherProfile.Type;
 
@@ -69,6 +77,9 @@ export const SwitcherStatus = Schema.Struct({
   elected: Schema.optionalKey(NullableString),
   rank_order: Schema.optionalKey(Schema.Array(Schema.String)),
   place_spread: Schema.optionalKey(NullableNumber),
+  /** Set by switchers that accept `--rates` and `--pending` on `--status`. */
+  place_rule: Schema.optionalKey(NullableString),
+  place_order: Schema.optionalKey(Schema.Array(Schema.String)),
   profiles: Schema.Array(SwitcherProfile),
 });
 export type SwitcherStatus = typeof SwitcherStatus.Type;
@@ -105,9 +116,18 @@ export type ClaudeAutoswitchOutcome<A> =
   | { readonly kind: "ok"; readonly value: A }
   | ClaudeAutoswitchFailure;
 
-export interface ClaudeAutoswitchPlaceInput {
+/**
+ * Inputs a `space-share-v1` switcher ranks with. Only sent once the switcher
+ * has reported `place_rule`: an older one rejects unknown flags.
+ */
+export interface ClaudeAutoswitchRankInput {
   /** Placements this server made in the last 90 s, by profile. */
   readonly pending: Readonly<Record<string, number>>;
+  /** Observed 5-hour burn, in window points per hour, by profile. */
+  readonly rates?: Readonly<Record<string, number>>;
+}
+
+export interface ClaudeAutoswitchPlaceInput extends ClaudeAutoswitchRankInput {
   /** Profiles the caller knows are exhausted. */
   readonly avoid: ReadonlyArray<string>;
 }
@@ -118,7 +138,9 @@ export interface ClaudeAutoswitchHardLimitInput {
 }
 
 export interface ClaudeAutoswitchClientShape {
-  readonly status: () => Effect.Effect<ClaudeAutoswitchOutcome<SwitcherStatus>>;
+  readonly status: (
+    input?: ClaudeAutoswitchRankInput,
+  ) => Effect.Effect<ClaudeAutoswitchOutcome<SwitcherStatus>>;
   readonly place: (
     input: ClaudeAutoswitchPlaceInput,
   ) => Effect.Effect<ClaudeAutoswitchOutcome<SwitcherPlaceResult>>;
@@ -169,12 +191,22 @@ export const configuredAutoswitchPath: Effect.Effect<string> = Effect.serviceOpt
   ),
 );
 
-function placeArgs(input: ClaudeAutoswitchPlaceInput): ReadonlyArray<string> {
-  const args: Array<string> = ["--place", "--json"];
+function rankArgs(input: ClaudeAutoswitchRankInput | undefined): Array<string> {
+  if (input === undefined) return [];
+  const args: Array<string> = [];
   const pending = Object.entries(input.pending)
     .filter(([, count]) => count > 0)
     .map(([name, count]) => `${name}=${count}`);
   if (pending.length > 0) args.push("--pending", pending.join(","));
+  const rates = Object.entries(input.rates ?? {})
+    .filter(([, rate]) => Number.isFinite(rate) && rate >= 0)
+    .map(([name, rate]) => `${name}=${Math.round(rate * 10) / 10}`);
+  if (rates.length > 0) args.push("--rates", rates.join(","));
+  return args;
+}
+
+function placeArgs(input: ClaudeAutoswitchPlaceInput): ReadonlyArray<string> {
+  const args: Array<string> = ["--place", "--json", ...rankArgs(input)];
   if (input.avoid.length > 0) args.push("--avoid", input.avoid.join(","));
   return args;
 }
@@ -243,7 +275,7 @@ export const make = Effect.gen(function* () {
     );
 
   return ClaudeAutoswitchClient.of({
-    status: () => invoke(["--status", "--json"], decodeStatus),
+    status: (input) => invoke(["--status", "--json", ...rankArgs(input)], decodeStatus),
     place: (input) => invoke(placeArgs(input), decodePlace),
     hardLimit: (input) =>
       invoke(["--hard-limit", input.type, "--profile", input.profile, "--json"], decodeHardLimit),

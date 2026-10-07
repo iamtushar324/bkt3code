@@ -86,6 +86,7 @@ import {
   type ClaudeHardLimitCondition,
   registerClaudeHardLimitAccountsHook,
 } from "./hardLimitHook.ts";
+import { type FiveHourHistory, fiveHourRates, recordFiveHour } from "./fiveHourRate.ts";
 import { computeShortLabels } from "./shortLabels.ts";
 
 export const STATUS_POLL_INTERVAL_MS = 15_000;
@@ -309,6 +310,8 @@ export const make = Effect.gen(function* () {
   const overlays = new Map<string, WindowOverlay>();
   const exhausted = new Map<string, ExhaustedMark>();
   const pendingPlacements: Array<{ readonly profile: string; readonly atMs: number }> = [];
+  /** Recent 5-hour readings per account, for the burn rates the switcher ranks with. */
+  const fiveHourHistory: FiveHourHistory = new Map();
   // Per-thread state the row does not carry.
   const threadProfiles = new Map<ThreadId, string>();
   const notices = new Map<ThreadId, string>();
@@ -528,6 +531,10 @@ export const make = Effect.gen(function* () {
     const rank = raw.rank;
     const sessions = raw.sessions;
     const ageSec = raw.age_sec;
+    const space = raw.space_to_reset;
+    const spacePerDay = raw.space_per_day;
+    const fullIn = raw.five_hour_full_in;
+    const placeRank = raw.place_rank;
     return {
       name: raw.name,
       shortLabel,
@@ -554,6 +561,23 @@ export const make = Effect.gen(function* () {
       sessions:
         typeof sessions === "number" && Number.isInteger(sessions) && sessions >= 0 ? sessions : 0,
       ...(typeof ageSec === "number" && Number.isFinite(ageSec) ? { ageSec } : {}),
+      ...(typeof space === "number" && Number.isFinite(space)
+        ? { spaceToReset: clampPercent(space) }
+        : {}),
+      ...(typeof spacePerDay === "number" && Number.isFinite(spacePerDay) && spacePerDay >= 0
+        ? { spacePerDay }
+        : {}),
+      ...(typeof fullIn === "number" && Number.isFinite(fullIn) && fullIn >= 0
+        ? { fiveHourFullInSec: fullIn }
+        : {}),
+      // A hard limit or a logout takes the account out of Auto's order at once.
+      ...(mark === undefined &&
+      authState !== "logged_out" &&
+      typeof placeRank === "number" &&
+      Number.isInteger(placeRank) &&
+      placeRank >= 1
+        ? { placeRank }
+        : {}),
     };
   };
 
@@ -690,6 +714,20 @@ export const make = Effect.gen(function* () {
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
+      const generatedMs =
+        typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
+      for (const profile of status.profiles) {
+        const used = profile.five_hour?.used;
+        const resetsAt = profile.five_hour?.resets_at;
+        if (typeof used !== "number" || !resetsAt) continue;
+        const ageMs = typeof profile.age_sec === "number" ? profile.age_sec * 1000 : 0;
+        recordFiveHour(
+          fiveHourHistory,
+          profile.name,
+          { atMs: generatedMs - ageMs, used, resetsAt },
+          lastStatusAtMs,
+        );
+      }
       // A fresher reading from the switcher supersedes live overlays up to now.
       for (const [profile, overlay] of overlays) {
         if (overlay.atMs <= lastStatusAtMs) overlays.delete(profile);
@@ -709,7 +747,7 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
     Effect.gen(function* () {
-      const outcome = yield* client.status();
+      const outcome = yield* client.status(yield* rankInput);
       if (outcome.kind === "ok") {
         yield* adoptStatus(outcome.value);
       } else {
@@ -812,6 +850,17 @@ export const make = Effect.gen(function* () {
     return counts;
   });
 
+  /**
+   * Pending placements and burn rates for the switcher's ranking, once it has
+   * shown (`place_rule`) that it accepts them; an older one rejects the flags.
+   */
+  const rankInput = Effect.gen(function* () {
+    if (!lastStatus?.place_rule) return undefined;
+    const pending = yield* pendingCounts;
+    const now = yield* Clock.currentTimeMillis;
+    return { pending, rates: fiveHourRates(fiveHourHistory, now) };
+  });
+
   const exhaustedNames = Effect.map(pruneExhausted, () => [...exhausted.keys()]);
 
   /** The earliest reset among exhausted accounts, skipping those the owner may not use. */
@@ -861,7 +910,14 @@ export const make = Effect.gen(function* () {
       if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
       const exhaustedNow = yield* exhaustedNames;
       const avoidSet = new Set([...exhaustedNow, ...avoid, ...disallowed]);
-      const outcome = yield* client.place({ pending, avoid: [...avoidSet] });
+      const rates = lastStatus?.place_rule
+        ? fiveHourRates(fiveHourHistory, yield* Clock.currentTimeMillis)
+        : undefined;
+      const outcome = yield* client.place({
+        pending,
+        avoid: [...avoidSet],
+        ...(rates ? { rates } : {}),
+      });
       if (outcome.kind !== "ok") {
         // `available` tracks `--status` alone; a failed `--place` only logs.
         yield* Effect.logWarning("claude.account.place-failed", {

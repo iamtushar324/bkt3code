@@ -114,6 +114,41 @@ describe("ClaudeAutoswitchClient", () => {
     }),
   );
 
+  it.effect("sends pending counts and burn rates to --status and --place when given", () =>
+    Effect.gen(function* () {
+      const { layer, calls } = harness(() =>
+        output({
+          stdout:
+            '{"schema":"claude-autoswitch.status/1","place_rule":"space-share-v1","place_order":["agent"],"profiles":[{"name":"agent","place_rank":1,"space_to_reset":97.0,"space_per_day":14.1,"five_hour_full_in":null}]}',
+        }),
+      );
+      const result = yield* Effect.gen(function* () {
+        const client = yield* ClaudeAutoswitchClient;
+        yield* client.place({
+          pending: { agent: 1 },
+          avoid: [],
+          rates: { tushar: 37.46, agent: 0, broken: Number.NaN },
+        });
+        return yield* client.status({ pending: {}, rates: { tushar: 37.46 } });
+      }).pipe(Effect.provide(layer));
+
+      assert.deepEqual(calls[0]!.args, [
+        "--place",
+        "--json",
+        "--pending",
+        "agent=1",
+        "--rates",
+        "tushar=37.5,agent=0",
+      ]);
+      assert.deepEqual(calls[1]!.args, ["--status", "--json", "--rates", "tushar=37.5"]);
+      assert.equal(result.kind, "ok");
+      if (result.kind === "ok") {
+        assert.equal(result.value.place_rule, "space-share-v1");
+        assert.equal(result.value.profiles[0]?.place_rank, 1);
+      }
+    }),
+  );
+
   it.effect(
     "passes the limit type and profile to --hard-limit and honours the configured path",
     () =>
