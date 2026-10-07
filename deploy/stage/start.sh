@@ -29,6 +29,12 @@ export PATH="/home/ubuntu/.nvm/versions/node/v24.16.0/bin:/home/ubuntu/.local/bi
 export TMPDIR="$BASE_DIR/tmp"
 mkdir -p "$TMPDIR"
 
+# A restart wakes a settled thread whose monitors, background commands or
+# subagents it cancelled, so the agent can re-arm them (only for projects with
+# "continue threads after server update" on). See
+# apps/server/src/orchestration-v2/restartBackgroundResume.expbkt3.ts.
+export T3_RESTART_WAKE_SETTLED_BACKGROUND="1"
+
 exec node "$SERVER_BUNDLE" serve \
   --mode web \
   --host "10.31.39.131" \

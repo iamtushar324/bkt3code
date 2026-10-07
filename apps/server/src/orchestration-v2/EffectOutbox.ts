@@ -31,6 +31,9 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+    // T3-CUSTOM(expbkt3): set when the source is a settled run woken because a
+    // restart cancelled its background work (restartBackgroundResume.expbkt3.ts).
+    wakeSettledRun: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
