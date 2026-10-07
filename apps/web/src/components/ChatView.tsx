@@ -6348,6 +6348,22 @@ export default function ChatView(props: ChatViewProps) {
   const onComposerPageScrollRelease = useCallback(() => {
     pageScrollControllerRef.current?.releaseActiveKey();
   }, []);
+  // T3-CUSTOM(expbkt3): a held chat.scrollPage* binding stops on the first keyup
+  // (the bound key or one of its modifiers) or when the window loses focus.
+  const keybindingPageScrollActiveRef = useRef(false);
+  useEffect(() => {
+    const release = () => {
+      if (!keybindingPageScrollActiveRef.current) return;
+      keybindingPageScrollActiveRef.current = false;
+      pageScrollControllerRef.current?.releaseActiveKey();
+    };
+    window.addEventListener("keyup", release, true);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("keyup", release, true);
+      window.removeEventListener("blur", release);
+    };
+  }, []);
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
   const scrollToEnd = useCallback((animated = false) => {
@@ -8078,6 +8094,28 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      // T3-CUSTOM(expbkt3): assignable chat scroll commands (no default shortcut).
+      // The page controller drives the hold, so key repeats are ignored; a keyup releases it.
+      if (command === "chat.scrollPageUp" || command === "chat.scrollPageDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        keybindingPageScrollActiveRef.current = true;
+        pageScrollControllerRef.current?.handleKeyDown(
+          command === "chat.scrollPageUp" ? "PageUp" : "PageDown",
+        );
+        return;
+      }
+      if (command === "chat.scrollToEnd") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        pageScrollControllerRef.current?.releaseActiveKey();
+        composerRef.current?.restoreAfterTimelineReachedEnd();
+        scrollToEnd(true);
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -8134,6 +8172,8 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
+    // T3-CUSTOM(expbkt3): chat.scrollToEnd keybinding.
+    scrollToEnd,
     draftId,
     environmentId,
     envLocked,
