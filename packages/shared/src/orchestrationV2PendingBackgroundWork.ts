@@ -72,7 +72,9 @@ export function turnItemUpdateCanEndBackgroundWork(
  */
 export function backgroundWorkHoldsCompletion(
   // T3-CUSTOM(expbkt3): `wakesAgent` lets a command that wakes the agent hold.
-  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind"> & { readonly wakesAgent?: boolean }>,
+  tasks: ReadonlyArray<
+    Pick<PendingBackgroundWorkTask, "kind"> & { readonly wakesAgent?: boolean }
+  >,
 ): boolean {
   return tasks.some(
     (task) =>
