@@ -93,7 +93,10 @@ import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 // T3-CUSTOM(expbkt3): admits the fork's restart wake of a settled run.
-import { settledBackgroundWakeCommandId } from "./restartBackgroundResume.expbkt3.ts";
+import {
+  settledBackgroundWakeCommandId,
+  settledBackgroundWakeEnabled,
+} from "./restartBackgroundResume.expbkt3.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -4520,7 +4523,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           !source ||
           // T3-CUSTOM(expbkt3): the fork's restart wake continues a settled run that lost
           // background work; every other delivery keeps upstream's cancelled-only rule.
-          (command.commandId === settledBackgroundWakeCommandId(source.id)
+          // Only the server's own wake qualifies, and only while the switch is on.
+          (command.commandId === settledBackgroundWakeCommandId(source.id) &&
+          command.creationSource === "server" &&
+          settledBackgroundWakeEnabled()
             ? !isRestartNoteSource(source, projection.providerTurns)
             : source.status !== "cancelled" ||
               isRestartNoteSource(source, projection.providerTurns)) ||

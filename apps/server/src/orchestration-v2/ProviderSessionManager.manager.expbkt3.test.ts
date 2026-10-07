@@ -509,6 +509,23 @@ it.effect(
   },
 );
 
+it.effect("a usage-limit resume keeps the last sender's process and its background work", () => {
+  const f = fixture("claudeAgent");
+  // UsageLimitRecoveryWorker writes its resume as createdBy "user" from the server, with no sender.
+  replaceMessages(f, [
+    humanMessage("human-turn", f.actor),
+    { ...continuationMessage("limit-resume"), createdBy: "user", creationSource: "server" },
+  ]);
+  return Effect.gen(function* () {
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const original = yield* manager.open({ ...f.open, messageId: MessageId.make("human-turn") });
+    f.state.pendingWork = true;
+    const resumed = yield* manager.open({ ...f.open, messageId: MessageId.make("limit-resume") });
+    expect(resumed).toBe(original);
+    expect(f.state.closed).toBe(0);
+  }).pipe(Effect.provide(f.layer));
+});
+
 it.effect("a human turn from a different person still restarts the process", () => {
   const f = fixture("claudeAgent");
   replaceMessages(f, [
