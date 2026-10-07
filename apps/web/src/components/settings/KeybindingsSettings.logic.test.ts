@@ -316,6 +316,23 @@ describe("KeybindingsSettings.logic", () => {
     }
   });
 
+  it("offers the chat scroll commands for assignment without a default shortcut", () => {
+    const options = buildKeybindingCommandOptions(DEFAULT_RESOLVED_KEYBINDINGS);
+    const expectedLabels = {
+      "chat.scrollPageUp": "Chat: Scroll Up One Page",
+      "chat.scrollPageDown": "Chat: Scroll Down One Page",
+      "chat.scrollToEnd": "Chat: Jump to Latest Message",
+    } as const;
+
+    for (const [command, label] of Object.entries(expectedLabels)) {
+      expect(options).toContain(command);
+      expect(commandLabel(command as keyof typeof expectedLabels)).toBe(label);
+      expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command)).toBe(
+        false,
+      );
+    }
+  });
+
   it("reports unknown when variables without rejecting parseable expressions", () => {
     const parsed = parseWhenExpressionDraft("!terminalFocus && terminalFoc");
 

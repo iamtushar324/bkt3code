@@ -123,6 +123,10 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`chat.scrollPageUp` and `chat.scrollPageDown` scroll the chat one page, like PageUp and
+PageDown, and keep scrolling while you hold the key. `chat.scrollToEnd` jumps to the
+latest message. These commands have no default shortcut; assign any key to them.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive
