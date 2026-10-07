@@ -824,13 +824,14 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
       /** The subagent's own thread, when it has one. */
       childThreadId: Schema.optional(ThreadId),
     }),
+    // T3-CUSTOM(expbkt3): BEGIN — `wakesAgent` is true when the provider starts
+    // the agent again once the command ends (a Claude background Bash).
     Schema.Struct({
       ...PendingBackgroundTaskFields,
       kind: Schema.Literal("command"),
-      // T3-CUSTOM(expbkt3): true when the provider starts the agent again once
-      // the command ends (a Claude background Bash), so the agent is not done.
       wakesAgent: Schema.optional(Schema.Boolean),
     }),
+    // T3-CUSTOM(expbkt3): END
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
   ],
