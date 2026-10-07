@@ -1192,10 +1192,7 @@ describe("ClaudeAccountsService hard limits", () => {
         assert.equal(actorUserId, owner);
         assert.equal(command.type, "thread.turn.start");
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            "Continue where you left off — this thread moved to Claude account agent because tushar hit its usage limit.",
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
         const snapshot = yield* service.snapshot();
@@ -1308,10 +1305,7 @@ describe("ClaudeAccountsService hard limits", () => {
         assert.deepEqual(harness.stoppedThreads, [affected]);
         const { command } = harness.dispatched[0]!;
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            `Continue where you left off — this thread moved to Claude account ${movedTo} because tushar has no Opus weekly allowance left.`,
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         // tushar is not exhausted: the sibling stays, and new threads may still land there.
         const snapshot = yield* service.snapshot();
@@ -1385,10 +1379,7 @@ describe("ClaudeAccountsService hard limits", () => {
         const { command, actorUserId } = harness.dispatched[0]!;
         assert.equal(actorUserId, owner);
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            "Continue where you left off — Claude account tushar has reset its usage limit.",
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         const resumed = yield* service.resolveForSession(threadId);
         assert.equal(resumed?.profile, "tushar");

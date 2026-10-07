@@ -1266,15 +1266,12 @@ export const make = Effect.gen(function* () {
 
   // -------------------------------------------------------------- hard limit
 
-  const continueText = (from: string, to: string, scope: string | undefined) =>
-    scope === undefined
-      ? `Continue where you left off — this thread moved to Claude account ${to} because ${from} hit its usage limit.`
-      : `Continue where you left off — this thread moved to Claude account ${to} because ${from} has no ${scope} allowance left.`;
-
-  const continueAfterResetText = (profile: string, scope: string | undefined) =>
-    scope === undefined
-      ? `Continue where you left off — Claude account ${profile} has reset its usage limit.`
-      : `Continue where you left off — Claude account ${profile} has reset its ${scope} allowance.`;
+  /**
+   * The prompt that continues a thread after a limit move or reset. Only this
+   * sentence: which account the thread runs on is not the agent's business,
+   * and the composer notice already tells the person.
+   */
+  const CONTINUE_TEXT = "Continue where you left off.";
 
   const dispatchContinueTurn = (threadId: ThreadId, text: string) =>
     Effect.gen(function* () {
@@ -1422,7 +1419,7 @@ export const make = Effect.gen(function* () {
             notices.delete(threadId);
             yield* pruneExhausted;
             yield* Effect.logInfo("claude.account.reset-wait-continue", { threadId, profile });
-            yield* dispatchContinueTurn(threadId, continueAfterResetText(profile, scope));
+            yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
             yield* announce(threadId);
           }),
         );
@@ -1448,7 +1445,7 @@ export const make = Effect.gen(function* () {
       notices.delete(threadId);
       movedAwaitingTurn.add(threadId);
       yield* stopSessionQuietly(threadId, "hard-limit");
-      yield* dispatchContinueTurn(threadId, continueText(profile, moved.success.profile, scope));
+      yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
       yield* announce(threadId);
       return true;
     });
