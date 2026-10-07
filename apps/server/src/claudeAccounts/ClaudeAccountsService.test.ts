@@ -45,6 +45,7 @@ import {
 } from "./applyClaudeAccountProfile.ts";
 import {
   type ClaudeAutoswitchClientShape,
+  type ClaudeAutoswitchRankInput,
   ClaudeAutoswitchClient,
   type SwitcherPlaceResult,
   type SwitcherProfile,
@@ -188,6 +189,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const statusRef = yield* Ref.make(status);
 
     const placeCalls: Array<{ pending: Record<string, number>; avoid: ReadonlyArray<string> }> = [];
+    /** The ranking input of every `--status` call, `undefined` when none was sent. */
+    const statusCalls: Array<ClaudeAutoswitchRankInput | undefined> = [];
     const hardLimitCalls: Array<{ type: string; profile: string }> = [];
     const stoppedThreads: Array<ThreadId> = [];
     const dispatched: Array<{ command: OrchestrationCommand; actorUserId: unknown }> = [];
@@ -210,8 +213,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const settingsSubscription = yield* PubSub.subscribe(settingsChanges);
 
     const client: ClaudeAutoswitchClientShape = {
-      status: () =>
+      status: (input) =>
         Ref.get(statusRef).pipe(
+          Effect.tap(() => Effect.sync(() => statusCalls.push(input))),
           Effect.map((current) =>
             options.statusUnavailable
               ? ({
@@ -309,6 +313,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       dir,
       status: statusRef,
       placeCalls,
+      statusCalls,
       hardLimitCalls,
       stoppedThreads,
       dispatched,
@@ -745,6 +750,74 @@ describe("ClaudeAccountsService placement", () => {
       }),
   );
 
+  scenario(
+    "sends burn rates once the switcher ranks by space to reset, and shows its order",
+    {
+      status: (dir) => ({
+        ...switcherStatus([
+          switcherProfile(dir, "tushar", {
+            five_hour: { used: 20, resets_at: "2026-10-02T12:00:00Z" },
+            space_to_reset: 68.5,
+            space_per_day: 46.6,
+            five_hour_full_in: 3720,
+            place_rank: 2,
+            eligible: false,
+          }),
+          switcherProfile(dir, "agent", {
+            rank: 2,
+            elected: false,
+            space_to_reset: 97,
+            space_per_day: 14.1,
+            place_rank: 1,
+          }),
+          switcherProfile(dir, "sam", {
+            rank: 3,
+            elected: false,
+            auth: { state: "logged_out", detail: "" },
+            place_rank: 3,
+          }),
+        ]),
+        place_rule: "space-share-v1",
+        place_order: ["agent", "tushar", "sam"],
+      }),
+    },
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        // Nothing is sent before the switcher has shown it accepts the flags.
+        assert.equal(harness.statusCalls[0], undefined);
+
+        // Ten minutes later tushar's window is 10 points fuller: 60 points/h.
+        yield* Ref.update(harness.status, (current) => ({
+          ...current,
+          generated_ms: 1_000 + 600_000,
+          profiles: current.profiles.map((profile) =>
+            profile.name === "tushar"
+              ? { ...profile, five_hour: { used: 30, resets_at: "2026-10-02T12:00:00Z" } }
+              : profile,
+          ),
+        }));
+        yield* service.refreshStatus();
+        yield* service.refreshStatus();
+        const last = harness.statusCalls.at(-1);
+        assert.deepEqual(last?.pending, {});
+        assert.closeTo(last?.rates?.tushar ?? -1, 60, 0.001);
+        assert.equal(last?.rates?.agent, 0);
+
+        const snapshot = yield* service.snapshot();
+        const byName = new Map(snapshot.profiles.map((profile) => [profile.name, profile]));
+        assert.include(byName.get("tushar"), {
+          spaceToReset: 68.5,
+          spacePerDay: 46.6,
+          fiveHourFullInSec: 3720,
+          placeRank: 2,
+        });
+        assert.equal(byName.get("agent")?.placeRank, 1);
+        // A logged-out account is never numbered, whatever the switcher says.
+        assert.equal(byName.get("sam")?.placeRank, undefined);
+      }),
+  );
+
   scenario("reports a loading snapshot until the first poll answers", {}, (_harness, service) =>
     Effect.gen(function* () {
       const before = yield* service.snapshot();
@@ -1119,10 +1192,7 @@ describe("ClaudeAccountsService hard limits", () => {
         assert.equal(actorUserId, owner);
         assert.equal(command.type, "thread.turn.start");
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            "Continue where you left off — this thread moved to Claude account agent because tushar hit its usage limit.",
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
         const snapshot = yield* service.snapshot();
@@ -1235,10 +1305,7 @@ describe("ClaudeAccountsService hard limits", () => {
         assert.deepEqual(harness.stoppedThreads, [affected]);
         const { command } = harness.dispatched[0]!;
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            `Continue where you left off — this thread moved to Claude account ${movedTo} because tushar has no Opus weekly allowance left.`,
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         // tushar is not exhausted: the sibling stays, and new threads may still land there.
         const snapshot = yield* service.snapshot();
@@ -1312,10 +1379,7 @@ describe("ClaudeAccountsService hard limits", () => {
         const { command, actorUserId } = harness.dispatched[0]!;
         assert.equal(actorUserId, owner);
         if (command.type === "thread.turn.start") {
-          assert.equal(
-            command.message.text,
-            "Continue where you left off — Claude account tushar has reset its usage limit.",
-          );
+          assert.equal(command.message.text, "Continue where you left off.");
         }
         const resumed = yield* service.resolveForSession(threadId);
         assert.equal(resumed?.profile, "tushar");

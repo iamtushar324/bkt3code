@@ -18,6 +18,11 @@ import {
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
+// T3-CUSTOM(expbkt3): a woken settled run gets its own command id and prompt.
+import {
+  settledBackgroundWakeCommandId,
+  settledBackgroundWakePrompt,
+} from "./restartBackgroundResume.expbkt3.ts";
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
@@ -88,7 +93,12 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+  // T3-CUSTOM(expbkt3): `wakeSettledRun` marks a settled source woken after a restart.
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    readonly wakeSettledRun?: true | undefined;
+  }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -112,8 +122,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     // including waiting runs that reconciliation subsequently cancelled.
     if (
       !source ||
-      source.status !== "cancelled" ||
-      isRestartNoteSource(source, projection.providerTurns)
+      // T3-CUSTOM(expbkt3): a wake continues only a settled run that lost background work.
+      (input.wakeSettledRun === true
+        ? !isRestartNoteSource(source, projection.providerTurns)
+        : source.status !== "cancelled" || isRestartNoteSource(source, projection.providerTurns))
     )
       return;
     // T3-CUSTOM(expbkt3): the bridge reconciles background runs before it issues
@@ -161,14 +173,21 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
     yield* threads.dispatch({
       type: "message.dispatch",
-      commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
+      // T3-CUSTOM(expbkt3): the orchestrator admits a settled source only under the wake's id.
+      commandId:
+        input.wakeSettledRun === true
+          ? settledBackgroundWakeCommandId(input.sourceRunId)
+          : CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
       threadId: input.threadId,
       messageId,
       text:
         noteText === undefined
           ? CONTINUE_PROMPT
           : note.settled
-            ? noteText
+            ? // T3-CUSTOM(expbkt3): a woken settled run is asked to re-arm what it still needs.
+              input.wakeSettledRun === true
+              ? settledBackgroundWakePrompt(noteText)
+              : noteText
             : `${noteText}\n\n${CONTINUE_PROMPT}`,
       attachments: [],
       modelSelection: source.modelSelection,

@@ -22,6 +22,11 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+// T3-CUSTOM(expbkt3): a settled run whose background work the restart cancelled is woken.
+import {
+  settledBackgroundWakeRequest,
+  settledBackgroundWakeRun,
+} from "./restartBackgroundResume.expbkt3.ts";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
@@ -648,9 +653,12 @@ export const make = Effect.gen(function* () {
           },
         });
       }
+      // T3-CUSTOM(expbkt3): also wake a settled run whose background work this
+      // restart cancelled; its effect is marked so delivery admits a settled source.
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? (restartContinuationRun(projection) ??
+            settledBackgroundWakeRun(projection, cancelledBackgroundWork))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -658,7 +666,12 @@ export const make = Effect.gen(function* () {
               id: `effect:restart-continuation:${continuationRun.id}`,
               commandId,
               threadId: projection.thread.id,
-              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+              // T3-CUSTOM(expbkt3): marks the continuation of a woken settled run.
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: continuationRun.id,
+                ...settledBackgroundWakeRequest(continuationRun),
+              },
             },
           ]
         : [];
@@ -786,7 +799,9 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        const run = restartContinuationRun(projection);
+        // T3-CUSTOM(expbkt3): shutdown reconciliation cancels a settled run's open
+        // background work, so its wake is captured here while that work is still open.
+        const run = restartContinuationRun(projection) ?? settledBackgroundWakeRun(projection);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
@@ -797,7 +812,12 @@ export const make = Effect.gen(function* () {
               id: `effect:restart-continuation:${run.id}`,
               commandId,
               threadId,
-              request: { type: "provider-runtime.continue", sourceRunId: run.id },
+              // T3-CUSTOM(expbkt3): marks the continuation of a woken settled run.
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: run.id,
+                ...settledBackgroundWakeRequest(run),
+              },
             },
           ],
         });

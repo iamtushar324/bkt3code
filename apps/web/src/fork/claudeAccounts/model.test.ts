@@ -10,6 +10,7 @@ import {
   accountRows,
   accountWarning,
   autoRowDetail,
+  nextPick,
   orderAccounts,
   recoversIn,
   resetsIn,
@@ -274,6 +275,55 @@ describe("account rows", () => {
       NOW,
     );
     expect(rows.map((row) => row.name)).toEqual(["agent", "tushar"]);
+  });
+
+  it("follows Auto's order and numbers only the accounts the viewer may use", () => {
+    const rows = accountRows(
+      snapshot([
+        account({
+          name: "tushar",
+          eligible: false,
+          why: "5-hour full in 1h 2m at this pace (37/h)",
+          weekly: { usedPercent: 11, resetsAt: "2026-10-03T19:00:00.000Z" },
+          spaceToReset: 68.5,
+          spacePerDay: 46.6,
+          fiveHourFullInSec: 3720,
+          placeRank: 2,
+        }),
+        account({ name: "sam", auth: "logged_out" }),
+        account({ name: "barsha", placeRank: 4 }),
+        account({ name: "audit", placeRank: 3, allowed: false }),
+        account({ name: "agent", placeRank: 1, spaceToReset: 97, spacePerDay: 14.1 }),
+      ]),
+      thread({ resolvedProfile: "audit" }),
+      NOW,
+    );
+    expect(rows.map((row) => [row.name, row.pick])).toEqual([
+      ["agent", 1],
+      ["tushar", 2],
+      ["audit", null],
+      ["barsha", 3],
+      ["sam", null],
+    ]);
+    expect(nextPick(rows)).toBe("agent");
+    expect(rows[1]?.space).toEqual({ percent: 69, perDay: 47, resetsIn: "1d 11h" });
+    expect(rows[1]?.tag).toMatchObject({ id: "filling", label: "5-hour full in 1h 2m" });
+    expect(rows[3]?.space).toBeNull();
+  });
+
+  it("names Auto's next pick on the Auto row once the switcher ranks accounts", () => {
+    const rows = accountRows(
+      snapshot([account({ name: "agent", placeRank: 1 }), account({ name: "tushar" })]),
+      null,
+      NOW,
+    );
+    expect(autoRowDetail(null, rows)).toBe("Picks #1 agent on the first message");
+    expect(autoRowDetail(thread({ resolvedProfile: "tushar" }), rows)).toBe(
+      "On tushar · next new session → #1 agent",
+    );
+    expect(autoRowDetail(thread({ mode: { kind: "profile", profile: "tushar" } }), rows)).toBe(
+      "Would pick #1 agent by space to reset",
+    );
   });
 
   it("describes the Auto row before and after placement", () => {

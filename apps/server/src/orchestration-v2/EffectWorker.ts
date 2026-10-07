@@ -110,7 +110,12 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            // T3-CUSTOM(expbkt3): passes the mark of a woken settled run's continuation.
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              wakeSettledRun: effect.request.wakeSettledRun,
+            }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               // A continuation that will never run still owes a delegated parent a result.

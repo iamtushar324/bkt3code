@@ -124,7 +124,7 @@ export function accountWarning(status: ClaudeAccountStatus | undefined): Account
 export type AccountTagTone = "bad" | "warn" | "muted";
 
 export interface AccountTag {
-  readonly id: "logged-out" | "over" | "near-limit" | "scoped-spent" | "not-used";
+  readonly id: "logged-out" | "over" | "near-limit" | "filling" | "scoped-spent" | "not-used";
   readonly label: string;
   readonly tone: AccountTagTone;
   /** The longer explanation shown on hover: the switcher's own reason. */
@@ -169,6 +169,15 @@ export function statusTag(status: ClaudeAccountStatus): AccountTag | null {
       detail: prettyWhy(status.why) || "5-hour window nearly used",
     };
   }
+  // Auto skips an account whose 5-hour window fills at its pace before it resets.
+  if (!status.eligible && status.fiveHourFullInSec !== undefined) {
+    return {
+      id: "filling",
+      label: `5-hour full in ${formatDuration(status.fiveHourFullInSec * 1000)}`,
+      tone: "warn",
+      detail: prettyWhy(status.why) || "5-hour window fills at this pace",
+    };
+  }
   if (status.scoped !== undefined && status.scoped.usedPercent >= 100) {
     return { id: "scoped-spent", label: `${status.scoped.label} spent`, tone: "warn" };
   }
@@ -188,11 +197,18 @@ export function isUsable(status: ClaudeAccountStatus): boolean {
   return status.auth !== "logged_out" && !isOverLimit(status);
 }
 
-/** Usable accounts first, each group in rank order (unranked last), as on the dashboard. */
+/**
+ * Auto's order for the next new session (`placeRank`) when the switcher sends
+ * one; accounts outside it follow. Otherwise usable accounts first, each group
+ * in rank order (unranked last), as on the dashboard.
+ */
 export function orderAccounts(
   profiles: ReadonlyArray<ClaudeAccountStatus>,
 ): ReadonlyArray<ClaudeAccountStatus> {
   return [...profiles].toSorted((left, right) => {
+    const leftPlace = left.placeRank ?? Number.POSITIVE_INFINITY;
+    const rightPlace = right.placeRank ?? Number.POSITIVE_INFINITY;
+    if (leftPlace !== rightPlace) return leftPlace - rightPlace;
     const leftUsable = isUsable(left) ? 0 : 1;
     const rightUsable = isUsable(right) ? 0 : 1;
     if (leftUsable !== rightUsable) return leftUsable - rightUsable;
@@ -274,8 +290,22 @@ export interface AccountWindowView {
   readonly resetsIn: string | null;
 }
 
+/** `Space to reset 68% in 1d 11h · 47%/day`. */
+export interface AccountSpaceView {
+  readonly percent: number;
+  readonly perDay: number;
+  /** Time until the binding weekly cap resets, or null when unknown. */
+  readonly resetsIn: string | null;
+}
+
 export interface AccountRowView {
   readonly name: string;
+  /**
+   * Position in Auto's order for the next new session among the accounts this
+   * viewer may use (1 = next pick); null when Auto cannot place there.
+   */
+  readonly pick: number | null;
+  readonly space: AccountSpaceView | null;
   readonly shortLabel: string;
   readonly emailMasked: string | null;
   readonly windows: ReadonlyArray<AccountWindowView>;
@@ -306,6 +336,29 @@ function windowView(
   };
 }
 
+/** The weekly cap that runs out first: the scoped one when it has less left. */
+function bindingWindow(status: ClaudeAccountStatus): UsageWindow | undefined {
+  if (status.scoped !== undefined && status.scoped.usedPercent > (used(status.weekly) ?? 0)) {
+    return status.scoped;
+  }
+  return status.weekly;
+}
+
+function spaceView(status: ClaudeAccountStatus, now: number): AccountSpaceView | null {
+  if (status.spaceToReset === undefined || status.spacePerDay === undefined) return null;
+  const at = resetAt(bindingWindow(status));
+  return {
+    percent: Math.round(status.spaceToReset),
+    perDay: Math.round(status.spacePerDay),
+    resetsIn: at === null ? null : formatDuration(Math.max(0, at - now)),
+  };
+}
+
+export function spaceLine(space: AccountSpaceView): string {
+  const within = space.resetsIn === null ? "" : ` in ${space.resetsIn}`;
+  return `Space to reset ${space.percent}%${within} · ${space.perDay}%/day`;
+}
+
 export function accountRows(
   snapshot: ClaudeAccountsSnapshot | null,
   thread: ThreadClaudeAccount | null,
@@ -318,8 +371,22 @@ export function accountRows(
   const offered = snapshot.profiles.filter(
     (status) => status.allowed !== false || status.name === current,
   );
-  return orderAccounts(offered).map((status) => ({
+  const ordered = orderAccounts(offered);
+  // Numbered among the accounts this viewer may use, so #1 is always Auto's next pick.
+  const picks = new Map(
+    ordered
+      .filter(
+        (status) =>
+          status.placeRank !== undefined &&
+          status.allowed !== false &&
+          status.auth !== "logged_out",
+      )
+      .map((status, index) => [status.name, index + 1]),
+  );
+  return ordered.map((status) => ({
     name: status.name,
+    pick: picks.get(status.name) ?? null,
+    space: spaceView(status, now),
     shortLabel: status.shortLabel || status.name.slice(0, 1),
     emailMasked: status.emailMasked ?? null,
     windows: [
@@ -337,10 +404,25 @@ export function accountRows(
   }));
 }
 
+/** The account Auto would give the next new session, from the rows' pick numbers. */
+export function nextPick(rows: ReadonlyArray<AccountRowView>): string | null {
+  return rows.find((row) => row.pick === 1)?.name ?? null;
+}
+
 /** The muted line under "Auto (account)". */
-export function autoRowDetail(thread: ThreadClaudeAccount | null): string {
+export function autoRowDetail(
+  thread: ThreadClaudeAccount | null,
+  rows: ReadonlyArray<AccountRowView> = [],
+): string {
   const resolved = thread?.mode.kind === "auto" ? thread.resolvedProfile : undefined;
-  return resolved ? `On ${resolved} · ${AUTO_ACCOUNT_RULE}` : AUTO_ACCOUNT_UNPLACED;
+  const next = nextPick(rows);
+  if (next === null) {
+    return resolved ? `On ${resolved} · ${AUTO_ACCOUNT_RULE}` : AUTO_ACCOUNT_UNPLACED;
+  }
+  if (resolved) return `On ${resolved} · next new session → #1 ${next}`;
+  return isAutoMode(thread)
+    ? `Picks #1 ${next} on the first message`
+    : `Would pick #1 ${next} by space to reset`;
 }
 
 export function isAutoMode(thread: ThreadClaudeAccount | null): boolean {

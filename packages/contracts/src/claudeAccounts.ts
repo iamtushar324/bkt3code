@@ -4,7 +4,7 @@
  * The host keeps several Claude subscription accounts as config directories
  * under `~/.claude-profiles/<name>` (plus `default` = `~/.claude`). Each Claude
  * thread runs on one of them: `auto` lets the server place it on the account
- * with the most headroom and fewest live sessions (the host switcher,
+ * with the most space to reset per live session (the host switcher,
  * `claude-autoswitch --place`, is the only ranker), or the user pins one
  * account by hand. The choice is sticky per thread so the provider's prompt
  * cache survives across turns.
@@ -76,6 +76,20 @@ export const ClaudeAccountStatus = Schema.Struct({
   sessions: NonNegativeInt,
   /** Age of the usage figures, in seconds; absent when unknown. */
   ageSec: Schema.optionalKey(Schema.Number),
+  /**
+   * Percent of the week this account can still use before its binding weekly
+   * cap resets: the cap left, limited by the 5-hour windows that still fit.
+   */
+  spaceToReset: Schema.optionalKey(Percent),
+  /** `spaceToReset` per day until that reset; Auto ranks on it. */
+  spacePerDay: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Seconds until the 5-hour window fills at its current pace; absent when it will not. */
+  fiveHourFullInSec: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  /**
+   * 1-based position in the order Auto tries accounts for the next new
+   * session; absent for an account Auto cannot place on (logged out, at 100%).
+   */
+  placeRank: Schema.optionalKey(NonNegativeInt),
   /**
    * Whether the viewer may use this account. Only admins are sent accounts
    * they cannot use (so they can manage access); everyone else gets only the
