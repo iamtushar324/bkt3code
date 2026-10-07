@@ -306,6 +306,26 @@ describe("lifecycle counters", () => {
     expect(counts.nextSnoozeWakeAt).toBe("2026-01-01T01:00:00.000Z");
   });
 
+  // T3-CUSTOM(expbkt3): subagents are hidden from the session list, so they
+  // must not inflate its counters either.
+  it("does not count subagent threads", () => {
+    const counts = summarizeSidebarSessions(
+      [
+        makeThread({ id: ThreadId.make("session") }),
+        makeThread({
+          id: ThreadId.make("subagent"),
+          lineage: {
+            rootThreadId: ThreadId.make("session"),
+            parentThreadId: ThreadId.make("session"),
+            relationshipToParent: "subagent",
+          },
+        }),
+      ],
+      { now, snoozeSupported: () => true },
+    );
+    expect(counts.nonRunning).toBe(1);
+  });
+
   it("counts a snoozed thread as idle where the server cannot snooze", () => {
     const counts = summarizeSidebarSessions(
       [makeThread({ snoozedUntil: "2026-01-01T01:00:00.000Z" })],
@@ -489,6 +509,44 @@ describe("buildPhaseSidebarRows", () => {
       lastKnownPhaseByThreadKey: null,
     });
     expect(rows.map((row) => row.thread.id)).toEqual(["a", "b"]);
+  });
+
+  // T3-CUSTOM(expbkt3): only sessions a user can talk to get a row. A
+  // subagent is left out, while a child session made with t3_create_session
+  // (fork parent link, no subagent lineage) keeps its row and nests.
+  it("leaves subagent threads out and keeps child sessions", () => {
+    const parentId = ThreadId.make("parent");
+    const rows = buildPhaseSidebarRows({
+      threads: [
+        makeThread({ id: parentId }),
+        makeThread({ id: ThreadId.make("child-session"), parentThreadId: parentId }),
+        makeThread({
+          id: ThreadId.make("subagent"),
+          parentThreadId: parentId,
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+        }),
+        makeThread({
+          id: ThreadId.make("fork"),
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "fork",
+          },
+        }),
+      ],
+      projects: [project],
+      serverConfigs: new Map(),
+      vcsStatusByThreadKey: new Map(),
+      lastVisitedAtByThreadKey: {},
+      currentUserId: null,
+      allEnvironmentShellsLive: true,
+      lastKnownPhaseByThreadKey: null,
+    });
+    expect(rows.map((row) => row.thread.id)).toEqual(["parent", "child-session", "fork"]);
   });
 
   // T3-CUSTOM(expbkt3): custom sidebar group — the thread's label wins, a

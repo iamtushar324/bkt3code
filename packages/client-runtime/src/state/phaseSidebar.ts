@@ -1516,6 +1516,19 @@ export function threadIsRunning(thread: ThreadShell): boolean {
   );
 }
 
+/**
+ * T3-CUSTOM(expbkt3): whether a thread is a session the user works with
+ * directly. Subagent threads (provider subagents and `delegate_task` children)
+ * are driven by their parent agent and cannot take a user's message, so the
+ * session list neither nests nor counts them; they stay visible in the parent
+ * chat's Lineage panel. Child sessions created with `t3_create_session` link
+ * through `parentThreadId` alone and keep nesting.
+ */
+export function isPhaseSidebarSessionThread(thread: Pick<ThreadShell, "lineage">): boolean {
+  // Optional read: partial shells from older clients' fixtures carry no lineage.
+  return thread.lineage?.relationshipToParent !== "subagent";
+}
+
 export function summarizeSidebarSessions(
   threads: ReadonlyArray<ThreadShell>,
   options: SidebarSessionCountOptions,
@@ -1528,6 +1541,7 @@ export function summarizeSidebarSessions(
 
   for (const thread of threads) {
     if (thread.archivedAt !== null || thread.settledAt !== null) continue;
+    if (!isPhaseSidebarSessionThread(thread)) continue;
     if (
       options.lastVisitedAtByThreadKey !== undefined &&
       hasUnseenCompletion({
@@ -1834,7 +1848,8 @@ export function buildPhaseSidebarRows(
     buildPhaseSidebarRepositoryOptions(input.projects).map((option) => [option.key, option.label]),
   );
 
-  return input.threads.map((thread) => {
+  // T3-CUSTOM(expbkt3): subagents are not sessions; see isPhaseSidebarSessionThread.
+  return input.threads.filter(isPhaseSidebarSessionThread).map((thread) => {
     const project = projectByKey.get(
       scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
     );
