@@ -1086,7 +1086,12 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   const workBadge = resolvePhaseSidebarWorkBadge({
     phaseId: row.phaseId,
     backgroundLiveness: row.thread.backgroundLiveness ?? null,
-    executionPresentation: { active: sessionActive, label: null },
+    // A foreground turn reads as Running (Starting while it boots), the same as
+    // mobile; it also outranks a monitor, so live work keeps its glint.
+    executionPresentation: {
+      active: sessionActive,
+      label: row.thread.runtime?.status === "running" ? "Running" : "Starting",
+    },
   });
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): whose session this is, when it is not mine.

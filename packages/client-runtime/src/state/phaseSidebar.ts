@@ -1037,6 +1037,10 @@ export function resolvePhaseSidebarPhase(
   _status?: VcsStatusResult | null,
 ): PhaseSidebarPhaseId {
   if (phaseSidebarNeedsUserInput(thread)) return "needs_input";
+  // T3-CUSTOM(expbkt3): a pending approval blocks the agent the same way a
+  // question does. It used to leave the row under Implementing, while the same
+  // approval on a child turned the parent red.
+  if (thread.hasPendingApprovals) return "needs_input";
 
   // T3-CUSTOM(expbkt3): an async question outranks liveness, because it does
   // not change liveness at all — the agent asked and carried on working, so

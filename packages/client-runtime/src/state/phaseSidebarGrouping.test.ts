@@ -267,7 +267,27 @@ describe("buildPhaseSidebarSections", () => {
       ],
       { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "project" },
     );
-    expect(result[0]?.summary).toEqual({ running: 2, attention: 1, unread: 1 });
+    // One pill per top-level session: "a" with its planning child is one
+    // running session, never two, so no pill exceeds the header total of 2.
+    expect(result[0]?.summary).toEqual({ running: 1, attention: 1, unread: 1 });
+  });
+
+  it("counts a pending approval as attention even while the row stays in Implementing", () => {
+    const busy = makeRow("a", { phaseId: "implementing" });
+    const withApproval = { ...busy, thread: { ...busy.thread, hasPendingApprovals: true } };
+    const result = sections([withApproval], {
+      ...DEFAULT_PHASE_SIDEBAR_GROUPING,
+      groupBy: "project",
+    });
+    expect(result[0]?.summary).toEqual({ running: 1, attention: 1, unread: 0 });
+  });
+
+  it("counts a parent once when only a child is unread", () => {
+    const result = sections(
+      [makeRow("a"), makeRow("b", { parent: "a", unread: true })],
+      { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "project" },
+    );
+    expect(result[0]?.summary).toEqual({ running: 0, attention: 0, unread: 1 });
   });
 });
 

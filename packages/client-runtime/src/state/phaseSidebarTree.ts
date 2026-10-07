@@ -294,9 +294,10 @@ export function buildPhaseSidebarTree(
  *
  * Precedence, most urgent first:
  *
- *   1. Anything in the subtree is waiting on a human  → Needs Input
- *   2. Anything in the subtree is doing work          → Implementing
- *   3. Otherwise                                      → the row's own phase
+ *   1. Anything in the subtree is blocked on a human  → Needs Input
+ *   2. A question or a plan waits in the subtree       → Ask / Plan Ready
+ *   3. Anything in the subtree is doing work          → Implementing
+ *   4. Otherwise                                      → the row's own phase
  *
  * Attention outranks work because a collapsed subtree hides it completely: an
  * approval sitting two levels down under a parent filed as "Implementing" is
@@ -305,15 +306,19 @@ export function buildPhaseSidebarTree(
  * scanning first.
  */
 export function resolvePhaseSidebarTreePhase(node: PhaseSidebarTreeNode): PhaseSidebarPhaseId {
-  // T3-CUSTOM(expbkt3): a plan-only subtree hoists to Plan Ready, not Needs
-  // Input. Turning a parent red because a child has a plan waiting misreports
-  // the urgency and puts a violet reason in the red group.
-  if (node.descendantAttention === "plan") return "plan_ready";
-  // T3-CUSTOM(expbkt3): likewise an ask-only subtree hoists to Ask, in amber,
-  // rather than turning its parent red.
-  if (node.descendantAttention === "ask") return "ask";
-  if (node.descendantAttention !== null) return "needs_input";
-  return node.hasBusyDescendant ? "implementing" : node.row.phaseId;
+  // T3-CUSTOM(expbkt3): one rule for a row and its subtree. Needs Input means
+  // an agent is blocked on a human (a question or an approval). A plan-only
+  // subtree hoists to Plan Ready and an ask-only one to Ask, in their own
+  // tones. A failure flies its ERROR badge but moves nothing, the same as a
+  // failed top-level row. A row's own stronger phase is never downgraded by a
+  // lighter child.
+  const ownPhaseId = node.row.phaseId;
+  if (ownPhaseId === "needs_input") return ownPhaseId;
+  const attention = node.descendantAttention;
+  if (attention === "input" || attention === "approval") return "needs_input";
+  if (ownPhaseId === "ask" || attention === "ask") return "ask";
+  if (attention === "plan") return "plan_ready";
+  return node.hasBusyDescendant ? "implementing" : ownPhaseId;
 }
 
 export function flattenPhaseSidebarTree(

@@ -27,6 +27,7 @@ import {
   isRunningSessionPhase,
   PHASE_SIDEBAR_UNGROUPED_ID,
   phaseSidebarCustomGroupIdForRow,
+  resolvePhaseSidebarAttentionKind,
   type PhaseSidebarFilters,
   type PhaseSidebarPhaseId,
   type PhaseSidebarRow,
@@ -480,18 +481,40 @@ export interface BuildPhaseSidebarSectionsInput {
   readonly environmentLabelFor?: (environmentId: string) => string | null;
 }
 
+/**
+ * What a collapsed header says it hides. Every pill counts top-level sessions,
+ * the same unit as the header's total, so no pill can exceed it; a subtree
+ * counts once, by what is anywhere inside it.
+ */
 function summarizeNodes(nodes: ReadonlyArray<PhaseSidebarTreeNode>): PhaseSidebarSectionSummary {
   let running = 0;
   let attention = 0;
   let unread = 0;
-  const visit = (node: PhaseSidebarTreeNode): void => {
-    if (isRunningSessionPhase(node.row.phaseId)) running += 1;
-    if (node.row.phaseId === "needs_input") attention += 1;
-    if (node.row.isUnreadCompletion) unread += 1;
-    for (const child of node.children) visit(child);
-  };
-  for (const node of nodes) visit(node);
+  for (const node of nodes) {
+    const phaseId = resolvePhaseSidebarTreePhase(node);
+    if (isRunningSessionPhase(phaseId)) running += 1;
+    if (nodeWaitsOnHuman(node, phaseId)) attention += 1;
+    if (node.row.isUnreadCompletion || node.descendantUnreadCount > 0) unread += 1;
+  }
   return { running, attention, unread };
+}
+
+const HUMAN_WAIT_PHASE_IDS: ReadonlySet<PhaseSidebarPhaseId> = new Set<PhaseSidebarPhaseId>([
+  "needs_input",
+  "ask",
+  "plan_ready",
+]);
+
+/**
+ * Any kind of attention counts — input, approval, error, a question or a plan
+ * to decide — on the row or below it. A row can hold an approval while it stays
+ * filed under Implementing, so the phase alone is not enough. A plan the agent
+ * is still working on is not a decision yet; plan_ready already covers the rest.
+ */
+function nodeWaitsOnHuman(node: PhaseSidebarTreeNode, phaseId: PhaseSidebarPhaseId): boolean {
+  if (HUMAN_WAIT_PHASE_IDS.has(phaseId) || node.descendantAttention !== null) return true;
+  const kind = resolvePhaseSidebarAttentionKind(node.row.thread);
+  return kind !== null && kind !== "plan";
 }
 
 function latestActivity(nodes: ReadonlyArray<PhaseSidebarTreeNode>): number {

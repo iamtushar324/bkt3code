@@ -747,6 +747,16 @@ describe("phase sidebar lifecycle", () => {
     ).toBe("planning");
   });
 
+  // T3-CUSTOM(expbkt3): an approval blocks the agent, so it files the row
+  // under Needs Input even while a turn is still marked running.
+  it("files a pending approval under Needs Input", () => {
+    expect(
+      resolvePhaseSidebarPhase(
+        makeThread({ hasPendingApprovals: true, runtime: makeSession("running") }),
+      ),
+    ).toBe("needs_input");
+  });
+
   it("lets failures outrank lingering background liveness", () => {
     expect(
       resolvePhaseSidebarPhase(

@@ -338,6 +338,34 @@ describe("resolvePhaseSidebarTreePhase", () => {
     expect(tree[0]?.descendantAttention).toBe("approval");
   });
 
+  // T3-CUSTOM(expbkt3): a failure badges but never moves a row, the same as a
+  // failed top-level row, which stays in Ready with its ERROR badge.
+  it("does not hoist a parent for a failed child", () => {
+    const parent = makeRow("parent", { phaseId: "ready" });
+    const child = makeRow("child", { parent: "parent", phaseId: "ready" });
+    const failedChild = {
+      ...child,
+      thread: { ...child.thread, runtime: { status: "failed" } as never },
+    };
+    const tree = buildPhaseSidebarTree([parent, failedChild], { compareSiblings: byId });
+
+    expect(tree[0]?.descendantAttention).toBe("error");
+    expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("ready");
+  });
+
+  // T3-CUSTOM(expbkt3): a lighter child never downgrades the row's own phase.
+  it("keeps a parent's own Needs Input when a child only holds a plan", () => {
+    const tree = buildPhaseSidebarTree(
+      [
+        makeRow("parent", { phaseId: "needs_input" }),
+        makeRow("child", { parent: "parent", phaseId: "plan_ready", plan: true }),
+      ],
+      { compareSiblings: byId },
+    );
+
+    expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("needs_input");
+  });
+
   it("reports the most blocking descendant when several are stuck", () => {
     const tree = buildPhaseSidebarTree(
       [
