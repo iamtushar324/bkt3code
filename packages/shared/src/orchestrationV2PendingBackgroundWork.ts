@@ -70,20 +70,22 @@ export function turnItemUpdateCanEndBackgroundWork(
  * they wake the agent and it continues (#13625). Work the adapter cannot name,
  * including kinds this build does not know, holds as the conservative choice.
  */
-export function backgroundWorkHoldsCompletion(
-  // T3-CUSTOM(expbkt3): `wakesAgent` lets a command that wakes the agent hold.
-  tasks: ReadonlyArray<
-    Pick<PendingBackgroundWorkTask, "kind"> & { readonly wakesAgent?: boolean | undefined }
-  >,
-): boolean {
-  return tasks.some(
-    (task) =>
-      backgroundWorkKindHoldsCompletion(task.kind) ||
-      // T3-CUSTOM(expbkt3): a command the provider wakes the agent after (a
-      // Claude background Bash) is a wait, not a dev server left running.
-      (task.kind === "command" && task.wakesAgent === true),
-  );
+// T3-CUSTOM(expbkt3): BEGIN — `wakesAgent` lets a command hold. A command the
+// provider wakes the agent after (a Claude background Bash) is a wait, not a
+// dev server left running.
+type HoldCheckTask = Pick<PendingBackgroundWorkTask, "kind"> & {
+  readonly wakesAgent?: boolean | undefined;
+};
+
+export function backgroundWorkHoldsCompletion(tasks: ReadonlyArray<HoldCheckTask>): boolean {
+  return tasks.some(backgroundWorkTaskHoldsCompletion);
 }
+
+function backgroundWorkTaskHoldsCompletion(task: HoldCheckTask): boolean {
+  if (task.kind === "command" && task.wakesAgent === true) return true;
+  return backgroundWorkKindHoldsCompletion(task.kind);
+}
+// T3-CUSTOM(expbkt3): END
 
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
   switch (kind) {
