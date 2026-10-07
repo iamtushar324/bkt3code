@@ -27,12 +27,12 @@ name: BK mobile release
 
 on:
   push:
-    branches: [expbkmain, bkmain]
+    branches: [expbkmain, bkmain, stage]
   # NOTE: this will not appear in the Actions UI. GitHub only offers
   # workflow_dispatch for workflows present on the DEFAULT branch, and this
   # fork's default branch is `main` — the pure upstream mirror, which by design
   # never carries fork-owned workflows. Declared anyway so it works if that ever
-  # changes; until then, push to expbkmain/bkmain to build.
+  # changes; until then, push to expbkmain/bkmain/stage to build.
   workflow_dispatch:
 
 # Per branch, and NOT cancel-in-progress: cancelling mid-publish can leave a
@@ -216,8 +216,8 @@ jobs:
         env:
           BK_GIT_SHA: ${{ github.sha }}
           # SideStore needs a new CFBundleVersion even when app-version.ts has
-          # not changed. Workflow run numbers are monotonic across both release
-          # branches, so an expbkmain build can never look older than the last.
+          # not changed. Workflow run numbers are monotonic across all release
+          # branches, so a build from one branch can never look older than the last.
           BK_IOS_BUILD_NUMBER: ${{ github.run_number }}
         run: node scripts/build-bk-mobile.ts --platform ios
 

@@ -21,7 +21,7 @@ import {
   BK_MOBILE_BUNDLE_IDENTIFIER,
 } from "./lib/bk-mobile.ts";
 
-const SUPPORTED_BRANCHES = ["expbkmain", "bkmain"] as const;
+const SUPPORTED_BRANCHES = ["expbkmain", "bkmain", "stage"] as const;
 type BkMobileReleaseBranch = (typeof SUPPORTED_BRANCHES)[number];
 
 export interface BkMobileSourceInput {
