@@ -369,13 +369,35 @@ export const layerWithOptions = (
           const { messages } = yield* projectionStore
             .getThreadRecords(threadId, ["messages"])
             .pipe(Effect.orDie);
+          const openingIndex =
+            messageId === undefined
+              ? -1
+              : messages.findIndex((message) => message.id === messageId);
+          const openingMessage = openingIndex === -1 ? undefined : messages[openingIndex];
+          // A server-made turn (wake or restart continuation, task notification)
+          // has no sender of its own. It continues the process the last person
+          // started, so it takes that person's identity; otherwise the identity
+          // key changes and the release below kills live background work.
+          const continuesLatestSender =
+            openingMessage !== undefined &&
+            openingMessage.sentByUserId == null &&
+            openingMessage.createdBy === "agent" &&
+            openingMessage.senderThreadId === undefined &&
+            openingMessage.backgroundGrantHash === undefined;
           const senderMessage =
             messageId === undefined
               ? messages.toReversed().find((message) => message.role === "user")
-              : messages.find((message) => message.id === messageId);
+              : continuesLatestSender
+                ? (messages
+                    .slice(0, openingIndex)
+                    .toReversed()
+                    .find((message) => message.role === "user" && message.sentByUserId != null) ??
+                  openingMessage)
+                : openingMessage;
           const latestSender = senderMessage?.sentByUserId ?? null;
           // T3-CUSTOM(expbkt3): rollback has no message and must not inherit a historical grant.
-          const backgroundMessage = messageId === undefined ? undefined : senderMessage;
+          // A continuation never inherits the earlier sender's grant either.
+          const backgroundMessage = messageId === undefined ? undefined : openingMessage;
 
           const identityEnvironment = Option.isSome(identityService)
             ? yield* identityService.value.resolve({

@@ -459,3 +459,90 @@ it.effect(
     }).pipe(Effect.provide(f.layer));
   },
 );
+
+const humanMessage = (id: string, sender: UserId) => ({
+  id: MessageId.make(id),
+  role: "user",
+  sentByUserId: sender,
+  createdBy: "user",
+  creationSource: "web",
+  runId: null,
+});
+
+// A wake continuation, restart continuation, or task notification: no sender of its own.
+const continuationMessage = (id: string) => ({
+  id: MessageId.make(id),
+  role: "user",
+  sentByUserId: null,
+  createdBy: "agent",
+  creationSource: "provider",
+  runId: null,
+});
+
+const replaceMessages = (
+  f: ReturnType<typeof fixture>,
+  messages: ReadonlyArray<Record<string, unknown>>,
+) => {
+  f.messages.splice(0, f.messages.length, ...(messages as never[]));
+};
+
+it.effect(
+  "an agent-created continuation keeps the last sender's process and its background work",
+  () => {
+    const f = fixture("claudeAgent");
+    replaceMessages(f, [humanMessage("human-turn", f.actor), continuationMessage("wake-turn")]);
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const original = yield* manager.open({ ...f.open, messageId: MessageId.make("human-turn") });
+      // The completed turn left a subagent and a Monitor running in the process.
+      f.state.pendingWork = true;
+      const continuation = yield* manager.open({
+        ...f.open,
+        messageId: MessageId.make("wake-turn"),
+      });
+      expect(continuation).toBe(original);
+      expect(continuation.credentialActorUserId).toBe(f.actor);
+      expect(f.state.opened).toBe(1);
+      expect(f.state.closed).toBe(0);
+      expect(f.issued).toHaveLength(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("a human turn from a different person still restarts the process", () => {
+  const f = fixture("claudeAgent");
+  replaceMessages(f, [
+    humanMessage("first-person-turn", f.actor),
+    humanMessage("second-person-turn", f.owner),
+  ]);
+  return Effect.gen(function* () {
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const original = yield* manager.open({
+      ...f.open,
+      messageId: MessageId.make("first-person-turn"),
+    });
+    const replacement = yield* manager.open({
+      ...f.open,
+      messageId: MessageId.make("second-person-turn"),
+    });
+    expect(replacement).not.toBe(original);
+    expect(replacement.credentialActorUserId).toBe(f.owner);
+    expect(f.state.opened).toBe(2);
+    expect(f.state.closed).toBe(1);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("a continuation in a thread with no human message keeps today's owner identity", () => {
+  const f = fixture("claudeAgent");
+  replaceMessages(f, [continuationMessage("only-continuation")]);
+  return Effect.gen(function* () {
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const open = { ...f.open, messageId: MessageId.make("only-continuation") };
+    const original = yield* manager.open(open);
+    // Unchanged: no sender to inherit, so the actor falls back to the thread owner.
+    expect(original.credentialActorUserId).toBe(f.owner);
+    expect(f.issued[0]?.actorUserId).toBe(f.owner);
+    expect(yield* manager.open(open)).toBe(original);
+    expect(f.state.closed).toBe(0);
+  }).pipe(Effect.provide(f.layer));
+});
