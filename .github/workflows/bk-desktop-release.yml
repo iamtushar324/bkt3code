@@ -219,6 +219,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Stamping $version."
 
+      # The bundled web UI reads its version from apps/web/package.json at build
+      # time, so without this the app shows the committed version (0.0.45) instead
+      # of its build version. Upstream's release.yml stamps the same way.
+      - name: Stamp package versions
+        if: steps.existing.outputs.found != 'true'
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
       - name: Build DMG
         if: steps.existing.outputs.found != 'true'
         run: |
