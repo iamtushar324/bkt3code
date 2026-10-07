@@ -1843,7 +1843,8 @@ function claudePendingBackgroundTask(input: {
   readonly startedByMonitor: boolean;
   readonly description: string | undefined;
 }): OrchestrationV2PendingBackgroundTask {
-  return {
+  // T3-CUSTOM(expbkt3): mark background Bash as waking the agent.
+  return withClaudeCommandWake({
     taskId: input.taskId,
     kind: input.startedByMonitor
       ? "monitor"
@@ -1853,7 +1854,15 @@ function claudePendingBackgroundTask(input: {
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),
-  };
+  });
+}
+
+// T3-CUSTOM(expbkt3): the Claude CLI re-invokes the model when a background
+// Bash ends, so a session with one running is waiting, not done.
+function withClaudeCommandWake(
+  task: OrchestrationV2PendingBackgroundTask,
+): OrchestrationV2PendingBackgroundTask {
+  return task.kind === "command" ? { ...task, wakesAgent: true } : task;
 }
 
 function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
