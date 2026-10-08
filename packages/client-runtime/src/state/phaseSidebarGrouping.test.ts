@@ -283,10 +283,8 @@ describe("buildPhaseSidebarSections", () => {
   });
 
   it("counts a parent once when only a child is unread", () => {
-    const result = sections(
-      [makeRow("a"), makeRow("b", { parent: "a", unread: true })],
-      { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "project" },
-    );
+    const rows = [makeRow("a"), makeRow("b", { parent: "a", unread: true })];
+    const result = sections(rows, { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "project" });
     expect(result[0]?.summary).toEqual({ running: 0, attention: 0, unread: 1 });
   });
 });

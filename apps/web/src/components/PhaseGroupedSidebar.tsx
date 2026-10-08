@@ -139,6 +139,9 @@ import { LinearIcon } from "./Icons";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 // T3-CUSTOM(expbkt3): owner avatar on rows started by someone else.
 import { PhaseSidebarOwnerAvatar } from "./sidebar/PhaseSidebarOwnerAvatar";
+// T3-CUSTOM(expbkt3): elapsed time for a running turn.
+import { PhaseRowWorkingDuration } from "./sidebar/PhaseRowWorkingDuration";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   hasUnseenCompletion,
   isTrailingDoubleClick,
@@ -1257,6 +1260,8 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           ),
         );
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): a running turn's start, for the elapsed-time label.
+  const workingStartedAt = sessionActive ? resolveThreadWorkingStartedAt(row.thread) : null;
 
   // T3-CUSTOM(expbkt3): links open in the integrated browser beside the open thread (this
   // row's when none is open); Cmd/Ctrl-click still goes to the system browser.
@@ -2186,7 +2191,14 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           {jumpLabel ? (
             <Kbd className="h-4 min-w-0 rounded-sm px-1 text-[9px]">{jumpLabel}</Kbd>
           ) : null}
-          <span className="text-[9px] tabular-nums text-muted-foreground/50">{timeLabel}</span>
+          <span className="text-[9px] tabular-nums text-muted-foreground/50">
+            {/* T3-CUSTOM(expbkt3): a running turn shows how long it has run. */}
+            {workingStartedAt !== null ? (
+              <PhaseRowWorkingDuration startedAt={workingStartedAt} />
+            ) : (
+              timeLabel
+            )}
+          </span>
         </span>
         {/* T3-CUSTOM(expbkt3): priority and provider stay anchored together at bottom-right. */}
         <span className="absolute right-2 bottom-2 flex h-3.5 items-center gap-1">
