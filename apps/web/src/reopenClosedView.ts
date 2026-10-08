@@ -143,6 +143,10 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
+    // T3-CUSTOM(expbkt3): a closed plan review reopens on its document.
+    case "planReview":
+      panels.openPlanReview(ref, surface.documentId);
+      break;
     default:
       panels.open(ref, surface.kind);
   }

@@ -252,7 +252,9 @@ export const make = Effect.gen(function* () {
         profileError({
           operation: "validate-credential",
           reason:
-            error._tag === "GitHubApiAuthenticationError" ? "invalid-credential" : "validation-failed",
+            error._tag === "GitHubApiAuthenticationError"
+              ? "invalid-credential"
+              : "validation-failed",
           detail:
             error._tag === "GitHubApiAuthenticationError"
               ? "GitHub rejected this credential. Replace it with a valid fine-grained token."

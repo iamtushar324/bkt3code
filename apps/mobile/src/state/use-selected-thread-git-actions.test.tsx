@@ -116,8 +116,10 @@ describe("useSelectedThreadGitActions", () => {
     act(() => rerender());
     await flush();
 
+    // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
     expect(harness.refreshStatusCalls).toEqual([
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
+      // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-1" } },
     ]);
   });
 
@@ -139,9 +141,10 @@ describe("useSelectedThreadGitActions", () => {
     await flush();
 
     expect(harness.refreshStatusCalls).toEqual([
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
-      { environmentId: "environment-1", input: { cwd: "/repo/worktree" } },
+      // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-1" } },
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-2" } },
+      { environmentId: "environment-1", input: { cwd: "/repo/worktree", threadId: "thread-2" } },
     ]);
   });
 
@@ -171,9 +174,11 @@ describe("useSelectedThreadGitActions", () => {
     act(() => rerender());
     await flush();
 
+    // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
     expect(harness.refreshStatusCalls).toEqual([
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
+      // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-1" } },
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-1" } },
     ]);
   });
 
@@ -194,8 +199,10 @@ describe("useSelectedThreadGitActions", () => {
     act(() => rerender());
     await flush();
 
+    // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
     expect(harness.refreshStatusCalls).toEqual([
-      { environmentId: "environment-1", input: { cwd: "/repo" } },
+      // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.
+      { environmentId: "environment-1", input: { cwd: "/repo", threadId: "thread-1" } },
     ]);
   });
 });

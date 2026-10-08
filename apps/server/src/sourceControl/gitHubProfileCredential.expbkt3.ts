@@ -19,14 +19,13 @@ import {
  * The current profile environment when it replaces the machine's GitHub identity, else null.
  * An overlay with no identity of its own (session markers only) keeps the host credential.
  */
-export const currentGitHubProfileEnvironment: Effect.Effect<
-  SourceControlExecutionEnvironment | null
-> = Effect.gen(function* () {
-  const execution = yield* CurrentSourceControlExecutionEnvironment;
-  return execution !== null && carriesSourceControlIdentity(execution.environment)
-    ? execution
-    : null;
-});
+export const currentGitHubProfileEnvironment: Effect.Effect<SourceControlExecutionEnvironment | null> =
+  Effect.gen(function* () {
+    const execution = yield* CurrentSourceControlExecutionEnvironment;
+    return execution !== null && carriesSourceControlIdentity(execution.environment)
+      ? execution
+      : null;
+  });
 
 /**
  * The token material a profile credential is fingerprinted from. Including the profile keeps
