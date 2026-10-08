@@ -1661,8 +1661,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   useThreadHistorySync(routeKind === "server" ? routeThreadRef : null);
   useThreadPresenceScope(routeKind === "server" ? routeThreadRef : null);
-    reportFailure: false,
-  });
   const resumeThreadQueue = useOrchestrationCommand(threadEnvironment.resumeThreadQueue, {
     reportFailure: false,
   });

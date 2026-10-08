@@ -233,7 +233,11 @@ function makeEnvironmentSessionAtoms<R, E>(
           const remoteAuthorization = yield* Effect.serviceOption(
             RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
           );
-          return yield* fetchOrchestrationUsers({ prepared, signer, remoteAuthorization });
+          const client = yield* Effect.serviceOption(HttpClient.HttpClient);
+          if (Option.isNone(client)) return yield* new SessionHttpClientUnavailable();
+          return yield* fetchOrchestrationUsers({ prepared, signer, remoteAuthorization }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client.value),
+          );
         });
       })
       .pipe(

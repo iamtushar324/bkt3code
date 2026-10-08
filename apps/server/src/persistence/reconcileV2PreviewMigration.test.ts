@@ -57,6 +57,8 @@ describe("fork V2 ledger upgrade", () => {
         pendingV2Migrations[2],
         pendingV2Migrations[3],
         pendingV2Migrations[4],
+        pendingV2Migrations[5],
+        pendingV2Migrations[6],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);

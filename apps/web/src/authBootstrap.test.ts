@@ -357,7 +357,10 @@ describe("resolveInitialServerAuthGateState", () => {
       expect(token).toBe("replacement-token");
       await submitServerAuthCredential(token!);
 
-      expect(testApi.calls.browserSession).toEqual([{ credential: "replacement-token" }]);
+      // T3-CUSTOM(expbkt3): the fork reports its client version on pairing.
+      expect(testApi.calls.browserSession).toEqual([
+        { credential: "replacement-token", client_version: APP_VERSION },
+      ]);
       await expect(fetchSessionState()).resolves.toMatchObject({
         authenticated: true,
         scopes: ["orchestration:read", "orchestration:operate"],
@@ -433,7 +436,10 @@ describe("resolveInitialServerAuthGateState", () => {
         finishExchange.resolve();
         await rejected;
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
-        expect(testApi.calls.browserSession).toEqual([{ credential: "invalid-replacement" }]);
+        // T3-CUSTOM(expbkt3): the fork reports its client version on pairing.
+        expect(testApi.calls.browserSession).toEqual([
+          { credential: "invalid-replacement", client_version: APP_VERSION },
+        ]);
         await expect(fetchSessionState()).resolves.toEqual(existingSession);
 
         testWindow.history.replaceState({}, "", "/");

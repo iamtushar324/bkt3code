@@ -103,6 +103,11 @@ vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: () => null,
 }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
+// T3-CUSTOM(expbkt3): the fork's browser-link hook pulls in the filesystem and
+// presentation atoms, which the narrow "~/state/server" mock above cannot satisfy.
+vi.mock("~/fork/pullRequestBrowserLinks", () => ({
+  useOpenPullRequestInBrowserInstead: () => () => undefined,
+}));
 vi.mock("./PullRequestThreadLinks", () => ({ PullRequestThreadLinks: () => null }));
 vi.mock("./PullRequestSummaryTab", () => ({
   PullRequestSummaryTab: ({

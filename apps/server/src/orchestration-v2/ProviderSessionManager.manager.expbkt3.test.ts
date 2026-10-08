@@ -408,6 +408,9 @@ it.effect.each([false, true])(
       f.state.upstreamServers = [toolyardServer()];
       const start = original.startTurn({
         threadId: f.threadId,
+        // A turn is busy per provider thread and run; the terminal event below clears this key.
+        providerThread: { id: "provider-thread", nativeThreadRef: null },
+        runOrdinal: 1,
         modelSelection: { model: "test-model" },
       } as never);
       if (race) f.state.onInspect = start.pipe(Effect.orDie);

@@ -81,9 +81,9 @@ it.effect("registers four compact tools while listing the complete virtual surfa
       expect(listed.structuredContent).toMatchObject({
         ok: true,
         // T3-CUSTOM(expbkt3): registration exposes native V2 methods and all retained fork RPCs.
-        rpcCount: 230,
-        streamCount: 30,
-        matchedCount: 230,
+        rpcCount: 235,
+        streamCount: 31,
+        matchedCount: 235,
       });
 
       const schema = yield* withInvocation(

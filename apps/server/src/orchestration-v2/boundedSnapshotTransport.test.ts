@@ -42,6 +42,15 @@ import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+// T3-CUSTOM(expbkt3): the fork's orchestration HTTP group also reads team access and fork routes.
+import * as Option from "effect/Option";
+import { ClerkDirectory } from "../auth/ClerkDirectory.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { TurnStartBootstrap } from "./turnStartBootstrap.expbkt3.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
@@ -230,6 +239,15 @@ const TestLayer = Layer.mergeAll(
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
+  // T3-CUSTOM(expbkt3): an unbound local session is an unrestricted operator; the fork-only
+  // routes are not called here.
+  Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
+  Layer.mock(ClerkDirectory)({}),
+  Layer.mock(ProviderRegistry)({}),
+  Layer.mock(VcsStatusBroadcaster)({}),
+  Layer.mock(ProjectionSnapshotQuery)({}),
+  Layer.mock(TurnStartBootstrap)({}),
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
 ).pipe(Layer.provideMerge(store));
 
 const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<A>) =>

@@ -25,6 +25,12 @@ import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
+// T3-CUSTOM(expbkt3): BEGIN — services the fork's auth routes need beyond upstream's.
+import * as ServerSettings from "../serverSettings.ts";
+import { ClerkDirectoryLive } from "./ClerkDirectory.ts";
+import * as ClerkIdentityVerifier from "./ClerkIdentityVerifier.ts";
+import * as EnvironmentUserService from "./EnvironmentUserService.ts";
+// T3-CUSTOM(expbkt3): END
 
 class AuthTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
@@ -37,6 +43,18 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
+// T3-CUSTOM(expbkt3): BEGIN — the fork's auth routes resolve Clerk identities (disabled here).
+const forkSettingsLayer = ServerSettings.layerTest();
+const forkAuthServicesLayer = Layer.mergeAll(
+  ClerkDirectoryLive,
+  ClerkIdentityVerifier.layer,
+  EnvironmentUserService.layer.pipe(
+    Layer.provide(forkSettingsLayer),
+    Layer.provide(Sqlite.layerMemory),
+  ),
+  forkSettingsLayer,
+).pipe(Layer.provide(layerConfig));
+// T3-CUSTOM(expbkt3): END
 // Each router gets its own database; the capture hands that router's EnvironmentAuth to its test.
 const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
   Layer.mergeAll(
@@ -44,7 +62,7 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
       EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
-      Layer.provide(AuthHttp.layer),
+      Layer.provide(AuthHttp.layer.pipe(Layer.provide(forkAuthServicesLayer))), // T3-CUSTOM(expbkt3)
       Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
