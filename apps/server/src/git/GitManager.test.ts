@@ -1208,7 +1208,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr]), JSON.stringify([existingPr])],
         },
       });
@@ -1421,7 +1420,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              // @effect-diagnostics-next-line preferSchemaOverJson:off - fake gh emits CLI JSON.
               JSON.stringify([
                 {
                   number: 217,
