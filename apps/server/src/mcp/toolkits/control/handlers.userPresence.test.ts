@@ -112,7 +112,7 @@ it.effect("defaults a user-bound provider credential to its own session too", ()
       client: {
         sessionId: "external-user:user-agent-owner",
         label: "External MCP user",
-        runtimeModeCeiling: "full-access",
+        access: "full-access",
       },
       capabilities: new Set(["t3.read", "t3.session.create"]),
     });

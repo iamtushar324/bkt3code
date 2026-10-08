@@ -1,4 +1,5 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+// T3-CUSTOM(expbkt3): useNavigate drives the Clerk team-mode gate below.
+import { createFileRoute, redirect, useNavigate, useRouter } from "@tanstack/react-router";
 
 import {
   HostedPairingRouteSurface,
@@ -38,7 +39,9 @@ export const Route = createFileRoute("/pair")({
 });
 
 function PairRouteView() {
+  const router = useRouter();
   const { authGateState } = Route.useRouteContext();
+  // T3-CUSTOM(expbkt3): Clerk team-mode gate navigation.
   const navigate = useNavigate();
 
   if (!authGateState) {
@@ -67,8 +70,12 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
+        // Recreate the primary connection so its WebSocket and cached scopes
+        // use the newly issued cookie after re-pairing.
         // T3-CUSTOM(expbkt3): restore an explicit Toolyard draft after pairing authentication.
-        void navigate({ to: afterAuthentication(), replace: true });
+        router.history.replace(afterAuthentication());
+        router.history.flush();
+        window.location.reload();
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />

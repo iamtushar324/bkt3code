@@ -75,7 +75,7 @@ const registryLayer = Layer.effect(
                   client: {
                     sessionId: `external-user:${actor.userId}`,
                     label: "External MCP user",
-                    runtimeModeCeiling: "full-access" as const,
+                    access: "full-access" as const,
                   },
                   issuedAt: 0,
                   capabilities: new Set(["t3.read", "t3.control"] as const),

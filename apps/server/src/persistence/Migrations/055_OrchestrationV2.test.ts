@@ -15,9 +15,10 @@ layer("055_OrchestrationV2", (it) => {
         migrationManifest.map(([id]) => id),
         [
           ...Array.from({ length: 45 }, (_, index) => index + 1),
-          // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045 and
-          // upstream's scheduled-task webhook migrations (57-58) at 1046-1047.
-          ...Array.from({ length: 48 }, (_, index) => 1000 + index),
+          // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045,
+          // upstream's scheduled-task webhook migrations (57-58) at 1046-1047 and
+          // upstream's MCP app context and snapshot indexes (59-60) at 1048-1049.
+          ...Array.from({ length: 50 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -35,6 +36,9 @@ layer("055_OrchestrationV2", (it) => {
         [1045, "SessionWebhooks"], // T3-CUSTOM(expbkt3): durable callback schema.
         [1046, "ScheduledTaskWebhooks"],
         [1047, "WebhookRelayDeliveries"],
+        // T3-CUSTOM(expbkt3): upstream 59-60 remapped to 1048-1049.
+        [1048, "McpAppModelContext"],
+        [1049, "ThreadSnapshotWindowIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -65,6 +69,9 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1045, name: "SessionWebhooks" }, // T3-CUSTOM(expbkt3): append, never rewrite.
         { migration_id: 1046, name: "ScheduledTaskWebhooks" },
         { migration_id: 1047, name: "WebhookRelayDeliveries" },
+        // T3-CUSTOM(expbkt3): upstream 59-60 remapped to 1048-1049.
+        { migration_id: 1048, name: "McpAppModelContext" },
+        { migration_id: 1049, name: "ThreadSnapshotWindowIndexes" },
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.

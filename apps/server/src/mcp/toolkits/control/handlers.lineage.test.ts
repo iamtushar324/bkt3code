@@ -55,7 +55,7 @@ function makeExternalScope(
     principal,
     requestNamespace,
     thread: undefined,
-    client: { sessionId: requestNamespace, label: principal, runtimeModeCeiling: "full-access" },
+    client: { sessionId: requestNamespace, label: principal, access: "full-access" },
   });
 }
 

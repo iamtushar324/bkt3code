@@ -100,7 +100,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
-import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
@@ -166,6 +166,8 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import * as McpOAuth from "./auth/McpOAuth.ts";
+import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
@@ -318,7 +320,7 @@ const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.p
     Layer.mergeAll(
       AzureDevOpsCli.layer,
       BitbucketApi.layer,
-      GitHubCli.layer,
+      GitHubApi.layerWithDependencies,
       GitLabCli.layer,
       ForgejoCli.layer,
     ),
@@ -399,7 +401,7 @@ const layerSourceControlRepositoryService = SourceControlRepositoryService.layer
 
 // T3-CUSTOM(expbkt3): BEGIN kept fork services.
 const layerSourceControlProfileService = SourceControlProfileService.layer.pipe(
-  Layer.provide(GitHubCli.layer.pipe(Layer.provide(VcsProcess.layer))),
+  Layer.provide(GitHubApi.layerWithDependencies.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(layerServerSettings),
   Layer.provide(ServerSecretStore.layer),
 );
@@ -665,13 +667,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
   // The asset route uses the registry's GitHub credential for private PR media.
+  Layer.provideMerge(layerSourceControlProviderRegistry),
+  Layer.provideMerge(GitHubApi.layerWithDependencies),
+  // T3-CUSTOM(expbkt3): per-user profiles.
   Layer.provideMerge(
-    Layer.mergeAll(
-      layerSourceControlProviderRegistry,
-      GitHubCli.layer,
-      layerSourceControlProfileService,
-      ThreadSourceControlActionLock.layer,
-    ) /* T3-CUSTOM(expbkt3): per-user profiles. */,
+    Layer.mergeAll(layerSourceControlProfileService, ThreadSourceControlActionLock.layer),
   ),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
@@ -804,6 +804,7 @@ export const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer.pipe(Layer.provide(ClerkDirectoryLive))), // T3-CUSTOM(expbkt3): Clerk team auth.
+      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
       Layer.provide(CloudHttp.layer),
       Layer.provide(
         OrchestrationHttp.layer.pipe(
@@ -829,6 +830,7 @@ export const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     McpHttpServer.layer.pipe(
       Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+      Layer.provide(McpOAuth.layerMcpClientAuthenticator),
     ),
     mcpUpstreamProxyRouteLayer,
     toolyardNativeRouteLayer, // T3-CUSTOM(expbkt3): authenticated Toolyard native endpoint.

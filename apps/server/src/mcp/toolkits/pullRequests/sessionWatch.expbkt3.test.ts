@@ -101,7 +101,7 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
     client:
       principal === "provider-session"
         ? undefined
-        : { sessionId: principal, label: principal, runtimeModeCeiling: "full-access" },
+        : { sessionId: principal, label: principal, access: "full-access" },
     capabilities: new Set(["pull-requests"]),
     issuedAt: 1,
   };

@@ -1,17 +1,23 @@
 /** T3-CUSTOM(expbkt3): agents manage fixed session destinations without seeing signing secrets. */
 import { ThreadId, UserId, OrchestratorMcpFailure, SessionWebhookView } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpServer, Tool, Toolkit } from "effect/ai";
+import { Tool, Toolkit } from "effect/ai";
 import { McpInvocationContext, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { hasUserWideScope } from "../mcp/mcpSessionTarget.ts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
 import { managedToolyardActor } from "../toolyard/ToolyardIntegration.ts";
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
-  dependencies: [SessionWebhookService, McpInvocationContext],
+  // McpToolAccess reads the calling thread before a write.
+  dependencies: [
+    SessionWebhookService,
+    McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
 };
 const id = Schema.String.check(Schema.isPattern(/^swh_[a-f0-9]{32}$/));
 const revision = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
@@ -87,7 +93,7 @@ const failure = (error: unknown) =>
         ? error.detail
         : "The webhook operation failed. Inspect the connection and retry.",
   });
-export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
+const handlers = {
   t3_session_webhook_create: Effect.fn(function* (input) {
     const scope = yield* actor("t3.control");
     if (scope.principal === "external-user" && input.sessionId === undefined)
@@ -155,7 +161,24 @@ export const SessionWebhookHandlersLive = SessionWebhookToolkit.toLayer({
       )
       .pipe(Effect.mapError(failure));
   }),
+} satisfies Parameters<typeof SessionWebhookToolkit.toLayer>[0];
+
+/** A webhook dispatches turns into its session, so changing one writes to that session. */
+const writesWebhook = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  McpToolAccess.writesThreads((_params: P) => [], handle);
+
+/** Who may call each webhook tool (see McpToolAccess); McpHttpServer registers these. */
+export const SessionWebhookHandlers = McpToolAccess.toLayer(SessionWebhookToolkit, {
+  t3_session_webhook_create: McpToolAccess.writesThreads(
+    (input: { readonly sessionId?: ThreadId | undefined }) => [input.sessionId],
+    handlers.t3_session_webhook_create,
+  ),
+  t3_session_webhook_inspect: McpToolAccess.reads(handlers.t3_session_webhook_inspect),
+  t3_session_webhook_disable: writesWebhook(handlers.t3_session_webhook_disable),
+  t3_session_webhook_rotate: writesWebhook(handlers.t3_session_webhook_rotate),
+  t3_session_webhook_remove: writesWebhook(handlers.t3_session_webhook_remove),
 });
-export const SessionWebhookToolkitRegistrationLive = McpServer.toolkit(SessionWebhookToolkit).pipe(
-  Layer.provide(SessionWebhookHandlersLive),
-);
+
+/** The handlers as a layer, for tests that build the toolkit directly. */
+export const SessionWebhookHandlersLive =
+  McpToolAccess.HandlersLayer.layer(SessionWebhookHandlers);

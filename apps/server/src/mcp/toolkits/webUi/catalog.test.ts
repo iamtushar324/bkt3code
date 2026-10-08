@@ -46,7 +46,7 @@ const invocation = (
       : {
           sessionId: "provider-session-web-ui-catalog-test",
           label: principal,
-          runtimeModeCeiling: "full-access",
+          access: "full-access",
         },
   capabilities: new Set(),
   issuedAt: 1,

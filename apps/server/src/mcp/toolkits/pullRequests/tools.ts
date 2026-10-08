@@ -1,5 +1,6 @@
 import {
   McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
   PositiveInt,
   PullRequestState,
   ThreadPullRequestLinkSource,
@@ -12,6 +13,7 @@ import * as Toolkit from "effect/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 
 // T3-CUSTOM(expbkt3): authorization for external named-session targets.
@@ -19,6 +21,7 @@ import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/A
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,
   // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
@@ -101,15 +104,6 @@ export class PullRequestThreadRequiredError extends Schema.TaggedError<PullReque
   }
 }
 
-export class PullRequestThreadAboveLimitsError extends Schema.TaggedError<PullRequestThreadAboveLimitsError>()(
-  "PullRequestThreadAboveLimitsError",
-  { threadId: Schema.String },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} cannot be changed from here: it runs with broader permissions than this caller, or the calling thread has no active run.`;
-  }
-}
-
 export class PullRequestThreadNotFoundError extends Schema.TaggedError<PullRequestThreadNotFoundError>()(
   "PullRequestThreadNotFoundError",
   { threadId: Schema.String },
@@ -181,6 +175,7 @@ export class PullRequestSessionTargetError extends Schema.TaggedError<PullReques
 // T3-CUSTOM(expbkt3): END
 
 export const PullRequestToolError = Schema.Union([
+  OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
   // T3-CUSTOM(expbkt3): named-session authorization failure.
   PullRequestSessionTargetError,
@@ -188,7 +183,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestThreadRequiredError,
-  PullRequestThreadAboveLimitsError,
   PullRequestThreadNotFoundError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,

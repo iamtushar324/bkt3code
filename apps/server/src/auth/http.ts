@@ -1,13 +1,9 @@
 import {
+  authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  AuthReviewWriteScope,
-  AuthTerminalOperateScope,
+  AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
@@ -28,11 +24,13 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): decode the operator a pairing grant's subject names.
 import { EnvironmentUserId, userIdFromSubject } from "@t3tools/contracts";
-import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
+import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -155,7 +153,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
       Effect.fail(
         new EnvironmentScopeRequiredError({
           code: "insufficient_scope",
-          requiredScope,
+          ...authScopeRequiredResponse(requiredScope),
           traceId,
         }),
       ),
@@ -521,6 +519,11 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const identity = yield* resolveIdentity(args.payload.identityToken); // T3-CUSTOM(expbkt3): team mode identity resolution.
+            const previousCredential = EnvironmentAuth.selectRequestCredential(
+              request,
+              sessions.cookieName,
+              sessions.legacyCookieName,
+            );
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
               deriveAuthClientMetadata({
@@ -529,7 +532,11 @@ export const layer = HttpApiBuilder.group(
                   ? { presented: { appVersion: args.payload.client_version } }
                   : {}),
               }),
-              identity ? { userId: identity.userId } : undefined,
+              previousCredential?.source === "cookie" ||
+                previousCredential?.source === "legacy-cookie"
+                ? previousCredential.token
+                : undefined,
+              identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
             );
             yield* persistIdentity(
               identity,
@@ -666,20 +673,8 @@ export const layer = HttpApiBuilder.group(
             const requestedScopes =
               args.payload.scope === undefined
                 ? undefined
-                : parseAllowedOAuthScope({
-                    value: args.payload.scope,
-                    allowedScopes: new Set<AuthEnvironmentScope>([
-                      AuthOrchestrationReadScope,
-                      AuthOrchestrationOperateScope,
-                      AuthTerminalOperateScope,
-                      AuthReviewWriteScope,
-                      AuthAccessReadScope,
-                      AuthAccessWriteScope,
-                      AuthRelayReadScope,
-                      AuthRelayWriteScope,
-                    ]),
-                  });
-            if (requestedScopes === null) {
+                : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ?? null);
+            if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
             const proofKeyThumbprint = args.headers.dpop

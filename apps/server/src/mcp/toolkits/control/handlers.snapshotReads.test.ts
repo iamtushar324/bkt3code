@@ -77,7 +77,7 @@ it.effect("lists sessions without materializing the full projection snapshot", (
       client: {
         sessionId: "external-operator",
         label: "External MCP operator",
-        runtimeModeCeiling: "full-access",
+        access: "full-access",
       },
       capabilities: new Set(["t3.read"]),
       issuedAt: 1,

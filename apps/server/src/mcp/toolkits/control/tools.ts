@@ -4,6 +4,7 @@
  */
 import {
   ModelSelection,
+  OrchestratorMcpFailure,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderUserInputAnswers,
@@ -25,6 +26,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
@@ -46,8 +48,15 @@ export class T3ControlToolError extends Schema.TaggedError<T3ControlToolError>()
   },
 ) {}
 
+/**
+ * Every control tool declares who may call it through McpToolAccess, whose
+ * refusals are OrchestratorMcpFailure and whose caller checks read threads.
+ */
+const T3ControlFailure = Schema.Union([T3ControlToolError, OrchestratorMcpFailure]);
+
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   ProjectionSnapshotQuery,
   TurnStartBootstrap,
   OrchestrationAccessControl,
@@ -139,7 +148,7 @@ export const T3ListSessionsTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "List T3 sessions"),
 );
@@ -161,7 +170,7 @@ export const T3GetSessionTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Inspect T3 session"),
 );
@@ -179,7 +188,7 @@ export const T3ListProjectsTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "List T3 projects"),
 );
@@ -214,7 +223,7 @@ export const T3SendPromptTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Send T3 prompt"),
 );
@@ -275,7 +284,7 @@ export const T3UpdateSessionTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Update T3 session"),
 );
@@ -309,7 +318,7 @@ export const T3SessionActionTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
@@ -330,7 +339,7 @@ export const T3RespondApprovalTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Respond to T3 approval"),
 );
@@ -351,7 +360,7 @@ export const T3RespondUserInputTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Answer T3 user input"),
 );
@@ -385,7 +394,7 @@ export const T3CreateProjectTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: projectDependencies,
   })
     .annotate(Tool.Title, "Create T3 project")
@@ -414,7 +423,7 @@ export const T3UpdateProjectTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: updateProjectDependencies,
   }).annotate(Tool.Title, "Update T3 project"),
 );
@@ -530,7 +539,7 @@ export const T3CreateSessionTool = mutatingTool(
       // T3-CUSTOM(expbkt3): END
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: sessionCreationDependencies,
   }).annotate(Tool.Title, "Create T3 session"),
 );
@@ -551,7 +560,7 @@ export const T3DispatchCommandTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Dispatch advanced T3 command"),
 );
@@ -572,7 +581,7 @@ export const T3SubmitPlanTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: [...dependencies, ServerSettingsService],
   }).annotate(Tool.Title, "Submit plan for review"),
 );
@@ -590,7 +599,7 @@ export const T3GetConfigurationTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: configurationDependencies,
   }).annotate(Tool.Title, "Get T3 configuration and model catalog"),
 );
@@ -606,7 +615,7 @@ export const T3UpdateServerSettingsTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: configurationDependencies,
   }).annotate(Tool.Title, "Update T3 server settings"),
 );
@@ -633,7 +642,7 @@ export const T3LinkSessionTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Link T3 session to a parent"),
 );
@@ -646,7 +655,7 @@ export const T3UnlinkSessionTool = mutatingTool(
       sessionId: described(Schema.String, "Session to detach from its parent."),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies,
   }).annotate(Tool.Title, "Unlink T3 session from its parent"),
 );
@@ -683,7 +692,7 @@ export const T3ShowUiTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: agentUiDependencies,
   }).annotate(Tool.Title, "Show a view in chat"),
 );
@@ -706,7 +715,7 @@ export const T3ListCommentsTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: threadCommentsDependencies,
   }).annotate(Tool.Title, "List review comments on this session"),
 );
@@ -734,7 +743,7 @@ export const T3ReplyCommentTool = mutatingTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: threadCommentsDependencies,
   }).annotate(Tool.Title, "Reply to a review comment"),
 );
@@ -762,7 +771,7 @@ export const T3UserPresenceTool = readonlyTool(
       ),
     }),
     success: Schema.Unknown,
-    failure: T3ControlToolError,
+    failure: T3ControlFailure,
     dependencies: userPresenceDependencies,
   }).annotate(Tool.Title, "Is the human here?"),
 );

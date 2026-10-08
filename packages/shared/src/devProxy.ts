@@ -9,7 +9,7 @@
  * server knows redirect-loops through the proxy.
  */
 // T3-CUSTOM(expbkt3): BEGIN — reformatted to a multi-line array to add the
-// experimental attachment and control-plane prefixes below.
+// fork's /attachments prefix (upstream now ships /mcp itself).
 export const DEV_PROXIED_PATH_PREFIXES = [
   "/api",
   "/oauth",
@@ -19,6 +19,17 @@ export const DEV_PROXIED_PATH_PREFIXES = [
   "/mcp",
 ] as const;
 // T3-CUSTOM(expbkt3): END
+
+/**
+ * Prefixes the proxy must forward with the browser's own Host. MCP OAuth
+ * derives its issuer and resource URLs from the request, and a client
+ * rejects metadata naming a different origin than the one it fetched.
+ */
+export const DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES: ReadonlySet<string> = new Set([
+  "/oauth",
+  "/.well-known",
+  "/mcp",
+]);
 
 export function isDevProxiedPath(pathname: string): boolean {
   return DEV_PROXIED_PATH_PREFIXES.some(

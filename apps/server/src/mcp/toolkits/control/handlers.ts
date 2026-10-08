@@ -58,8 +58,11 @@ import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "../../../serverSettings.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import { hasUserWideScope, resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
-import { T3ControlToolkit, T3ControlToolError } from "./tools.ts";
+import { T3ControlToolkit, T3ControlToolError, type T3CreateSessionTool } from "./tools.ts";
+import type { Tool } from "effect/ai";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommandSchema);
@@ -502,6 +505,253 @@ const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
     Effect.map((uuid) => MessageId.make(`mcp:${uuid}`)),
     mapControlError(operation),
   );
+
+/**
+ * `started` is what McpToolAccess.startsThreads resolved: the modes the caller
+ * asked for, or its own where it asked for none. A saved default it did not ask
+ * for may not run broader than the caller either.
+ */
+const createSession = Effect.fn("T3ControlToolkit.createSession")(function* (
+  input: Tool.Parameters<typeof T3CreateSessionTool>,
+  started?: McpToolAccess.StartedModes,
+) {
+  const operation = "create-session";
+  const scope = yield* requireSessionCreator(operation);
+  const query = yield* ProjectionSnapshotQuery;
+  const dispatcher = yield* TurnStartBootstrap;
+  const crypto = yield* Crypto.Crypto;
+  const shell = yield* query.getShellSnapshot().pipe(mapControlError(operation));
+  const projectId = ProjectId.make(input.projectId);
+  const project = shell.projects.find((candidate) => candidate.id === projectId);
+  if (!project) {
+    return yield* new T3ControlToolError({
+      operation,
+      message: `T3 project ${projectId} was not found.`,
+    });
+  }
+  if (!McpInvocationContext.isExternalMcpOperator(scope) && scope.actorUserId !== null) {
+    const accessControl = yield* OrchestrationAccessControl;
+    const allowed = yield* accessControl
+      .canAccessProject(scope.actorUserId, projectId)
+      .pipe(mapControlError(operation));
+    if (!allowed) {
+      return yield* new T3ControlToolError({
+        operation,
+        message: `T3 project ${projectId} was not found.`,
+      });
+    }
+  }
+  // T3-CUSTOM(expbkt3): session lineage.
+  const parentThreadId = yield* resolveCreatedSessionParent({
+    operation,
+    scope,
+    threads: shell.threads,
+    createAsChild: input.createAsChild,
+    parentSessionId: input.parentSessionId,
+  });
+  const uuid = yield* crypto.randomUUIDv4.pipe(mapControlError(operation));
+  const sessionId = ThreadId.make(`mcp:${uuid}`);
+  const ownerUserId =
+    scope.actorUserId ?? project.ownerUserId ?? (yield* resolveConfiguredOwnerUserId(operation));
+  // T3-CUSTOM(expbkt3): the new session inherits the calling session's audience.
+  const memberUserIds = resolveCreatedSessionTags({
+    scope,
+    threads: shell.threads,
+    parentThreadId,
+    ownerUserId,
+    explicitTagUserIds:
+      input.tagUserIds === undefined ? [] : yield* resolveTagUserIds(operation, input.tagUserIds),
+    inheritParentTags: input.inheritParentTags,
+  });
+  const title =
+    input.title?.trim() ||
+    input.prompt?.trim().split(/\s+/).slice(0, 10).join(" ").slice(0, 80) ||
+    "New MCP session";
+  const createdAt = yield* nowIso;
+  const commandId = yield* makeCommandId(crypto, operation);
+  const prompt = input.prompt?.trim();
+  const messageId = prompt ? yield* makeMessageId(crypto, operation) : null;
+  const explicitWorkspace =
+    input.workspace ??
+    (input.worktreePath
+      ? {
+          mode: "existing-worktree" as const,
+          path: input.worktreePath,
+          ...(input.branch ? { branch: input.branch } : {}),
+        }
+      : input.branch
+        ? {
+            mode: "existing-worktree" as const,
+            path: project.workspaceRoot,
+            branch: input.branch,
+          }
+        : undefined);
+  // T3-CUSTOM(expbkt3): a child session works where its parent works — its
+  // parent's own worktree in the same repository, otherwise one worktree
+  // shared by every child of that parent in the target repository.
+  const parentShell =
+    parentThreadId === null
+      ? null
+      : (shell.threads.find((thread) => thread.id === parentThreadId) ?? null);
+  const inheritance = resolveParentWorkspaceInheritance({
+    hasExplicitWorkspace: explicitWorkspace !== undefined,
+    parentThreadId,
+    parent:
+      parentShell === null
+        ? null
+        : {
+            projectId: parentShell.projectId,
+            worktreePath: parentShell.worktreePath,
+            branch: parentShell.branch,
+          },
+    targetProjectId: projectId,
+  });
+  const settings = yield* (yield* ServerSettingsService).getSettings.pipe(
+    mapControlError(operation),
+  );
+  // T3-CUSTOM(expbkt3): every field the caller omits takes the saved
+  // new-thread default — the project's override entry, then the host — the
+  // same way the web's new-thread paths do.
+  const defaults = resolveCreatedSessionDefaults({ settings, projectId, project, input });
+  const workspace =
+    explicitWorkspace ??
+    (inheritance.kind === "parent-worktree"
+      ? {
+          mode: "existing-worktree" as const,
+          path: inheritance.path,
+          ...(inheritance.branch ? { branch: inheritance.branch } : {}),
+        }
+      : inheritance.kind === "parent-checkout" || defaults.envMode === "local"
+        ? { mode: "local" as const }
+        : { mode: "new-worktree" as const });
+  const { modelSelection, runtimeMode, interactionMode } = defaults;
+  if (started !== undefined) {
+    yield* resolveRuntimeMode(started.runtimeMode, runtimeMode);
+    yield* resolveInteractionMode(started.interactionMode, interactionMode);
+  }
+  // Upstream's bootstrap needs a concrete base branch; the caller's choice
+  // wins, otherwise the branch checked out in the project root.
+  const prepareWorktree =
+    workspace.mode === "new-worktree"
+      ? yield* Effect.gen(function* () {
+          const gitWorkflow = yield* GitWorkflowService;
+          const baseRef = workspace.baseRef;
+          const baseBranch =
+            baseRef?.kind === "branch"
+              ? baseRef.branch
+              : (yield* gitWorkflow.localStatus({ cwd: project.workspaceRoot })).refName;
+          if (!baseBranch) {
+            return yield* new T3ControlToolError({
+              operation,
+              message: `${project.workspaceRoot} is not on a branch a new worktree could start from. Pass workspace.baseRef.`,
+            });
+          }
+          return {
+            projectCwd: project.workspaceRoot,
+            baseBranch,
+            ...(workspace.newBranch ? { branch: workspace.newBranch } : {}),
+            startFromOrigin: baseRef?.source !== "local",
+          };
+        }).pipe(mapControlError(operation))
+      : undefined;
+  const createThread = {
+    projectId,
+    title,
+    modelSelection,
+    runtimeMode,
+    interactionMode,
+    branch: workspace.mode === "existing-worktree" ? (workspace.branch ?? null) : null,
+    worktreePath: workspace.mode === "existing-worktree" ? workspace.path : null,
+    sourceControlProfileId: null,
+    ...(ownerUserId ? { ownerUserId } : {}),
+    // T3-CUSTOM(expbkt3): always stated, never omitted: the audience is
+    // resolved from the calling session here, so an empty list has to read as
+    // "tag nobody" rather than letting the lineage default tag the parent's.
+    memberUserIds,
+    createdAt,
+    priority: input.priority ?? null,
+    // T3-CUSTOM(expbkt3): custom sidebar group.
+    customGroup: (yield* resolveCustomGroupInput(operation, input.customGroup)) ?? null,
+    // T3-CUSTOM(expbkt3): session lineage.
+    parentThreadId,
+  } as const;
+  const runSetupScript = workspace.mode === "new-worktree";
+  const dispatchOptions = {
+    actorUserId: ownerUserId,
+    ...(inheritance.kind === "shared-group" && parentThreadId !== null
+      ? { workspaceGroup: { ownerThreadId: parentThreadId, projectId } }
+      : {}),
+  };
+  const result =
+    messageId && prompt
+      ? yield* dispatcher
+          .dispatch(
+            {
+              type: "thread.turn.start",
+              commandId,
+              threadId: sessionId,
+              message: {
+                messageId,
+                role: "user",
+                text: prompt,
+                attachments: [],
+              },
+              runtimeMode,
+              interactionMode,
+              bootstrap: {
+                createThread,
+                ...(prepareWorktree ? { prepareWorktree } : {}),
+                runSetupScript,
+              },
+              // T3-CUSTOM(expbkt3): when the caller did not name the session we
+              // clipped one out of the prompt above. Declaring it as the seed
+              // marks it replaceable, so the first turn titles the session the
+              // same way it does for one started from a client. A title the
+              // caller passed explicitly is theirs and is not seeded.
+              ...(input.title?.trim() ? {} : { titleSeed: title }),
+              createdAt,
+            },
+            dispatchOptions,
+          )
+          .pipe(mapControlError(operation))
+      : yield* dispatcher
+          .createThread(
+            {
+              create: {
+                type: "thread.create",
+                commandId,
+                threadId: sessionId,
+                ...createThread,
+              },
+              ...(prepareWorktree ? { prepareWorktree } : {}),
+              runSetupScript,
+            },
+            dispatchOptions,
+          )
+          .pipe(mapControlError(operation));
+  return {
+    created: true,
+    started: messageId !== null,
+    sessionId,
+    threadId: sessionId,
+    workspace:
+      workspace.mode === "existing-worktree"
+        ? { mode: workspace.mode, path: workspace.path }
+        : workspace.mode === "local"
+          ? { mode: workspace.mode, path: project.workspaceRoot }
+          : {
+              mode: workspace.mode,
+              ...("worktreePath" in result ? { path: result.worktreePath } : {}),
+              sharedWithParent: inheritance.kind === "shared-group",
+            },
+    ...(messageId ? { messageId } : {}),
+    // T3-CUSTOM(expbkt3): who can see this session, so the caller can say so
+    // instead of guessing.
+    ownerUserId,
+    taggedUserIds: [...(ownerUserId ? [ownerUserId] : []), ...memberUserIds],
+    sequence: result.sequence,
+  };
+});
 
 const handlers = {
   t3_list_sessions: Effect.fn("T3ControlToolkit.listSessions")(function* (input) {
@@ -1116,240 +1366,7 @@ const handlers = {
   }),
   // T3-CUSTOM(expbkt3): END
 
-  t3_create_session: Effect.fn("T3ControlToolkit.createSession")(function* (input) {
-    const operation = "create-session";
-    const scope = yield* requireSessionCreator(operation);
-    const query = yield* ProjectionSnapshotQuery;
-    const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
-    const shell = yield* query.getShellSnapshot().pipe(mapControlError(operation));
-    const projectId = ProjectId.make(input.projectId);
-    const project = shell.projects.find((candidate) => candidate.id === projectId);
-    if (!project) {
-      return yield* new T3ControlToolError({
-        operation,
-        message: `T3 project ${projectId} was not found.`,
-      });
-    }
-    if (!McpInvocationContext.isExternalMcpOperator(scope) && scope.actorUserId !== null) {
-      const accessControl = yield* OrchestrationAccessControl;
-      const allowed = yield* accessControl
-        .canAccessProject(scope.actorUserId, projectId)
-        .pipe(mapControlError(operation));
-      if (!allowed) {
-        return yield* new T3ControlToolError({
-          operation,
-          message: `T3 project ${projectId} was not found.`,
-        });
-      }
-    }
-    // T3-CUSTOM(expbkt3): session lineage.
-    const parentThreadId = yield* resolveCreatedSessionParent({
-      operation,
-      scope,
-      threads: shell.threads,
-      createAsChild: input.createAsChild,
-      parentSessionId: input.parentSessionId,
-    });
-    const uuid = yield* crypto.randomUUIDv4.pipe(mapControlError(operation));
-    const sessionId = ThreadId.make(`mcp:${uuid}`);
-    const ownerUserId =
-      scope.actorUserId ?? project.ownerUserId ?? (yield* resolveConfiguredOwnerUserId(operation));
-    // T3-CUSTOM(expbkt3): the new session inherits the calling session's audience.
-    const memberUserIds = resolveCreatedSessionTags({
-      scope,
-      threads: shell.threads,
-      parentThreadId,
-      ownerUserId,
-      explicitTagUserIds:
-        input.tagUserIds === undefined ? [] : yield* resolveTagUserIds(operation, input.tagUserIds),
-      inheritParentTags: input.inheritParentTags,
-    });
-    const title =
-      input.title?.trim() ||
-      input.prompt?.trim().split(/\s+/).slice(0, 10).join(" ").slice(0, 80) ||
-      "New MCP session";
-    const createdAt = yield* nowIso;
-    const commandId = yield* makeCommandId(crypto, operation);
-    const prompt = input.prompt?.trim();
-    const messageId = prompt ? yield* makeMessageId(crypto, operation) : null;
-    const explicitWorkspace =
-      input.workspace ??
-      (input.worktreePath
-        ? {
-            mode: "existing-worktree" as const,
-            path: input.worktreePath,
-            ...(input.branch ? { branch: input.branch } : {}),
-          }
-        : input.branch
-          ? {
-              mode: "existing-worktree" as const,
-              path: project.workspaceRoot,
-              branch: input.branch,
-            }
-          : undefined);
-    // T3-CUSTOM(expbkt3): a child session works where its parent works — its
-    // parent's own worktree in the same repository, otherwise one worktree
-    // shared by every child of that parent in the target repository.
-    const parentShell =
-      parentThreadId === null
-        ? null
-        : (shell.threads.find((thread) => thread.id === parentThreadId) ?? null);
-    const inheritance = resolveParentWorkspaceInheritance({
-      hasExplicitWorkspace: explicitWorkspace !== undefined,
-      parentThreadId,
-      parent:
-        parentShell === null
-          ? null
-          : {
-              projectId: parentShell.projectId,
-              worktreePath: parentShell.worktreePath,
-              branch: parentShell.branch,
-            },
-      targetProjectId: projectId,
-    });
-    const settings = yield* (yield* ServerSettingsService).getSettings.pipe(
-      mapControlError(operation),
-    );
-    // T3-CUSTOM(expbkt3): every field the caller omits takes the saved
-    // new-thread default — the project's override entry, then the host — the
-    // same way the web's new-thread paths do.
-    const defaults = resolveCreatedSessionDefaults({ settings, projectId, project, input });
-    const workspace =
-      explicitWorkspace ??
-      (inheritance.kind === "parent-worktree"
-        ? {
-            mode: "existing-worktree" as const,
-            path: inheritance.path,
-            ...(inheritance.branch ? { branch: inheritance.branch } : {}),
-          }
-        : inheritance.kind === "parent-checkout" || defaults.envMode === "local"
-          ? { mode: "local" as const }
-          : { mode: "new-worktree" as const });
-    const { modelSelection, runtimeMode, interactionMode } = defaults;
-    // Upstream's bootstrap needs a concrete base branch; the caller's choice
-    // wins, otherwise the branch checked out in the project root.
-    const prepareWorktree =
-      workspace.mode === "new-worktree"
-        ? yield* Effect.gen(function* () {
-            const gitWorkflow = yield* GitWorkflowService;
-            const baseRef = workspace.baseRef;
-            const baseBranch =
-              baseRef?.kind === "branch"
-                ? baseRef.branch
-                : (yield* gitWorkflow.localStatus({ cwd: project.workspaceRoot })).refName;
-            if (!baseBranch) {
-              return yield* new T3ControlToolError({
-                operation,
-                message: `${project.workspaceRoot} is not on a branch a new worktree could start from. Pass workspace.baseRef.`,
-              });
-            }
-            return {
-              projectCwd: project.workspaceRoot,
-              baseBranch,
-              ...(workspace.newBranch ? { branch: workspace.newBranch } : {}),
-              startFromOrigin: baseRef?.source !== "local",
-            };
-          }).pipe(mapControlError(operation))
-        : undefined;
-    const createThread = {
-      projectId,
-      title,
-      modelSelection,
-      runtimeMode,
-      interactionMode,
-      branch: workspace.mode === "existing-worktree" ? (workspace.branch ?? null) : null,
-      worktreePath: workspace.mode === "existing-worktree" ? workspace.path : null,
-      sourceControlProfileId: null,
-      ...(ownerUserId ? { ownerUserId } : {}),
-      // T3-CUSTOM(expbkt3): always stated, never omitted: the audience is
-      // resolved from the calling session here, so an empty list has to read as
-      // "tag nobody" rather than letting the lineage default tag the parent's.
-      memberUserIds,
-      createdAt,
-      priority: input.priority ?? null,
-      // T3-CUSTOM(expbkt3): custom sidebar group.
-      customGroup: (yield* resolveCustomGroupInput(operation, input.customGroup)) ?? null,
-      // T3-CUSTOM(expbkt3): session lineage.
-      parentThreadId,
-    } as const;
-    const runSetupScript = workspace.mode === "new-worktree";
-    const dispatchOptions = {
-      actorUserId: ownerUserId,
-      ...(inheritance.kind === "shared-group" && parentThreadId !== null
-        ? { workspaceGroup: { ownerThreadId: parentThreadId, projectId } }
-        : {}),
-    };
-    const result =
-      messageId && prompt
-        ? yield* dispatcher
-            .dispatch(
-              {
-                type: "thread.turn.start",
-                commandId,
-                threadId: sessionId,
-                message: {
-                  messageId,
-                  role: "user",
-                  text: prompt,
-                  attachments: [],
-                },
-                runtimeMode,
-                interactionMode,
-                bootstrap: {
-                  createThread,
-                  ...(prepareWorktree ? { prepareWorktree } : {}),
-                  runSetupScript,
-                },
-                // T3-CUSTOM(expbkt3): when the caller did not name the session we
-                // clipped one out of the prompt above. Declaring it as the seed
-                // marks it replaceable, so the first turn titles the session the
-                // same way it does for one started from a client. A title the
-                // caller passed explicitly is theirs and is not seeded.
-                ...(input.title?.trim() ? {} : { titleSeed: title }),
-                createdAt,
-              },
-              dispatchOptions,
-            )
-            .pipe(mapControlError(operation))
-        : yield* dispatcher
-            .createThread(
-              {
-                create: {
-                  type: "thread.create",
-                  commandId,
-                  threadId: sessionId,
-                  ...createThread,
-                },
-                ...(prepareWorktree ? { prepareWorktree } : {}),
-                runSetupScript,
-              },
-              dispatchOptions,
-            )
-            .pipe(mapControlError(operation));
-    return {
-      created: true,
-      started: messageId !== null,
-      sessionId,
-      threadId: sessionId,
-      workspace:
-        workspace.mode === "existing-worktree"
-          ? { mode: workspace.mode, path: workspace.path }
-          : workspace.mode === "local"
-            ? { mode: workspace.mode, path: project.workspaceRoot }
-            : {
-                mode: workspace.mode,
-                ...("worktreePath" in result ? { path: result.worktreePath } : {}),
-                sharedWithParent: inheritance.kind === "shared-group",
-              },
-      ...(messageId ? { messageId } : {}),
-      // T3-CUSTOM(expbkt3): who can see this session, so the caller can say so
-      // instead of guessing.
-      ownerUserId,
-      taggedUserIds: [...(ownerUserId ? [ownerUserId] : []), ...memberUserIds],
-      sequence: result.sequence,
-    };
-  }),
+  t3_create_session: (input) => createSession(input),
 
   // T3-CUSTOM(expbkt3): the submitted document becomes the session's proposed
   // plan; native plan review ingests it from the proposed-plan event like any
@@ -1512,7 +1529,55 @@ const handlers = {
   }),
 } satisfies Parameters<typeof T3ControlToolkit.toLayer>[0];
 
-export const T3ControlToolkitHandlersLive = T3ControlToolkit.toLayer(handlers);
+/** The control tools a session (`sessionId`, or the caller's own when omitted) changes. */
+const writesSession = <P extends { readonly sessionId?: string | undefined }, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) =>
+  McpToolAccess.writesThreads(
+    (params: P) => [params.sessionId === undefined ? undefined : ThreadId.make(params.sessionId)],
+    handle,
+  );
+
+/**
+ * Who may call each control tool (see McpToolAccess). The fork-only checks
+ * (t3.* capabilities, team boundary, external-operator tools) stay inside the
+ * handlers above.
+ */
+export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, {
+  t3_list_sessions: McpToolAccess.reads(handlers.t3_list_sessions),
+  t3_get_session: McpToolAccess.reads(handlers.t3_get_session),
+  t3_list_projects: McpToolAccess.reads(handlers.t3_list_projects),
+  t3_get_configuration: McpToolAccess.reads(handlers.t3_get_configuration),
+  t3_send_prompt: writesSession(handlers.t3_send_prompt),
+  t3_update_session: writesSession(handlers.t3_update_session),
+  t3_update_server_settings: McpToolAccess.writesEnvironment((input) =>
+    handlers.t3_update_server_settings(input),
+  ),
+  t3_session_action: writesSession(handlers.t3_session_action),
+  t3_respond_approval: writesSession(handlers.t3_respond_approval),
+  t3_respond_user_input: writesSession(handlers.t3_respond_user_input),
+  t3_create_project: McpToolAccess.writesEnvironment((input) => handlers.t3_create_project(input)),
+  t3_update_project: McpToolAccess.writesEnvironment((input) => handlers.t3_update_project(input)),
+  t3_create_session: McpToolAccess.startsThreads(
+    (input) => ({ runtimeMode: input.runtimeMode, interactionMode: input.interactionMode }),
+    (input, started) => createSession(input, started),
+  ),
+  t3_link_session: writesSession(handlers.t3_link_session),
+  t3_unlink_session: writesSession(handlers.t3_unlink_session),
+  t3_submit_plan: writesSession(handlers.t3_submit_plan),
+  t3_dispatch_command: McpToolAccess.writesEnvironment((input) =>
+    handlers.t3_dispatch_command(input),
+  ),
+  t3_show_ui: McpToolAccess.actsAsCaller(handlers.t3_show_ui),
+  t3_list_comments: McpToolAccess.readsAsCaller(handlers.t3_list_comments),
+  t3_reply_comment: McpToolAccess.actsAsCaller(handlers.t3_reply_comment),
+  t3_user_presence: McpToolAccess.reads(handlers.t3_user_presence),
+});
+
+/** The control handlers as a layer, for tests that build the toolkit directly. */
+export const T3ControlToolkitHandlersLive = McpToolAccess.HandlersLayer.layer(
+  T3ControlToolkitHandlers,
+);
 
 /** Exposed for focused authorization tests. */
 // T3-CUSTOM(expbkt3): what a created session starts with when the caller

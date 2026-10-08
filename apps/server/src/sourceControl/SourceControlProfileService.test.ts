@@ -12,21 +12,22 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import * as GitHubCli from "./GitHubCli.ts";
+// T3-CUSTOM(expbkt3): profile validation reads GitHub through upstream's API transport.
+import * as GitHubApi from "./GitHubApi.ts";
 import { make, sourceControlProfileSecretName } from "./SourceControlProfileService.ts";
 
-const output = (stdout: string) => ({
-  exitCode: ChildProcessSpawner.ExitCode(0),
-  stdout,
-  stderr: "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
+const output = (body: string): GitHubApi.GitHubRestResponse => ({
+  status: 200,
+  headers: {},
+  body,
+  truncated: false,
+  invalidUtf8: false,
 });
 
 const makeHarness = Effect.gen(function* () {
@@ -35,7 +36,7 @@ const makeHarness = Effect.gen(function* () {
     sourceControlIdentityMode: "thread-profile",
   });
   const secrets = new Map<string, Uint8Array>();
-  const validationEnvironments: NodeJS.ProcessEnv[] = [];
+  const validationCredentials: Array<{ readonly host: string; readonly token: string }> = [];
 
   const settingsLayer = Layer.mock(ServerSettingsService)({
     getSettings: Ref.get(settings),
@@ -52,35 +53,32 @@ const makeHarness = Effect.gen(function* () {
       remove: (name) => Effect.sync(() => void secrets.delete(name)),
     }),
   );
-  const githubLayer = Layer.mock(GitHubCli.GitHubCli)({
-    execute: (input) => {
-      const environment = input.env ?? {};
-      validationEnvironments.push(environment);
-      const credential = environment.GH_TOKEN;
-      if (credential === "invalid-token") {
-        return Effect.fail(
-          new GitHubCli.GitHubCliAuthenticationError({
-            command: "gh",
-            cwd: input.cwd,
-            cause: new Error("authentication failed"),
-          }),
-        );
-      }
-      if (input.args[0] === "api" && input.args[1] === "user/emails") {
-        if (credential === "email-private-token") {
-          return Effect.fail(
-            new GitHubCli.GitHubCliCommandError({
-              command: "gh",
-              cwd: input.cwd,
-              cause: new Error("HTTP 403: Resource not accessible by personal access token"),
-            }),
-          );
+  const githubLayer = Layer.mock(GitHubApi.GitHubApi)({
+    rest: (input) =>
+      Effect.gen(function* () {
+        // The profile's token arrives pinned, never through the machine's credential.
+        const pinned = yield* GitHubApi.PinnedGitHubCredential;
+        const credential = pinned === null ? undefined : Redacted.value(pinned.token);
+        validationCredentials.push({ host: pinned?.host ?? "", token: credential ?? "" });
+        if (credential === "invalid-token") {
+          return yield* new GitHubApi.GitHubApiAuthenticationError({
+            host: input.host,
+            operation: input.operation,
+          });
         }
-        return Effect.succeed(output("[]"));
-      }
-      const bob = credential === "bob-token";
-      return Effect.succeed(
-        output(
+        if (input.path === "user/emails") {
+          if (credential === "email-private-token") {
+            return yield* new GitHubApi.GitHubApiResponseError({
+              host: input.host,
+              operation: input.operation,
+              status: 403,
+              githubErrors: ["Resource not accessible by personal access token"],
+            });
+          }
+          return output("[]");
+        }
+        const bob = credential === "bob-token";
+        return output(
           JSON.stringify({
             login: bob ? "bob" : "alice",
             id: bob ? 84 : 42,
@@ -88,9 +86,8 @@ const makeHarness = Effect.gen(function* () {
             name: bob ? "Bob Example" : "Alice Example",
             email: null,
           }),
-        ),
-      );
-    },
+        );
+      }),
   });
   const dependencies = Layer.mergeAll(
     settingsLayer,
@@ -100,7 +97,7 @@ const makeHarness = Effect.gen(function* () {
   );
   const service = yield* make.pipe(Effect.provide(dependencies));
 
-  return { service, settings, secrets, validationEnvironments };
+  return { service, settings, secrets, validationCredentials };
 });
 
 it.layer(NodeServices.layer)("SourceControlProfileService", (it) => {
@@ -143,9 +140,9 @@ it.layer(NodeServices.layer)("SourceControlProfileService", (it) => {
       assert.strictEqual(context.environment.GIT_SSH_COMMAND, "false");
       assert.notStrictEqual(context.environment.GH_CONFIG_DIR, "/machine-gh");
 
-      const validationEnvironment = harness.validationEnvironments[0];
-      assert.strictEqual(validationEnvironment?.GH_TOKEN, "alice-token");
-      assert.isUndefined(validationEnvironment?.GITHUB_TOKEN);
+      const validationCredential = harness.validationCredentials[0];
+      assert.strictEqual(validationCredential?.token, "alice-token");
+      assert.strictEqual(validationCredential?.host, "github.com");
     }),
   );
 

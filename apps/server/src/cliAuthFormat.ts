@@ -80,7 +80,7 @@ export function formatPairingCredentialList(
       credentials.map((credential) => ({
         id: credential.id,
         ...(credential.label ? { label: credential.label } : {}),
-        scopes: credential.scopes,
+        scopes: credential.permissions ?? credential.scopes,
         createdAt: toIsoString(credential.createdAt),
         expiresAt: toIsoString(credential.expiresAt),
       })),
@@ -98,7 +98,7 @@ export function formatPairingCredentialList(
       .map((credential) =>
         [
           `${credential.id}${credential.label ? ` (${credential.label})` : ""}`,
-          `  scopes: ${credential.scopes.join(" ")}`,
+          `  scopes: ${(credential.permissions ?? credential.scopes).join(" ")}`,
           `  created: ${toIsoString(credential.createdAt)}`,
           `  expires: ${toIsoString(credential.expiresAt)}`,
         ].join(newline),

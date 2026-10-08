@@ -36,6 +36,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 import { managedToolyardActor } from "../toolyard/ToolyardIntegration.ts"; // T3-CUSTOM(expbkt3): local Toolyard profiles retain the authenticated local boundary.
 import { configuredUpstreamServers } from "./McpUpstreamConfiguration.ts"; // T3-CUSTOM(expbkt3): read-only configuration inspection.
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts"; // T3-CUSTOM(expbkt3): personal MCP integrations + external tokens.
+import { settingsCredentialClientScope } from "./clientAccess.expbkt3.ts"; // T3-CUSTOM(expbkt3): Settings credentials are upstream MCP clients.
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -442,28 +443,29 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (externalUser) {
         // T3-CUSTOM(expbkt3): an external principal is a client caller with no thread
         // of its own, so every tool needs an explicit target. Its sessions are
-        // bounded by team access control, not by a runtime-mode ceiling.
+        // bounded by team access control; its ceiling is full access.
         const requestNamespace = `external-user:${externalUser.userId}`;
         return {
-          principal: "external-user",
-          actorUserId: externalUser.userId,
           environmentId,
           requestNamespace,
           thread: undefined,
-          client: {
+          // T3-CUSTOM(expbkt3): the same client model as an OAuth sign-in; its
+          // access level comes from the fork capabilities below.
+          ...settingsCredentialClientScope({
+            principal: "external-user",
+            actorUserId: externalUser.userId,
             sessionId: requestNamespace,
             label: "External MCP user",
-            runtimeModeCeiling: "full-access",
-          },
-          // T3-CUSTOM(expbkt3): an external agent that may already rename a
-          // session and dispatch its commands may also tag its pull requests.
-          capabilities: new Set([
-            "pull-requests",
-            "t3.read",
-            "t3.control",
-            "t3.plan",
-            "t3.session.create",
-          ]),
+            // T3-CUSTOM(expbkt3): an external agent that may already rename a
+            // session and dispatch its commands may also tag its pull requests.
+            forkCapabilities: [
+              "pull-requests",
+              "t3.read",
+              "t3.control",
+              "t3.plan",
+              "t3.session.create",
+            ],
+          }),
           issuedAt: timestamp,
         } satisfies McpInvocationContext.McpInvocationScope;
       }
@@ -475,17 +477,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         return undefined;
       }
       return {
-        principal: "external-operator",
-        actorUserId: null,
         environmentId,
         requestNamespace: "external-operator",
         thread: undefined,
-        client: {
+        // T3-CUSTOM(expbkt3): the same client model as an OAuth sign-in.
+        ...settingsCredentialClientScope({
+          principal: "external-operator",
+          actorUserId: null,
           sessionId: "external-operator",
           label: "External MCP operator",
-          runtimeModeCeiling: "full-access",
-        },
-        capabilities: new Set(["pull-requests", "t3.read", "t3.control", "t3.plan"]),
+          forkCapabilities: ["pull-requests", "t3.read", "t3.control", "t3.plan"],
+        }),
         issuedAt: timestamp,
       } satisfies McpInvocationContext.McpInvocationScope;
     },

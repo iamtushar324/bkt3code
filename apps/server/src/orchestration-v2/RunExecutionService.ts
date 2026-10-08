@@ -43,6 +43,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -551,6 +552,7 @@ export const layer: Layer.Layer<
   | IdAllocator.IdAllocatorV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
+  | McpAppModelContext.McpAppModelContext
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -559,6 +561,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     // T3-CUSTOM(expbkt3): upstream-only tests remain valid without the fork comment store.
     const threadComments = yield* Effect.serviceOption(ThreadCommentsService);
@@ -1383,6 +1386,23 @@ export const layer: Layer.Layer<
                 ...input.message,
                 text: appendAgentPlanInstructions(yield* commentText, agentPlanSubmissionEnabled),
               };
+          // A context read that fails costs the agent the apps' notes for
+          // this turn, not the turn itself.
+          const appContext = (yield* mcpAppModelContext
+            .forThread(input.run.threadId)
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
+                  Effect.as([]),
+                ),
+              ),
+            )).map((entry) => ({
+            // The item id alone is unique and needs no escaping; server and
+            // tool names are free text that would break the tag Codex wraps
+            // the context in.
+            key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
+            text: entry.text,
+          }));
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
@@ -1403,6 +1423,7 @@ export const layer: Layer.Layer<
             message: providerMessage, // T3-CUSTOM(expbkt3): comments and the server plan policy reach the provider.
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
+            ...(appContext.length === 0 ? {} : { appContext }),
           };
           const startTurn = compact
             ? (input.session.compactThread?.(turnInput) ??
