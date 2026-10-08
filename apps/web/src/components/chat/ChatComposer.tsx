@@ -95,6 +95,7 @@ import {
 // T3-CUSTOM(expbkt3): review comments on agent messages.
 import {
   THREAD_COMMENT_PLACEHOLDER,
+  ThreadCommentsComposerChip,
   useThreadCommentsEmptySendAllowed,
   withThreadCommentsSendable,
 } from "~/fork/threadComments/threadCommentsSurface";
@@ -6884,6 +6885,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) : null}
       </ComposerBanner.Dock>
       <div className="relative">
+        {/* T3-CUSTOM(expbkt3): sent review comments, top-right in the chat box. */}
+        <ThreadCommentsComposerChip />
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}

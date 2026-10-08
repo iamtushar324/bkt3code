@@ -78,5 +78,11 @@ export function createThreadCommentsEnvironmentAtoms<R, E>(
       scheduler,
       concurrency: serialByThread,
     }),
+    resend: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:thread-comments:resend",
+      tag: WS_METHODS.threadCommentsResend,
+      scheduler,
+      concurrency: serialByThread,
+    }),
   };
 }

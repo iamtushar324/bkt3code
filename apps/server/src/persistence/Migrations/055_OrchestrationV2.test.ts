@@ -17,7 +17,8 @@ layer("055_OrchestrationV2", (it) => {
           ...Array.from({ length: 45 }, (_, index) => index + 1),
           // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045 and
           // upstream's scheduled-task webhook migrations (57-58) at 1046-1047.
-          ...Array.from({ length: 48 }, (_, index) => 1000 + index),
+          // T3-CUSTOM(expbkt3): 1048 adds the review comment send-once mark.
+          ...Array.from({ length: 49 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -35,6 +36,7 @@ layer("055_OrchestrationV2", (it) => {
         [1045, "SessionWebhooks"], // T3-CUSTOM(expbkt3): durable callback schema.
         [1046, "ScheduledTaskWebhooks"],
         [1047, "WebhookRelayDeliveries"],
+        [1048, "ThreadCommentLastSent"], // T3-CUSTOM(expbkt3): comment send-once mark.
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -65,6 +67,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1045, name: "SessionWebhooks" }, // T3-CUSTOM(expbkt3): append, never rewrite.
         { migration_id: 1046, name: "ScheduledTaskWebhooks" },
         { migration_id: 1047, name: "WebhookRelayDeliveries" },
+        { migration_id: 1048, name: "ThreadCommentLastSent" }, // T3-CUSTOM(expbkt3)
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.

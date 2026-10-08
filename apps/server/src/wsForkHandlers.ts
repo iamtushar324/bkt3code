@@ -827,6 +827,14 @@ export const makeForkWsHandlers = ({
         ),
         { "rpc.aggregate": "thread-comments" },
       ),
+    [WS_METHODS.threadCommentsResend]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.threadCommentsResend,
+        guardCommentsThread("resend", input.threadId).pipe(
+          Effect.andThen(threadComments.resend(input)),
+        ),
+        { "rpc.aggregate": "thread-comments" },
+      ),
     [WS_METHODS.subscribeThreadComments]: (input) =>
       observeRpcStream(
         WS_METHODS.subscribeThreadComments,

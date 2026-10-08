@@ -26,6 +26,7 @@ import {
   formatOpenThreadCommentsForAgent,
   neutralizeOwnTags,
   OPEN_THREAD_COMMENTS_MAX_CHARS,
+  prepareOpenThreadComments,
 } from "./turnContext.ts";
 
 const threadId = ThreadId.make("thread-turn-context");
@@ -66,8 +67,9 @@ const reply = (index: number, body = `reply ${index}`): ThreadComment["replies"]
 
 const serviceWith = (
   openForDelivery: ThreadCommentsService["Service"]["openForDelivery"],
+  markSent: ThreadCommentsService["Service"]["markSent"] = () => Effect.void,
 ): ThreadCommentsService["Service"] =>
-  ({ openForDelivery }) as unknown as ThreadCommentsService["Service"];
+  ({ openForDelivery, markSent }) as unknown as ThreadCommentsService["Service"];
 
 describe("neutralizeOwnTags", () => {
   it("defuses only the block's own tags and leaves other markup alone", () => {
@@ -132,9 +134,9 @@ describe("formatOpenThreadCommentsForAgent", () => {
 
   it("keeps the newest comments when the block would exceed the budget", () => {
     const comments = [1, 2, 3, 4, 5].map((number) => comment({ number, body: "x".repeat(400) }));
-    const block = formatOpenThreadCommentsForAgent(comments, { maxChars: 1_600 });
+    const block = formatOpenThreadCommentsForAgent(comments, { maxChars: 1_900 });
     expect(block).not.toBeNull();
-    expect(block!.length).toBeLessThanOrEqual(1_600);
+    expect(block!.length).toBeLessThanOrEqual(1_900);
     expect(block).toContain('<open_chat_comments count="2" omitted="3">');
     expect(block).toContain("Only the newest 2 of 5 open comments fit here");
     expect(block).not.toContain('id="tc_3"');
@@ -176,6 +178,59 @@ describe("formatOpenThreadCommentsForAgent", () => {
 });
 
 describe("appendOpenThreadComments", () => {
+  // T3-CUSTOM(expbkt3): a comment goes once, so the turn marks what it carried.
+  it.effect("marks only the comments that went with the turn as sent", () =>
+    Effect.gen(function* () {
+      const marked: Array<ReadonlyArray<string>> = [];
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 }), comment({ number: 2 })]),
+            (input) => Effect.sync(() => void marked.push(input.comments.map((c) => c.commentId))),
+          ),
+        ),
+      );
+      expect(result).toContain('id="tc_1"');
+      expect(result).toContain('id="tc_2"');
+      expect(marked).toEqual([["tc_1", "tc_2"]]);
+    }),
+  );
+
+  it.effect("prepares the text without marking until the turn has started", () =>
+    Effect.gen(function* () {
+      const marked: Array<ReadonlyArray<string>> = [];
+      const prepared = yield* prepareOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 })]),
+            (input) => Effect.sync(() => void marked.push(input.comments.map((c) => c.commentId))),
+          ),
+        ),
+      );
+      expect(prepared.text).toContain('id="tc_1"');
+      expect(marked).toEqual([]);
+      yield* prepared.markSent;
+      expect(marked).toEqual([["tc_1"]]);
+    }),
+  );
+
+  it.effect("still sends the comments when the sent mark fails", () =>
+    Effect.gen(function* () {
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 })]),
+            () => Effect.die("disk full"),
+          ),
+        ),
+      );
+      expect(result).toContain('id="tc_1"');
+    }),
+  );
+
   it.effect("returns the text unchanged when the service is not provided", () =>
     Effect.gen(function* () {
       expect(yield* appendOpenThreadComments(threadId, "hello")).toBe("hello");
