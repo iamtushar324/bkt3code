@@ -8,11 +8,18 @@
  * and the hover/focus pairing between a card and its highlight, so each of
  * those readers is a single hook call rather than a threaded prop.
  */
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 export interface ThreadCommentsActiveSummary {
   readonly threadKey: string;
+  /** The same thread as `threadKey`, for the composer chip's actions. */
+  readonly threadRef: ScopedThreadRef;
   readonly openCount: number;
+  /** Open comments that go with the next turn; the rest already went. */
+  readonly unsentCount: number;
+  readonly sentCount: number;
+  readonly addressedCount: number;
   readonly deliveryPaused: boolean;
   /** Setting on and the server advertises the capability. */
   readonly enabled: boolean;
@@ -39,6 +46,9 @@ export const useThreadCommentsUiStore = create<ThreadCommentsUiState>((set) => (
     set((state) =>
       state.active?.threadKey === active?.threadKey &&
       state.active?.openCount === active?.openCount &&
+      state.active?.unsentCount === active?.unsentCount &&
+      state.active?.sentCount === active?.sentCount &&
+      state.active?.addressedCount === active?.addressedCount &&
       state.active?.deliveryPaused === active?.deliveryPaused &&
       state.active?.enabled === active?.enabled &&
       state.active?.running === active?.running

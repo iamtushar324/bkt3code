@@ -705,7 +705,7 @@ export const T3ShowUiTool = readonlyTool(
 export const T3ListCommentsTool = readonlyTool(
   Tool.make("t3_list_comments", {
     description:
-      "List the review comments the user left on your earlier messages in this session. A comment quotes a passage of one of your messages and carries either free text or a reaction: good (keep this as it is), okay (acceptable, no change needed) or remove (drop this / do not do this). Status `open` means the comment is an active instruction for you and is re-sent with every new turn until you mark it addressed with t3_reply_comment; `addressed` means you reported it done and the user has not closed it yet; `resolved` means the user closed it. Defaults to open comments only.",
+      "List the review comments the user left on your earlier messages in this session. A comment quotes a passage of one of your messages and carries either free text or a reaction: good (keep this as it is), okay (acceptable, no change needed) or remove (drop this / do not do this). Status `open` means the comment is an active instruction for you until you mark it addressed with t3_reply_comment; each comment reaches you once, and again only when the user changes it, replies to it or sends the open comments again; `addressed` means you reported it done and the user has not closed it yet; `resolved` means the user closed it. Defaults to open comments only.",
     parameters: Schema.Struct({
       status: Schema.optional(
         described(
@@ -723,7 +723,7 @@ export const T3ListCommentsTool = readonlyTool(
 export const T3ReplyCommentTool = mutatingTool(
   Tool.make("t3_reply_comment", {
     description:
-      "Reply to one of the user's review comments on this session, and/or mark it addressed. Call it once per comment you have handled: pass `addressed: true` when the request in the comment is done, with a short `body` saying what you did (or, for a reaction, that you took note). Use a `body` without `addressed` to ask a question or explain why you are not doing it; the comment then stays open and is re-sent next turn. Only the user can resolve a comment; an addressed comment waits for them, and a user reply reopens it. Pass at least one of `body` or `addressed`.",
+      "Reply to one of the user's review comments on this session, and/or mark it addressed. Call it once per comment you have handled: pass `addressed: true` when the request in the comment is done, with a short `body` saying what you did (or, for a reaction, that you took note). Use a `body` without `addressed` to ask a question or explain why you are not doing it; the comment then stays open, and the user's reply sends it back to you. Only the user can resolve a comment; an addressed comment waits for them, and a user reply reopens it. Pass at least one of `body` or `addressed`.",
     parameters: Schema.Struct({
       commentId: described(
         Schema.String,
@@ -738,7 +738,7 @@ export const T3ReplyCommentTool = mutatingTool(
       addressed: Schema.optional(
         described(
           Schema.Boolean,
-          "Set to true once you have done what the comment asks; it stops the comment being re-sent to you. Omit or pass false to reply without closing it.",
+          "Set to true once you have done what the comment asks; the comment then waits for the user to resolve it. Omit or pass false to reply without closing it.",
         ),
       ),
     }),

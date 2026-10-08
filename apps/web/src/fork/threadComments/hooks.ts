@@ -14,7 +14,7 @@ import { useServerConfigs, useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadCommentsEnvironment } from "../../state/threadComments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { allowsEmptySend, countComments } from "./model";
+import { allowsEmptySend, countCommentDelivery, countComments } from "./model";
 import { useThreadCommentsUiStore } from "./uiStore";
 
 /** The setting is on and the thread's server speaks the fork RPCs. */
@@ -53,9 +53,10 @@ export function useThreadCommentsCommands() {
   const resolveAll = useAtomCommand(threadCommentsEnvironment.resolveAll);
   const remove = useAtomCommand(threadCommentsEnvironment.remove);
   const setDeliveryPaused = useAtomCommand(threadCommentsEnvironment.setDeliveryPaused);
+  const resend = useAtomCommand(threadCommentsEnvironment.resend);
   return useMemo(
-    () => ({ add, reply, setStatus, resolveAll, remove, setDeliveryPaused }),
-    [add, reply, setStatus, resolveAll, remove, setDeliveryPaused],
+    () => ({ add, reply, setStatus, resolveAll, remove, setDeliveryPaused, resend }),
+    [add, reply, setStatus, resolveAll, remove, setDeliveryPaused, resend],
   );
 }
 
@@ -71,15 +72,38 @@ export function useThreadCommentsActiveSummary(
 ): void {
   const setActive = useThreadCommentsUiStore((state) => state.setActive);
   const openCount = snapshot === null ? 0 : countComments(snapshot.comments).open;
+  const delivery = countCommentDelivery(snapshot?.comments ?? []);
   const deliveryPaused = snapshot?.deliveryPaused ?? false;
   const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
+  const { unsent: unsentCount, sent: sentCount, addressed: addressedCount } = delivery;
   useEffect(() => {
-    if (threadKey === null) {
+    if (threadKey === null || threadRef === null) {
       setActive(null);
       return;
     }
-    setActive({ threadKey, openCount, deliveryPaused, enabled, running });
-  }, [deliveryPaused, enabled, openCount, running, setActive, threadKey]);
+    setActive({
+      threadKey,
+      threadRef,
+      openCount,
+      unsentCount,
+      sentCount,
+      addressedCount,
+      deliveryPaused,
+      enabled,
+      running,
+    });
+    // threadRef is keyed by threadKey; a new object for the same thread changes nothing.
+  }, [
+    addressedCount,
+    deliveryPaused,
+    enabled,
+    openCount,
+    running,
+    sentCount,
+    setActive,
+    threadKey,
+    unsentCount,
+  ]);
   useEffect(() => () => setActive(null), [setActive]);
 }
 
@@ -90,7 +114,7 @@ export function useThreadCommentsEmptySendAllowed(): boolean {
       ? false
       : allowsEmptySend({
           enabled: state.active.enabled,
-          openCount: state.active.openCount,
+          unsentCount: state.active.unsentCount,
           deliveryPaused: state.active.deliveryPaused,
           running: state.active.running,
         }),

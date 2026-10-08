@@ -20,12 +20,14 @@ import {
   useThreadCommentsEnabled,
   useThreadCommentsSnapshot,
 } from "./hooks";
-import { composerStripText, countComments } from "./model";
+import { composerStripText, countCommentDelivery } from "./model";
+import { useCommentSendActions } from "./useCommentSendActions";
 import { useActiveThreadCommentsOpenCount } from "./uiStore";
 
 export { ThreadCommentsPanel } from "./ThreadCommentsPanel";
 export { ThreadCommentMarks } from "./ThreadCommentMarks";
 export { ThreadCommentsSelectionActions } from "./ThreadCommentsSelectionActions";
+export { ThreadCommentsComposerChip } from "./ThreadCommentsComposerChip";
 export type { AssistantSelectionToolbarExtras } from "./selectionToolbarExtras";
 export { threadCommentsEmptySendAllowed, useThreadCommentsEmptySendAllowed } from "./hooks";
 export { THREAD_COMMENT_PLACEHOLDER, THREAD_COMMENTS_EMPTY_SEND_TEXT } from "./model";
@@ -77,8 +79,9 @@ export function useThreadCommentsChatView({
     if (enabled || !commentsSurfaceOpen || threadRef === null) return;
     useRightPanelStore.getState().closeSurface(threadRef, THREAD_COMMENTS_SURFACE_KIND);
   }, [commentsSurfaceOpen, enabled, threadRef]);
-  const openCount = snapshot === null ? 0 : countComments(snapshot.comments).open;
+  const unsentCount = countCommentDelivery(snapshot?.comments ?? []).unsent;
   const deliveryPaused = snapshot?.deliveryPaused ?? false;
+  const { sendNow } = useCommentSendActions(threadRef);
 
   const openSurface = useCallback(() => {
     if (threadRef === null) return;
@@ -96,7 +99,8 @@ export function useThreadCommentsChatView({
     [commands, threadRef],
   );
 
-  const stripText = enabled ? composerStripText({ openCount, deliveryPaused }) : null;
+  // The strip carries only comments not sent yet; the chat box chip carries the rest.
+  const stripText = enabled ? composerStripText({ unsentCount, deliveryPaused }) : null;
   const strip = useMemo<ComposerBannerStackItem | null>(() => {
     if (stripText === null || threadRef === null) return null;
     return {
@@ -110,6 +114,11 @@ export function useThreadCommentsChatView({
           <Button size="xs" variant="ghost" onClick={openSurface}>
             Review
           </Button>
+          {deliveryPaused ? null : (
+            <Button size="xs" variant="warning-outline" onClick={sendNow}>
+              Send now
+            </Button>
+          )}
           {deliveryPaused ? (
             <Button size="xs" variant="ghost" onClick={() => setPaused(false)}>
               Resume
@@ -122,7 +131,7 @@ export function useThreadCommentsChatView({
         </>
       ),
     };
-  }, [deliveryPaused, openSurface, setPaused, stripText, threadRef]);
+  }, [deliveryPaused, openSurface, sendNow, setPaused, stripText, threadRef]);
 
   const bannerItemsWithStrip = useMemo(
     () => (strip === null ? bannerItems : [...bannerItems, strip]),

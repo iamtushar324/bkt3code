@@ -64,6 +64,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.threadCommentsResolveAll]: AuthOrchestrationOperateScope,
   [WS_FORK_METHODS.threadCommentsRemove]: AuthOrchestrationOperateScope,
   [WS_FORK_METHODS.threadCommentsSetDeliveryPaused]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.threadCommentsResend]: AuthOrchestrationOperateScope,
   // T3-CUSTOM(expbkt3): Claude account profiles per thread. Reading the host
   // snapshot or a thread's account is a read; choosing the account is operate.
   [WS_FORK_METHODS.claudeAccountsGetThread]: AuthOrchestrationReadScope,

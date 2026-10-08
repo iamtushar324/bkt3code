@@ -15,8 +15,9 @@ const pendingV2Migrations = [
   [1045, "SessionWebhooks"],
   [1046, "ScheduledTaskWebhooks"],
   [1047, "WebhookRelayDeliveries"],
-  [1048, "McpAppModelContext"],
-  [1049, "ThreadSnapshotWindowIndexes"],
+  [1048, "ThreadCommentLastSent"],
+  [1049, "McpAppModelContext"],
+  [1050, "ThreadSnapshotWindowIndexes"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -59,6 +60,7 @@ describe("fork V2 ledger upgrade", () => {
         pendingV2Migrations[4],
         pendingV2Migrations[5],
         pendingV2Migrations[6],
+        pendingV2Migrations[7],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);

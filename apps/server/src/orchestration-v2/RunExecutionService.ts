@@ -1,5 +1,5 @@
 // T3-CUSTOM(expbkt3): open review comments reach each new provider turn.
-import { appendOpenThreadComments } from "../threadcomments/turnContext.ts";
+import { prepareOpenThreadComments } from "../threadcomments/turnContext.ts";
 // T3-CUSTOM(expbkt3): capture this optional fork service before native workers hide their construction context.
 import { ThreadCommentsService } from "../threadcomments/ThreadCommentsService.ts";
 // T3-CUSTOM(expbkt3): the server plan policy reaches every provider.
@@ -1374,17 +1374,20 @@ export const layer: Layer.Layer<
           const compact =
             input.message.attachments.length === 0 &&
             input.message.text.trim().toLowerCase() === "/compact";
-          const commentText = Option.isSome(threadComments)
-            ? appendOpenThreadComments(input.run.threadId, input.message.text).pipe(
-                Effect.provideService(ThreadCommentsService, threadComments.value),
-              )
-            : Effect.succeed(input.message.text);
+          // T3-CUSTOM(expbkt3): BEGIN — comments are marked sent only once the turn starts.
+          const comments =
+            Option.isSome(threadComments) && !compact
+              ? yield* prepareOpenThreadComments(input.run.threadId, input.message.text).pipe(
+                  Effect.provideService(ThreadCommentsService, threadComments.value),
+                )
+              : { text: input.message.text, markSent: Effect.void };
+          // T3-CUSTOM(expbkt3): END
           const providerMessage = compact
             ? input.message
             : // T3-CUSTOM(expbkt3): command history stays unchanged; the agent gets the plan policy.
               {
                 ...input.message,
-                text: appendAgentPlanInstructions(yield* commentText, agentPlanSubmissionEnabled),
+                text: appendAgentPlanInstructions(comments.text, agentPlanSubmissionEnabled),
               };
           // A context read that fails costs the agent the apps' notes for
           // this turn, not the turn itself.
@@ -1438,6 +1441,8 @@ export const layer: Layer.Layer<
               ))
             : input.session.startTurn(turnInput);
           yield* Effect.andThen(shouldStart, startTurn).pipe(
+            // T3-CUSTOM(expbkt3): a turn that never starts leaves its comments unsent.
+            Effect.tap(() => comments.markSent),
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {
                 runId: input.run.id,

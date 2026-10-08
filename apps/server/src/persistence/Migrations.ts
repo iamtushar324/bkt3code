@@ -167,8 +167,8 @@ import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
 // T3-CUSTOM(expbkt3): upstream ships these as migrations 59-60. The legacy fork
 // block (33-42) and the shipped 1000+ lane already occupy those slots, so they
 // register at the next free IDs in the 1000+ lane; the files keep upstream names.
-import Migration1048 from "./Migrations/059_McpAppModelContext.ts";
-import Migration1049 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
+import Migration1049 from "./Migrations/059_McpAppModelContext.ts";
+import Migration1050 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -202,6 +202,8 @@ import Migration1049 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 // row already present in effect_sql_migrations.
 // T3-CUSTOM(expbkt3): owner-bound session callback storage.
 import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
+// T3-CUSTOM(expbkt3): review comments are sent once; this records when.
+import Migration1048 from "./Migrations/1048_ThreadCommentLastSent.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -322,9 +324,11 @@ const migrationEntries = [
   // T3-CUSTOM(expbkt3): upstream 57-58 remapped above the shipped 1045 migration.
   [1046, "ScheduledTaskWebhooks", Migration1046],
   [1047, "WebhookRelayDeliveries", Migration1047],
-  // T3-CUSTOM(expbkt3): upstream 59-60 remapped above the shipped 1047 migration.
-  [1048, "McpAppModelContext", Migration1048],
-  [1049, "ThreadSnapshotWindowIndexes", Migration1049],
+  // T3-CUSTOM(expbkt3): review comment send-once mark.
+  [1048, "ThreadCommentLastSent", Migration1048],
+  // T3-CUSTOM(expbkt3): upstream 59-60 remapped above the shipped 1048 migration.
+  [1049, "McpAppModelContext", Migration1049],
+  [1050, "ThreadSnapshotWindowIndexes", Migration1050],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

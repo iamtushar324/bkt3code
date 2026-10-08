@@ -146,6 +146,7 @@ export const WS_FORK_METHODS = {
   threadCommentsResolveAll: "threadComments.resolveAll",
   threadCommentsRemove: "threadComments.remove",
   threadCommentsSetDeliveryPaused: "threadComments.setDeliveryPaused",
+  threadCommentsResend: "threadComments.resend",
   subscribeThreadComments: "subscribeThreadComments",
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   claudeAccountsGetThread: "claudeAccounts.getThread",
@@ -467,6 +468,13 @@ export const WsThreadCommentsSetDeliveryPausedRpc = Rpc.make(
   },
 );
 
+/** Marks every open comment on the thread not sent, so the next turn carries them again. */
+export const WsThreadCommentsResendRpc = Rpc.make(WS_FORK_METHODS.threadCommentsResend, {
+  payload: ThreadCommentsThreadInput,
+  success: ThreadCommentsSnapshot,
+  error: threadCommentsError,
+});
+
 export const WsSubscribeThreadCommentsRpc = Rpc.make(WS_FORK_METHODS.subscribeThreadComments, {
   payload: ThreadCommentsThreadInput,
   success: ThreadCommentsSnapshot,
@@ -582,6 +590,7 @@ export const FORK_WS_RPCS = [
   WsThreadCommentsResolveAllRpc,
   WsThreadCommentsRemoveRpc,
   WsThreadCommentsSetDeliveryPausedRpc,
+  WsThreadCommentsResendRpc,
   WsSubscribeThreadCommentsRpc,
   WsThreadUsageGetRpc,
   WsPlanReviewGetRpc,
