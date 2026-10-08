@@ -232,7 +232,6 @@ describe("comment delivery counts and chip", () => {
   });
 });
 
-
 describe("message marker", () => {
   it("counts unresolved comments and takes the most urgent colour", () => {
     expect(
