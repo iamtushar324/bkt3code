@@ -43,6 +43,10 @@ interface ForkThreadMetadata {
   readonly priority?: import("@t3tools/contracts").ThreadPriority | null | undefined;
   readonly customGroup?: string | null | undefined;
   readonly linearIssueUrl?: string | null | undefined;
+  readonly linearLinksAdd?:
+    | ReadonlyArray<import("@t3tools/contracts").ThreadLinearLink>
+    | undefined;
+  readonly linearLinksRemove?: ReadonlyArray<string> | undefined;
   readonly mattermostThreadUrl?: string | null | undefined;
   readonly parentThreadId?: ThreadId | null | undefined;
   readonly parentEnvironmentId?: import("@t3tools/contracts").EnvironmentId | null | undefined;
@@ -591,6 +595,10 @@ function forkThreadMetadata(input: ForkThreadMetadata) {
     ...(input.priority === undefined ? {} : { priority: input.priority }),
     ...(input.customGroup === undefined ? {} : { customGroup: input.customGroup }),
     ...(input.linearIssueUrl === undefined ? {} : { linearIssueUrl: input.linearIssueUrl }),
+    ...(input.linearLinksAdd === undefined ? {} : { linearLinksAdd: input.linearLinksAdd }),
+    ...(input.linearLinksRemove === undefined
+      ? {}
+      : { linearLinksRemove: input.linearLinksRemove }),
     ...(input.mattermostThreadUrl === undefined
       ? {}
       : { mattermostThreadUrl: input.mattermostThreadUrl }),

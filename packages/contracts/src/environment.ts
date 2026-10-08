@@ -171,6 +171,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadCustomGroup: Schema.optionalKey(Schema.Boolean),
   /** T3-CUSTOM(expbkt3): durable manual Linear tags on thread metadata. */
   threadLinearIssue: Schema.optionalKey(Schema.Boolean),
+  /** T3-CUSTOM(expbkt3): several Linear tags per thread — `linearLinks` on thread
+      metadata, `linearLinksAdd`/`linearLinksRemove` on thread.meta.update. Absent
+      on older servers, which silently ignore those fields. */
+  threadLinearLinks: Schema.optionalKey(Schema.Boolean),
   /** T3-CUSTOM(expbkt3): durable Mattermost conversation link on thread metadata. */
   threadMattermostLink: Schema.optionalKey(Schema.Boolean),
   /** T3-CUSTOM(expbkt3): server exposes the native plan-review document API

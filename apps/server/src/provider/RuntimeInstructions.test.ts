@@ -10,6 +10,14 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("call list_thread_pull_requests and link any PR");
   });
 
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  it("asks for every Linear project, issue and sub-issue to be tagged", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Claude Code" });
+    expect(instructions).toContain("When the t3-code MCP server exposes t3_link_linear");
+    expect(instructions).toContain("the Linear project, the main issue, and every sub-issue");
+    expect(instructions).toContain("omit sessionId for this thread");
+  });
+
   it("keeps known model and effort metadata on one line", () => {
     expect(
       buildRuntimeInstructions({

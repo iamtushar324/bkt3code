@@ -23,6 +23,9 @@ it("exports self-documenting, provider-compatible T3 control tools", () => {
   expect(T3ControlToolkit.tools.t3_reply_comment).toBeDefined();
   // T3-CUSTOM(expbkt3): user presence.
   expect(T3ControlToolkit.tools.t3_user_presence).toBeDefined();
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  expect(T3ControlToolkit.tools.t3_link_linear).toBeDefined();
+  expect(T3ControlToolkit.tools.t3_unlink_linear).toBeDefined();
 
   for (const tool of tools) {
     const schema = Tool.getJsonSchema(tool) as {

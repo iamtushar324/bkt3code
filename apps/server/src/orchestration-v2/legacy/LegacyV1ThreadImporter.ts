@@ -43,6 +43,7 @@ import {
 } from "../ForkLegacyHistory.expbkt3.ts";
 import { forkLegacyProviderEvents } from "../ForkLegacyProviderImport.expbkt3.ts";
 import { forkThreadMetadata } from "../forkMetadata.expbkt3.ts";
+import { threadLinearLinks } from "@t3tools/shared/linearIssue";
 import * as EventSink from "../EventSink.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
 
@@ -574,6 +575,13 @@ const make = Effect.gen(function* () {
         customGroup: current.customGroup === undefined ? legacy.customGroup : current.customGroup,
         linearIssueUrl:
           current.linearIssueUrl === undefined ? legacy.linearIssueUrl : current.linearIssueUrl,
+        // T3-CUSTOM(expbkt3): the tag list follows the repaired single tag, not
+        // the empty list forkThreadMetadata reads off a tagless payload.
+        linearLinks: threadLinearLinks({
+          linearLinks: current.linearLinks,
+          linearIssueUrl:
+            current.linearIssueUrl === undefined ? legacy.linearIssueUrl : current.linearIssueUrl,
+        }),
         mattermostThreadUrl:
           current.mattermostThreadUrl === undefined
             ? legacy.mattermostThreadUrl

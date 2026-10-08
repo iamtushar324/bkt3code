@@ -178,6 +178,15 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Tag Linear work
+
+With the **BK sidebar** on (**Settings → BK Add-ons**), a session can carry
+several Linear tags: a project, main issues, and sub-issues, each with its own
+icon. Choose **Add Linear tag…** from a thread's menu and paste an issue or
+project URL; **Remove Linear tag** takes one off. Agents add tags with
+`t3_link_linear`. When a session has more than one tag, click the chip to see
+and open all of them.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads

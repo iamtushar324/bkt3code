@@ -1,7 +1,7 @@
 // T3-CUSTOM(expbkt3): one thread row in the mobile phase sidebar.
 //
 // The metadata lane is the whole point of this sidebar, so it carries the same
-// facts as web: repository, worktree codename, Linear tag, Mattermost mark, PR
+// facts as web: repository, worktree codename, Linear tags, Mattermost mark, PR
 // number, priority, owner, provider and relative time. Every one of those is
 // resolved by client-runtime; this component only lays them out.
 //
@@ -17,24 +17,24 @@ import {
   formatThreadPriority,
   phaseSidebarRowOwnerAvatarUserId,
   phaseSidebarWorktreeRowProps,
-  resolvePhaseSidebarLinearIssue,
   resolvePhaseSidebarMattermostLink,
   resolvePhaseSidebarProviderCode,
   type PhaseSidebarRow,
   type PhaseSidebarWorktreeView,
 } from "@t3tools/client-runtime/state/phase-sidebar";
 import { worktreeCodenameToneIndex } from "@t3tools/shared/worktreeCodename";
-import type { UserId } from "@t3tools/contracts";
+import type { LinearIssueStatusSummary, UserId } from "@t3tools/contracts";
 import {
   MenuView,
   type MenuAction,
   type MenuComponentRef,
   type NativeActionEvent,
 } from "@react-native-menu/menu";
-import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import {
   ActionSheetIOS,
+  Alert,
   Platform,
   Pressable,
   useWindowDimensions,
@@ -43,13 +43,23 @@ import {
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { EnvironmentBadge } from "../environments/EnvironmentBadge";
 import type { MobileEnvironmentAppearance } from "../environments/environmentAppearance";
 import { PhaseSidebarRowStatus } from "./PhaseSidebarRowStatus";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import {
+  phaseSidebarLinearChipLabel,
+  phaseSidebarLinearTagKinds,
+  phaseSidebarLinearTagMenuTitle,
+  resolvePhaseSidebarLinearTags,
+  type PhaseSidebarLinearTag,
+  type PhaseSidebarLinearTagKind,
+} from "./phaseSidebarLinearTags";
 import {
   phaseSidebarCheckoutToneClassName,
   phaseSidebarPriorityToneClassName,
@@ -79,6 +89,8 @@ export interface PhaseSidebarRowViewProps {
   readonly isActive: boolean;
   readonly subtreeCount: number;
   readonly isExpanded: boolean;
+  /** This row's own Linear issue statuses; they tell sub-issues apart. */
+  readonly linearStatuses: ReadonlyArray<LinearIssueStatusSummary>;
   /** Relative age ("2h") or, for a snoozed row, when it wakes. */
   readonly timeLabel: string;
   readonly onPress: (row: PhaseSidebarRow) => void;
@@ -120,6 +132,19 @@ const PRIMARY_SWIPE: Record<
 
 type IdentifiedMenuAction = MenuAction & { readonly id: string };
 
+/** One glyph per Linear tag kind, so a project, an issue and a sub-issue read apart. */
+const LINEAR_TAG_ICON: Record<PhaseSidebarLinearTagKind, AppSymbolName> = {
+  project: "cube",
+  issue: "ticket",
+  "sub-issue": "arrow.turn.down.right",
+};
+
+function openLinearTag(tag: PhaseSidebarLinearTag) {
+  void tryOpenExternalUrl(tag.url, "linear-link").then((opened) => {
+    if (!opened) Alert.alert("Unable to open Linear", "The Linear link could not be opened.");
+  });
+}
+
 export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   props: PhaseSidebarRowViewProps,
 ) {
@@ -129,9 +154,17 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   const { width: windowWidth } = useWindowDimensions();
   const screenColor = String(useUniwindTheme()["--color-screen"]);
   const worktree = phaseSidebarWorktreeRowProps(worktreeView, thread.worktreePath);
-  const linearIssue = row.linearIssueSupported
-    ? resolvePhaseSidebarLinearIssue(thread.branch, thread.linearIssueUrl)
-    : null;
+  const { linearStatuses } = props;
+  const linearTags = useMemo(
+    () =>
+      row.linearIssueSupported
+        ? resolvePhaseSidebarLinearTags(
+            { branch: thread.branch, linearLinks: thread.linearLinks },
+            linearStatuses,
+          )
+        : [],
+    [linearStatuses, row.linearIssueSupported, thread.branch, thread.linearLinks],
+  );
   const mattermost = row.mattermostLinkSupported
     ? resolvePhaseSidebarMattermostLink(thread.mattermostThreadUrl)
     : null;
@@ -142,6 +175,46 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   const providerCode = resolvePhaseSidebarProviderCode(row.providerKind);
   const priority = thread.priority ?? null;
   const actionsMenuRef = useRef<MenuComponentRef>(null);
+  const linearMenuRef = useRef<MenuComponentRef>(null);
+  // T3-CUSTOM(expbkt3): one tag opens at once; several open a list to pick from,
+  // the same native menu the row's own actions use.
+  const linearMenuActions = useMemo<MenuAction[]>(
+    () =>
+      linearTags.map((tag, index) => ({
+        id: String(index),
+        title: phaseSidebarLinearTagMenuTitle(tag),
+      })),
+    [linearTags],
+  );
+  const handleLinearMenuAction = useCallback(
+    (event: NativeActionEvent) => {
+      const tag = linearTags[Number(event.nativeEvent.event)];
+      if (tag !== undefined) openLinearTag(tag);
+    },
+    [linearTags],
+  );
+  const handleLinearPress = useCallback(() => {
+    const only = linearTags.length === 1 ? linearTags[0] : undefined;
+    if (only !== undefined) {
+      openLinearTag(only);
+      return;
+    }
+    if (Platform.OS !== "ios") {
+      linearMenuRef.current?.show();
+      return;
+    }
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        cancelButtonIndex: linearTags.length,
+        options: [...linearTags.map(phaseSidebarLinearTagMenuTitle), "Cancel"],
+        title: "Open in Linear",
+      },
+      (selectedIndex) => {
+        const tag = linearTags[selectedIndex];
+        if (tag !== undefined) openLinearTag(tag);
+      },
+    );
+  }, [linearTags]);
 
   const handlePress = useCallback(() => props.onPress(row), [props, row]);
   const handleLayout = useCallback(
@@ -399,13 +472,14 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
                     {worktree.worktreeSharedCount > 0 ? ` ×${worktree.worktreeSharedCount}` : ""}
                   </Text>
                 )}
-                {linearIssue === null ? null : (
-                  <Text
-                    className="shrink-0 font-t3-mono text-[11px] text-foreground-muted"
-                    numberOfLines={1}
-                  >
-                    {linearIssue.identifier}
-                  </Text>
+                {linearTags.length === 0 ? null : (
+                  <LinearTagChip
+                    menuActions={linearMenuActions}
+                    menuRef={linearMenuRef}
+                    onPress={handleLinearPress}
+                    onPressMenuAction={handleLinearMenuAction}
+                    tags={linearTags}
+                  />
                 )}
                 {mattermost === null ? null : (
                   <Text className="shrink-0 font-t3-mono text-[11px] text-adaptive-sky-700-300">
@@ -485,3 +559,53 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
     </ThreadSwipeable>
   );
 });
+
+/**
+ * T3-CUSTOM(expbkt3): the row's Linear chip: one glyph per kind present, the
+ * lead tag's key, and "+N" for the rest. Android needs the MenuView mounted to
+ * show the pick list; iOS uses an action sheet, as the row's actions do.
+ */
+function LinearTagChip(props: {
+  readonly tags: ReadonlyArray<PhaseSidebarLinearTag>;
+  readonly menuActions: MenuAction[];
+  readonly menuRef: RefObject<MenuComponentRef | null>;
+  readonly onPress: () => void;
+  readonly onPressMenuAction: (event: NativeActionEvent) => void;
+}) {
+  const { tags } = props;
+  const label = phaseSidebarLinearChipLabel(tags);
+  const chip = (
+    <Pressable
+      accessibilityHint={tags.length > 1 ? "Lists the Linear tags to open" : "Opens in Linear"}
+      accessibilityLabel={`Linear: ${tags.map(phaseSidebarLinearTagMenuTitle).join(", ")}`}
+      accessibilityRole="button"
+      className="shrink flex-row items-center gap-0.5"
+      hitSlop={6}
+      onPress={props.onPress}
+    >
+      {phaseSidebarLinearTagKinds(tags).map((kind) => (
+        <SymbolView
+          key={kind}
+          name={LINEAR_TAG_ICON[kind]}
+          size={10}
+          tintColorClassName="accent-foreground-muted"
+          type="monochrome"
+        />
+      ))}
+      <Text className="shrink font-t3-mono text-[11px] text-foreground-muted" numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+  if (Platform.OS === "ios" || tags.length < 2) return chip;
+  return (
+    <MenuView
+      actions={props.menuActions}
+      onPressAction={props.onPressMenuAction}
+      ref={props.menuRef}
+      title="Open in Linear"
+    >
+      {chip}
+    </MenuView>
+  );
+}

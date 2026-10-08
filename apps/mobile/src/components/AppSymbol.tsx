@@ -117,6 +117,7 @@ import IconCircleMinus from "@tabler/icons-react-native/IconCircleMinus";
 import IconCirclePlus from "@tabler/icons-react-native/IconCirclePlus";
 import IconClipboardList from "@tabler/icons-react-native/IconClipboardList";
 import IconCpu from "@tabler/icons-react-native/IconCpu";
+import IconCornerDownRight from "@tabler/icons-react-native/IconCornerDownRight";
 import IconCurrencyDollar from "@tabler/icons-react-native/IconCurrencyDollar";
 import IconFlask from "@tabler/icons-react-native/IconFlask";
 import IconListDetails from "@tabler/icons-react-native/IconListDetails";
@@ -247,6 +248,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "xmark.circle.fill": IconCircleXFilled,
   // T3-CUSTOM(expbkt3): BEGIN fork-only symbols (environment badges, members,
   // phase sidebar, plan mode and review, source-control users, cost, quotes).
+  "arrow.turn.down.right": IconCornerDownRight,
   "bolt.fill": IconBolt,
   "cloud.fill": IconCloud,
   cpu: IconCpu,

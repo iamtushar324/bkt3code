@@ -53,6 +53,11 @@ import {
   phaseSidebarWorktreeRowProps,
   resolvePhaseSidebarDisplayPhase,
   resolvePhaseSidebarLinearIssue,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  phaseSidebarLinearIssueIdentifiers,
+  phaseSidebarLinearTagRefs,
+  resolvePhaseSidebarLinearTags,
+  samePhaseSidebarLinearIssueStatus,
   resolvePhaseSidebarPhase,
   resolvePhaseSidebarProviderCode,
   resolvePhaseSidebarTraversalTarget,
@@ -639,6 +644,7 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     priority: null,
     customGroup: null,
     linearIssueUrl: null,
+    linearLinks: [],
     mattermostThreadUrl: null,
     parentThreadId: null,
     parentEnvironmentId: null,
@@ -1125,6 +1131,102 @@ describe("phase sidebar metadata and filters", () => {
     });
     expect(resolvePhaseSidebarLinearIssue(null, "https://example.com/TEC-811")).toBeNull();
   });
+
+  // T3-CUSTOM(expbkt3): BEGIN — Linear tags on a session.
+  const linearStatus = (
+    identifier: string,
+    fields: { status?: string; title?: string; parentIdentifier?: string | null } = {},
+  ) => ({
+    identifier,
+    url: `https://linear.app/beknown/issue/${identifier}`,
+    status: fields.status ?? null,
+    statusType: null,
+    updatedAt: null,
+    error: null,
+    title: fields.title ?? null,
+    parentIdentifier: fields.parentIdentifier ?? null,
+  });
+
+  it("shows one issue tag as its key and status", () => {
+    const tags = resolvePhaseSidebarLinearTags(
+      phaseSidebarLinearTagRefs(null, [
+        { url: "https://linear.app/beknown/issue/TEC-1", kind: "issue" },
+      ]),
+      [linearStatus("TEC-1", { status: "In Progress" })],
+    );
+    expect(tags?.label).toBe("TEC-1 (In Progress)");
+    expect(tags?.entries.map((entry) => entry.kind)).toEqual(["issue"]);
+  });
+
+  it("shows a lone project tag by the name in its slug", () => {
+    const tags = resolvePhaseSidebarLinearTags(
+      phaseSidebarLinearTagRefs(null, [
+        { url: "https://linear.app/beknown/project/bk-sidebar-0123abcd4567", kind: "project" },
+      ]),
+      [],
+    );
+    expect(tags?.label).toBe("bk sidebar");
+    expect(tags?.primary.kind).toBe("project");
+  });
+
+  it("orders project, main issue, sub-issue and leads the chip with the main issue", () => {
+    const tags = resolvePhaseSidebarLinearTags(
+      phaseSidebarLinearTagRefs("linear/tec-9-ignored", [
+        { url: "https://linear.app/beknown/issue/TEC-2", kind: "issue" },
+        { url: "https://linear.app/beknown/project/bk-sidebar-0123abcd4567", kind: "project" },
+        { url: "https://linear.app/beknown/issue/TEC-1", kind: "issue" },
+      ]),
+      [
+        linearStatus("TEC-2", { title: "Sub task", parentIdentifier: "TEC-1" }),
+        linearStatus("TEC-1", { status: "Todo" }),
+      ],
+    );
+    expect(tags?.entries.map((entry) => [entry.kind, entry.label])).toEqual([
+      ["project", "bk sidebar"],
+      ["issue", "TEC-1"],
+      ["sub-issue", "TEC-2"],
+    ]);
+    expect(tags?.primary.label).toBe("TEC-1");
+    expect(tags?.label).toBe("TEC-1 +2");
+    expect(tags?.entries.every((entry) => entry.manual)).toBe(true);
+  });
+
+  it("falls back to the branch issue only when no tag is stored", () => {
+    const tags = resolvePhaseSidebarLinearTags(
+      phaseSidebarLinearTagRefs("linear/tec-9-slug", []),
+      [],
+    );
+    expect(tags?.entries).toHaveLength(1);
+    expect(tags?.primary).toMatchObject({ label: "TEC-9", manual: false, statusText: "syncing…" });
+    expect(
+      resolvePhaseSidebarLinearTags(phaseSidebarLinearTagRefs("feature/x", []), []),
+    ).toBeNull();
+  });
+
+  it("collects every issue key for the batched status request, never project slugs", () => {
+    expect(
+      phaseSidebarLinearIssueIdentifiers(
+        phaseSidebarLinearTagRefs(null, [
+          { url: "https://linear.app/beknown/issue/TEC-1", kind: "issue" },
+          { url: "https://linear.app/beknown/project/bk-sidebar-0123abcd4567", kind: "project" },
+          { url: "https://linear.app/beknown/issue/TEC-2/some-title", kind: "issue" },
+        ]),
+      ),
+    ).toEqual(["TEC-1", "TEC-2"]);
+    expect(
+      phaseSidebarLinearIssueIdentifiers(phaseSidebarLinearTagRefs("linear/tec-9", [])),
+    ).toEqual(["TEC-9"]);
+  });
+
+  it("treats a refetched status with the same fields as unchanged", () => {
+    const status = linearStatus("TEC-1", { status: "Todo" });
+    expect(samePhaseSidebarLinearIssueStatus(status, { ...status })).toBe(true);
+    expect(
+      samePhaseSidebarLinearIssueStatus(status, { ...status, parentIdentifier: "TEC-0" }),
+    ).toBe(false);
+    expect(samePhaseSidebarLinearIssueStatus(status, { ...status, status: "Done" })).toBe(false);
+  });
+  // T3-CUSTOM(expbkt3): END
 
   it("formats the newest relative time as zero minutes", () => {
     expect(compactPhaseSidebarTimeLabel("just now")).toBe("0m");

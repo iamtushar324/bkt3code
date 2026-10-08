@@ -26,7 +26,13 @@ import {
   type RuntimeMode,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { parseLinearIssueUrl } from "@t3tools/shared/linearIssue";
+import {
+  parseLinearIssueUrl,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  parseLinearLinkUrl,
+  threadLinearLinks,
+  type LinearLinkRef,
+} from "@t3tools/shared/linearIssue";
 // T3-CUSTOM(expbkt3): saved new-thread defaults for created sessions.
 import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import {
@@ -363,6 +369,84 @@ const resolveSessionId = Effect.fn("T3ControlToolkit.resolveSessionId")(function
   );
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — Linear tags on a session.
+/**
+ * The session a Linear tag tool acts on. As with link_pull_request, an omitted
+ * id (or the caller's own) is the calling agent's session even when its
+ * credential is user-wide — an agent rarely knows its own session id. Any other
+ * session is authorized exactly as the other control tools authorize it.
+ */
+const resolveTaggedSessionId = Effect.fn("T3ControlToolkit.resolveTaggedSessionId")(function* (
+  operation: string,
+  requested: ThreadId | undefined,
+) {
+  const scope = yield* requireCapability(operation, "t3.control");
+  const own = scope.thread?.threadId;
+  if (own !== undefined && (requested === undefined || requested === own)) return own;
+  return yield* resolveSessionId(operation, requested, "t3.control");
+});
+
+/** Every URL as a tag, canonicalised and deduplicated; one bad URL fails the call. */
+const parseLinearLinkInputs = Effect.fn("T3ControlToolkit.parseLinearLinkInputs")(function* (
+  operation: string,
+  urls: ReadonlyArray<string>,
+) {
+  const parsed = urls.map((url) => ({ url, link: parseLinearLinkUrl(url) }));
+  const invalid = parsed.filter((entry) => entry.link === null).map((entry) => entry.url);
+  if (invalid.length > 0) {
+    return yield* new T3ControlToolError({
+      operation,
+      message: `${invalid.join(", ")} ${invalid.length === 1 ? "is not a Linear issue or project URL" : "are not Linear issue or project URLs"}. Pass URLs like https://linear.app/acme/issue/ENG-42 or https://linear.app/acme/project/checkout-revamp-0a1b2c3d4e5f.`,
+    });
+  }
+  const links = new Map<string, LinearLinkRef>();
+  for (const { link } of parsed) {
+    if (link !== null && !links.has(link.url)) links.set(link.url, link);
+  }
+  return [...links.values()];
+});
+
+const readLinearLinks = Effect.fn("T3ControlToolkit.readLinearLinks")(function* (
+  operation: string,
+  sessionId: ThreadId,
+) {
+  const query = yield* ProjectionSnapshotQuery;
+  const shell = yield* query.getThreadShellById(sessionId).pipe(mapControlError(operation));
+  if (Option.isNone(shell)) {
+    return yield* new T3ControlToolError({
+      operation,
+      message: `T3 session ${sessionId} was not found.`,
+    });
+  }
+  return threadLinearLinks(shell.value);
+});
+
+const dispatchLinearChange = Effect.fn("T3ControlToolkit.dispatchLinearChange")(function* (
+  operation: string,
+  sessionId: ThreadId,
+  change:
+    | { readonly linearLinksAdd: ReadonlyArray<LinearLinkRef> }
+    | { readonly linearLinksRemove: ReadonlyArray<string> },
+) {
+  const dispatcher = yield* TurnStartBootstrap;
+  const crypto = yield* Crypto.Crypto;
+  const commandId = yield* makeCommandId(crypto, operation);
+  // Add and remove are applied against the stored list under the thread's
+  // lock, so a concurrent tag from the sidebar or another agent is kept.
+  const result = yield* dispatcher
+    .dispatch({
+      type: "thread.meta.update",
+      commandId,
+      threadId: sessionId,
+      ...("linearLinksAdd" in change
+        ? { linearLinksAdd: change.linearLinksAdd.map(({ url, kind }) => ({ url, kind })) }
+        : { linearLinksRemove: [...change.linearLinksRemove] }),
+    })
+    .pipe(mapControlError(operation));
+  return result.sequence;
+});
+// T3-CUSTOM(expbkt3): END
+
 // Status is derived from upstream's projected provider session and latest turn.
 function sessionStatus(thread: OrchestrationThreadShell | OrchestrationThread) {
   const session = thread.session;
@@ -468,6 +552,8 @@ function sessionSummary(
     priority: thread.priority ?? null,
     // T3-CUSTOM(expbkt3): custom sidebar group (null = ungrouped).
     customGroup: thread.customGroup ?? null,
+    // T3-CUSTOM(expbkt3): Linear tags (projects, issues, sub-issues).
+    linearLinks: threadLinearLinks(thread),
     // T3-CUSTOM(expbkt3): session lineage. Lets an agent inspect its own
     // subtree instead of re-spawning work it already delegated.
     parentSessionId: thread.parentThreadId ?? null,
@@ -1367,6 +1453,52 @@ const handlers = {
   }),
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): BEGIN — Linear tags on a session.
+  // Both tools send the whole request and let the decider dedupe and cap it
+  // under the thread's lock, then report what the stored list now holds, so a
+  // tag written concurrently by the sidebar or another agent is never lost or
+  // misreported.
+  t3_link_linear: Effect.fn("T3ControlToolkit.linkLinear")(function* (input) {
+    const operation = "link-linear";
+    const sessionId = yield* resolveTaggedSessionId(operation, input.sessionId);
+    const links = yield* parseLinearLinkInputs(operation, input.urls);
+    const before = yield* readLinearLinks(operation, sessionId);
+    const sequence = yield* dispatchLinearChange(operation, sessionId, { linearLinksAdd: links });
+    const after = yield* readLinearLinks(operation, sessionId);
+    const urls = links.map((link) => link.url);
+    const has = (list: typeof before, url: string) => list.some((entry) => entry.url === url);
+    return {
+      sessionId,
+      linearLinks: after,
+      added: urls.filter((url) => !has(before, url) && has(after, url)),
+      alreadyLinked: urls.filter((url) => has(before, url)),
+      // Left out because the session already holds the maximum number of tags.
+      notAdded: urls.filter((url) => !has(before, url) && !has(after, url)),
+      sequence,
+    };
+  }),
+
+  t3_unlink_linear: Effect.fn("T3ControlToolkit.unlinkLinear")(function* (input) {
+    const operation = "unlink-linear";
+    const sessionId = yield* resolveTaggedSessionId(operation, input.sessionId);
+    const links = yield* parseLinearLinkInputs(operation, input.urls);
+    const before = yield* readLinearLinks(operation, sessionId);
+    const urls = links.map((link) => link.url);
+    const sequence = yield* dispatchLinearChange(operation, sessionId, {
+      linearLinksRemove: urls,
+    });
+    const after = yield* readLinearLinks(operation, sessionId);
+    const has = (list: typeof before, url: string) => list.some((entry) => entry.url === url);
+    return {
+      sessionId,
+      linearLinks: after,
+      removed: urls.filter((url) => has(before, url) && !has(after, url)),
+      notLinked: urls.filter((url) => !has(before, url)),
+      sequence,
+    };
+  }),
+  // T3-CUSTOM(expbkt3): END
+
   t3_create_session: (input) => createSession(input),
 
   // T3-CUSTOM(expbkt3): the submitted document becomes the session's proposed
@@ -1565,6 +1697,9 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
   ),
   t3_link_session: writesSession(handlers.t3_link_session),
   t3_unlink_session: writesSession(handlers.t3_unlink_session),
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  t3_link_linear: writesSession(handlers.t3_link_linear),
+  t3_unlink_linear: writesSession(handlers.t3_unlink_linear),
   t3_submit_plan: writesSession(handlers.t3_submit_plan),
   t3_dispatch_command: McpToolAccess.writesEnvironment((input) =>
     handlers.t3_dispatch_command(input),
@@ -1626,4 +1761,7 @@ export const __testing = {
   replyComment: handlers.t3_reply_comment,
   // T3-CUSTOM(expbkt3): user presence.
   userPresence: handlers.t3_user_presence,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  linkLinear: handlers.t3_link_linear,
+  unlinkLinear: handlers.t3_unlink_linear,
 };

@@ -32,6 +32,7 @@ import {
   type ThreadContextExportResult,
   type ThreadId,
 } from "@t3tools/contracts";
+import { threadLinearLinks, type StoredLinearLink } from "@t3tools/shared/linearIssue";
 import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -164,6 +165,7 @@ interface ArchiveExportSource {
   readonly archivedAt: string | null;
   readonly deletedAt: string | null;
   readonly linearIssueUrl: string | null;
+  readonly linearLinks: ReadonlyArray<StoredLinearLink>;
   readonly parentThreadId: string | null;
 }
 
@@ -181,6 +183,7 @@ function shellToExportSource(thread: OrchestrationThreadShell): ArchiveExportSou
     // Snapshots never contain soft-deleted threads.
     deletedAt: null,
     linearIssueUrl: thread.linearIssueUrl ?? null,
+    linearLinks: threadLinearLinks(thread),
     parentThreadId: thread.parentThreadId ?? null,
   };
 }
@@ -198,6 +201,7 @@ function rowToExportSource(row: OrchestrationV2AppThreadJson): ArchiveExportSour
     archivedAt: row.archivedAt === null ? null : DateTime.formatIso(row.archivedAt),
     deletedAt: row.deletedAt === null ? null : DateTime.formatIso(row.deletedAt),
     linearIssueUrl: row.linearIssueUrl ?? null,
+    linearLinks: threadLinearLinks(row),
     parentThreadId: row.parentThreadId ?? null,
   };
 }
@@ -748,6 +752,7 @@ export const make = Effect.gen(function* () {
           deletedAt: source.deletedAt,
           exportedAt,
           linearIssueUrl: source.linearIssueUrl,
+          linearLinks: source.linearLinks,
           parentThreadId: source.parentThreadId,
           messageCount: threadMessages.length,
           activityCount: threadActivities.length,

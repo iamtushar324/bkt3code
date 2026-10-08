@@ -14,6 +14,8 @@ import {
   ThreadId,
   ThreadPriority,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  THREAD_LINEAR_LINKS_MAX,
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
   THREAD_COMMENT_MAX_BODY_LENGTH,
 } from "@t3tools/contracts";
@@ -231,7 +233,7 @@ export const T3SendPromptTool = mutatingTool(
 export const T3UpdateSessionTool = mutatingTool(
   Tool.make("t3_update_session", {
     description:
-      "Update T3 session metadata and defaults. Supports title, Linear issue tag, custom group, priority, model selection, runtime/sandbox mode, interaction mode (plan/default), and branch. Only supplied fields change. Use it to name the session once you know what the work is, to tag the Linear ticket it belongs to, and to file it in a custom sidebar group; pull requests are tagged separately with link_pull_request.",
+      "Update T3 session metadata and defaults. Supports title, Linear issue tag, custom group, priority, model selection, runtime/sandbox mode, interaction mode (plan/default), and branch. Only supplied fields change. Use it to name the session once you know what the work is and to file it in a custom sidebar group; tag Linear items with t3_link_linear and pull requests with link_pull_request.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       title: Schema.optional(
@@ -272,7 +274,7 @@ export const T3UpdateSessionTool = mutatingTool(
       linearIssueUrl: Schema.optional(
         described(
           Schema.NullOr(Schema.String),
-          "Linear issue URL to tag this session with, for example https://linear.app/acme/issue/ENG-42, or null to clear the tag. The key and its live status then appear beside the session in the sidebar. Only linear.app issue URLs are accepted.",
+          "Linear issue URL to make this session's main issue tag (it moves to the front of the session's Linear tags, added if missing), for example https://linear.app/acme/issue/ENG-42, or null to remove every Linear tag. Prefer t3_link_linear, which takes several issues and projects at once, and t3_unlink_linear to remove one tag. Only linear.app issue URLs are accepted.",
         ),
       ),
       // T3-CUSTOM(expbkt3): custom sidebar group.
@@ -661,6 +663,47 @@ export const T3UnlinkSessionTool = mutatingTool(
 );
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — Linear tags on a session, a pair of verbs like
+// link_pull_request / unlink_pull_request. A session carries several tags.
+const linearUrls = (description: string) =>
+  described(
+    Schema.Array(Schema.String).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(THREAD_LINEAR_LINKS_MAX),
+    ),
+    description,
+  );
+
+export const T3LinkLinearTool = mutatingTool(
+  Tool.make("t3_link_linear", {
+    description: `Tag a T3 session with one or more Linear items: a project, issues, sub-issues. Tag every Linear item the session works on — the project it belongs to, the main issue, and every sub-issue — as soon as you know it, the same way you link pull requests with link_pull_request. Each tag shows beside the session in the sidebar with its live status. Tags are added to the ones already there, and linking an item twice is safe. A session holds at most ${THREAD_LINEAR_LINKS_MAX} tags; the result lists what was added, what was already linked, and anything left out because the list is full. Omit sessionId for your own session.`,
+    parameters: Schema.Struct({
+      ...optionalSessionId,
+      urls: linearUrls(
+        "Linear URLs to tag the session with, for example https://linear.app/acme/issue/ENG-42 or https://linear.app/acme/project/checkout-revamp-0a1b2c3d4e5f. Only linear.app issue and project URLs are accepted.",
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Tag T3 session with Linear items"),
+);
+
+export const T3UnlinkLinearTool = mutatingTool(
+  Tool.make("t3_unlink_linear", {
+    description:
+      "Remove Linear tags (projects, issues, sub-issues) from a T3 session, for example a ticket that turned out to belong to other work. Other tags stay. Removing a tag the session does not have is safe. Omit sessionId for your own session.",
+    parameters: Schema.Struct({
+      ...optionalSessionId,
+      urls: linearUrls("Linear issue or project URLs to remove from the session's tags."),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Remove Linear tags from T3 session"),
+);
+// T3-CUSTOM(expbkt3): END
+
 // T3-CUSTOM(expbkt3): BEGIN — agent-rendered UI surfaces in chat.
 //
 // Named to stay clear of the provider adapters' substring classifier: anything
@@ -794,6 +837,9 @@ export const T3ControlToolkit = Toolkit.make(
   // T3-CUSTOM(expbkt3): session lineage.
   T3LinkSessionTool,
   T3UnlinkSessionTool,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  T3LinkLinearTool,
+  T3UnlinkLinearTool,
   T3SubmitPlanTool,
   T3DispatchCommandTool,
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.

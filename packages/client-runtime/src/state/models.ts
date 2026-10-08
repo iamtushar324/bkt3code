@@ -1,5 +1,7 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import { threadLinearLinks } from "@t3tools/shared/linearIssue";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
@@ -94,6 +96,8 @@ export interface EnvironmentThreadShell {
   readonly priority: import("@t3tools/contracts").ThreadPriority | null;
   readonly customGroup: string | null;
   readonly linearIssueUrl: string | null;
+  /** Every Linear tag, with the single pre-multi-tag `linearIssueUrl` folded in. */
+  readonly linearLinks: ReadonlyArray<import("@t3tools/contracts").ThreadLinearLink>;
   readonly mattermostThreadUrl: string | null;
   readonly parentThreadId: ThreadId | null;
   readonly parentEnvironmentId: EnvironmentId | null;
@@ -247,6 +251,7 @@ export function presentThreadShell(
     priority: thread.priority ?? null,
     customGroup: thread.customGroup ?? null,
     linearIssueUrl: thread.linearIssueUrl ?? null,
+    linearLinks: threadLinearLinks(thread),
     mattermostThreadUrl: thread.mattermostThreadUrl ?? null,
     parentThreadId: thread.parentThreadId ?? thread.lineage.parentThreadId ?? null,
     parentEnvironmentId: thread.parentEnvironmentId ?? null,

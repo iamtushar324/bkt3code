@@ -41,10 +41,17 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { type SidebarThreadSortOrder, type UserId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  type LinearIssueStatusSummary,
+  type SidebarThreadSortOrder,
+  type UserId,
+} from "@t3tools/contracts";
 import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -73,6 +80,15 @@ import {
 import { usePhaseSidebarDrag } from "./usePhaseSidebarDrag";
 import type { PendingDraftTask } from "../../state/pending-new-tasks-model";
 import { PhaseSidebarDraftHeader } from "./PhaseSidebarDraftHeader";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import { linearIssueStatusesEnvironment } from "../../state/linearIssues";
+import { useEnvironmentQuery } from "../../state/query";
+import {
+  mergePhaseSidebarLinearStatuses,
+  phaseSidebarLinearStatusRequests,
+  pickPhaseSidebarLinearStatuses,
+  type PhaseSidebarLinearStatusMap,
+} from "./phaseSidebarLinearTags";
 import {
   buildPhaseSidebarDraftItems,
   PHASE_SIDEBAR_DRAFTS_SECTION_KEY,
@@ -165,6 +181,29 @@ function resolveRowTimeLabel(row: PhaseSidebarRow, shelf: PhaseSidebarRowShelf, 
   return compactPhaseSidebarTimeLabel(relativeTime(row.thread.updatedAt));
 }
 
+const NO_LINEAR_STATUSES: ReadonlyArray<LinearIssueStatusSummary> = [];
+
+// T3-CUSTOM(expbkt3): one batched Linear status request per environment, so a
+// long list does not issue one request per row. It tells sub-issues from main
+// issues and titles each tag; until it answers, every issue reads as a main one.
+function LinearIssueStatusProbe(props: {
+  readonly environmentId: EnvironmentId;
+  readonly identifiers: ReadonlyArray<string>;
+  readonly onStatus: (
+    environmentId: EnvironmentId,
+    issues: ReadonlyArray<LinearIssueStatusSummary>,
+  ) => void;
+}) {
+  const { environmentId, identifiers, onStatus } = props;
+  const { data } = useEnvironmentQuery(
+    linearIssueStatusesEnvironment({ environmentId, input: { identifiers } }),
+  );
+  useEffect(() => {
+    if (data !== null) onStatus(environmentId, data.issues);
+  }, [data, environmentId, onStatus]);
+  return null;
+}
+
 export function PhaseSidebarList(props: PhaseSidebarListProps) {
   const filters = props.filters ?? EMPTY_PHASE_SIDEBAR_FILTERS;
   const sort = props.sort ?? DEFAULT_PHASE_SIDEBAR_SORT;
@@ -195,6 +234,40 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
   // "Now" is fixed per row set so labels and presets stay stable across a
   // scroll — the same cadence the stock list uses.
   const nowIso = useMemo(() => new Date().toISOString(), [props.rows]);
+
+  // T3-CUSTOM(expbkt3): BEGIN — Linear status for every issue tag on screen.
+  const linearStatusRequests = useMemo(
+    () =>
+      phaseSidebarLinearStatusRequests(
+        props.rows.filter((row) => row.linearIssueSupported).map((row) => row.thread),
+      ),
+    [props.rows],
+  );
+  const [linearStatuses, setLinearStatuses] = useState<PhaseSidebarLinearStatusMap>(
+    () => new Map(),
+  );
+  const recordLinearStatuses = useCallback(
+    (environmentId: EnvironmentId, issues: ReadonlyArray<LinearIssueStatusSummary>) => {
+      setLinearStatuses((current) =>
+        mergePhaseSidebarLinearStatuses(current, environmentId, issues),
+      );
+    },
+    [],
+  );
+  // Each row gets only its own summaries, with the same array identity until
+  // one of them changes, so a status update re-renders only the rows it touches.
+  const rowLinearStatusesRef = useRef(new Map<string, ReadonlyArray<LinearIssueStatusSummary>>());
+  const rowLinearStatuses = useMemo(() => {
+    const previous = rowLinearStatusesRef.current;
+    const next = new Map<string, ReadonlyArray<LinearIssueStatusSummary>>();
+    for (const row of props.rows) {
+      const key = `${row.thread.environmentId}:${row.thread.id}`;
+      next.set(key, pickPhaseSidebarLinearStatuses(linearStatuses, row.thread, previous.get(key)));
+    }
+    rowLinearStatusesRef.current = next;
+    return next;
+  }, [linearStatuses, props.rows]);
+  // T3-CUSTOM(expbkt3): END
 
   const worktreeView = useMemo(
     // Resolved across the whole set, not per row: codenames disambiguate against
@@ -535,6 +608,14 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
 
   return (
     <SwipeableScrollGateProvider enabled={swipeEnabled}>
+      {linearStatusRequests.map(({ environmentId, identifiers }) => (
+        <LinearIssueStatusProbe
+          environmentId={environmentId}
+          identifiers={identifiers}
+          key={`linear:${environmentId}:${identifiers.join(",")}`}
+          onStatus={recordLinearStatuses}
+        />
+      ))}
       <FlatList
         ListEmptyComponent={props.ListEmptyComponent}
         ListHeaderComponent={props.ListHeaderComponent}
@@ -574,6 +655,11 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
               rowKey={item.node.key}
               isActive={props.activeThreadKey === item.node.key}
               isExpanded={isExpanded(item.node.key)}
+              linearStatuses={
+                rowLinearStatuses.get(
+                  `${item.node.row.thread.environmentId}:${item.node.row.thread.id}`,
+                ) ?? NO_LINEAR_STATUSES
+              }
               actions={rowActionsFor(item.node.row, item.node.key, item.node.depth)}
               onPress={props.onSelectRow}
               onPressAction={props.onRowAction}

@@ -70,6 +70,7 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     priority: null,
     customGroup: null,
     linearIssueUrl: null,
+    linearLinks: [],
     mattermostThreadUrl: null,
     parentThreadId: null,
     parentEnvironmentId: null,

@@ -146,6 +146,8 @@ Revoked access does not return automatically. Bifrost remains available under
 | `t3_create_session`         | Create a user-owned session. User-bound provider sessions, external users, and legacy external operators.                    |
 | `t3_link_session`           | File one session under another, for organising related work into a tree.                                                     |
 | `t3_unlink_session`         | Detach a session from its parent, returning it to the top level.                                                             |
+| `t3_link_linear`            | Tag a session with Linear items: its project, main issue, and every sub-issue. Linking twice is safe.                        |
+| `t3_unlink_linear`          | Remove Linear tags from a session; other tags stay.                                                                          |
 | `t3_submit_plan`            | Publish a Markdown or HTML plan as the session's proposed plan, reviewable in built-in plan review.                          |
 | `t3_update_server_settings` | Apply a validated settings patch. External operators only.                                                                   |
 | `t3_dispatch_command`       | Dispatch any current validated orchestration command. External operators only; prefer focused tools.                         |
@@ -163,14 +165,22 @@ answering approvals or structured input.
 
 ## Naming a session's work
 
-Three pieces of a session's identity are settable over MCP, so an agent can
+Several pieces of a session's identity are settable over MCP, so an agent can
 label its own work rather than leaving it to whoever opens the sidebar:
 
 - **Title** — `t3_update_session` with `title`. An MCP rename takes ownership of
   the title, so automatic title generation will not overwrite it afterwards.
-- **Linear issue** — `t3_update_session` with `linearIssueUrl`, or `null` to
-  clear it. Only `linear.app` issue URLs are accepted; the key and its live
-  status then appear beside the session in the sidebar.
+- **Linear items** — `t3_link_linear` with `urls`: the session's Linear
+  project, its main issue, and every sub-issue it touches, in one call or
+  several. Tags add to the ones already there, and linking an item twice is
+  safe. A session holds at most 25 tags. The result is the session's stored
+  list, with what was added, what was already linked, and what was left out
+  because the list was full. `t3_unlink_linear` removes tags the same way.
+  Only `linear.app` issue and project URLs are accepted. Each tag and its live
+  status then appear beside the session in the sidebar. Both tools act on the
+  caller's own session when `sessionId` is omitted. The older `linearIssueUrl`
+  field of `t3_update_session` makes one issue the session's main tag (first
+  in the list), and `null` there removes every Linear tag.
 - **Custom group** — `t3_update_session` with `customGroup`, or `null` to remove
   the session from its group; `t3_create_session` accepts the same field. A
   custom group is the shared label that sections the sidebar's Custom view and

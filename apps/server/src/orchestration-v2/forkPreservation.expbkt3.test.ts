@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   UserId,
+  type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { OrchestratorV2 } from "./Orchestrator.ts";
@@ -101,6 +102,94 @@ it.layer(TestLayer)("fork native dispatch", (it) => {
           .pipe(Effect.result);
         assert.equal(rejected._tag, "Failure");
       }),
+  );
+  it.effect("adds and removes Linear tags against the stored list and keeps the mirror", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("fork:linear");
+      const issue42 = "https://linear.app/acme/issue/ENG-42";
+      const issue43 = "https://linear.app/acme/issue/ENG-43";
+      const project = "https://linear.app/acme/project/checkout-revamp-0a1b2c3d4e5f";
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create:linear"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("project:fork"),
+        title: "Linear session",
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        // Created with the single-tag field only, like a pre-multi-tag thread.
+        linearIssueUrl: issue42,
+      });
+      const update = (
+        id: string,
+        fields: Omit<
+          Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }>,
+          "type" | "commandId" | "threadId"
+        >,
+      ) =>
+        orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`linear:${id}`),
+          threadId,
+          ...fields,
+        });
+      const tags = Effect.map(orchestrator.getThreadShell(threadId), (shell) => ({
+        linearLinks: shell?.linearLinks,
+        linearIssueUrl: shell?.linearIssueUrl,
+      }));
+
+      assert.deepEqual(yield* tags, {
+        linearLinks: [{ url: issue42, kind: "issue" }],
+        linearIssueUrl: issue42,
+      });
+
+      yield* update("add", {
+        linearLinksAdd: [
+          { url: project, kind: "project" },
+          { url: `${issue43}/slug`, kind: "issue" },
+          { url: issue42, kind: "issue" },
+        ],
+      });
+      assert.deepEqual(yield* tags, {
+        linearLinks: [
+          { url: issue42, kind: "issue" },
+          { url: project, kind: "project" },
+          { url: issue43, kind: "issue" },
+        ],
+        linearIssueUrl: issue42,
+      });
+
+      // A change that does not mention Linear leaves the tags alone.
+      yield* update("title", { title: "Renamed" });
+      yield* update("remove", { linearLinksRemove: [issue42] });
+      assert.deepEqual(yield* tags, {
+        linearLinks: [
+          { url: project, kind: "project" },
+          { url: issue43, kind: "issue" },
+        ],
+        linearIssueUrl: issue43,
+      });
+
+      // The single-tag field moves its issue to the front, so the mirror follows.
+      yield* update("main", { linearIssueUrl: `${issue42}/slug` });
+      assert.deepEqual(yield* tags, {
+        linearLinks: [
+          { url: issue42, kind: "issue" },
+          { url: project, kind: "project" },
+          { url: issue43, kind: "issue" },
+        ],
+        linearIssueUrl: issue42,
+      });
+
+      yield* update("clear", { linearIssueUrl: null });
+      assert.deepEqual(yield* tags, { linearLinks: [], linearIssueUrl: null });
+    }),
   );
   it.effect(
     "commits async activities through native receipts and retains exact agent UI handles",

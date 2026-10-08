@@ -12,6 +12,11 @@ import {
 } from "./baseSchemas.ts";
 import { SourceControlProfileId } from "./sourceControlProfiles.ts";
 import { ThreadCustomGroup } from "./threadCustomGroup.ts";
+import {
+  ThreadLinearLink,
+  ThreadLinearLinksAdd,
+  ThreadLinearLinksRemove,
+} from "./threadLinearLink.ts";
 import { OrchestrationThreadActivity } from "./orchestration.ts";
 
 export const ThreadPriority = Schema.Literals([0, 1, 2, 3, 4]);
@@ -30,6 +35,10 @@ export const ForkThreadMetadataFields = {
   priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Every Linear tag, in tag order. Absent on threads tagged before
+  // multi-tagging; read through `threadLinearLinks`, which folds in
+  // `linearIssueUrl`.
+  linearLinks: Schema.optional(Schema.Array(ThreadLinearLink)),
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   parentEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
@@ -52,6 +61,10 @@ export const ForkThreadUpdateFields = {
   priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Add or remove single Linear tags against the thread's current list, so two
+  // writers tagging at once cannot overwrite each other.
+  linearLinksAdd: Schema.optional(ThreadLinearLinksAdd),
+  linearLinksRemove: Schema.optional(ThreadLinearLinksRemove),
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   parentEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
