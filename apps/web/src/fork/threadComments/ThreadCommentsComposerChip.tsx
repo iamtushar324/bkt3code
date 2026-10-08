@@ -63,15 +63,15 @@ export function ThreadCommentsComposerChip() {
         <MenuTrigger
           render={
             <Badge
-              size="sm"
+              size="lg"
               variant={TONE_VARIANT[composerChipTone(counts)]}
               render={<button type="button" aria-label={`Review comments: ${label}`} />}
             />
           }
         >
-          <MessageSquareTextIcon aria-hidden className="size-3" />
+          <MessageSquareTextIcon aria-hidden className="size-3.5" />
           {label}
-          <ChevronDownIcon aria-hidden className="size-3 opacity-70" />
+          <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
         </MenuTrigger>
         <MenuPopup align="end" side="bottom" sideOffset={4}>
           <MenuGroup>
