@@ -87,6 +87,8 @@ export function assertClaudeBackgroundTaskWakeOutput(
     taskId: BACKGROUND_TASK_ID,
     description: "Background sleep test",
     kind: "command",
+    // T3-CUSTOM(expbkt3): the CLI wakes the agent when the command ends.
+    wakesAgent: true,
   });
   assert.deepEqual(backgroundNotifications(projection), [
     {
