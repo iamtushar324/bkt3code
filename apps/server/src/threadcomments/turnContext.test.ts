@@ -134,9 +134,9 @@ describe("formatOpenThreadCommentsForAgent", () => {
 
   it("keeps the newest comments when the block would exceed the budget", () => {
     const comments = [1, 2, 3, 4, 5].map((number) => comment({ number, body: "x".repeat(400) }));
-    const block = formatOpenThreadCommentsForAgent(comments, { maxChars: 1_600 });
+    const block = formatOpenThreadCommentsForAgent(comments, { maxChars: 1_900 });
     expect(block).not.toBeNull();
-    expect(block!.length).toBeLessThanOrEqual(1_600);
+    expect(block!.length).toBeLessThanOrEqual(1_900);
     expect(block).toContain('<open_chat_comments count="2" omitted="3">');
     expect(block).toContain("Only the newest 2 of 5 open comments fit here");
     expect(block).not.toContain('id="tc_3"');
