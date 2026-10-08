@@ -34,7 +34,7 @@ So: a deploy that changes `@t3tools/contracts` — above all
 `OrchestrationEvent`, `OrchestrationShellStreamItem` or
 `OrchestrationThreadStreamItem` — requires re-sideloading the mobile app from
 that same commit. The workflow builds an artifact for **every** push to
-`expbkmain` and `bkmain` precisely so a matching build always exists.
+`expbkmain`, `bkmain` and `stage` precisely so a matching build always exists.
 
 To check what a device is running, look at the `client_version` the server
 recorded at token exchange: it reads `1.0.4+bk.a1b2c3d`, and `a1b2c3d` is the
@@ -43,7 +43,7 @@ commit the binary was built from.
 ## Getting a build
 
 Releases are published by `.github/workflows/mobile-bk-release.yml` on every
-push to `expbkmain` or `bkmain`, as a GitHub **prerelease** tagged
+push to `expbkmain`, `bkmain` or `stage`, as a GitHub **prerelease** tagged
 `bk-mobile-v<version>-<sha7>` with the `.apk` and `.ipa` attached. Re-running a
 green workflow republishes nothing (the guard job skips an already-released
 SHA).
@@ -69,8 +69,12 @@ For later builds, add the branch's update source to SideStore once:
 
 | Channel     | SideStore source URL                                                                                             |
 | ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| `expbkmain` | `https://github.com/beknown-work/bkt3code/releases/download/bk-mobile-source-expbkmain/bk-mobile-expbkmain.json` |
-| `bkmain`    | `https://github.com/beknown-work/bkt3code/releases/download/bk-mobile-source-bkmain/bk-mobile-bkmain.json`       |
+| `expbkmain` | `https://github.com/iamtushar324/bkt3code/releases/download/bk-mobile-source-expbkmain/bk-mobile-expbkmain.json` |
+| `bkmain`    | `https://github.com/iamtushar324/bkt3code/releases/download/bk-mobile-source-bkmain/bk-mobile-bkmain.json`       |
+| `stage`     | `https://github.com/iamtushar324/bkt3code/releases/download/bk-mobile-source-stage/bk-mobile-stage.json`         |
+
+All channels share one bundle identifier, so a device holds one BK T3 Code app;
+installing from a different channel's source replaces it in place.
 
 In SideStore, open **Browse → Sources → +**, paste the URL, and add the source.
 The current BK T3 Code build then appears in that source, and future builds show

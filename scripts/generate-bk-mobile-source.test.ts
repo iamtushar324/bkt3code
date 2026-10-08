@@ -74,6 +74,12 @@ describe("parseArgs", () => {
     expect(parseArgs(argv).outputPath).toMatch(/release\/mobile\/bk-mobile-expbkmain\.json$/);
   });
 
+  it("accepts the stage channel", () => {
+    expect(parseArgs(argv.with(1, "stage")).outputPath).toMatch(
+      /release\/mobile\/bk-mobile-stage\.json$/,
+    );
+  });
+
   it("rejects channels and build numbers SideStore cannot order", () => {
     expect(() => parseArgs(argv.with(1, "feature"))).toThrow(/--branch/);
     expect(() => parseArgs(argv.with(9, "0"))).toThrow(/positive integer/);
