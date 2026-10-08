@@ -94,8 +94,8 @@ export function resolvePhaseSidebarLinearTags(
       title: status?.title ?? null,
     };
   });
-  // toSorted is stable, so tag order survives within a kind.
-  return tags.toSorted((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]);
+  // Array#sort is stable, so tag order survives within a kind. Hermes has no toSorted.
+  return [...tags].sort((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]);
 }
 
 /**
@@ -114,8 +114,8 @@ export function phaseSidebarLinearStatusRequests<E extends string>(
     byEnvironment.set(thread.environmentId, set);
   }
   return [...byEnvironment.entries()]
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([environmentId, set]) => ({ environmentId, identifiers: [...set].toSorted() }));
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([environmentId, set]) => ({ environmentId, identifiers: [...set].sort() }));
 }
 
 function sameLinearStatus(left: LinearIssueStatusSummary, right: LinearIssueStatusSummary) {

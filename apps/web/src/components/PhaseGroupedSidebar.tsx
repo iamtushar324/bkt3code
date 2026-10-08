@@ -1981,7 +1981,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                       <button
                         key={entry.url}
                         type="button"
-                        title={entry.tooltip}
+                        aria-label={entry.tooltip}
                         data-linear-tag-kind={entry.kind}
                         className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         onClick={(event) => {
