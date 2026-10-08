@@ -9,8 +9,9 @@
  * numbered pin at the end of the range as the click target (highlights are not
  * hit-testable). To be findable while scrolling, every unresolved comment also
  * draws a bar in the row's left gutter spanning its lines, and the message
- * carries one bubble chip with the unresolved count at its top-right corner
- * (the timeline clips anything outside the message column, so a chip cannot
+ * carries one bubble chip with the unresolved count at its bottom-right corner
+ * (the top-right is where a leading code block keeps its wrap and copy buttons,
+ * and the timeline clips anything outside the message column, so a chip cannot
  * hang in the margin). Everything is absolutely positioned inside the row, so
  * it travels with the virtualised list for free, and is only recomputed when
  * the row resizes or its text mutates — never on scroll or per frame.
@@ -249,7 +250,7 @@ const ThreadCommentPins = memo(function ThreadCommentPins({
           data-thread-comment-marker={messageId}
           aria-label={`${marker.count} ${marker.count === 1 ? "comment" : "comments"} to handle on this message: open in the Comments panel`}
           className={cn(
-            "pointer-events-auto absolute top-0.5 right-1 flex h-4 cursor-pointer items-center gap-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums shadow-sm ring-1 ring-background transition-transform hover:scale-110",
+            "pointer-events-auto absolute right-1 bottom-0.5 flex h-4 cursor-pointer items-center gap-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums shadow-sm ring-1 ring-background transition-transform hover:scale-110",
             URGENCY_CLASS[marker.urgency],
           )}
           onPointerDown={(event) => event.preventDefault()}

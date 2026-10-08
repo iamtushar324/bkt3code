@@ -1,5 +1,5 @@
 /**
- * T3-CUSTOM(expbkt3): the review-comment chip in the chat box's top-right corner.
+ * T3-CUSTOM(expbkt3): the review-comment chip in the chat box's action row.
  *
  * Comments not sent yet live in the strip above the chat box. Once they go,
  * the strip leaves and this chip keeps the rest in view: blue while the agent
@@ -56,8 +56,9 @@ export function ThreadCommentsComposerChip() {
   const target = { environmentId: threadRef.environmentId };
 
   return (
-    // Straddles the chat box's top edge, so it never covers the first line of a draft.
-    <div className="absolute top-0 right-4 z-10 -translate-y-1/2">
+    // Inline in the chat box's action row, just before the send button: the one
+    // row both composer layouts keep, so it never covers the draft.
+    <div className="flex shrink-0 items-center">
       <Menu>
         <MenuTrigger
           render={

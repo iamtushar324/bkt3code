@@ -6885,8 +6885,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) : null}
       </ComposerBanner.Dock>
       <div className="relative">
-        {/* T3-CUSTOM(expbkt3): sent review comments, top-right in the chat box. */}
-        <ThreadCommentsComposerChip />
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
@@ -7614,6 +7612,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
+                  {/* T3-CUSTOM(expbkt3): sent review comments, beside the send button. */}
+                  <ThreadCommentsComposerChip />
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
