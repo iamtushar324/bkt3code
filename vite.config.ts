@@ -200,6 +200,9 @@ export default defineConfig({
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
+          // T3-CUSTOM(expbkt3): fork reads of session client metadata (member devices, session list).
+          "apps/web/src/fork/memberDevices.ts",
+          "apps/web/src/environments/primary/auth.ts",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },

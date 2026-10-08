@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
 import {
@@ -110,7 +111,10 @@ const harness = Effect.gen(function* () {
   const dependencies = Layer.mergeAll(
     webhooks,
     liveThreadsLayer,
-    Layer.mock(OrchestrationAccessControl)({ canAccessThread: () => Effect.succeed(true) }),
+    Layer.mock(OrchestrationAccessControl)({
+      actorFor: () => Option.none(),
+      canAccessThread: () => Effect.succeed(true),
+    }),
   );
   const toolkit = yield* SessionWebhookToolkit.pipe(
     Effect.provide(SessionWebhookHandlersLive.pipe(Layer.provide(dependencies))),

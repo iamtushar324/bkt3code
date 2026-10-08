@@ -51,6 +51,8 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import { TurnStartBootstrap } from "./turnStartBootstrap.expbkt3.ts";
+import * as ServerConfig from "../config.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
@@ -96,6 +98,7 @@ const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
       subject: "compact-transport",
       method: "browser-session-cookie",
       scopes: new Set([AuthOrchestrationReadScope]),
+      userId: null, // T3-CUSTOM(expbkt3): an unbound session.
     }),
   ),
 );
@@ -242,12 +245,17 @@ const TestLayer = Layer.mergeAll(
   // T3-CUSTOM(expbkt3): an unbound local session is an unrestricted operator; the fork-only
   // routes are not called here.
   Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
-  Layer.mock(ClerkDirectory)({}),
+  Layer.mock(ClerkDirectory)({ enabled: false, descriptor: null }),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
   Layer.mock(ProjectionSnapshotQuery)({}),
   Layer.mock(TurnStartBootstrap)({}),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+  // Fork dispatch handlers read these per request, so the handler receives them below.
+  Layer.mergeAll(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-bounded-snapshot-" }),
+    WorkspacePaths.layer,
+  ).pipe(Layer.provideMerge(NodeServices.layer)),
 ).pipe(Layer.provideMerge(store));
 
 const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<A>) =>
@@ -272,6 +280,7 @@ const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<
                   [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
                 },
               }),
+              context, // T3-CUSTOM(expbkt3): request services of the fork's handlers.
             ),
           ),
         ),
