@@ -495,7 +495,7 @@ const make = Effect.gen(function* () {
                 ),
               ),
             ),
-          // T3-CUSTOM(expbkt3): the approval result also carries the team user and operator flag.
+            // T3-CUSTOM(expbkt3): the approval result also carries the team user and operator flag.
           );
         // T3-CUSTOM(expbkt3): BEGIN — an anonymous code cannot approve when identity is required.
         if (approval.userId === null && (yield* identityRequired)) {
