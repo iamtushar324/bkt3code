@@ -26,6 +26,7 @@ import {
   formatOpenThreadCommentsForAgent,
   neutralizeOwnTags,
   OPEN_THREAD_COMMENTS_MAX_CHARS,
+  prepareOpenThreadComments,
 } from "./turnContext.ts";
 
 const threadId = ThreadId.make("thread-turn-context");
@@ -186,13 +187,32 @@ describe("appendOpenThreadComments", () => {
           ThreadCommentsService,
           serviceWith(
             () => Effect.succeed([comment({ number: 1 }), comment({ number: 2 })]),
-            (input) => Effect.sync(() => void marked.push(input.commentIds)),
+            (input) => Effect.sync(() => void marked.push(input.comments.map((c) => c.commentId))),
           ),
         ),
       );
       expect(result).toContain('id="tc_1"');
       expect(result).toContain('id="tc_2"');
       expect(marked).toEqual([["tc_1", "tc_2"]]);
+    }),
+  );
+
+  it.effect("prepares the text without marking until the turn has started", () =>
+    Effect.gen(function* () {
+      const marked: Array<ReadonlyArray<string>> = [];
+      const prepared = yield* prepareOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 })]),
+            (input) => Effect.sync(() => void marked.push(input.comments.map((c) => c.commentId))),
+          ),
+        ),
+      );
+      expect(prepared.text).toContain('id="tc_1"');
+      expect(marked).toEqual([]);
+      yield* prepared.markSent;
+      expect(marked).toEqual([["tc_1"]]);
     }),
   );
 

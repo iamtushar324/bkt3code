@@ -16,10 +16,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { MigrationsLive } from "../persistence/Migrations.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
@@ -267,8 +269,12 @@ describe("ThreadCommentsService", () => {
         const commentId = added.comments[0]!.commentId;
         expect(added.comments[0]?.lastSentAt ?? null).toBeNull();
         expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+        // What a turn does: read the unsent comments, then mark exactly those.
+        const sendTurn = Effect.flatMap(service.openForDelivery(threadId), (comments) =>
+          service.markSent({ threadId, comments }),
+        );
 
-        yield* service.markSent({ threadId, commentIds: [commentId] });
+        yield* sendTurn;
         expect(yield* service.openForDelivery(threadId)).toEqual([]);
         expect((yield* service.snapshot(threadId)).comments[0]?.lastSentAt).not.toBeNull();
 
@@ -279,14 +285,29 @@ describe("ThreadCommentsService", () => {
         yield* service.reply({ threadId, commentId, body: "not yet", ...actor });
         expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
 
-        yield* service.markSent({ threadId, commentIds: [commentId] });
+        yield* sendTurn;
         yield* service.setStatus({ threadId, commentId, status: "resolved" });
         yield* service.setStatus({ threadId, commentId, status: "open" });
         expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
 
-        yield* service.markSent({ threadId, commentIds: [commentId] });
+        yield* sendTurn;
         const resent = yield* service.resend({ threadId });
         expect(resent.comments[0]?.lastSentAt ?? null).toBeNull();
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+      }),
+    ),
+  );
+
+  // T3-CUSTOM(expbkt3): a reply between the turn's read and its mark wins.
+  it.effect("keeps a comment unsent when it changed after the turn read it", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        yield* service.add({ threadId, kind: "comment", anchor: anchor(), body: "one", ...actor });
+        const read = yield* service.openForDelivery(threadId);
+        // Tests run on the frozen test clock; move it so the reply's timestamp differs.
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* service.reply({ threadId, commentId: read[0]!.commentId, body: "also", ...actor });
+        yield* service.markSent({ threadId, comments: read });
         expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
       }),
     ),

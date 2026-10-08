@@ -5,7 +5,9 @@
  * the chat box stays as it is, and a running turn is never interrupted: the
  * message waits behind it. The server appends the comments not sent yet when
  * the turn starts. "Address remaining" and "Ask for an update" first mark every
- * open comment not sent, so they go again with that turn.
+ * open comment not sent, so they go again with that turn. If another message is
+ * already queued, that earlier turn carries them instead; the agent still gets
+ * them, one turn sooner.
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";

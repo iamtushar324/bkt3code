@@ -125,24 +125,36 @@ function isSteeringRunningTurn(
   return session?.status === "running" && session.activeTurnId !== null;
 }
 
+/** The provider input, and the step that records which comments it carried. */
+export interface PreparedThreadComments {
+  readonly text: string;
+  /**
+   * Marks the comments in `text` sent. Run it only once the provider turn has
+   * started: a turn that never starts must leave them unsent, so they go next
+   * time. Never fails; a failed mark only means they go again.
+   */
+  readonly markSent: Effect.Effect<void>;
+}
+
 /**
- * The user's text with the thread's open comments appended, or the text
+ * The user's text with the thread's unsent open comments appended, or the text
  * unchanged when there is nothing to add, the message steers a running turn
  * (the block already went out with that turn), the service is not wired
  * (isolated upstream reactor tests), the block would not fit the provider's
  * input limit, or the read fails.
  */
-export const appendOpenThreadComments = (
+export const prepareOpenThreadComments = (
   threadId: ThreadId,
   text: string,
   session?: Pick<OrchestrationSession, "status" | "activeTurnId"> | null,
-): Effect.Effect<string> =>
-  Effect.gen(function* () {
+): Effect.Effect<PreparedThreadComments> => {
+  const unchanged: PreparedThreadComments = { text, markSent: Effect.void };
+  return Effect.gen(function* () {
     const service = yield* Effect.serviceOption(ThreadCommentsService);
-    if (Option.isNone(service)) return text;
-    if (isSteeringRunningTurn(session)) return text;
+    if (Option.isNone(service)) return unchanged;
+    if (isSteeringRunningTurn(session)) return unchanged;
     const comments = yield* service.value.openForDelivery(threadId);
-    if (comments.length === 0) return text;
+    if (comments.length === 0) return unchanged;
 
     const separator = text.length === 0 ? "" : "\n\n";
     const room = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - text.length - separator.length;
@@ -152,38 +164,52 @@ export const appendOpenThreadComments = (
             maxChars: Math.min(OPEN_THREAD_COMMENTS_MAX_CHARS, room),
           })
         : null;
-    const block = rendered?.block ?? null;
-    const result = block === null ? null : `${text}${separator}${block}`;
-    if (result === null || result.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+    const result = rendered === null ? null : `${text}${separator}${rendered.block}`;
+    if (
+      rendered === null ||
+      result === null ||
+      result.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ) {
       yield* Effect.logWarning("thread comments skipped: no room left in the turn input", {
         threadId,
         openComments: comments.length,
         textLength: text.length,
       });
-      return text;
+      return unchanged;
     }
     yield* Effect.logInfo("thread comments appended to turn input", {
       threadId,
       openComments: comments.length,
-      blockLength: block!.length,
+      blockLength: rendered.block.length,
     });
-    // Each comment goes once. A failed mark only means it goes again next turn.
-    yield* service.value
-      .markSent({ threadId, commentIds: rendered!.kept.map((comment) => comment.commentId) })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("thread comments could not be marked sent", {
-            threadId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    return result;
+    // Only the comments read here, unchanged since: a reply that lands in
+    // between keeps its comment unsent, so the reply still reaches the agent.
+    const markSent = service.value.markSent({ threadId, comments: rendered.kept }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("thread comments could not be marked sent", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+    return { text: result, markSent } satisfies PreparedThreadComments;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("thread comments could not be appended to the turn input", {
         threadId,
         cause: Cause.pretty(cause),
-      }).pipe(Effect.as(text)),
+      }).pipe(Effect.as(unchanged)),
     ),
+  );
+};
+
+/** `prepareOpenThreadComments`, marking the comments sent at once. */
+export const appendOpenThreadComments = (
+  threadId: ThreadId,
+  text: string,
+  session?: Pick<OrchestrationSession, "status" | "activeTurnId"> | null,
+): Effect.Effect<string> =>
+  prepareOpenThreadComments(threadId, text, session).pipe(
+    Effect.tap((prepared) => prepared.markSent),
+    Effect.map((prepared) => prepared.text),
   );

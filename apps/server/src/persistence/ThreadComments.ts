@@ -92,10 +92,14 @@ export class ThreadCommentsRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly paused: boolean;
     }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
-    /** Records that these comments went to the agent at `sentAt`. */
+    /**
+     * Records that these comments went to the agent at `sentAt`. Each row is
+     * marked only while it is unchanged since it was read (same `updatedAt`)
+     * and still unsent, so a reply that landed in between keeps it unsent.
+     */
     readonly markSent: (input: {
       readonly threadId: ThreadId;
-      readonly commentIds: ReadonlyArray<ThreadCommentId>;
+      readonly comments: ReadonlyArray<Pick<ThreadComment, "commentId" | "updatedAt">>;
       readonly sentAt: string;
     }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
     /** Clears the sent mark on every open comment, so the next turn sends them again. */
@@ -242,15 +246,19 @@ export const make = Effect.gen(function* () {
     `,
   });
 
-  const markSentRows = SqlSchema.void({
+  const markSentRow = SqlSchema.void({
     Request: Schema.Struct({
       threadId: ThreadId,
-      commentIds: Schema.Array(ThreadCommentId),
+      commentId: ThreadCommentId,
+      updatedAt: Schema.String,
       sentAt: Schema.String,
     }),
-    execute: ({ threadId, commentIds, sentAt }) => sql`
+    execute: ({ threadId, commentId, updatedAt, sentAt }) => sql`
       UPDATE thread_comments SET last_sent_at = ${sentAt}
-      WHERE thread_id = ${threadId} AND ${sql.in("comment_id", commentIds)}
+      WHERE thread_id = ${threadId}
+        AND comment_id = ${commentId}
+        AND updated_at = ${updatedAt}
+        AND last_sent_at IS NULL
     `,
   });
 
@@ -322,10 +330,18 @@ export const make = Effect.gen(function* () {
         Effect.mapError(mapError("ThreadComments.setDeliveryPaused")),
       ),
 
-    markSent: (input) =>
-      input.commentIds.length === 0
-        ? Effect.void
-        : markSentRows(input).pipe(Effect.mapError(mapError("ThreadComments.markSent"))),
+    markSent: ({ threadId, comments, sentAt }) =>
+      Effect.forEach(
+        comments,
+        (comment) =>
+          markSentRow({
+            threadId,
+            commentId: comment.commentId,
+            updatedAt: comment.updatedAt,
+            sentAt,
+          }),
+        { discard: true },
+      ).pipe(Effect.mapError(mapError("ThreadComments.markSent"))),
 
     clearSentForOpen: (threadId) =>
       clearSentForOpenRows({ threadId }).pipe(

@@ -51,10 +51,13 @@ export function ThreadCommentsComposerChip() {
   const label = composerChipLabel(counts);
   if (label === null) return null;
   const openCount = counts.unsent + counts.sent;
+  // While paused nothing is appended, so a re-send would go out without comments.
+  const canResend = openCount > 0 && !active.deliveryPaused;
   const target = { environmentId: threadRef.environmentId };
 
   return (
-    <div className="absolute top-2 right-3 z-10">
+    // Straddles the chat box's top edge, so it never covers the first line of a draft.
+    <div className="absolute top-0 right-4 z-10 -translate-y-1/2">
       <Menu>
         <MenuTrigger
           render={
@@ -74,10 +77,10 @@ export function ThreadCommentsComposerChip() {
             <MenuGroupLabel>
               {openCount} open · {counts.addressed} addressed
             </MenuGroupLabel>
-            <MenuItem disabled={openCount === 0} onClick={actions.addressRemaining}>
+            <MenuItem disabled={!canResend} onClick={actions.addressRemaining}>
               Address remaining
             </MenuItem>
-            <MenuItem disabled={openCount === 0} onClick={actions.askForUpdate}>
+            <MenuItem disabled={!canResend} onClick={actions.askForUpdate}>
               Ask for an update
             </MenuItem>
           </MenuGroup>

@@ -89,10 +89,13 @@ export interface ThreadCommentsServiceShape {
   readonly openForDelivery: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadComment>, ThreadCommentsError>;
-  /** Records that these comments went to the agent with a turn. */
+  /**
+   * Records that these comments went to the agent with a turn. A comment that
+   * changed after it was read (its `updatedAt` moved) stays unsent.
+   */
   readonly markSent: (input: {
     readonly threadId: ThreadId;
-    readonly commentIds: ReadonlyArray<ThreadCommentId>;
+    readonly comments: ReadonlyArray<Pick<ThreadComment, "commentId" | "updatedAt">>;
   }) => Effect.Effect<void, ThreadCommentsError>;
   /** Marks every open comment not sent, so the next turn carries them again. */
   readonly resend: (
@@ -369,11 +372,11 @@ export const make = Effect.gen(function* () {
 
   const markSent: ThreadCommentsServiceShape["markSent"] = (input) =>
     Effect.gen(function* () {
-      if (input.commentIds.length === 0) return;
+      if (input.comments.length === 0) return;
       const sentAt = yield* nowIso;
       yield* writes.withPermits(1)(
         repository
-          .markSent({ threadId: input.threadId, commentIds: input.commentIds, sentAt })
+          .markSent({ threadId: input.threadId, comments: input.comments, sentAt })
           .pipe(Effect.mapError(internal("markSent"))),
       );
       yield* announce(input.threadId);
