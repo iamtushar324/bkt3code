@@ -49,6 +49,18 @@ vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeVariables: {} }),
 }));
 
+// T3-CUSTOM(expbkt3): smart git reaches the connection runtime, whose Expo
+// imports need `__DEV__`; a hidden action leaves upstream's header unchanged.
+vi.mock("../smartgit/useSmartGitAction", () => ({
+  useSmartGitAction: () => ({
+    visible: false,
+    highlighted: false,
+    headerVersion: "",
+    icon: "arrow.up.circle",
+    intent: { label: "", hint: null, highlighted: false },
+    run: () => {},
+  }),
+}));
 import { ThreadHeader } from "./ThreadHeader";
 
 const projectScripts: never[] = [];

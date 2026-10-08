@@ -23,7 +23,7 @@ export function ThreadHeader(
     readonly onOpenGitInspector: () => void;
     readonly onOpenFilesInspector: () => void;
     // T3-CUSTOM(expbkt3): per-thread API-level cost pill.
-    readonly threadCostHeader: { readonly label: string; readonly onPress: () => void } | null;
+    readonly threadCostHeader?: { readonly label: string; readonly onPress: () => void } | null;
   },
 ) {
   const navigation = useNavigation();

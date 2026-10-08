@@ -180,5 +180,4 @@ export const SessionWebhookHandlers = McpToolAccess.toLayer(SessionWebhookToolki
 });
 
 /** The handlers as a layer, for tests that build the toolkit directly. */
-export const SessionWebhookHandlersLive =
-  McpToolAccess.HandlersLayer.layer(SessionWebhookHandlers);
+export const SessionWebhookHandlersLive = McpToolAccess.HandlersLayer.layer(SessionWebhookHandlers);

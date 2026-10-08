@@ -278,105 +278,105 @@ const invalidToolInput = (message: string) =>
  * included, so it needs a full-access caller.
  */
 const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
-    t3_ui_list_tools: McpToolAccess.reads((payload: unknown) =>
-      Effect.gen(function* () {
-        const decoded = yield* decodePayload(ListToolsSchema, payload);
-        if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
-        const invocation = yield* McpInvocationContext.McpInvocationContext;
-        const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
-        const query = decoded.success.query?.trim().toLowerCase() ?? "";
-        const filtered = WEB_UI_VIRTUAL_TOOLS.filter((tool) => {
-          const authorized = isWebUiVirtualToolAuthorized(tool, scopes);
-          if (decoded.success.authorizedOnly === true && !authorized) return false;
-          return (
-            query.length === 0 ||
-            tool.name.includes(query) ||
-            tool.method.toLowerCase().includes(query) ||
-            tool.category.toLowerCase().includes(query)
-          );
-        });
-        const cursor = normalizedOffset(decoded.success.cursor, 0, filtered.length);
-        const limit = normalizedOffset(decoded.success.limit, 100, 100) || 1;
-        const page = filtered.slice(cursor, cursor + limit).map((tool) => ({
-          ...tool,
-          authorized: isWebUiVirtualToolAuthorized(tool, scopes),
-        }));
-        const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
-        return yield* toolResult({
-          ok: true,
-          rpcCount: WEB_UI_VIRTUAL_TOOL_COUNT,
-          streamCount: WEB_UI_STREAM_TOOL_COUNT,
-          matchedCount: filtered.length,
-          cursor,
-          nextCursor,
-          tools: page,
-          note: "authorized reflects the transport scope only; each call still enforces the web UI's user, project, thread, and administrator checks.",
-        });
-      }),
-    ),
-    t3_ui_get_tool: McpToolAccess.reads((payload: unknown) =>
-      Effect.gen(function* () {
-        const decoded = yield* decodePayload(GetToolSchema, payload);
-        if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
-        const detail = getWebUiVirtualToolDetail(decoded.success.tool);
-        if (!detail) {
-          return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
-        }
-        const invocation = yield* McpInvocationContext.McpInvocationContext;
-        const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
-        return yield* toolResult({
-          ok: true,
-          tool: {
-            ...detail,
-            authorized: isWebUiVirtualToolAuthorized(detail, scopes),
-          },
-        });
-      }),
-    ),
-    t3_ui_call: McpToolAccess.writesEnvironment((payload: unknown) =>
-      Effect.gen(function* () {
-        const decoded = yield* decodePayload(VirtualCallSchema, payload);
-        if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
-        const call = toCallRequest(decoded.success);
-        if (!call) {
-          return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
-        }
-        const invocation = yield* McpInvocationContext.McpInvocationContext;
-        const outcomes = yield* execute(invocation, [call], false);
-        const outcome = outcomes[0];
-        if (!outcome) return yield* invalidToolInput("The web UI call produced no outcome.");
-        return yield* toolResult(outcome, !outcome.ok);
-      }),
-    ),
-    t3_ui_batch: McpToolAccess.writesEnvironment((payload: unknown) =>
-      Effect.gen(function* () {
-        const decoded = yield* decodePayload(BatchSchema, payload);
-        if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
-        if (decoded.success.calls.length === 0 || decoded.success.calls.length > 25) {
-          return yield* invalidToolInput("calls must contain between 1 and 25 operations.");
-        }
-        const calls: Array<WebUiRpcCallRequest> = [];
-        for (const input of decoded.success.calls) {
-          const call = toCallRequest(input);
-          if (!call) return yield* invalidToolInput(`Unknown virtual tool: ${input.tool}`);
-          calls.push(call);
-        }
-        const invocation = yield* McpInvocationContext.McpInvocationContext;
-        const outcomes = yield* execute(invocation, calls, decoded.success.stopOnError === true);
-        const failed = outcomes.filter((outcome) => !outcome.ok).length;
-        return yield* toolResult(
-          {
-            ok: failed === 0,
-            requestedCount: calls.length,
-            completedCount: outcomes.length,
-            failedCount: failed,
-            results: outcomes,
-          },
-          failed > 0,
+  t3_ui_list_tools: McpToolAccess.reads((payload: unknown) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodePayload(ListToolsSchema, payload);
+      if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
+      const query = decoded.success.query?.trim().toLowerCase() ?? "";
+      const filtered = WEB_UI_VIRTUAL_TOOLS.filter((tool) => {
+        const authorized = isWebUiVirtualToolAuthorized(tool, scopes);
+        if (decoded.success.authorizedOnly === true && !authorized) return false;
+        return (
+          query.length === 0 ||
+          tool.name.includes(query) ||
+          tool.method.toLowerCase().includes(query) ||
+          tool.category.toLowerCase().includes(query)
         );
-      }),
-    ),
-  });
+      });
+      const cursor = normalizedOffset(decoded.success.cursor, 0, filtered.length);
+      const limit = normalizedOffset(decoded.success.limit, 100, 100) || 1;
+      const page = filtered.slice(cursor, cursor + limit).map((tool) => ({
+        ...tool,
+        authorized: isWebUiVirtualToolAuthorized(tool, scopes),
+      }));
+      const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
+      return yield* toolResult({
+        ok: true,
+        rpcCount: WEB_UI_VIRTUAL_TOOL_COUNT,
+        streamCount: WEB_UI_STREAM_TOOL_COUNT,
+        matchedCount: filtered.length,
+        cursor,
+        nextCursor,
+        tools: page,
+        note: "authorized reflects the transport scope only; each call still enforces the web UI's user, project, thread, and administrator checks.",
+      });
+    }),
+  ),
+  t3_ui_get_tool: McpToolAccess.reads((payload: unknown) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodePayload(GetToolSchema, payload);
+      if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
+      const detail = getWebUiVirtualToolDetail(decoded.success.tool);
+      if (!detail) {
+        return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
+      }
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
+      return yield* toolResult({
+        ok: true,
+        tool: {
+          ...detail,
+          authorized: isWebUiVirtualToolAuthorized(detail, scopes),
+        },
+      });
+    }),
+  ),
+  t3_ui_call: McpToolAccess.writesEnvironment((payload: unknown) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodePayload(VirtualCallSchema, payload);
+      if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
+      const call = toCallRequest(decoded.success);
+      if (!call) {
+        return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
+      }
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const outcomes = yield* execute(invocation, [call], false);
+      const outcome = outcomes[0];
+      if (!outcome) return yield* invalidToolInput("The web UI call produced no outcome.");
+      return yield* toolResult(outcome, !outcome.ok);
+    }),
+  ),
+  t3_ui_batch: McpToolAccess.writesEnvironment((payload: unknown) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodePayload(BatchSchema, payload);
+      if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
+      if (decoded.success.calls.length === 0 || decoded.success.calls.length > 25) {
+        return yield* invalidToolInput("calls must contain between 1 and 25 operations.");
+      }
+      const calls: Array<WebUiRpcCallRequest> = [];
+      for (const input of decoded.success.calls) {
+        const call = toCallRequest(input);
+        if (!call) return yield* invalidToolInput(`Unknown virtual tool: ${input.tool}`);
+        calls.push(call);
+      }
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const outcomes = yield* execute(invocation, calls, decoded.success.stopOnError === true);
+      const failed = outcomes.filter((outcome) => !outcome.ok).length;
+      return yield* toolResult(
+        {
+          ok: failed === 0,
+          requestedCount: calls.length,
+          completedCount: outcomes.length,
+          failedCount: failed,
+          results: outcomes,
+        },
+        failed > 0,
+      );
+    }),
+  ),
+});
 
 /** The bridge with an injected executor, for focused registration tests. */
 export const makeWebUiRpcHandlers = (execute: WebUiRpcExecutor) =>

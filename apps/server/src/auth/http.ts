@@ -41,6 +41,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import { resolveClerkBrowserIdentity } from "./ClerkBrowserIdentity.ts";
 // T3-CUSTOM(expbkt3): direct-vs-relay identity policy for the token exchange.
 import { resolveExchangeIdentity } from "./ExchangeIdentity.ts";
+import { isEnvironmentIdentityRequired } from "./mcpApprovalPolicy.expbkt3.ts"; // T3-CUSTOM(expbkt3)
 // T3-CUSTOM(expbkt3): the pairing grant can name the operator when no token does.
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 // T3-CUSTOM(expbkt3): BEGIN - pairing credentials carry the operator that created
@@ -334,7 +335,8 @@ export const layer = HttpApiBuilder.group(
           Effect.catch((error) => failEnvironmentInternal("identity_management_failed", error)),
         );
         if (!token) {
-          return identityMode === "required"
+          // T3-CUSTOM(expbkt3): one rule for pairing exchanges and MCP agent approvals.
+          return isEnvironmentIdentityRequired(identityMode)
             ? yield* failEnvironmentAuthInvalid("missing_identity")
             : null;
         }

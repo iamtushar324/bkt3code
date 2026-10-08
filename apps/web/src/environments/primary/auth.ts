@@ -160,6 +160,12 @@ let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
+// T3-CUSTOM(expbkt3): the /pair route keeps the pairing surface (not the Clerk
+// gate) while an explicit pairing link is pending, even after its token is stripped.
+export function isExplicitPairingRequested(): boolean {
+  return explicitPairingRequested;
+}
+
 export function peekPairingTokenFromUrl(): string | null {
   return getPairingTokenFromUrl(new URL(window.location.href));
 }
@@ -692,7 +698,19 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     explicitPairingRequested = true;
   }
   if (explicitPairingRequested) {
-    const currentSession = await fetchSessionState();
+    // T3-CUSTOM(expbkt3): BEGIN — keep the managed offline gate on this path too;
+    // an unreachable managed primary cannot redeem the link anyway.
+    let currentSession: AuthSessionState;
+    try {
+      currentSession = await fetchSessionState();
+    } catch (error) {
+      const offlineState = await resolveManagedOfflineAuthGateState(error);
+      if (offlineState !== null) {
+        return offlineState;
+      }
+      throw error;
+    }
+    // T3-CUSTOM(expbkt3): END
     return { status: "requires-auth", auth: currentSession.auth };
   }
 

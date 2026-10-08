@@ -63,16 +63,19 @@ export const settingsCredentialClientScope = (input: {
  * The fork fields of an OAuth client. A client approved from a browser
  * session (or a pairing code) that names a team user acts as that user, so
  * the team boundary in `forkAccess.expbkt3.ts` limits it to that user's
- * threads. An unbound client (no user, as in single-user mode) behaves as
- * upstream: no team boundary.
+ * threads. An unbound client has no team boundary, as upstream; it is an
+ * operator (operator-only tools, administrative web UI scopes) only when the
+ * approving grant or session held `access:write`
+ * (`auth/mcpApprovalPolicy.expbkt3.ts`).
  */
 export const oauthClientForkFields = (input: {
   readonly access: AuthMcpClientAccess;
   readonly userId: UserId | null;
+  readonly operator: boolean;
 }): Pick<McpInvocationScope, "principal" | "actorUserId"> & {
   readonly forkCapabilities: ReadonlyArray<McpCapability>;
 } => ({
-  principal: input.userId === null ? "external-operator" : "external-user",
+  principal: input.userId === null && input.operator ? "external-operator" : "external-user",
   actorUserId: input.userId,
   forkCapabilities:
     input.access === "read-only"

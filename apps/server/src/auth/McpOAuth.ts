@@ -31,6 +31,12 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { oauthClientForkFields } from "../mcp/clientAccess.expbkt3.ts"; // T3-CUSTOM(expbkt3): team-bound OAuth clients.
+// T3-CUSTOM(expbkt3): who may approve an outside agent, and what it becomes.
+import { ServerSettingsService } from "../serverSettings.ts";
+import {
+  approvalGrantsOperator,
+  isEnvironmentIdentityRequired,
+} from "./mcpApprovalPolicy.expbkt3.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
@@ -202,6 +208,7 @@ interface PendingCode {
   readonly resource: string;
   readonly access: AuthMcpClientAccess;
   readonly userId: EnvironmentUserId | null; // T3-CUSTOM(expbkt3): the approving team user.
+  readonly operator: boolean; // T3-CUSTOM(expbkt3): the approval held `access:write`.
   readonly expiresAtMs: number;
 }
 
@@ -269,6 +276,14 @@ export const redirectForError = (error: McpOAuthRedirectError, issuer: string) =
 
 const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  // T3-CUSTOM(expbkt3): BEGIN — with identity required, an approval must name a team
+  // user, the same rule `/oauth/token` applies. Unreadable settings count as required.
+  const serverSettings = yield* ServerSettingsService;
+  const identityRequired = serverSettings.getSettings.pipe(
+    Effect.map((current) => isEnvironmentIdentityRequired(current.environmentUserIdentityMode)),
+    Effect.orElseSucceed(() => true),
+  );
+  // T3-CUSTOM(expbkt3): END
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const signingKey = yield* secretStore
@@ -404,12 +419,20 @@ const make = Effect.gen(function* () {
     authorization,
   ) =>
     environmentAuth.authenticateBrowserSession(request).pipe(
+      // T3-CUSTOM(expbkt3): with identity required, only a session bound to a team user approves.
+      Effect.tap((session) =>
+        identityRequired.pipe(
+          Effect.flatMap((required) =>
+            required && session.userId === null ? Effect.fail("identity_required") : Effect.void,
+          ),
+        ),
+      ),
       Effect.map((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          // T3-CUSTOM(expbkt3): the approval also names the approving team user.
-          ? {
+          ? // T3-CUSTOM(expbkt3): the approval also names the approving team user.
+            {
               csrfToken: csrfToken(session.sessionId, authorization),
               scopes: session.scopes,
               userId: session.userId, // T3-CUSTOM(expbkt3): the approving team user.
@@ -424,6 +447,7 @@ const make = Effect.gen(function* () {
     authorization: AuthorizationRequest,
     access: AuthMcpClientAccess,
     userId: EnvironmentUserId | null, // T3-CUSTOM(expbkt3): the approving team user.
+    operator: boolean, // T3-CUSTOM(expbkt3): the approval held `access:write`.
   ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -442,6 +466,7 @@ const make = Effect.gen(function* () {
           resource: authorization.resource,
           access,
           userId, // T3-CUSTOM(expbkt3): the approving team user.
+          operator, // T3-CUSTOM(expbkt3)
           expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
         });
         return next;
@@ -454,8 +479,9 @@ const make = Effect.gen(function* () {
       const { decision } = input;
       // T3-CUSTOM(expbkt3): the team user the approval names binds the client to that user.
       let approvingUserId: EnvironmentUserId | null = null;
+      let approvingOperator = false; // T3-CUSTOM(expbkt3): the approval held `access:write`.
       if (decision._tag === "pairing-code") {
-        approvingUserId = yield* environmentAuth
+        const approval = yield* environmentAuth
           .consumeMcpApprovalCode(decision.code, decision.access)
           .pipe(
             Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
@@ -470,6 +496,15 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+        // T3-CUSTOM(expbkt3): BEGIN — an anonymous code cannot approve when identity is required.
+        if (approval.userId === null && (yield* identityRequired)) {
+          return yield* new EnvironmentAuth.ServerAuthMcpApprovalCodeError({
+            reason: "not_a_pairing_code",
+          });
+        }
+        approvingUserId = approval.userId;
+        approvingOperator = approval.operator;
+        // T3-CUSTOM(expbkt3): END
       } else {
         const session = yield* approvingBrowserSession(input.request, input.authorization);
         if (
@@ -484,8 +519,14 @@ const make = Effect.gen(function* () {
           });
         }
         approvingUserId = session.userId; // T3-CUSTOM(expbkt3): the approving team user.
+        approvingOperator = approvalGrantsOperator(session.scopes); // T3-CUSTOM(expbkt3)
       }
-      const code = yield* mintCode(input.authorization, decision.access, approvingUserId);
+      const code = yield* mintCode(
+        input.authorization,
+        decision.access,
+        approvingUserId, // T3-CUSTOM(expbkt3)
+        approvingOperator, // T3-CUSTOM(expbkt3)
+      );
       yield* Effect.logInfo("Approved an MCP client sign-in.", {
         client: input.authorization.client.name,
         access: decision.access,
@@ -548,6 +589,7 @@ const make = Effect.gen(function* () {
           label: pending.clientName,
           access: pending.access,
           userId: pending.userId, // T3-CUSTOM(expbkt3): the approving team user.
+          operator: pending.operator, // T3-CUSTOM(expbkt3)
           client: deriveAuthClientMetadata({ request }),
         })
         .pipe(
@@ -601,6 +643,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                 const { forkCapabilities, ...forkFields } = oauthClientForkFields({
                   access: client.access,
                   userId: client.userId === null ? null : UserId.make(client.userId),
+                  operator: client.operator,
                 });
                 return {
                   ...forkFields, // T3-CUSTOM(expbkt3)

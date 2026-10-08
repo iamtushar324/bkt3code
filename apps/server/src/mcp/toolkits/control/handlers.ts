@@ -156,7 +156,8 @@ const requireExternalOperator = Effect.fn("T3ControlToolkit.requireExternalOpera
   if (!McpInvocationContext.isExternalMcpOperator(scope)) {
     return yield* new T3ControlToolError({
       operation,
-      message: "This operation requires the Settings-issued external operator credential.",
+      message:
+        "This operation requires an operator: the Settings-issued external operator credential, or an MCP client approved by an administrator.",
     });
   }
   return scope;
@@ -1575,9 +1576,8 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
 });
 
 /** The control handlers as a layer, for tests that build the toolkit directly. */
-export const T3ControlToolkitHandlersLive = McpToolAccess.HandlersLayer.layer(
-  T3ControlToolkitHandlers,
-);
+export const T3ControlToolkitHandlersLive =
+  McpToolAccess.HandlersLayer.layer(T3ControlToolkitHandlers);
 
 /** Exposed for focused authorization tests. */
 // T3-CUSTOM(expbkt3): what a created session starts with when the caller

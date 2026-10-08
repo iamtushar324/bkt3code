@@ -47,6 +47,7 @@ import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import { operatorSessionStateFields } from "./OperatorIdentity.ts";
 // T3-CUSTOM(expbkt3): shorter sessions for member self-service pairings.
 import { pairedSessionTtlFields } from "./SelfServicePairing.ts";
+import { approvalGrantsOperator } from "./mcpApprovalPolicy.expbkt3.ts"; // T3-CUSTOM(expbkt3)
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -108,6 +109,14 @@ export interface McpClientSession {
   readonly access: AuthMcpClientAccess;
   /** T3-CUSTOM(expbkt3): the team user who approved this client; null when unbound. */
   readonly userId: EnvironmentUserId | null;
+  /** T3-CUSTOM(expbkt3): whether the approving grant or session held `access:write`. */
+  readonly operator: boolean;
+}
+
+/** T3-CUSTOM(expbkt3): what a spent MCP approval code says about who approved. */
+export interface McpApprovalCodeGrant {
+  readonly userId: EnvironmentUserId | null;
+  readonly operator: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -608,6 +617,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly client: AuthClientMetadata;
       /** T3-CUSTOM(expbkt3): the team user who approved this client. */
       readonly userId?: EnvironmentUserId | null;
+      /** T3-CUSTOM(expbkt3): the approving grant or session held `access:write`. */
+      readonly operator?: boolean;
     }) => Effect.Effect<
       { readonly token: string; readonly expiresAt: DateTime.DateTime },
       ServerAuthInternalError
@@ -617,15 +628,14 @@ export class EnvironmentAuth extends Context.Service<
      * given access; the code must hold every scope that access grants.
      * Proof-bound codes (T3 Connect) are refused without being spent, and
      * desktop bootstrap grants never qualify.
-     * T3-CUSTOM(expbkt3): succeeds with the team user the code was issued for,
-     * or null when it names none.
+     * T3-CUSTOM(expbkt3): succeeds with the team user the code was issued for
+     * (null when it names none) and whether it held `access:write`.
      */
-    // T3-CUSTOM(expbkt3): returns the team user the approval code was issued for.
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
     ) => Effect.Effect<
-      EnvironmentUserId | null,
+      McpApprovalCodeGrant,
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
     >;
     /** A browser cookie session only; a bearer header never counts as one. */
@@ -1330,6 +1340,7 @@ export const make = Effect.gen(function* () {
                 ? (session.runtimeModeCeiling ?? "approval-required")
                 : "read-only",
               userId: session.userId, // T3-CUSTOM(expbkt3): the approving team user.
+              operator: session.mcpOperator === true, // T3-CUSTOM(expbkt3)
             } satisfies McpClientSession)
           : Effect.fail(
               new ServerAuthInvalidCredentialError({
@@ -1350,6 +1361,7 @@ export const make = Effect.gen(function* () {
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         ...(input.userId ? { userId: input.userId } : {}), // T3-CUSTOM(expbkt3): team user binding.
+        ...(input.operator ? { mcpOperator: true } : {}), // T3-CUSTOM(expbkt3): operator approval.
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
       .pipe(
@@ -1391,7 +1403,11 @@ export const make = Effect.gen(function* () {
         grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
           : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
-            ? Effect.succeed(mcpApprovalCodeUserId(grant.subject)) // T3-CUSTOM(expbkt3): team user binding.
+            ? Effect.succeed({
+                // T3-CUSTOM(expbkt3): who approved, for the client's team binding.
+                userId: mcpApprovalCodeUserId(grant.subject),
+                operator: approvalGrantsOperator(grant.scopes),
+              } satisfies McpApprovalCodeGrant)
             : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),

@@ -1262,7 +1262,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                           className="rounded-lg border border-danger-border bg-danger px-3 py-2"
                           onPress={props.onRetryFailedOutbox}
                         >
-                          <Text className="text-xs font-t3-medium text-danger-foreground">Retry</Text>
+                          <Text className="text-xs font-t3-medium text-danger-foreground">
+                            Retry
+                          </Text>
                         </Pressable>
                         <Pressable
                           accessibilityRole="button"

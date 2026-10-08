@@ -64,6 +64,8 @@ export interface VerifiedSession {
   readonly proofKeyThumbprint?: string;
   /** The most an MCP client approved through OAuth may hand to the threads it drives. */
   readonly runtimeModeCeiling?: RuntimeMode;
+  /** T3-CUSTOM(expbkt3): an MCP client whose approval held `access:write`. */
+  readonly mcpOperator?: boolean;
 }
 
 export type SessionCredentialChange =
@@ -417,6 +419,8 @@ export class SessionStore extends Context.Service<
       readonly userId?: EnvironmentUserId; // T3-CUSTOM(expbkt3): bind the issued session to a durable user.
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
+      /** T3-CUSTOM(expbkt3): an MCP client whose approval held `access:write`. */
+      readonly mcpOperator?: boolean;
       /**
        * Atomically revoke active sessions with the same subject and method
        * before storing this session.
@@ -487,6 +491,7 @@ const SessionClaims = Schema.Struct({
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
   jkt: Schema.optionalKey(Schema.String),
   rtc: Schema.optionalKey(RuntimeMode),
+  mop: Schema.optionalKey(Schema.Boolean), // T3-CUSTOM(expbkt3): MCP client approved by an operator.
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -730,6 +735,7 @@ export const make = Effect.gen(function* () {
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
+        ...(input?.mcpOperator ? { mop: true } : {}), // T3-CUSTOM(expbkt3)
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -920,6 +926,7 @@ export const make = Effect.gen(function* () {
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
+        ...(claims.mop ? { mcpOperator: true } : {}), // T3-CUSTOM(expbkt3)
       } satisfies VerifiedSession;
     },
   );

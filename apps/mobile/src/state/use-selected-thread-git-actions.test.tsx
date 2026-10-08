@@ -55,6 +55,10 @@ vi.mock("./use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => harness.worktree,
 }));
 
+// T3-CUSTOM(expbkt3): the acting-profile lookup reaches the connection runtime,
+// whose Expo imports need `__DEV__`; stub the fork's source-control query.
+vi.mock("./query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+vi.mock("./sourceControl", () => ({ sourceControlEnvironment: { profiles: () => null } }));
 import { useSelectedThreadGitActions } from "./use-selected-thread-git-actions";
 
 let root: Root | null = null;

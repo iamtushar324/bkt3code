@@ -2150,7 +2150,8 @@ it.effect(
         const config = McpProviderSession.readMcpProviderSession(threadId);
         assert.isDefined(config);
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
-        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+        // T3-CUSTOM(expbkt3): fork scopes may have no thread (external callers).
+        assert.equal((yield* registry.resolve(token))?.thread?.threadId, threadId);
       }).pipe(
         Effect.provide(
           layerTest({ state, idleTimeoutMs: 60_000, pauseAttachWrite: { armed, paused } }),
@@ -2226,7 +2227,8 @@ it.effect(
           config!.providerSessionId,
         );
         const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
-        assert.equal((yield* registry.resolve(token))?.thread.threadId, threadId);
+        // T3-CUSTOM(expbkt3): fork scopes may have no thread (external callers).
+        assert.equal((yield* registry.resolve(token))?.thread?.threadId, threadId);
         // Still attached: resuming on the replacement does not attach the thread again.
         const attachedEvents = eventStore
           .read({ threadId, eventType: "provider-session.attached" })

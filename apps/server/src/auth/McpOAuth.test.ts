@@ -63,7 +63,12 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer.pipe(Layer.provide(forkAuthServicesLayer))), // T3-CUSTOM(expbkt3)
-      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+      Layer.provide(
+        McpOAuthHttp.layer.pipe(
+          // T3-CUSTOM(expbkt3): approvals read the environment's identity rule.
+          Layer.provide(McpOAuth.layer.pipe(Layer.provide(forkSettingsLayer))),
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
   ).pipe(
