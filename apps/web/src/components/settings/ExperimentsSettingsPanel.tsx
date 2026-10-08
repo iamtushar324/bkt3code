@@ -160,12 +160,12 @@ export function ExperimentsSettingsPanel() {
         />
         {/* T3-CUSTOM(expbkt3): END */}
         <SettingsRow
-          title="Phase-grouped sidebar"
+          title="BK sidebar"
           description="Group threads by lifecycle phase instead of repository. Repository, branch, and provider stay visible as row labels, and the original sidebar remains available when this is off."
           resetAction={
             phaseGroupedSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled ? (
               <SettingResetButton
-                label="phase-grouped sidebar"
+                label="BK sidebar"
                 onClick={() =>
                   updateSettings({
                     phaseGroupedSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled,
@@ -180,7 +180,7 @@ export function ExperimentsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ phaseGroupedSidebarEnabled: Boolean(checked) })
               }
-              aria-label="Enable the phase-grouped sidebar"
+              aria-label="Enable the BK sidebar"
             />
           }
         />

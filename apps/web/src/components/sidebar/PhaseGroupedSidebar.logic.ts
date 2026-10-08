@@ -11,6 +11,9 @@
 export * from "@t3tools/client-runtime/state/phase-sidebar";
 
 import type { PhaseSidebarPhaseId } from "@t3tools/client-runtime/state/phase-sidebar";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import type { LinearIssueStatusSummary, ThreadLinearLink } from "@t3tools/contracts";
+import { linearIssueFromBranch, parseLinearLinkUrl } from "@t3tools/shared/linearIssue";
 
 import { cn } from "../../lib/utils";
 
@@ -146,4 +149,143 @@ export function phaseSidebarPriorityBadgeClassName(priority: number): string {
     PHASE_SIDEBAR_PRIORITY_BADGE_CLASS_NAMES[priority] ??
     PHASE_SIDEBAR_PRIORITY_BADGE_CLASS_NAMES.at(-1)!
   );
+}
+
+/**
+ * T3-CUSTOM(expbkt3): a session's Linear tags as the BK sidebar shows them.
+ *
+ * A session can carry a project, main issues and sub-issues. Stored tags win;
+ * a thread with none falls back to the issue its `linear/ABC-123` branch names.
+ * Whether an issue is a sub-issue is Linear's to say (its status summary names
+ * a parent), so a tag reads as a main issue until its status arrives.
+ */
+export type PhaseSidebarLinearTagKind = "project" | "issue" | "sub-issue";
+
+export interface PhaseSidebarLinearTagRef {
+  readonly kind: ThreadLinearLink["kind"];
+  readonly url: string;
+  readonly identifier: string;
+  readonly label: string;
+  /** Stored on the thread, so it can be removed; false for the branch fallback. */
+  readonly manual: boolean;
+}
+
+export interface PhaseSidebarLinearTagEntry {
+  readonly kind: PhaseSidebarLinearTagKind;
+  readonly url: string;
+  /** Issue key, or the project name read from its slug. */
+  readonly label: string;
+  /** The status shown in the chip ("In Progress", "syncing…"); null for projects. */
+  readonly statusText: string | null;
+  readonly title: string | null;
+  readonly tooltip: string;
+  readonly manual: boolean;
+}
+
+export interface PhaseSidebarLinearTags {
+  /** Display order: projects, main issues, sub-issues; tag order within each. */
+  readonly entries: ReadonlyArray<PhaseSidebarLinearTagEntry>;
+  /** The tag a single chip stands for: the first main issue, else the first tag. */
+  readonly primary: PhaseSidebarLinearTagEntry;
+  /** "ENG-1 (In Progress)", "Project name", or "ENG-1 +2" when there are several. */
+  readonly label: string;
+}
+
+/** A thread's tags parsed once; rows memoise this on `linearLinks` + branch. */
+export function phaseSidebarLinearTagRefs(
+  branch: string | null | undefined,
+  links: ReadonlyArray<ThreadLinearLink> | null | undefined,
+): ReadonlyArray<PhaseSidebarLinearTagRef> {
+  const refs: PhaseSidebarLinearTagRef[] = [];
+  for (const link of links ?? []) {
+    const parsed = parseLinearLinkUrl(link.url);
+    if (!parsed || refs.some((ref) => ref.url === parsed.url)) continue;
+    refs.push({ ...parsed, manual: true });
+  }
+  if (refs.length > 0) return refs;
+  const fromBranch = linearIssueFromBranch(branch);
+  return fromBranch
+    ? [{ kind: "issue", ...fromBranch, label: fromBranch.identifier, manual: false }]
+    : [];
+}
+
+/** Issue keys whose status the sidebar fetches, in one batched request per environment. */
+export function phaseSidebarLinearIssueIdentifiers(
+  refs: ReadonlyArray<PhaseSidebarLinearTagRef>,
+): ReadonlyArray<string> {
+  return refs.filter((ref) => ref.kind === "issue").map((ref) => ref.identifier);
+}
+
+/** Two status summaries that would render the same, so a refetch can keep the old object. */
+export function samePhaseSidebarLinearIssueStatus(
+  left: LinearIssueStatusSummary,
+  right: LinearIssueStatusSummary,
+): boolean {
+  return (
+    left.identifier === right.identifier &&
+    left.url === right.url &&
+    left.status === right.status &&
+    left.statusType === right.statusType &&
+    left.updatedAt === right.updatedAt &&
+    left.error === right.error &&
+    (left.title ?? null) === (right.title ?? null) &&
+    (left.parentIdentifier ?? null) === (right.parentIdentifier ?? null)
+  );
+}
+
+const PHASE_SIDEBAR_LINEAR_TAG_ORDER = {
+  project: 0,
+  issue: 1,
+  "sub-issue": 2,
+} satisfies Record<PhaseSidebarLinearTagKind, number>;
+
+export function resolvePhaseSidebarLinearTags(
+  refs: ReadonlyArray<PhaseSidebarLinearTagRef>,
+  statuses: ReadonlyArray<LinearIssueStatusSummary>,
+): PhaseSidebarLinearTags | null {
+  const statusFor = (identifier: string) =>
+    statuses.find((status) => status.identifier === identifier) ?? null;
+  const entries = refs
+    .map((ref): PhaseSidebarLinearTagEntry => {
+      if (ref.kind === "project") {
+        return {
+          kind: "project",
+          url: ref.url,
+          label: ref.label,
+          statusText: null,
+          title: null,
+          tooltip: `Project: ${ref.label}`,
+          manual: ref.manual,
+        };
+      }
+      const status = statusFor(ref.identifier);
+      const parent = status?.parentIdentifier ?? null;
+      const title = status?.title ?? null;
+      return {
+        kind: parent === null ? "issue" : "sub-issue",
+        url: ref.url,
+        label: ref.label,
+        statusText: status?.status ?? (status?.error ? "unavailable" : "syncing…"),
+        title,
+        tooltip: `${ref.label} (${status?.status ?? status?.error ?? "syncing…"})${
+          parent === null ? "" : ` · sub-issue of ${parent}`
+        }${title === null ? "" : ` · ${title}`}`,
+        manual: ref.manual,
+      };
+    })
+    // toSorted is stable, so tag order survives within a kind.
+    .toSorted(
+      (left, right) =>
+        PHASE_SIDEBAR_LINEAR_TAG_ORDER[left.kind] - PHASE_SIDEBAR_LINEAR_TAG_ORDER[right.kind],
+    );
+  const first = entries[0];
+  if (!first) return null;
+  const primary = entries.find((entry) => entry.kind === "issue") ?? first;
+  const label =
+    entries.length > 1
+      ? `${primary.label} +${entries.length - 1}`
+      : primary.statusText === null
+        ? primary.label
+        : `${primary.label} (${primary.statusText})`;
+  return { entries, primary, label };
 }

@@ -44,6 +44,8 @@ export interface SessionManifestInput {
   readonly deletedAt: string | null;
   readonly exportedAt: string;
   readonly linearIssueUrl: string | null;
+  /** Every Linear tag (project, issues); absent reads as none. */
+  readonly linearLinks?: ReadonlyArray<{ readonly url: string; readonly kind: string }>;
   readonly parentThreadId: string | null;
   readonly messageCount: number;
   readonly activityCount: number;
@@ -110,6 +112,7 @@ export function renderSessionManifest(input: SessionManifestInput): string {
       deleted: input.deletedAt !== null,
       exportedAt: input.exportedAt,
       linearIssueUrl: input.linearIssueUrl,
+      linearLinks: input.linearLinks ?? [],
       parentThreadId: input.parentThreadId,
       messageCount: input.messageCount,
       activityCount: input.activityCount,

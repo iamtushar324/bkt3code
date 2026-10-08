@@ -30,6 +30,12 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import { SourceControlProfileId } from "./sourceControlProfiles.ts";
 // T3-CUSTOM(expbkt3): per-thread custom sidebar group.
 import { ThreadCustomGroup } from "./threadCustomGroup.ts";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import {
+  ThreadLinearLink,
+  ThreadLinearLinksAdd,
+  ThreadLinearLinksRemove,
+} from "./threadLinearLink.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -945,6 +951,8 @@ export const OrchestrationThread = Schema.Struct({
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   // T3-CUSTOM(expbkt3): optional so payloads from pre-manual-tag servers decode.
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // T3-CUSTOM(expbkt3): every Linear tag; optional so pre-multi-tag payloads decode.
+  linearLinks: Schema.optional(Schema.Array(ThreadLinearLink)),
   // T3-CUSTOM(expbkt3): optional so payloads from pre-Mattermost servers decode.
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // T3-CUSTOM(expbkt3): session lineage. Optional so payloads from
@@ -1039,6 +1047,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   // T3-CUSTOM(expbkt3): durable manual Linear issue URL.
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // T3-CUSTOM(expbkt3): every Linear tag (see ThreadLinearLink).
+  linearLinks: Schema.optional(Schema.Array(ThreadLinearLink)),
   // T3-CUSTOM(expbkt3): durable Mattermost conversation permalink.
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // T3-CUSTOM(expbkt3): session lineage (see the ThreadPriority block above).
@@ -1410,6 +1420,9 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   // T3-CUSTOM(expbkt3): manual Linear tag. undefined = unchanged, null = clear.
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // T3-CUSTOM(expbkt3): add or remove single Linear tags (see ForkThreadUpdateFields).
+  linearLinksAdd: Schema.optional(ThreadLinearLinksAdd),
+  linearLinksRemove: Schema.optional(ThreadLinearLinksRemove),
   // T3-CUSTOM(expbkt3): Mattermost conversation this session is bound to.
   // undefined = unchanged, null = clear.
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2185,6 +2198,8 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   customGroup: Schema.optional(Schema.NullOr(ThreadCustomGroup)),
   // T3-CUSTOM(expbkt3): manual Linear tag. undefined = unchanged, null = clear.
   linearIssueUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // T3-CUSTOM(expbkt3): the whole Linear tag list. undefined = unchanged.
+  linearLinks: Schema.optional(Schema.Array(ThreadLinearLink)),
   // T3-CUSTOM(expbkt3): Mattermost conversation this session is bound to.
   // undefined = unchanged, null = clear.
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

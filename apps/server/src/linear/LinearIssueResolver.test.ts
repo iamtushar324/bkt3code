@@ -24,6 +24,23 @@ it.effect("parses only the reduced Linear return value", () =>
   }),
 );
 
+// T3-CUSTOM(expbkt3): the title and parent key the BK sidebar shows on a tag.
+it.effect("parses the title and parent key, and tolerates null for both", () =>
+  Effect.gen(function* () {
+    const subIssue = yield* parseLinearToolResult(
+      'Return value: {"id":"DS-175","status":"Todo","url":"https://linear.app/beknown/issue/DS-175","title":"Wire the tag list","parentId":"DS-174"}',
+    );
+    expect(subIssue.title).toBe("Wire the tag list");
+    expect(subIssue.parentId).toBe("DS-174");
+
+    const topLevel = yield* parseLinearToolResult(
+      'Return value: {"id":"DS-174","status":"Todo","url":"https://linear.app/beknown/issue/DS-174","title":null,"parentId":null}',
+    );
+    expect(topLevel.title).toBeNull();
+    expect(topLevel.parentId).toBeNull();
+  }),
+);
+
 it.effect("rejects a response without a reduced return value", () =>
   Effect.gen(function* () {
     const exit = yield* Effect.exit(parseLinearToolResult("Print output only"));

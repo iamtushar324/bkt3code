@@ -8,6 +8,8 @@ const ExternalUrlTarget = Schema.Literals([
   "provider-auth",
   "html-render",
   "mcp-app",
+  // T3-CUSTOM(expbkt3): Linear tags on the BK sidebar row.
+  "linear-link",
 ]);
 
 export type ExternalUrlTarget = typeof ExternalUrlTarget.Type;

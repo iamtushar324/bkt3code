@@ -758,6 +758,9 @@ export interface PhaseSidebarRow {
   // T3-CUSTOM(expbkt3): END
   /** Same version-skew contract for manual Linear tags on thread.meta.update. */
   readonly linearIssueSupported?: boolean;
+  /** T3-CUSTOM(expbkt3): the server adds and removes single Linear tags
+      (`linearLinksAdd` / `linearLinksRemove`); older servers ignore them. */
+  readonly linearLinksSupported?: boolean;
   /** Same version-skew contract for the Mattermost link on thread.meta.update. */
   readonly mattermostLinkSupported?: boolean;
   /** Same version-skew contract for regenerateTitle on thread.meta.update,
@@ -1903,6 +1906,7 @@ export function buildPhaseSidebarRows(
       customGroup: thread.customGroup ?? input.localCustomGroupForKey?.(threadKey) ?? null,
       customGroupSupported: capabilities?.threadCustomGroup === true,
       linearIssueSupported: capabilities?.threadLinearIssue === true,
+      linearLinksSupported: capabilities?.threadLinearLinks === true,
       mattermostLinkSupported: capabilities?.threadMattermostLink === true,
       titleRegenerationSupported: capabilities?.threadTitleRegeneration === true,
       changeRequestState: vcsStatus?.pr?.state ?? null,

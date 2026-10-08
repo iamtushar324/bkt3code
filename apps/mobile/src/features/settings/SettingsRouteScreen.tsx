@@ -258,14 +258,14 @@ function ExperimentsSettingsSection() {
         <AgentPlanSubmissionSettingsRow />
         <SettingsSwitchRow
           icon="square.grid.2x2"
-          label="Phase-grouped Sidebar"
+          label="BK sidebar"
           value={phaseSidebarEnabled}
           onValueChange={(value) => savePreferences({ experimentalPhaseSidebarEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Groups threads by lifecycle and shows the full row lane — worktree codename, Linear tag,
-        priority and owner. Experimental; turn it off to return to the stock list.
+        The BK sidebar groups threads by lifecycle and shows the full row lane — worktree codename,
+        Linear tags, priority and owner. Experimental; turn it off to return to the stock list.
       </Text>
     </View>
   );

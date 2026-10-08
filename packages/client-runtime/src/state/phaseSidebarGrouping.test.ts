@@ -66,6 +66,7 @@ function makeThread(id: string, overrides: Partial<ThreadShell> = {}): ThreadShe
     priority: null,
     customGroup: null,
     linearIssueUrl: null,
+    linearLinks: [],
     mattermostThreadUrl: null,
     parentThreadId: null,
     parentEnvironmentId: null,

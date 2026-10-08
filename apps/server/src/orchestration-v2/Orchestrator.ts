@@ -13,6 +13,12 @@ import {
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+// T3-CUSTOM(expbkt3): Linear tags on a session.
+import {
+  applyLinearLinkChanges,
+  parseLinearIssueUrl,
+  threadLinearLinks,
+} from "@t3tools/shared/linearIssue";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -2205,7 +2211,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       sourceControlProfileId: command.sourceControlProfileId ?? null,
       priority: command.priority ?? null,
       customGroup: command.customGroup ?? null,
-      linearIssueUrl: command.linearIssueUrl ?? null,
+      // Canonical, so the legacy one-tag read and later tag changes agree on
+      // its URL; a value that does not parse is kept as given.
+      linearIssueUrl:
+        command.linearIssueUrl == null
+          ? null
+          : (parseLinearIssueUrl(command.linearIssueUrl)?.url ?? command.linearIssueUrl),
       mattermostThreadUrl: command.mattermostThreadUrl ?? null,
       parentThreadId: command.parentThreadId ?? null,
       parentEnvironmentId: command.parentEnvironmentId ?? null,
@@ -2938,9 +2949,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : { sourceControlProfileId: command.sourceControlProfileId }),
             ...(command.priority === undefined ? {} : { priority: command.priority }),
             ...(command.customGroup === undefined ? {} : { customGroup: command.customGroup }),
-            ...(command.linearIssueUrl === undefined
+            // T3-CUSTOM(expbkt3): Linear tags. Any tag change rewrites the list
+            // and its single-tag `linearIssueUrl` mirror together.
+            ...(command.linearIssueUrl === undefined &&
+            command.linearLinksAdd === undefined &&
+            command.linearLinksRemove === undefined
               ? {}
-              : { linearIssueUrl: command.linearIssueUrl }),
+              : applyLinearLinkChanges(threadLinearLinks(thread), command)),
             ...(command.mattermostThreadUrl === undefined
               ? {}
               : { mattermostThreadUrl: command.mattermostThreadUrl }),

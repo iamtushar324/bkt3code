@@ -69,6 +69,7 @@ function makeThread(overrides: Partial<EnvironmentThreadShell> = {}): Environmen
     priority: null,
     customGroup: null,
     linearIssueUrl: null,
+    linearLinks: [],
     mattermostThreadUrl: null,
     parentThreadId: null,
     parentEnvironmentId: null,

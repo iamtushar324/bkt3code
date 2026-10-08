@@ -1,7 +1,7 @@
 # expbkt3 customization boundaries
 
 The Beknown fork extends upstream T3 Code with team mode, external MCP control,
-native plan review, the phase-grouped sidebar, and BK desktop and mobile builds.
+native plan review, the BK sidebar (code name: phase-grouped sidebar), and BK desktop and mobile builds.
 This page is the registry of where that code lives and which seams it holds in
 upstream-owned files.
 
@@ -28,7 +28,7 @@ tools (`t3_*`, `t3_ui_*`); admin pages (users, project access, Active Projects);
 event feed and external PR sync endpoints for the Linear bridge; Claude
 hard-limit account rotation; city codename worktrees; child sessions and lineage,
 including cross-environment parents; manual-title ownership; shared workspace groups for sibling
-sessions; session archive; the phase-grouped sidebar on web and mobile, with
+sessions; session archive; the BK sidebar on web and mobile, with
 per-thread custom groups; shared host appearance (name, icon, colour stored in the host's server settings); the smart git button (header asks the agent to commit / push / create PR, flag `smartGitPromptsEnabled`); thread priority; Linear tags; Mattermost links; the
 row PR badge; native plan review; comments on agent messages (`chatCommentsEnabled`); plan mode on by default; agent views
 (`t3_show_ui`); user presence for agents (`t3_user_presence`, `GET /api/presence`,
@@ -343,7 +343,7 @@ it, `PhaseGroupedSidebar.tsx` renders it in the metadata lane.
 Whether a merge settles a thread is upstream's `sidebarAutoSettleOnMerge`
 setting (default on). The fork's own "a merge never settles" rewrite was retired
 for it; the fork helpers left in `client-runtime/state/threadSettled.ts` exist
-for the phase sidebar.
+for the BK sidebar.
 
 ## Session titles
 

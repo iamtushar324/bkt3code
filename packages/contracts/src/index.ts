@@ -26,6 +26,7 @@ export * from "./providerRuntime.ts";
 export * from "./threadUsage.ts";
 // T3-CUSTOM(expbkt3): per-thread custom sidebar group.
 export * from "./threadCustomGroup.ts";
+export * from "./threadLinearLink.ts";
 export * from "./providerUsageLimits.ts";
 export * from "./usageLimitSourceId.ts";
 export * from "./providerPolicy.ts";

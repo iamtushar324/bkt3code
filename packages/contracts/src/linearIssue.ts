@@ -15,6 +15,10 @@ export const LinearIssueStatusSummary = Schema.Struct({
   statusType: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: Schema.NullOr(TrimmedNonEmptyString),
   error: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional so summaries from servers that predate multi-tagging decode.
+  title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The parent issue's key when this issue is a sub-issue, else null. */
+  parentIdentifier: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type LinearIssueStatusSummary = typeof LinearIssueStatusSummary.Type;
 

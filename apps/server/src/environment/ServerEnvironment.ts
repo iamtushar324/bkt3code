@@ -255,6 +255,8 @@ export const make = Effect.gen(function* () {
       threadCustomGroup: true,
       // T3-CUSTOM(expbkt3): durable manual Linear tags.
       threadLinearIssue: true,
+      // T3-CUSTOM(expbkt3): several Linear tags per thread (add/remove).
+      threadLinearLinks: true,
       // T3-CUSTOM(expbkt3): durable Mattermost conversation link.
       threadMattermostLink: true,
       // T3-CUSTOM(expbkt3): native plan-review documents and discussions.

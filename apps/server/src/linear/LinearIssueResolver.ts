@@ -56,8 +56,20 @@ const ToolIssue = Schema.Struct({
   statusType: Schema.optional(Schema.String),
   url: Schema.String,
   updatedAt: Schema.optional(Schema.String),
+  // Null or absent when Linear leaves them out.
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  parentId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const ToolIssueJson = Schema.fromJsonString(ToolIssue);
+
+/**
+ * Linear's MCP returns `parentId` as the parent's key (`DS-174`). Anything else
+ * (a UUID from another tool version) reads as unknown rather than as a key.
+ */
+const parentIdentifierOf = (parentId: string | null | undefined): string | null => {
+  const key = parentId?.trim().toUpperCase();
+  return key !== undefined && LINEAR_IDENTIFIER_PATTERN.test(key) ? key : null;
+};
 
 const unavailable = (identifier: string, error: string): LinearIssueStatusSummary => ({
   identifier,
@@ -93,7 +105,7 @@ const resolveOne = Effect.fn("LinearIssueResolver.resolveOne")(function* (
 ) {
   const code = [
     `issue = LinearForUsers.get_issue(id="${identifier}")`,
-    'result = {"id": issue.get("id"), "status": issue.get("status"), "statusType": issue.get("statusType"), "url": issue.get("url"), "updatedAt": issue.get("updatedAt")}',
+    'result = {"id": issue.get("id"), "status": issue.get("status"), "statusType": issue.get("statusType"), "url": issue.get("url"), "updatedAt": issue.get("updatedAt"), "title": issue.get("title"), "parentId": issue.get("parentId")}',
   ].join("\n");
   const request = HttpClientRequest.post(BIFROST_MCP_URL).pipe(
     HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
@@ -127,6 +139,8 @@ const resolveOne = Effect.fn("LinearIssueResolver.resolveOne")(function* (
     statusType: issue.statusType ?? null,
     updatedAt: issue.updatedAt ?? null,
     error: null,
+    title: issue.title?.trim() || null,
+    parentIdentifier: parentIdentifierOf(issue.parentId),
   } satisfies LinearIssueStatusSummary;
 });
 

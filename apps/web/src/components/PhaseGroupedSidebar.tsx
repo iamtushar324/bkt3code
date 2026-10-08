@@ -19,6 +19,8 @@ import {
   type ProjectId,
   type LinearIssueStatusSummary,
   type ScopedThreadRef,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  type ThreadLinearLink,
   // T3-CUSTOM(expbkt3): session lineage.
   type ThreadId,
   type VcsStatusResult,
@@ -36,9 +38,13 @@ import {
   CornerDownRightIcon,
   FilterIcon,
   FolderGit2Icon,
+  // T3-CUSTOM(expbkt3): Linear project tag.
+  FolderKanbanIcon,
   // T3-CUSTOM(expbkt3): PR badge in the row metadata lane.
   LayersIcon,
   LaptopIcon,
+  // T3-CUSTOM(expbkt3): Linear sub-issue tag.
+  ListTreeIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -182,7 +188,12 @@ import {
   resolvePhaseSidebarDisplayPhase,
   resolvePhaseSidebarPhase,
   buildPhaseSidebarRows,
-  resolvePhaseSidebarLinearIssue,
+  // T3-CUSTOM(expbkt3): Linear tags on a session.
+  phaseSidebarLinearIssueIdentifiers,
+  phaseSidebarLinearTagRefs,
+  resolvePhaseSidebarLinearTags,
+  samePhaseSidebarLinearIssueStatus,
+  type PhaseSidebarLinearTagKind,
   resolvePhaseSidebarMattermostLink,
   resolvePhaseSidebarProviderCode,
   resolvePhaseSidebarTraversalTarget,
@@ -295,6 +306,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const linearIssueStatusKey = (environmentId: string, identifier: string) =>
   `${environmentId}\0${identifier}`;
 
+// T3-CUSTOM(expbkt3): one shared empty list, so an untagged row's prop never changes.
+const NO_LINEAR_ISSUE_STATUSES: ReadonlyArray<LinearIssueStatusSummary> = [];
+
 // The failed branch of a settle/snooze command — the four of them share one
 // error reporter, so it takes the widened failure shape.
 type ParkingCommandFailure = Extract<
@@ -306,6 +320,20 @@ type ParkingCommandFailure = Extract<
 // shared button shape.
 const ROW_ACTION_CLASS =
   "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+// T3-CUSTOM(expbkt3): one glyph per Linear tag kind, so a project, a main issue
+// and a sub-issue read apart at a glance.
+function LinearTagIcon({
+  kind,
+  className,
+}: {
+  readonly kind: PhaseSidebarLinearTagKind;
+  readonly className: string;
+}) {
+  if (kind === "project") return <FolderKanbanIcon aria-hidden className={className} />;
+  if (kind === "sub-issue") return <ListTreeIcon aria-hidden className={className} />;
+  return <LinearIcon aria-hidden className={className} />;
+}
 
 type RepositoryOption = ReturnType<typeof buildPhaseSidebarRepositoryOptions>[number];
 
@@ -465,7 +493,7 @@ function PhaseFilterPopover({
             variant="outline"
             size="sm"
             className="h-7 gap-1.5 px-2 text-xs"
-            aria-label="Filter phase sidebar"
+            aria-label="Filter BK sidebar"
           />
         }
       >
@@ -956,12 +984,19 @@ interface PhaseThreadRowProps {
   readonly onUnsnooze: (row: PhaseSidebarRow) => void;
   // T3-CUSTOM(expbkt3): null clears the priority.
   readonly onSetPriority: (row: PhaseSidebarRow, priority: 0 | 1 | 2 | 3 | 4 | null) => void;
-  // T3-CUSTOM(expbkt3): null clears a manually attached Linear issue.
+  // T3-CUSTOM(expbkt3): Linear tags on a session — added and removed one at a
+  // time on servers with `threadLinearLinks`.
+  readonly onAddLinearLink: (row: PhaseSidebarRow, link: ThreadLinearLink) => void;
+  readonly onRemoveLinearLink: (row: PhaseSidebarRow, url: string) => void;
+  // Older servers keep one issue tag; null clears it.
   readonly onSetLinearIssueUrl: (row: PhaseSidebarRow, url: string | null) => void;
   readonly onSetMattermostThreadUrl: (row: PhaseSidebarRow, url: string | null) => void;
   // T3-CUSTOM(expbkt3): re-derive the title from the conversation.
   readonly onRegenerateTitle: (row: PhaseSidebarRow) => void;
-  readonly linearIssueStatus: LinearIssueStatusSummary | null;
+  // T3-CUSTOM(expbkt3): this row's own Linear statuses. The list keeps its
+  // identity until one of its summaries changes, so a refetch re-renders only
+  // the rows whose status moved.
+  readonly linearIssueStatuses: ReadonlyArray<LinearIssueStatusSummary>;
   // T3-CUSTOM(expbkt3): start a side-by-side session from this row. Offered on
   // shelf rows too — a parked session is a perfectly good place to branch from.
   readonly onCreateThread: (row: PhaseSidebarRow, choice: NewThreadWorkspaceChoice) => void;
@@ -1061,10 +1096,12 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     onUnsettle,
     onUnsnooze,
     onSetPriority,
+    onAddLinearLink,
+    onRemoveLinearLink,
     onSetLinearIssueUrl,
     onSetMattermostThreadUrl,
     onRegenerateTitle,
-    linearIssueStatus,
+    linearIssueStatuses,
     onCreateThread,
     treeActions,
     treeDepth,
@@ -1115,7 +1152,16 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // discard action when the lifecycle sidebar is selected.
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !active;
   const clearComposerContent = useComposerDraftStore((state) => state.clearComposerContent);
-  const linearIssue = resolvePhaseSidebarLinearIssue(row.thread.branch, row.thread.linearIssueUrl);
+  // T3-CUSTOM(expbkt3): every Linear tag on the session — project, main issues,
+  // sub-issues — or the branch's issue when none is stored.
+  const linearTagRefs = useMemo(
+    () => phaseSidebarLinearTagRefs(row.thread.branch, row.thread.linearLinks),
+    [row.thread.branch, row.thread.linearLinks],
+  );
+  const linearTags = useMemo(
+    () => resolvePhaseSidebarLinearTags(linearTagRefs, linearIssueStatuses),
+    [linearTagRefs, linearIssueStatuses],
+  );
   // T3-CUSTOM(expbkt3): every link opens in the integrated browser. A row's own link (Linear,
   // pull request, Mattermost) takes you to that row's thread and opens beside it, so the page
   // never lands in the panel of a thread you are not looking at. Cmd/Ctrl-click stays put and
@@ -1273,8 +1319,8 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   }) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!linearIssue) return;
-    openRowLink(linearIssue.url, event, `Failed to open ${linearIssue.identifier}`);
+    if (!linearTags) return;
+    openRowLink(linearTags.primary.url, event, `Failed to open ${linearTags.primary.label}`);
   };
 
   // T3-CUSTOM(expbkt3): same affordance as the Linear tag — the badge opens the
@@ -1380,17 +1426,46 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
         ]
       : [];
     const draftItems = hasUnsentDraft ? [{ id: "discard-draft", label: "Discard draft" }] : [];
-    const linearItems = row.linearIssueSupported
+    // T3-CUSTOM(expbkt3): a session carries several Linear tags. Each one added
+    // can be removed on its own; a tag read off the branch is not stored, so it
+    // has nothing to remove.
+    const removableLinearTags = linearTags?.entries.filter((entry) => entry.manual) ?? [];
+    // An older server keeps one issue tag: change it or clear it, nothing more.
+    const legacyLinearIssueUrl = row.thread.linearIssueUrl;
+    const linearItems = row.linearLinksSupported
       ? [
-          {
-            id: "tag-linear",
-            label: row.thread.linearIssueUrl ? "Change Linear tag…" : "Tag Linear…",
-          },
-          ...(row.thread.linearIssueUrl
-            ? [{ id: "remove-linear", label: "Remove manual Linear tag" }]
-            : []),
+          { id: "tag-linear", label: "Add Linear tag…" },
+          ...(removableLinearTags.length === 1
+            ? [
+                {
+                  id: `remove-linear:${removableLinearTags[0]!.url}`,
+                  label: `Remove Linear tag ${removableLinearTags[0]!.label}`,
+                },
+              ]
+            : removableLinearTags.length > 1
+              ? [
+                  {
+                    id: "remove-linear",
+                    label: "Remove Linear tag",
+                    children: removableLinearTags.map((entry) => ({
+                      id: `remove-linear:${entry.url}`,
+                      label: entry.label,
+                    })),
+                  },
+                ]
+              : []),
         ]
-      : [];
+      : row.linearIssueSupported
+        ? [
+            {
+              id: "tag-linear",
+              label: legacyLinearIssueUrl ? "Change Linear tag…" : "Tag Linear…",
+            },
+            ...(legacyLinearIssueUrl
+              ? [{ id: "remove-linear-issue", label: "Remove Linear tag" }]
+              : []),
+          ]
+        : [];
     // T3-CUSTOM(expbkt3): the Mattermost conversation following this session.
     // "Open" comes first because the badge itself is not clickable - it lives
     // inside the row's button, where an anchor would be invalid and would
@@ -1546,7 +1621,10 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       if (choice) onSetPriority(row, choice.value);
     }
     if (action === "tag-linear") setLinearTagDialogOpen(true);
-    if (action === "remove-linear") onSetLinearIssueUrl(row, null);
+    if (action === "remove-linear-issue") onSetLinearIssueUrl(row, null);
+    if (action?.startsWith("remove-linear:")) {
+      onRemoveLinearLink(row, action.slice("remove-linear:".length));
+    }
     // T3-CUSTOM(expbkt3): Mattermost conversation link.
     if (action === "open-mattermost" && mattermostLink) {
       openRowLink(mattermostLink.url, undefined);
@@ -1844,41 +1922,87 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
               </Tooltip>
             ) : null}
             {/* T3-CUSTOM(expbkt3): END */}
-            {linearIssue ? (
-              <Tooltip>
-                {/* T3-CUSTOM(expbkt3): BEGIN — wrap complete labels as units. */}
-                <TooltipTrigger
-                  render={
-                    <span
-                      role="link"
-                      tabIndex={0}
-                      data-testid={`linear-issue-${row.thread.id}`}
-                      aria-label={`Open ${linearIssue.identifier} in Linear`}
-                      className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      onClick={openLinearIssue}
-                      onDoubleClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        openLinearIssue(event);
-                      }}
-                    />
-                  }
-                >
-                  <LinearIcon aria-hidden className="size-2.5 shrink-0" />
-                  <span className="max-w-32 truncate">
-                    {linearIssue.identifier} (
-                    {linearIssueStatus?.status ??
-                      (linearIssueStatus?.error ? "unavailable" : "syncing…")}
-                    )
-                  </span>
-                </TooltipTrigger>
-                {/* T3-CUSTOM(expbkt3): END */}
-                <TooltipPopup side="top">
-                  {linearIssue.identifier} (
-                  {linearIssueStatus?.status ?? linearIssueStatus?.error ?? "syncing…"})
-                </TooltipPopup>
-              </Tooltip>
+            {/* T3-CUSTOM(expbkt3): BEGIN — Linear tags. One tag opens on click;
+                several list themselves first, like linked pull requests. */}
+            {linearTags ? (
+              linearTags.entries.length === 1 ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        role="link"
+                        tabIndex={0}
+                        data-testid={`linear-issue-${row.thread.id}`}
+                        data-linear-tag-kind={linearTags.primary.kind}
+                        aria-label={`Open ${linearTags.primary.label} in Linear`}
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        onClick={openLinearIssue}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          openLinearIssue(event);
+                        }}
+                      />
+                    }
+                  >
+                    <LinearTagIcon kind={linearTags.primary.kind} className="size-2.5 shrink-0" />
+                    <span className="max-w-32 truncate">{linearTags.label}</span>
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{linearTags.primary.tooltip}</TooltipPopup>
+                </Tooltip>
+              ) : (
+                <Popover>
+                  <PopoverTrigger
+                    render={
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        data-testid={`linear-issue-${row.thread.id}`}
+                        data-linear-tag-kind={linearTags.primary.kind}
+                        aria-label={`${linearTags.entries.length} Linear tags`}
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        onClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                          event.stopPropagation();
+                        }}
+                        onDoubleClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                          event.stopPropagation();
+                        }}
+                      />
+                    }
+                  >
+                    <LinearTagIcon kind={linearTags.primary.kind} className="size-2.5 shrink-0" />
+                    <span className="max-w-32 truncate">{linearTags.label}</span>
+                  </PopoverTrigger>
+                  <PopoverPopup align="start" side="bottom" className="w-72 p-1">
+                    <p className="px-2 py-1 text-xs text-muted-foreground">
+                      {`${linearTags.entries.length} Linear tags`}
+                    </p>
+                    {linearTags.entries.map((entry) => (
+                      <button
+                        key={entry.url}
+                        type="button"
+                        title={entry.tooltip}
+                        data-linear-tag-kind={entry.kind}
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openRowLink(entry.url, event, `Failed to open ${entry.label}`);
+                        }}
+                      >
+                        <LinearTagIcon kind={entry.kind} className="size-3 shrink-0" />
+                        <span className="max-w-32 shrink-0 truncate font-medium">
+                          {entry.label}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                          {entry.title ?? entry.statusText ?? "Project"}
+                        </span>
+                      </button>
+                    ))}
+                  </PopoverPopup>
+                </Popover>
+              )
             ) : null}
+            {/* T3-CUSTOM(expbkt3): END */}
             {/* T3-CUSTOM(expbkt3): PR badge — number only, state by colour. A
                 stack wears the layers glyph so it is distinguishable from a
                 single review at a glance; more than one review opens a list
@@ -2320,10 +2444,19 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
       {isArchiving ? <ThreadArchiveStatus title={row.thread.title} /> : null}
       <LinearIssueTagDialog
         open={linearTagDialogOpen}
-        initialUrl={row.thread.linearIssueUrl ?? linearIssue?.url ?? ""}
+        allowProjects={row.linearLinksSupported === true}
+        initialUrl={
+          row.linearLinksSupported === true
+            ? ""
+            : (row.thread.linearIssueUrl ?? linearTags?.primary.url ?? "")
+        }
         threadTitle={row.thread.title}
         onOpenChange={setLinearTagDialogOpen}
-        onSave={(url) => onSetLinearIssueUrl(row, url)}
+        onSave={(link) =>
+          row.linearLinksSupported === true
+            ? onAddLinearLink(row, link)
+            : onSetLinearIssueUrl(row, link.url)
+        }
       />
       {/* T3-CUSTOM(expbkt3): Mattermost conversation link editor. */}
       <MattermostLinkDialog
@@ -2514,23 +2647,27 @@ export function PhaseGroupedSidebar() {
       error: string | null,
     ) => {
       if (issues === null && error === null) return;
+      // T3-CUSTOM(expbkt3): a refetch that changes nothing keeps the same map and
+      // the same summary objects, so rows reading them do not re-render.
+      const summaries: ReadonlyArray<LinearIssueStatusSummary> =
+        issues ??
+        identifiers.map((identifier) => ({
+          identifier,
+          url: null,
+          status: null,
+          statusType: null,
+          updatedAt: null,
+          error,
+        }));
       setLinearIssueStatusByKey((current) => {
+        const changed = summaries.filter((summary) => {
+          const previous = current.get(linearIssueStatusKey(environmentId, summary.identifier));
+          return !previous || !samePhaseSidebarLinearIssueStatus(previous, summary);
+        });
+        if (changed.length === 0) return current;
         const next = new Map(current);
-        if (issues) {
-          for (const issue of issues) {
-            next.set(linearIssueStatusKey(environmentId, issue.identifier), issue);
-          }
-        } else if (error) {
-          for (const identifier of identifiers) {
-            next.set(linearIssueStatusKey(environmentId, identifier), {
-              identifier,
-              url: null,
-              status: null,
-              statusType: null,
-              updatedAt: null,
-              error,
-            });
-          }
+        for (const summary of changed) {
+          next.set(linearIssueStatusKey(environmentId, summary.identifier), summary);
         }
         return next;
       });
@@ -2883,20 +3020,79 @@ export function PhaseGroupedSidebar() {
     return visibleRows.some((candidate) => candidate.thread.environmentId !== first);
   }, [visibleRows]);
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): each row's issue keys, parsed again only when its tags
+  // or branch change. Shell events rebuild `visibleRows` constantly; the tags
+  // almost never move.
+  const linearIdentifiersCacheRef = useRef(
+    new Map<
+      string,
+      {
+        readonly branch: string | null;
+        readonly links: PhaseSidebarRow["thread"]["linearLinks"];
+        readonly identifiers: ReadonlyArray<string>;
+      }
+    >(),
+  );
+  const linearIdentifiersForRow = useCallback((row: PhaseSidebarRow): ReadonlyArray<string> => {
+    const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
+    const cached = linearIdentifiersCacheRef.current.get(key);
+    if (cached && cached.branch === row.thread.branch && cached.links === row.thread.linearLinks) {
+      return cached.identifiers;
+    }
+    const identifiers = phaseSidebarLinearIssueIdentifiers(
+      phaseSidebarLinearTagRefs(row.thread.branch, row.thread.linearLinks),
+    );
+    linearIdentifiersCacheRef.current.set(key, {
+      branch: row.thread.branch,
+      links: row.thread.linearLinks,
+      identifiers,
+    });
+    return identifiers;
+  }, []);
+  // T3-CUSTOM(expbkt3): each row's own statuses, keeping the previous list while
+  // every summary in it is the same object (the status map preserves unchanged
+  // summaries), so the memo'd row skips re-rendering.
+  const linearStatusesCacheRef = useRef(new Map<string, ReadonlyArray<LinearIssueStatusSummary>>());
+  const linearStatusesForRow = (row: PhaseSidebarRow): ReadonlyArray<LinearIssueStatusSummary> => {
+    if (!row.linearIssueSupported) return NO_LINEAR_ISSUE_STATUSES;
+    const identifiers = linearIdentifiersForRow(row);
+    if (identifiers.length === 0) return NO_LINEAR_ISSUE_STATUSES;
+    const statuses: LinearIssueStatusSummary[] = [];
+    for (const identifier of identifiers) {
+      const status = linearIssueStatusByKey.get(
+        linearIssueStatusKey(row.thread.environmentId, identifier),
+      );
+      if (status) statuses.push(status);
+    }
+    if (statuses.length === 0) return NO_LINEAR_ISSUE_STATUSES;
+    const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
+    const previous = linearStatusesCacheRef.current.get(key);
+    if (
+      previous &&
+      previous.length === statuses.length &&
+      previous.every((status, index) => status === statuses[index])
+    ) {
+      return previous;
+    }
+    linearStatusesCacheRef.current.set(key, statuses);
+    return statuses;
+  };
   const linearIssueStatusRequests = useMemo(() => {
     const identifiersByEnvironment = new Map<EnvironmentId, Set<string>>();
     for (const row of visibleRows) {
-      const issue = resolvePhaseSidebarLinearIssue(row.thread.branch, row.thread.linearIssueUrl);
-      if (!issue || !row.linearIssueSupported) continue;
+      if (!row.linearIssueSupported) continue;
+      // T3-CUSTOM(expbkt3): every issue tag on the row, still one request per environment.
+      const rowIdentifiers = linearIdentifiersForRow(row);
+      if (rowIdentifiers.length === 0) continue;
       const identifiers = identifiersByEnvironment.get(row.thread.environmentId) ?? new Set();
-      identifiers.add(issue.identifier);
+      for (const identifier of rowIdentifiers) identifiers.add(identifier);
       identifiersByEnvironment.set(row.thread.environmentId, identifiers);
     }
     return [...identifiersByEnvironment].map(([environmentId, identifiers]) => ({
       environmentId,
       identifiers: [...identifiers].sort(),
     }));
-  }, [visibleRows]);
+  }, [linearIdentifiersForRow, visibleRows]);
   // T3-CUSTOM(expbkt3): END
 
   useEffect(() => {
@@ -3204,6 +3400,50 @@ export function PhaseGroupedSidebar() {
     },
     [updateThreadMetadata],
   );
+  // T3-CUSTOM(expbkt3): Linear tags change one at a time; the server applies
+  // each against the thread's current list, so two writers cannot clobber.
+  const updateThreadLinearLinks = useCallback(
+    (
+      row: PhaseSidebarRow,
+      change:
+        | { readonly linearLinksAdd: ReadonlyArray<ThreadLinearLink> }
+        | { readonly linearLinksRemove: ReadonlyArray<string> },
+    ) => {
+      void updateThreadMetadata({
+        environmentId: row.thread.environmentId,
+        input: { threadId: row.thread.id, ...change },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title:
+                "linearLinksAdd" in change
+                  ? "Failed to add Linear tag"
+                  : "Failed to remove Linear tag",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+      });
+    },
+    [updateThreadMetadata],
+  );
+  const addThreadLinearLink = useCallback(
+    (row: PhaseSidebarRow, link: ThreadLinearLink) => {
+      if (row.thread.linearLinks.some((existing) => existing.url === link.url)) return;
+      updateThreadLinearLinks(row, { linearLinksAdd: [link] });
+    },
+    [updateThreadLinearLinks],
+  );
+  const removeThreadLinearLink = useCallback(
+    (row: PhaseSidebarRow, url: string) => {
+      updateThreadLinearLinks(row, { linearLinksRemove: [url] });
+    },
+    [updateThreadLinearLinks],
+  );
+  // T3-CUSTOM(expbkt3): servers without `threadLinearLinks` keep one issue tag.
   const setThreadLinearIssueUrl = useCallback(
     (row: PhaseSidebarRow, linearIssueUrl: string | null) => {
       if ((row.thread.linearIssueUrl ?? null) === linearIssueUrl) return;
@@ -3716,6 +3956,8 @@ export function PhaseGroupedSidebar() {
         onSnooze={attemptSnooze}
         onUnsnooze={attemptUnsnooze}
         onSetPriority={setThreadPriority}
+        onAddLinearLink={addThreadLinearLink}
+        onRemoveLinearLink={removeThreadLinearLink}
         onSetLinearIssueUrl={setThreadLinearIssueUrl}
         onSetMattermostThreadUrl={setThreadMattermostThreadUrl}
         onRegenerateTitle={regenerateThreadTitle}
@@ -3724,17 +3966,7 @@ export function PhaseGroupedSidebar() {
         {...(groupActions ? { groupActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
         customGroupLabel={grouping.groupBy === "custom" ? null : (row.customGroup ?? null)}
-        linearIssueStatus={(() => {
-          const issue = resolvePhaseSidebarLinearIssue(
-            row.thread.branch,
-            row.thread.linearIssueUrl,
-          );
-          return issue
-            ? (linearIssueStatusByKey.get(
-                linearIssueStatusKey(row.thread.environmentId, issue.identifier),
-              ) ?? null)
-            : null;
-        })()}
+        linearIssueStatuses={linearStatusesForRow(row)}
         {...(tree ?? {})}
       />
     );
