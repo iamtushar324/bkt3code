@@ -86,16 +86,12 @@ jobs:
       - name: Typecheck
         run: pnpm exec vp run typecheck
 
-      # Upstream's server browser tests launch a real headless Chromium (#15328).
-      - name: Install Chromium for server browser integration tests
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+      # No test step: ci.yml runs the full suite on every PR, sharded, in about
+      # 6 minutes. Running it here again on one runner took 20-30 minutes on the
+      # PR and again after the merge, before the artifact existed.
 
-      - name: Test
-        run: pnpm exec vp run test
-
-      # Tests run against the committed package versions, as in upstream CI; some
-      # upstream tests read the release channel from the version. Only the build
-      # artifacts carry the nightly version.
+      # Only the build artifacts carry the nightly version; the committed
+      # package versions stay as upstream has them.
       - name: Align package versions to upstream nightly
         run: node scripts/update-release-package-versions.ts "$APP_VERSION"
 
