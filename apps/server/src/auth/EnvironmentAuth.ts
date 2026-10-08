@@ -631,6 +631,7 @@ export class EnvironmentAuth extends Context.Service<
      * T3-CUSTOM(expbkt3): succeeds with the team user the code was issued for
      * (null when it names none) and whether it held `access:write`.
      */
+    // T3-CUSTOM(expbkt3): resolves to the approving team user and operator flag.
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
@@ -1403,6 +1404,7 @@ export const make = Effect.gen(function* () {
         grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
           : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
+            // T3-CUSTOM(expbkt3): the grant carries the team user and operator flag.
             ? Effect.succeed({
                 // T3-CUSTOM(expbkt3): who approved, for the client's team binding.
                 userId: mcpApprovalCodeUserId(grant.subject),
