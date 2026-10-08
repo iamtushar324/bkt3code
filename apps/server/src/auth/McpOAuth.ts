@@ -227,6 +227,7 @@ export class McpOAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
+      // T3-CUSTOM(expbkt3): the approving session also names its team user.
       | {
           readonly csrfToken: string;
           readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
@@ -407,6 +408,7 @@ const make = Effect.gen(function* () {
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
+          // T3-CUSTOM(expbkt3): the approval also names the approving team user.
           ? {
               csrfToken: csrfToken(session.sessionId, authorization),
               scopes: session.scopes,
@@ -417,6 +419,7 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
 
+  // T3-CUSTOM(expbkt3): a minted code also carries the approving team user.
   const mintCode = (
     authorization: AuthorizationRequest,
     access: AuthMcpClientAccess,
@@ -592,6 +595,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
         environmentAuth.authenticateMcpClient(request).pipe(
           Effect.flatMap((client) =>
             Clock.currentTimeMillis.pipe(
+              // T3-CUSTOM(expbkt3): the scope carries fork principal, actor and capabilities.
               Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => {
                 // T3-CUSTOM(expbkt3): principal, actor and fork capabilities.
                 const { forkCapabilities, ...forkFields } = oauthClientForkFields({

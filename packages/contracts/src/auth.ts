@@ -292,6 +292,7 @@ export const ServerAuthDescriptor = Schema.Struct({
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — team mode Clerk session request and subject encoding.
 export const AuthClerkSessionRequest = Schema.Struct({
   token: TrimmedNonEmptyString,
   // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
@@ -314,6 +315,7 @@ export const userIdFromSubject = (subject: string): UserId | null => {
   const raw = subject.slice(CLERK_SUBJECT_PREFIX.length).trim();
   return raw.length > 0 ? (raw as UserId) : null;
 };
+// T3-CUSTOM(expbkt3): END
 
 export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,

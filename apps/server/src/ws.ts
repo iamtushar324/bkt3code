@@ -2934,6 +2934,7 @@ const layerWsRpc = (
           }),
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+        // T3-CUSTOM(expbkt3): BEGIN — profile metadata guard and user-administrator settings.
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) => {
           // Profile metadata is writable only through the credential-aware
           // source-control profile RPCs. A generic settings client must not be

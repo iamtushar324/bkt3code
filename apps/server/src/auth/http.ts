@@ -526,6 +526,7 @@ export const layer = HttpApiBuilder.group(
             );
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
+              // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
               deriveAuthClientMetadata({
                 request,
                 ...(args.payload.client_version

@@ -864,6 +864,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     className={cn(
                       "text-xs leading-normal text-foreground-muted",
                       Platform.OS === "android" && "mt-2 text-center",
+                      // T3-CUSTOM(expbkt3): this block is one level shallower; the error gate sits above.
                     )}
                   >
                     This thread has no ready turn diffs and the worktree diff is empty.

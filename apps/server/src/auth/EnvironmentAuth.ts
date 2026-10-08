@@ -620,6 +620,7 @@ export class EnvironmentAuth extends Context.Service<
      * T3-CUSTOM(expbkt3): succeeds with the team user the code was issued for,
      * or null when it names none.
      */
+    // T3-CUSTOM(expbkt3): returns the team user the approval code was issued for.
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,

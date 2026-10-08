@@ -68,6 +68,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
   | typeof WS_METHODS.terminalAttach
+  // T3-CUSTOM(expbkt3): the fork's subscription methods continue this union below.
   | typeof WS_METHODS.terminalObserve
   // T3-CUSTOM(expbkt3): BEGIN — native plan review, review-comment and Claude account snapshots.
   | typeof WS_METHODS.subscribePlanReview
