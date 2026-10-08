@@ -115,6 +115,13 @@ export interface PhaseSidebarTreeNode {
    */
   readonly descendantAttention: PhaseSidebarAttentionKind | null;
   /**
+   * T3-CUSTOM(expbkt3): the most blocking descendant attention that moves a
+   * row between groups. Errors are left out: a failure badges but never moves
+   * a row, and as the worst kind it would otherwise hide an ask or a plan
+   * below it.
+   */
+  readonly descendantPlacementAttention: PhaseSidebarAttentionKind | null;
+  /**
    * Set only on a row whose recorded parent is not rendering in this section —
    * archived, settled, filtered out, in another environment, or deleted. The row
    * renders at the top level with this breadcrumb instead of silently losing its
@@ -152,6 +159,7 @@ interface MutableNode {
   descendantUnreadCount: number;
   descendantRunningCount: number;
   descendantAttention: PhaseSidebarAttentionKind | null;
+  descendantPlacementAttention: PhaseSidebarAttentionKind | null;
   orphanedFrom: { readonly key: string; readonly title: string } | null;
 }
 
@@ -201,6 +209,7 @@ function finalize(node: MutableNode, depth: number): void {
   let descendantUnreadCount = 0;
   let descendantRunningCount = 0;
   let descendantAttention: PhaseSidebarAttentionKind | null = null;
+  let descendantPlacementAttention: PhaseSidebarAttentionKind | null = null;
   for (const child of node.children) {
     finalize(child, depth + 1);
     descendantCount += 1 + child.descendantCount;
@@ -211,12 +220,18 @@ function finalize(node: MutableNode, depth: number): void {
       descendantAttention,
       moreUrgent(attentionKindOf(child.row), child.descendantAttention),
     );
+    const childKind = attentionKindOf(child.row);
+    descendantPlacementAttention = moreUrgent(
+      descendantPlacementAttention,
+      moreUrgent(childKind === "error" ? null : childKind, child.descendantPlacementAttention),
+    );
   }
   node.descendantCount = descendantCount;
   node.hasBusyDescendant = hasBusyDescendant;
   node.descendantUnreadCount = descendantUnreadCount;
   node.descendantRunningCount = descendantRunningCount;
   node.descendantAttention = descendantAttention;
+  node.descendantPlacementAttention = descendantPlacementAttention;
 }
 
 function freeze(node: MutableNode): PhaseSidebarTreeNode {
@@ -230,6 +245,7 @@ function freeze(node: MutableNode): PhaseSidebarTreeNode {
     descendantUnreadCount: node.descendantUnreadCount,
     descendantRunningCount: node.descendantRunningCount,
     descendantAttention: node.descendantAttention,
+    descendantPlacementAttention: node.descendantPlacementAttention,
     orphanedFrom: node.orphanedFrom,
   };
 }
@@ -260,6 +276,7 @@ export function buildPhaseSidebarTree(
     descendantUnreadCount: 0,
     descendantRunningCount: 0,
     descendantAttention: null,
+    descendantPlacementAttention: null,
     orphanedFrom: null,
   }));
   const byKey = new Map(nodes.map((node) => [node.key, node]));
@@ -294,9 +311,10 @@ export function buildPhaseSidebarTree(
  *
  * Precedence, most urgent first:
  *
- *   1. Anything in the subtree is waiting on a human  → Needs Input
- *   2. Anything in the subtree is doing work          → Implementing
- *   3. Otherwise                                      → the row's own phase
+ *   1. Anything in the subtree is blocked on a human  → Needs Input
+ *   2. A question or a plan waits in the subtree       → Ask / Plan Ready
+ *   3. Anything in the subtree is doing work          → Implementing
+ *   4. Otherwise                                      → the row's own phase
  *
  * Attention outranks work because a collapsed subtree hides it completely: an
  * approval sitting two levels down under a parent filed as "Implementing" is
@@ -305,15 +323,19 @@ export function buildPhaseSidebarTree(
  * scanning first.
  */
 export function resolvePhaseSidebarTreePhase(node: PhaseSidebarTreeNode): PhaseSidebarPhaseId {
-  // T3-CUSTOM(expbkt3): a plan-only subtree hoists to Plan Ready, not Needs
-  // Input. Turning a parent red because a child has a plan waiting misreports
-  // the urgency and puts a violet reason in the red group.
-  if (node.descendantAttention === "plan") return "plan_ready";
-  // T3-CUSTOM(expbkt3): likewise an ask-only subtree hoists to Ask, in amber,
-  // rather than turning its parent red.
-  if (node.descendantAttention === "ask") return "ask";
-  if (node.descendantAttention !== null) return "needs_input";
-  return node.hasBusyDescendant ? "implementing" : node.row.phaseId;
+  // T3-CUSTOM(expbkt3): one rule for a row and its subtree. Needs Input means
+  // an agent is blocked on a human (a question or an approval). A plan-only
+  // subtree hoists to Plan Ready and an ask-only one to Ask, in their own
+  // tones. A failure flies its ERROR badge but moves nothing, the same as a
+  // failed top-level row. A row's own stronger phase is never downgraded by a
+  // lighter child.
+  const ownPhaseId = node.row.phaseId;
+  if (ownPhaseId === "needs_input") return ownPhaseId;
+  const attention = node.descendantPlacementAttention;
+  if (attention === "input" || attention === "approval") return "needs_input";
+  if (ownPhaseId === "ask" || attention === "ask") return "ask";
+  if (attention === "plan") return "plan_ready";
+  return node.hasBusyDescendant ? "implementing" : ownPhaseId;
 }
 
 export function flattenPhaseSidebarTree(

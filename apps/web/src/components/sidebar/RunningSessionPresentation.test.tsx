@@ -16,8 +16,10 @@ describe("running session presentation", () => {
     const markup = renderToStaticMarkup(<RunningSessionDivider />);
 
     expect(markup).toContain('role="separator"');
-    expect(markup).toContain('aria-label="Monitoring agent work"');
-    expect(markup).toContain("Monitoring");
+    // T3-CUSTOM(expbkt3): "Agent work", so it never reads as the MONITORING badge.
+    expect(markup).toContain('aria-label="Agent work"');
+    expect(markup).toContain("Agent work");
+    expect(markup).not.toContain("Monitoring");
     expect(markup).not.toContain(">Running<");
   });
 });
