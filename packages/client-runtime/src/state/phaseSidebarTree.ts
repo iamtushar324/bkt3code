@@ -115,6 +115,13 @@ export interface PhaseSidebarTreeNode {
    */
   readonly descendantAttention: PhaseSidebarAttentionKind | null;
   /**
+   * T3-CUSTOM(expbkt3): the most blocking descendant attention that moves a
+   * row between groups. Errors are left out: a failure badges but never moves
+   * a row, and as the worst kind it would otherwise hide an ask or a plan
+   * below it.
+   */
+  readonly descendantPlacementAttention: PhaseSidebarAttentionKind | null;
+  /**
    * Set only on a row whose recorded parent is not rendering in this section —
    * archived, settled, filtered out, in another environment, or deleted. The row
    * renders at the top level with this breadcrumb instead of silently losing its
@@ -152,6 +159,7 @@ interface MutableNode {
   descendantUnreadCount: number;
   descendantRunningCount: number;
   descendantAttention: PhaseSidebarAttentionKind | null;
+  descendantPlacementAttention: PhaseSidebarAttentionKind | null;
   orphanedFrom: { readonly key: string; readonly title: string } | null;
 }
 
@@ -201,6 +209,7 @@ function finalize(node: MutableNode, depth: number): void {
   let descendantUnreadCount = 0;
   let descendantRunningCount = 0;
   let descendantAttention: PhaseSidebarAttentionKind | null = null;
+  let descendantPlacementAttention: PhaseSidebarAttentionKind | null = null;
   for (const child of node.children) {
     finalize(child, depth + 1);
     descendantCount += 1 + child.descendantCount;
@@ -211,12 +220,18 @@ function finalize(node: MutableNode, depth: number): void {
       descendantAttention,
       moreUrgent(attentionKindOf(child.row), child.descendantAttention),
     );
+    const childKind = attentionKindOf(child.row);
+    descendantPlacementAttention = moreUrgent(
+      descendantPlacementAttention,
+      moreUrgent(childKind === "error" ? null : childKind, child.descendantPlacementAttention),
+    );
   }
   node.descendantCount = descendantCount;
   node.hasBusyDescendant = hasBusyDescendant;
   node.descendantUnreadCount = descendantUnreadCount;
   node.descendantRunningCount = descendantRunningCount;
   node.descendantAttention = descendantAttention;
+  node.descendantPlacementAttention = descendantPlacementAttention;
 }
 
 function freeze(node: MutableNode): PhaseSidebarTreeNode {
@@ -230,6 +245,7 @@ function freeze(node: MutableNode): PhaseSidebarTreeNode {
     descendantUnreadCount: node.descendantUnreadCount,
     descendantRunningCount: node.descendantRunningCount,
     descendantAttention: node.descendantAttention,
+    descendantPlacementAttention: node.descendantPlacementAttention,
     orphanedFrom: node.orphanedFrom,
   };
 }
@@ -260,6 +276,7 @@ export function buildPhaseSidebarTree(
     descendantUnreadCount: 0,
     descendantRunningCount: 0,
     descendantAttention: null,
+    descendantPlacementAttention: null,
     orphanedFrom: null,
   }));
   const byKey = new Map(nodes.map((node) => [node.key, node]));
@@ -314,7 +331,7 @@ export function resolvePhaseSidebarTreePhase(node: PhaseSidebarTreeNode): PhaseS
   // lighter child.
   const ownPhaseId = node.row.phaseId;
   if (ownPhaseId === "needs_input") return ownPhaseId;
-  const attention = node.descendantAttention;
+  const attention = node.descendantPlacementAttention;
   if (attention === "input" || attention === "approval") return "needs_input";
   if (ownPhaseId === "ask" || attention === "ask") return "ask";
   if (attention === "plan") return "plan_ready";

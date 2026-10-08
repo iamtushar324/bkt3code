@@ -353,6 +353,26 @@ describe("resolvePhaseSidebarTreePhase", () => {
     expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("ready");
   });
 
+  // T3-CUSTOM(expbkt3): a failed child must not hide a question beside it.
+  it("hoists to Ask when one child failed and another asks a question", () => {
+    const child = makeRow("failed", { parent: "parent", phaseId: "ready" });
+    const failedChild = {
+      ...child,
+      thread: { ...child.thread, runtime: { status: "failed" } as never },
+    };
+    const tree = buildPhaseSidebarTree(
+      [
+        makeRow("parent", { phaseId: "ready" }),
+        failedChild,
+        makeRow("asking", { parent: "parent", phaseId: "ask" }),
+      ],
+      { compareSiblings: byId },
+    );
+
+    expect(tree[0]?.descendantAttention).toBe("error");
+    expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("ask");
+  });
+
   // T3-CUSTOM(expbkt3): a lighter child never downgrades the row's own phase.
   it("keeps a parent's own Needs Input when a child only holds a plan", () => {
     const tree = buildPhaseSidebarTree(
