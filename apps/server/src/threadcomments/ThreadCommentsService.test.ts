@@ -253,6 +253,45 @@ describe("ThreadCommentsService", () => {
     ),
   );
 
+  // T3-CUSTOM(expbkt3): each comment goes to the agent once.
+  it.effect("sends a comment once, and again after a user reply, a reopen or a resend", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const added = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "one",
+          ...actor,
+        });
+        const commentId = added.comments[0]!.commentId;
+        expect(added.comments[0]?.lastSentAt ?? null).toBeNull();
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+
+        yield* service.markSent({ threadId, commentIds: [commentId] });
+        expect(yield* service.openForDelivery(threadId)).toEqual([]);
+        expect((yield* service.snapshot(threadId)).comments[0]?.lastSentAt).not.toBeNull();
+
+        // An agent reply alone does not send it again.
+        yield* service.agentReply({ threadId, commentId, body: "on it" });
+        expect(yield* service.openForDelivery(threadId)).toEqual([]);
+
+        yield* service.reply({ threadId, commentId, body: "not yet", ...actor });
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+
+        yield* service.markSent({ threadId, commentIds: [commentId] });
+        yield* service.setStatus({ threadId, commentId, status: "resolved" });
+        yield* service.setStatus({ threadId, commentId, status: "open" });
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+
+        yield* service.markSent({ threadId, commentIds: [commentId] });
+        const resent = yield* service.resend({ threadId });
+        expect(resent.comments[0]?.lastSentAt ?? null).toBeNull();
+        expect(yield* service.openForDelivery(threadId)).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect("openForDelivery returns open comments only, and nothing while paused", () =>
     withService((service) =>
       Effect.gen(function* () {

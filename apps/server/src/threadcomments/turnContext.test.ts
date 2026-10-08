@@ -66,8 +66,9 @@ const reply = (index: number, body = `reply ${index}`): ThreadComment["replies"]
 
 const serviceWith = (
   openForDelivery: ThreadCommentsService["Service"]["openForDelivery"],
+  markSent: ThreadCommentsService["Service"]["markSent"] = () => Effect.void,
 ): ThreadCommentsService["Service"] =>
-  ({ openForDelivery }) as unknown as ThreadCommentsService["Service"];
+  ({ openForDelivery, markSent }) as unknown as ThreadCommentsService["Service"];
 
 describe("neutralizeOwnTags", () => {
   it("defuses only the block's own tags and leaves other markup alone", () => {
@@ -176,6 +177,40 @@ describe("formatOpenThreadCommentsForAgent", () => {
 });
 
 describe("appendOpenThreadComments", () => {
+  // T3-CUSTOM(expbkt3): a comment goes once, so the turn marks what it carried.
+  it.effect("marks only the comments that went with the turn as sent", () =>
+    Effect.gen(function* () {
+      const marked: Array<ReadonlyArray<string>> = [];
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 }), comment({ number: 2 })]),
+            (input) => Effect.sync(() => void marked.push(input.commentIds)),
+          ),
+        ),
+      );
+      expect(result).toContain('id="tc_1"');
+      expect(result).toContain('id="tc_2"');
+      expect(marked).toEqual([["tc_1", "tc_2"]]);
+    }),
+  );
+
+  it.effect("still sends the comments when the sent mark fails", () =>
+    Effect.gen(function* () {
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1 })]),
+            () => Effect.die("disk full"),
+          ),
+        ),
+      );
+      expect(result).toContain('id="tc_1"');
+    }),
+  );
+
   it.effect("returns the text unchanged when the service is not provided", () =>
     Effect.gen(function* () {
       expect(yield* appendOpenThreadComments(threadId, "hello")).toBe("hello");

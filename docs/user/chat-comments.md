@@ -55,21 +55,28 @@ the thread under a comment, and the agent sees the replies too.
 
 ## What the agent does with open comments
 
-Every message you send carries the thread's open comments — each one quoted with
-your note — plus the instruction to act on them or answer. The agent can reply
-under a comment and mark it addressed; only you resolve. A comment keeps coming
-back each turn until it is resolved, so an instruction the agent skipped is not
-forgotten.
+Each open comment goes to the agent once, with your next message: quoted with
+your note, plus the instruction to act on it or answer it. The agent can reply
+under a comment and mark it addressed; only you resolve. A comment goes again
+when you edit it, reply to it or reopen it.
 
-While the thread has open comments, a strip above the composer says how many will
-be sent with your next message. **Review** opens the panel. Sending with an empty
-message is allowed in that state: the agent is simply asked to work through the
-comments.
+While some comments are not sent yet, a strip above the composer says how many.
+**Review** opens the panel. **Send now** sends just the comments and leaves your
+draft as it is; while the agent is working, they wait for its turn to end.
+Pressing Enter on a typed message sends the comments with it, and an empty
+message is allowed too: the agent is simply asked to work through them.
 
-**Don't send** pauses delivery for the thread — the strip then reads "paused —
-not sent" and the agent stops receiving the open comments until you press
-**Resume** (in the strip or at the top of the panel). The comments stay open in
-the panel either way.
+After the comments go, the strip leaves and a chip in the top-right corner of the
+composer keeps count: blue while the agent has them, green once it has addressed
+some. Its menu has **Address remaining** (sends the open comments again and asks
+the agent to finish them), **Ask for an update** (sends them again and asks where
+each one stands, without new changes), **Review comments**, **Resolve
+addressed**, and **Pause sending**.
+
+**Don't send** (in the strip) or **Pause sending** (in the chip) pauses delivery
+for the thread — the strip then reads "paused — not sent" and the agent stops
+receiving the comments until you press **Resume**. The comments stay open in the
+panel either way.
 
 ## Where it applies
 

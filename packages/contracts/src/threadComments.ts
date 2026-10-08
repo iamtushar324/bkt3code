@@ -32,7 +32,7 @@ export const ThreadCommentKind = Schema.Literals(["comment", "good", "okay", "re
 export type ThreadCommentKind = typeof ThreadCommentKind.Type;
 
 /**
- * - `open`: sent to the agent with every turn.
+ * - `open`: sent to the agent once (see `lastSentAt`), until it is addressed.
  * - `addressed`: the agent says it is done; waits for the user to resolve. Not re-sent.
  * - `resolved`: closed by the user. Not re-sent.
  */
@@ -93,6 +93,13 @@ export const ThreadComment = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String,
   resolvedAt: Schema.NullOr(Schema.String),
+  /**
+   * When the comment last went to the agent, or null while it is not sent. A
+   * comment goes once: the user editing, replying to or reopening it, or asking
+   * for a re-send, clears this so it goes again. Optional so payloads from
+   * servers without the column decode.
+   */
+  lastSentAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ThreadComment = typeof ThreadComment.Type;
 
@@ -182,4 +189,11 @@ export const THREAD_COMMENT_KIND_MEANING: Record<ThreadCommentKind, string> = {
 
 export function isThreadCommentDeliverable(comment: Pick<ThreadComment, "status">): boolean {
   return comment.status === "open";
+}
+
+/** An open comment that has not gone to the agent since it last changed. */
+export function isThreadCommentUnsent(
+  comment: Pick<ThreadComment, "status" | "lastSentAt">,
+): boolean {
+  return comment.status === "open" && (comment.lastSentAt ?? null) === null;
 }

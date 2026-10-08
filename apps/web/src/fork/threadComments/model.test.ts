@@ -5,7 +5,10 @@ import {
   allowsEmptySend,
   buildCommentAnchor,
   commentsForMessage,
+  composerChipLabel,
+  composerChipTone,
   composerStripText,
+  countCommentDelivery,
   countComments,
   deriveCommentDisplayState,
   filterComments,
@@ -176,32 +179,59 @@ describe("groupCommentsByMessage", () => {
 });
 
 describe("composer strip and empty send", () => {
-  it("hides the strip without open comments and pluralises", () => {
-    expect(composerStripText({ openCount: 0, deliveryPaused: false })).toBeNull();
-    expect(composerStripText({ openCount: 1, deliveryPaused: false })).toBe(
-      "1 open comment will be sent with your next message",
+  it("hides the strip without unsent comments and pluralises", () => {
+    expect(composerStripText({ unsentCount: 0, deliveryPaused: false })).toBeNull();
+    expect(composerStripText({ unsentCount: 1, deliveryPaused: false })).toBe(
+      "1 comment not sent yet",
     );
-    expect(composerStripText({ openCount: 3, deliveryPaused: false })).toBe(
-      "3 open comments will be sent with your next message",
+    expect(composerStripText({ unsentCount: 3, deliveryPaused: false })).toBe(
+      "3 comments not sent yet",
     );
   });
 
   it("says so when delivery is paused", () => {
-    expect(composerStripText({ openCount: 2, deliveryPaused: true })).toBe(
-      "2 open comments paused — not sent",
+    expect(composerStripText({ unsentCount: 2, deliveryPaused: true })).toBe(
+      "2 comments paused — not sent",
     );
   });
 
-  it("allows an empty send only when open comments will actually travel on an idle thread", () => {
-    const idle = { enabled: true, openCount: 1, deliveryPaused: false, running: false };
+  it("allows an empty send only when unsent comments will travel on an idle thread", () => {
+    const idle = { enabled: true, unsentCount: 1, deliveryPaused: false, running: false };
     expect(allowsEmptySend(idle)).toBe(true);
-    expect(allowsEmptySend({ ...idle, openCount: 0 })).toBe(false);
+    expect(allowsEmptySend({ ...idle, unsentCount: 0 })).toBe(false);
     expect(allowsEmptySend({ ...idle, deliveryPaused: true })).toBe(false);
     expect(allowsEmptySend({ ...idle, enabled: false })).toBe(false);
     // While a turn runs an empty Enter keeps upstream's meaning: nothing is queued.
     expect(allowsEmptySend({ ...idle, running: true })).toBe(false);
   });
 });
+
+// T3-CUSTOM(expbkt3): a comment goes once; the chip says where the rest stand.
+describe("comment delivery counts and chip", () => {
+  const at = "2026-10-08T00:00:00.000Z";
+
+  it("splits unresolved comments into unsent, sent and addressed", () => {
+    expect(
+      countCommentDelivery([
+        { status: "open", lastSentAt: null },
+        { status: "open" },
+        { status: "open", lastSentAt: at },
+        { status: "addressed", lastSentAt: at },
+        { status: "resolved", lastSentAt: at },
+      ]),
+    ).toEqual({ unsent: 2, sent: 1, addressed: 1 });
+  });
+
+  it("labels the chip by what the agent has done", () => {
+    expect(composerChipLabel({ unsent: 2, sent: 0, addressed: 0 })).toBeNull();
+    expect(composerChipLabel({ unsent: 0, sent: 2, addressed: 0 })).toBe("2 sent");
+    expect(composerChipLabel({ unsent: 0, sent: 1, addressed: 1 })).toBe("1 addressed · 1 open");
+    expect(composerChipLabel({ unsent: 0, sent: 0, addressed: 2 })).toBe("2 addressed");
+    expect(composerChipTone({ unsent: 0, sent: 2, addressed: 0 })).toBe("sent");
+    expect(composerChipTone({ unsent: 0, sent: 0, addressed: 1 })).toBe("addressed");
+  });
+});
+
 
 describe("message marker", () => {
   it("counts unresolved comments and takes the most urgent colour", () => {

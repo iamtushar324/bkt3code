@@ -194,34 +194,82 @@ export function groupCommentsByMessage(
   );
 }
 
+/**
+ * Where each unresolved comment stands with the agent. A comment goes once:
+ * `unsent` will travel with the next turn, `sent` already went and waits for
+ * the agent, `addressed` waits for the user to resolve.
+ */
+export interface ThreadCommentDeliveryCounts {
+  readonly unsent: number;
+  readonly sent: number;
+  readonly addressed: number;
+}
+
+export function countCommentDelivery(
+  comments: ReadonlyArray<Pick<ThreadComment, "status" | "lastSentAt">>,
+): ThreadCommentDeliveryCounts {
+  let unsent = 0;
+  let sent = 0;
+  let addressed = 0;
+  for (const comment of comments) {
+    if (comment.status === "addressed") addressed += 1;
+    else if (comment.status === "open") {
+      if ((comment.lastSentAt ?? null) === null) unsent += 1;
+      else sent += 1;
+    }
+  }
+  return { unsent, sent, addressed };
+}
+
 /** Text of the strip above the composer, or null when the strip stays hidden. */
 export function composerStripText(input: {
-  readonly openCount: number;
+  readonly unsentCount: number;
   readonly deliveryPaused: boolean;
 }): string | null {
-  if (input.openCount <= 0) return null;
-  const noun = input.openCount === 1 ? "comment" : "comments";
+  if (input.unsentCount <= 0) return null;
+  const noun = input.unsentCount === 1 ? "comment" : "comments";
   return input.deliveryPaused
-    ? `${input.openCount} open ${noun} paused — not sent`
-    : `${input.openCount} open ${noun} will be sent with your next message`;
+    ? `${input.unsentCount} ${noun} paused — not sent`
+    : `${input.unsentCount} ${noun} not sent yet`;
+}
+
+/** Label of the chip in the chat box, or null when nothing is sent or addressed. */
+export function composerChipLabel(counts: ThreadCommentDeliveryCounts): string | null {
+  const open = counts.unsent + counts.sent;
+  if (counts.addressed > 0 && open > 0) return `${counts.addressed} addressed · ${open} open`;
+  if (counts.addressed > 0) return `${counts.addressed} addressed`;
+  return counts.sent > 0 ? `${counts.sent} sent` : null;
+}
+
+/** The chip's tone: green once the agent has addressed something, else blue. */
+export function composerChipTone(counts: ThreadCommentDeliveryCounts): "sent" | "addressed" {
+  return counts.addressed > 0 ? "addressed" : "sent";
 }
 
 /**
- * An empty message is a valid send when open comments will travel with it and
- * the thread is idle. While a turn runs, an empty Enter keeps upstream's
+ * An empty message is a valid send when comments not sent yet will travel with
+ * it and the thread is idle. While a turn runs, an empty Enter keeps upstream's
  * meaning (nothing happens) rather than queueing a comments-only steer.
  */
 export function allowsEmptySend(input: {
   readonly enabled: boolean;
-  readonly openCount: number;
+  readonly unsentCount: number;
   readonly deliveryPaused: boolean;
   readonly running: boolean;
 }): boolean {
-  return input.enabled && input.openCount > 0 && !input.deliveryPaused && !input.running;
+  return input.enabled && input.unsentCount > 0 && !input.deliveryPaused && !input.running;
 }
 
 /** What goes out as the message when the user sends nothing but open comments. */
 export const THREAD_COMMENTS_EMPTY_SEND_TEXT = "Please work through the open review comments.";
+
+/** "Address remaining": the open comments go again with this message. */
+export const THREAD_COMMENTS_ADDRESS_REMAINING_TEXT =
+  "Address the remaining open review comments. For each one, finish the work or answer it, then reply to it with t3_reply_comment.";
+
+/** "Ask for an update": the open comments go again, and the agent only reports. */
+export const THREAD_COMMENTS_ASK_UPDATE_TEXT =
+  "Give me a short status update on each open review comment: what you did, what is left, and any blocker. Reply to each one with t3_reply_comment. Do not make new changes in this turn.";
 
 export const THREAD_COMMENT_PLACEHOLDER =
   "Ask for follow-up changes, or press Send to have the agent work through the comments…";

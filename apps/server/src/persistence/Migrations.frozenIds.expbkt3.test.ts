@@ -21,6 +21,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         [1045, "SessionWebhooks"],
         [1046, "ScheduledTaskWebhooks"],
         [1047, "WebhookRelayDeliveries"],
+        [1048, "ThreadCommentLastSent"],
       ]);
       const after = yield* sql<{
         migration_id: number;

@@ -197,6 +197,8 @@ import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
 // row already present in effect_sql_migrations.
 // T3-CUSTOM(expbkt3): owner-bound session callback storage.
 import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
+// T3-CUSTOM(expbkt3): review comments are sent once; this records when.
+import Migration1048 from "./Migrations/1048_ThreadCommentLastSent.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -317,6 +319,8 @@ const migrationEntries = [
   // T3-CUSTOM(expbkt3): upstream 57-58 remapped above the shipped 1045 migration.
   [1046, "ScheduledTaskWebhooks", Migration1046],
   [1047, "WebhookRelayDeliveries", Migration1047],
+  // T3-CUSTOM(expbkt3): review comment send-once mark.
+  [1048, "ThreadCommentLastSent", Migration1048],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -2,9 +2,10 @@
  * T3-CUSTOM(expbkt3): appends the thread's open review comments to the agent's
  * input at turn start.
  *
- * Open comments are standing instructions: they ride along with every new
- * provider turn until the agent marks them addressed (through
- * `t3_reply_comment`) or the user resolves them. The reactor calls
+ * Each open comment goes with the next provider turn once, and is then marked
+ * sent; it goes again only after the user edits, replies to or reopens it, or
+ * asks for a re-send. The agent answers through `t3_reply_comment`, and the
+ * user resolves. The reactor calls
  * `appendOpenThreadComments` from one marked seam; everything else here is
  * fork-owned, and nothing in this module can fail a turn — a broken read or a
  * block that does not fit logs and falls back to the user's text.
@@ -30,7 +31,7 @@ const TEXT_MAX_CHARS = 2_000;
 const REPLIES_SHOWN = 3;
 
 const INSTRUCTIONS =
-  "The user left these comments on your earlier messages in this session. Treat them as active instructions for this turn: act on each one, or answer it. When you have handled one, call t3_reply_comment with its id (addressed=true once done; a short body explaining what you did). The user resolves comments; open ones are re-sent with every new turn.";
+  "You received review comments on your earlier messages in this session, listed below. Treat this as review work: for each comment, either make the change it asks for or answer it. Then call t3_reply_comment with that comment's id and a short reply that says what you did; pass addressed=true when it is done. Do not skip a comment. If a comment is unclear, reply with your question instead of guessing. Reply to every comment before you end your turn. Each comment is sent to you once; the user resolves comments, or sends them again if they are still open.";
 
 /**
  * Only the block's own tags are defused, by swapping their `<` for `‹`: a
@@ -84,6 +85,14 @@ export function formatOpenThreadCommentsForAgent(
   comments: ReadonlyArray<ThreadComment>,
   options: { readonly maxChars?: number } = {},
 ): string | null {
+  return renderOpenThreadComments(comments, options)?.block ?? null;
+}
+
+/** The block plus the comments it kept, so only those are marked sent. */
+function renderOpenThreadComments(
+  comments: ReadonlyArray<ThreadComment>,
+  options: { readonly maxChars?: number },
+): { readonly block: string; readonly kept: ReadonlyArray<ThreadComment> } | null {
   if (comments.length === 0) return null;
   const maxChars = options.maxChars ?? OPEN_THREAD_COMMENTS_MAX_CHARS;
   const header = (count: number, omitted: number) =>
@@ -106,7 +115,7 @@ export function formatOpenThreadCommentsForAgent(
   if (kept.length === 0) return null;
   const omitted = comments.length - kept.length;
   const block = [header(kept.length, omitted), ...kept, footer].join("\n");
-  return block.length <= maxChars ? block : null;
+  return block.length <= maxChars ? { block, kept: comments.slice(omitted) } : null;
 }
 
 /** A send while a real turn is running steers that turn rather than starting one. */
@@ -137,12 +146,13 @@ export const appendOpenThreadComments = (
 
     const separator = text.length === 0 ? "" : "\n\n";
     const room = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - text.length - separator.length;
-    const block =
+    const rendered =
       room > 0
-        ? formatOpenThreadCommentsForAgent(comments, {
+        ? renderOpenThreadComments(comments, {
             maxChars: Math.min(OPEN_THREAD_COMMENTS_MAX_CHARS, room),
           })
         : null;
+    const block = rendered?.block ?? null;
     const result = block === null ? null : `${text}${separator}${block}`;
     if (result === null || result.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
       yield* Effect.logWarning("thread comments skipped: no room left in the turn input", {
@@ -157,6 +167,17 @@ export const appendOpenThreadComments = (
       openComments: comments.length,
       blockLength: block!.length,
     });
+    // Each comment goes once. A failed mark only means it goes again next turn.
+    yield* service.value
+      .markSent({ threadId, commentIds: rendered!.kept.map((comment) => comment.commentId) })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("thread comments could not be marked sent", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
     return result;
   }).pipe(
     Effect.catchCause((cause) =>

@@ -15,6 +15,7 @@ const pendingV2Migrations = [
   [1045, "SessionWebhooks"],
   [1046, "ScheduledTaskWebhooks"],
   [1047, "WebhookRelayDeliveries"],
+  [1048, "ThreadCommentLastSent"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {

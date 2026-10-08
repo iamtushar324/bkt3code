@@ -11,7 +11,7 @@
 import {
   THREAD_COMMENT_MAX_REPLIES,
   ThreadCommentsError,
-  isThreadCommentDeliverable,
+  isThreadCommentUnsent,
   type ThreadComment,
   type ThreadCommentId,
   type ThreadCommentsAddInput,
@@ -21,6 +21,7 @@ import {
   type ThreadCommentsSetDeliveryPausedInput,
   type ThreadCommentsSetStatusInput,
   type ThreadCommentsSnapshot,
+  type ThreadCommentsThreadInput,
   type ThreadId,
   type UserId,
 } from "@t3tools/contracts";
@@ -81,10 +82,22 @@ export interface ThreadCommentsServiceShape {
   readonly agentReply: (
     input: AgentReplyInput,
   ) => Effect.Effect<ThreadComment, ThreadCommentsError>;
-  /** Comments to append to the agent's next input: open ones, unless paused. */
+  /**
+   * Comments to append to the agent's next input: open ones not sent yet,
+   * unless paused. Each comment goes once; see `markSent` and `resend`.
+   */
   readonly openForDelivery: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadComment>, ThreadCommentsError>;
+  /** Records that these comments went to the agent with a turn. */
+  readonly markSent: (input: {
+    readonly threadId: ThreadId;
+    readonly commentIds: ReadonlyArray<ThreadCommentId>;
+  }) => Effect.Effect<void, ThreadCommentsError>;
+  /** Marks every open comment not sent, so the next turn carries them again. */
+  readonly resend: (
+    input: ThreadCommentsThreadInput,
+  ) => Effect.Effect<ThreadCommentsSnapshot, ThreadCommentsError>;
   /**
    * Emits a snapshot on subscribe and again after every mutation from any
    * client or the agent, so open panels converge without polling.
@@ -240,6 +253,8 @@ export const make = Effect.gen(function* () {
             ...comment,
             status: "open",
             resolvedAt: null,
+            // A user reply is new input: the comment goes to the agent again.
+            lastSentAt: null,
             replies: appendReply(comment, {
               replyId,
               author: "user",
@@ -268,6 +283,8 @@ export const make = Effect.gen(function* () {
             status: input.status,
             updatedAt,
             resolvedAt: input.status === "resolved" ? updatedAt : null,
+            // A reopened comment goes to the agent again.
+            lastSentAt: input.status === "open" ? null : comment.lastSentAt,
           })
           .pipe(Effect.mapError(internal("setStatus")));
       }),
@@ -347,8 +364,27 @@ export const make = Effect.gen(function* () {
       const settings = yield* repository.getSettings(threadId);
       if (settings.deliveryPaused) return [];
       const comments = yield* repository.listForThread(threadId);
-      return comments.filter(isThreadCommentDeliverable);
+      return comments.filter(isThreadCommentUnsent);
     }).pipe(Effect.mapError(internal("openForDelivery")));
+
+  const markSent: ThreadCommentsServiceShape["markSent"] = (input) =>
+    Effect.gen(function* () {
+      if (input.commentIds.length === 0) return;
+      const sentAt = yield* nowIso;
+      yield* writes.withPermits(1)(
+        repository
+          .markSent({ threadId: input.threadId, commentIds: input.commentIds, sentAt })
+          .pipe(Effect.mapError(internal("markSent"))),
+      );
+      yield* announce(input.threadId);
+    });
+
+  const resend: ThreadCommentsServiceShape["resend"] = (input) =>
+    mutate(
+      "resend",
+      input.threadId,
+      repository.clearSentForOpen(input.threadId).pipe(Effect.mapError(internal("resend"))),
+    );
 
   // Subscribe before the first read: a write that lands between the two is
   // then seen as a change and re-read, rather than lost until the next one.
@@ -377,6 +413,8 @@ export const make = Effect.gen(function* () {
     setDeliveryPaused,
     agentReply,
     openForDelivery,
+    markSent,
+    resend,
     watch,
   });
 });

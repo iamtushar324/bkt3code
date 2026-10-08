@@ -92,6 +92,16 @@ export class ThreadCommentsRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly paused: boolean;
     }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
+    /** Records that these comments went to the agent at `sentAt`. */
+    readonly markSent: (input: {
+      readonly threadId: ThreadId;
+      readonly commentIds: ReadonlyArray<ThreadCommentId>;
+      readonly sentAt: string;
+    }) => Effect.Effect<void, ThreadCommentsRepositoryError>;
+    /** Clears the sent mark on every open comment, so the next turn sends them again. */
+    readonly clearSentForOpen: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadCommentsRepositoryError>;
   }
 >()("t3/persistence/ThreadComments/ThreadCommentsRepository") {}
 
@@ -118,7 +128,8 @@ export const make = Effect.gen(function* () {
     replies_json AS "replies",
     created_at AS "createdAt",
     updated_at AS "updatedAt",
-    resolved_at AS "resolvedAt"
+    resolved_at AS "resolvedAt",
+    last_sent_at AS "lastSentAt"
   `;
 
   const listRows = SqlSchema.findAll({
@@ -145,12 +156,14 @@ export const make = Effect.gen(function* () {
     execute: (comment) => sql`
       INSERT INTO thread_comments (
         comment_id, thread_id, number, kind, anchor_json, body, status,
-        author_user_id, author_label, replies_json, created_at, updated_at, resolved_at
+        author_user_id, author_label, replies_json, created_at, updated_at, resolved_at,
+        last_sent_at
       ) VALUES (
         ${comment.commentId}, ${comment.threadId}, ${comment.number}, ${comment.kind},
         ${JSON.stringify(comment.anchor)}, ${comment.body}, ${comment.status},
         ${comment.authorUserId}, ${comment.authorLabel}, ${JSON.stringify(comment.replies)},
-        ${comment.createdAt}, ${comment.updatedAt}, ${comment.resolvedAt}
+        ${comment.createdAt}, ${comment.updatedAt}, ${comment.resolvedAt},
+        ${comment.lastSentAt ?? null}
       )
       ON CONFLICT(comment_id) DO NOTHING
     `,
@@ -164,7 +177,8 @@ export const make = Effect.gen(function* () {
         status = ${comment.status},
         replies_json = ${JSON.stringify(comment.replies)},
         updated_at = ${comment.updatedAt},
-        resolved_at = ${comment.resolvedAt}
+        resolved_at = ${comment.resolvedAt},
+        last_sent_at = ${comment.lastSentAt ?? null}
       WHERE comment_id = ${comment.commentId} AND thread_id = ${comment.threadId}
     `,
   });
@@ -228,6 +242,26 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  const markSentRows = SqlSchema.void({
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      commentIds: Schema.Array(ThreadCommentId),
+      sentAt: Schema.String,
+    }),
+    execute: ({ threadId, commentIds, sentAt }) => sql`
+      UPDATE thread_comments SET last_sent_at = ${sentAt}
+      WHERE thread_id = ${threadId} AND ${sql.in("comment_id", commentIds)}
+    `,
+  });
+
+  const clearSentForOpenRows = SqlSchema.void({
+    Request: Schema.Struct({ threadId: ThreadId }),
+    execute: ({ threadId }) => sql`
+      UPDATE thread_comments SET last_sent_at = NULL
+      WHERE thread_id = ${threadId} AND status = 'open'
+    `,
+  });
+
   return ThreadCommentsRepository.of({
     listForThread: (threadId) =>
       listRows({ threadId }).pipe(Effect.mapError(mapError("ThreadComments.listForThread"))),
@@ -286,6 +320,16 @@ export const make = Effect.gen(function* () {
     setDeliveryPaused: ({ threadId, paused }) =>
       setDeliveryPausedRow({ threadId, paused: paused ? 1 : 0 }).pipe(
         Effect.mapError(mapError("ThreadComments.setDeliveryPaused")),
+      ),
+
+    markSent: (input) =>
+      input.commentIds.length === 0
+        ? Effect.void
+        : markSentRows(input).pipe(Effect.mapError(mapError("ThreadComments.markSent"))),
+
+    clearSentForOpen: (threadId) =>
+      clearSentForOpenRows({ threadId }).pipe(
+        Effect.mapError(mapError("ThreadComments.clearSentForOpen")),
       ),
   });
 });
