@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
 import {
@@ -17,6 +18,8 @@ import {
   type McpInvocationScope,
 } from "../mcp/McpInvocationContext.ts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
+import { liveThreadsLayer } from "../mcp/McpToolAccess.testkit.ts";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import { SessionWebhookHandlersLive, SessionWebhookToolkit } from "./mcp.ts";
 
 const owner = UserId.make("webhook-tool-owner");
@@ -48,7 +51,7 @@ const scope = (
   client:
     principal === "provider-session"
       ? undefined
-      : { sessionId: principal, label: principal, runtimeModeCeiling: "full-access" },
+      : { sessionId: principal, label: principal, access: "full-access" },
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });
@@ -76,7 +79,7 @@ const harness = Effect.gen(function* () {
     revision?: number;
     allowedThreadId?: ThreadId;
   }> = [];
-  const dependencies = Layer.mock(SessionWebhookService)({
+  const webhooks = Layer.mock(SessionWebhookService)({
     create: (userId, threadId) =>
       Effect.sync(() => {
         operations.push({ operation: "create", owner: userId, destination: threadId });
@@ -104,6 +107,15 @@ const harness = Effect.gen(function* () {
         return fixture();
       }),
   });
+  // McpToolAccess reads the calling thread, and the team boundary its owner's access.
+  const dependencies = Layer.mergeAll(
+    webhooks,
+    liveThreadsLayer,
+    Layer.mock(OrchestrationAccessControl)({
+      actorFor: () => Option.none(),
+      canAccessThread: () => Effect.succeed(true),
+    }),
+  );
   const toolkit = yield* SessionWebhookToolkit.pipe(
     Effect.provide(SessionWebhookHandlersLive.pipe(Layer.provide(dependencies))),
   );

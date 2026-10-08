@@ -254,7 +254,6 @@ const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: clientMetadata(),
-      scopes: AuthStandardClientScopes,
     });
     const cloudSession = ClientCapabilities.CloudSession.of({
       identity: Effect.sync(() =>
@@ -418,6 +417,8 @@ const loadSecondaryConnectionRegistration = Effect.fn(
     timeoutMs: DESKTOP_LOCAL_DESCRIPTOR_TIMEOUT_MS,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
+  // The desktop seed grant is administrative so the primary window can manage
+  // access; a secondary backend session only needs to operate its environment.
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,

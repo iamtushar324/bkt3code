@@ -34,6 +34,7 @@ import { ThreadCommentsService } from "../../../threadcomments/ThreadCommentsSer
 import { WorkspacePaths } from "../../../workspace/WorkspacePaths.ts";
 import { T3ControlToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import { T3ControlToolkitHandlersLive } from "./handlers.ts";
 import { T3ControlToolkit } from "./tools.ts";
 
@@ -137,6 +138,8 @@ const makeFixture = Effect.gen(function* () {
     ),
     Layer.mock(WorkspacePaths)({}),
     Layer.mock(GitWorkflowService)({}),
+    // McpToolAccess reads the calling thread before a write.
+    liveThreadsLayer,
     NodeServices.layer,
   );
   const setCurrent = (enabled: boolean) =>

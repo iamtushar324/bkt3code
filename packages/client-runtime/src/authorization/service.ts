@@ -357,7 +357,6 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
         credential: bootstrap.credential,
         dpopProof: bootstrapProof,
-        scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
         // T3-CUSTOM(expbkt3): required-identity environments need the operator token.
         identityToken: bootstrap.identityToken,

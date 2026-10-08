@@ -35,6 +35,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -468,7 +469,9 @@ export const layer: Layer.Layer<
                 type: "turn-item.updated",
                 threadId: input.event.turnItem.threadId,
                 // T3-CUSTOM(expbkt3): the render handle survives native tool projection.
-                payload: withAgentUiTurnItemHandle(input.event.turnItem),
+                payload: withAgentUiTurnItemHandle(
+                  stripUnservedToolOutputImageBytes(input.event.turnItem),
+                ),
                 runId: input.event.turnItem.runId,
                 nodeId: input.event.turnItem.nodeId,
               }),

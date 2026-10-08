@@ -59,7 +59,7 @@ const tokens = new Map<string, McpInvocationContext.McpInvocationScope>([
       client: {
         sessionId: "external-user:user-actor",
         label: "External MCP user",
-        runtimeModeCeiling: "full-access",
+        access: "full-access",
       },
       capabilities: new Set(["t3.read", "t3.session.create"]),
     }),

@@ -439,12 +439,13 @@ const makeEventStore = Effect.gen(function* () {
         correlation_id
       FROM orchestration_events
       ${
-        // T3-CUSTOM(expbkt3): command receipts must seek the command, not scan all V2 history.
-        input.onlyAgentEvents === true
-          ? input.commandId === undefined
+        // The sequence range otherwise wins and a command lookup scans every
+        // V2 event, which blocks the server for seconds on large histories.
+        input.commandId !== undefined
+          ? sql`INDEXED BY idx_orch_events_command_id`
+          : input.onlyAgentEvents === true
             ? sql``
-            : sql`INDEXED BY idx_orch_events_command_id`
-          : sql`INDEXED BY idx_orchestration_events_application_high_water`
+            : sql`INDEXED BY idx_orchestration_events_application_high_water`
       }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}

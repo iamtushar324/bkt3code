@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -24,7 +25,8 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import * as GitHubCli from "./GitHubCli.ts";
+// T3-CUSTOM(expbkt3): profile tokens are checked through upstream's GitHub API transport.
+import * as GitHubApi from "./GitHubApi.ts";
 import { scrubSourceControlIdentityEnvironment } from "./SourceControlExecutionEnvironment.ts";
 
 export {
@@ -129,7 +131,7 @@ export class SourceControlProfileService extends Context.Service<
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const github = yield* GitHubCli.GitHubCli;
+  const github = yield* GitHubApi.GitHubApi;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -220,30 +222,48 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // T3-CUSTOM(expbkt3): reads a GitHub.com REST path as the profile's own token, pinned so the
+  // machine's credential is never used and the rate-limit scope stays with the profile.
+  const readAsProfile = (
+    profileId: SourceControlProfileId,
+    credential: string,
+    operation: string,
+    apiPath: string,
+  ) =>
+    github.rest({ host: "github.com", operation, path: apiPath, allowReserve: true }).pipe(
+      Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+        host: "github.com",
+        token: Redacted.make(credential),
+        credentialFingerprint: `github.com:source-control-profile:${profileId}`,
+      }),
+    );
+
   const validateCredential = Effect.fn("SourceControlProfileService.validateCredential")(function* (
     profileId: SourceControlProfileId,
     credential: string,
   ): Effect.fn.Return<ValidatedGitHubCredential, SourceControlProfileError> {
-    const environment = yield* isolatedEnvironment(profileId, credential, process.env);
-    const response = yield* github
-      .execute({ cwd: config.cwd, args: ["api", "user"], env: environment })
-      .pipe(
-        Effect.mapError((error) =>
-          profileError({
-            operation: "validate-credential",
-            reason:
-              error._tag === "GitHubCliAuthenticationError"
-                ? "invalid-credential"
-                : "validation-failed",
-            detail:
-              error._tag === "GitHubCliAuthenticationError"
-                ? "GitHub rejected this credential. Replace it with a valid fine-grained token."
-                : "GitHub CLI could not validate this credential.",
-            profileId,
-          }),
-        ),
-      );
-    const user = yield* decodeGitHubUser(response.stdout).pipe(
+    const response = yield* readAsProfile(
+      profileId,
+      credential,
+      "validateProfileCredential",
+      "user",
+    ).pipe(
+      Effect.mapError((error) =>
+        profileError({
+          operation: "validate-credential",
+          reason:
+            error._tag === "GitHubApiAuthenticationError"
+              ? "invalid-credential"
+              : "validation-failed",
+          detail:
+            error._tag === "GitHubApiAuthenticationError"
+              ? "GitHub rejected this credential. Replace it with a valid fine-grained token."
+              : "GitHub could not validate this credential.",
+          profileId,
+        }),
+      ),
+    );
+    const user = yield* decodeGitHubUser(response.body).pipe(
       Effect.mapError(() =>
         profileError({
           operation: "validate-credential",
@@ -289,20 +309,22 @@ export const make = Effect.gen(function* () {
 
     const noreplyEmail = `${identity.accountId}+${identity.login}@users.noreply.github.com`;
 
-    const environment = yield* isolatedEnvironment(profileId, credential, process.env);
-    const response = yield* github
-      .execute({ cwd: config.cwd, args: ["api", "user/emails"], env: environment })
-      .pipe(
-        Effect.mapError(() =>
-          profileError({
-            operation: "validate-email",
-            reason: "invalid-email",
-            detail: `GitHub could not verify this email. Grant the token "Email addresses: read", or use ${noreplyEmail}.`,
-            profileId,
-          }),
-        ),
-      );
-    const emails = yield* decodeGitHubEmails(response.stdout).pipe(
+    const response = yield* readAsProfile(
+      profileId,
+      credential,
+      "validateProfileEmail",
+      "user/emails",
+    ).pipe(
+      Effect.mapError(() =>
+        profileError({
+          operation: "validate-email",
+          reason: "invalid-email",
+          detail: `GitHub could not verify this email. Grant the token "Email addresses: read", or use ${noreplyEmail}.`,
+          profileId,
+        }),
+      ),
+    );
+    const emails = yield* decodeGitHubEmails(response.body).pipe(
       Effect.mapError(() =>
         profileError({
           operation: "validate-email",

@@ -20,6 +20,8 @@ import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/A
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
 import { PullRequestsToolkit, type PullRequestTargetInput } from "./tools.ts";
 
@@ -35,6 +37,8 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
   const reads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const dependencies = Layer.mergeAll(
+    // McpToolAccess reads the caller and the target thread's modes before a write.
+    liveThreadsLayer,
     Layer.mock(OrchestrationAccessControl)({
       actorFor: () => Option.none(),
       canAccessThread: (actor, target) =>
@@ -77,7 +81,11 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
     ),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
-    Effect.provide(PullRequestsHandlers.layer.pipe(Layer.provide(dependencies))),
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer).pipe(
+        Layer.provide(dependencies),
+      ),
+    ),
   );
   const scope: McpInvocationContext.McpInvocationScope = {
     principal,
@@ -101,7 +109,7 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
     client:
       principal === "provider-session"
         ? undefined
-        : { sessionId: principal, label: principal, runtimeModeCeiling: "full-access" },
+        : { sessionId: principal, label: principal, access: "full-access" },
     capabilities: new Set(["pull-requests"]),
     issuedAt: 1,
   };

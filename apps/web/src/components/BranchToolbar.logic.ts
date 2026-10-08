@@ -123,13 +123,6 @@ export function resolveLockedWorkspaceLabel(
 }
 // T3-CUSTOM(expbkt3): END
 
-export function resolveWorkspaceDisplayName(path: string | null): string | null {
-  if (!path) return null;
-  const normalizedPath = path.replace(/[\\/]+$/, "");
-  if (normalizedPath.length === 0) return path;
-  return normalizedPath.split(/[\\/]/).at(-1) ?? normalizedPath;
-}
-
 export interface PreviousWorktreeSeed {
   branch: string | null;
   worktreePath: string;

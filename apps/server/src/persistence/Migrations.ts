@@ -164,6 +164,11 @@ import Migration1044 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts"
 // register at the next free IDs in the 1000+ lane; the files keep upstream names.
 import Migration1046 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 59-60. The legacy fork
+// block (33-42) and the shipped 1000+ lane already occupy those slots, so they
+// register at the next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1049 from "./Migrations/059_McpAppModelContext.ts";
+import Migration1050 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -321,6 +326,9 @@ const migrationEntries = [
   [1047, "WebhookRelayDeliveries", Migration1047],
   // T3-CUSTOM(expbkt3): review comment send-once mark.
   [1048, "ThreadCommentLastSent", Migration1048],
+  // T3-CUSTOM(expbkt3): upstream 59-60 remapped above the shipped 1048 migration.
+  [1049, "McpAppModelContext", Migration1049],
+  [1050, "ThreadSnapshotWindowIndexes", Migration1050],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

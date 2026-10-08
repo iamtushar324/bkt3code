@@ -4,9 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import type { WebUiRpcCallRequest } from "./bridge.ts";
-import { makeWebUiRpcRegistrationLayer, WEB_UI_MCP_TOOL_NAMES } from "./registration.ts";
+import { makeWebUiRpcHandlers, WEB_UI_MCP_TOOL_NAMES, WebUiRpcToolkit } from "./registration.ts";
 
 const invocation: McpInvocationContext.McpInvocationScope = {
   principal: "external-user",
@@ -17,9 +19,9 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   client: {
     sessionId: "external-user:user-web-ui-registration-test",
     label: "External MCP user",
-    runtimeModeCeiling: "full-access",
+    access: "full-access",
   },
-  capabilities: new Set(["t3.read", "t3.control"]),
+  capabilities: new Set(["orchestration", "t3.read", "t3.control"]),
   issuedAt: 1,
 };
 
@@ -38,7 +40,8 @@ const client = McpSchema.McpServerClient.of({
 });
 
 const calls: Array<ReadonlyArray<WebUiRpcCallRequest>> = [];
-const TestLayer = makeWebUiRpcRegistrationLayer((_scope, requests) => {
+// Registered the production way: McpToolAccess checks run before the bridge.
+const handlers = makeWebUiRpcHandlers((_scope, requests) => {
   calls.push(requests);
   return Effect.succeed(
     requests.map((request, index) => ({
@@ -51,7 +54,11 @@ const TestLayer = makeWebUiRpcRegistrationLayer((_scope, requests) => {
       result: { echoed: request.input ?? null },
     })),
   );
-}).pipe(Layer.provideMerge(McpServer.McpServer.layer));
+});
+const TestLayer = McpHttpServer.toolkitRegistration(WebUiRpcToolkit, handlers).pipe(
+  Layer.provide(liveThreadsLayer),
+  Layer.provideMerge(McpServer.McpServer.layer),
+);
 
 const withInvocation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
@@ -74,9 +81,9 @@ it.effect("registers four compact tools while listing the complete virtual surfa
       expect(listed.structuredContent).toMatchObject({
         ok: true,
         // T3-CUSTOM(expbkt3): registration exposes native V2 methods and all retained fork RPCs.
-        rpcCount: 231,
-        streamCount: 30,
-        matchedCount: 231,
+        rpcCount: 236,
+        streamCount: 31,
+        matchedCount: 236,
       });
 
       const schema = yield* withInvocation(

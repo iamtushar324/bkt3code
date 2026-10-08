@@ -24,6 +24,7 @@
 - [T3 Code MCP control center](./user/t3-mcp-control.md)
 - [Agent views in chat](./user/agent-views.md)
 - [Remote access](./user/remote-access.md)
+- [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md)

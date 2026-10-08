@@ -136,7 +136,6 @@ export const preparePairingRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
     // T3-CUSTOM(expbkt3): BEGIN — bind the operator to the session this pairing creates.
     ...(Option.isSome(identityToken) ? { identityToken: identityToken.value } : {}),

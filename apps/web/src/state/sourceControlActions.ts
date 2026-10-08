@@ -9,13 +9,16 @@ import {
   type VcsActionOperation,
   type RunVcsStackedActionInput,
 } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  GitResolvePullRequestResult,
-  SourceControlCloneProtocol,
-  SourceControlRepositoryVisibility,
-  SourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity type.
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentAuthorizationError,
+  type EnvironmentId,
+  type GitResolvePullRequestResult,
+  type SourceControlCloneProtocol,
+  type SourceControlRepositoryVisibility,
+  type SourceControlProfileId, // T3-CUSTOM(expbkt3): source-control identity type.
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -25,6 +28,7 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { gitEnvironment } from "./git";
 import { useEnvironmentQuery } from "./query";
+import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
@@ -51,11 +55,15 @@ interface SourceControlActionState<
   R extends AtomCommandResult<unknown, unknown>,
 > {
   readonly isPending: boolean;
+  readonly isAllowed: boolean;
   readonly error: unknown;
   readonly run: (
     ...args: TArgs
   ) => Promise<
-    AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R> | VcsActionUnavailableError>
+    AtomCommandResult<
+      AtomCommandSuccess<R>,
+      AtomCommandFailure<R> | VcsActionUnavailableError | EnvironmentAuthorizationError
+    >
   >;
   readonly resetError: () => void;
 }
@@ -79,6 +87,7 @@ function useAction<
   readonly onSuccess?: () => void;
   readonly managedExternally?: boolean;
 }): SourceControlActionState<TArgs, R> {
+  const isAllowed = useEnvironmentScope(input.scope.environmentId, AuthSourceControlWriteScope);
   const operation = ACTION_OPERATION[input.kind];
   const state = useAtomValue(vcsActionManager.stateAtom(input.scope));
   const ownsState = state.operation === operation;
@@ -89,6 +98,19 @@ function useAction<
 
   const run = useCallback(
     async (...args: TArgs) => {
+      if (
+        input.scope.environmentId === null ||
+        !readEnvironmentScope(input.scope.environmentId, AuthSourceControlWriteScope)
+      ) {
+        return AsyncResult.failure<never, EnvironmentAuthorizationError>(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthSourceControlWriteScope,
+              message: "This connection cannot change source control.",
+            }),
+          ),
+        );
+      }
       const execute = async (): Promise<
         AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>
       > => {
@@ -114,6 +136,7 @@ function useAction<
   );
 
   return {
+    isAllowed,
     error: ownsState ? state.error : null,
     isPending: ownsState && state.isRunning,
     resetError,
@@ -323,6 +346,20 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
               operation: "prepare_pull_request_thread",
               environmentId: scope.environmentId,
               cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      if (
+        input.mode === "worktree" &&
+        input.threadId !== undefined &&
+        !readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
+      ) {
+        return AsyncResult.failure<never, EnvironmentAuthorizationError>(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot change threads.",
             }),
           ),
         );

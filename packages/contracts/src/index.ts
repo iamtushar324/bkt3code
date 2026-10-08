@@ -77,6 +77,7 @@ export * from "./filesystem.ts";
 export * from "./agentSessions.ts";
 export * from "./assets.ts";
 export * from "./review.ts";
+export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./device.ts";
@@ -195,3 +196,4 @@ export * from "./sessionWebhooks.ts";
 
 // T3-CUSTOM(expbkt3): server-owned Toolyard federation.
 export * from "./toolyardIntegration.ts";
+export * from "./clientRpcPermissions.ts";

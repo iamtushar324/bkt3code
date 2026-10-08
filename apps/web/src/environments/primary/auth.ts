@@ -2,6 +2,7 @@ import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthEnvironmentScope,
+  AuthGrantScope,
   AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
@@ -155,8 +156,15 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
+
+// T3-CUSTOM(expbkt3): the /pair route keeps the pairing surface (not the Clerk
+// gate) while an explicit pairing link is pending, even after its token is stripped.
+export function isExplicitPairingRequested(): boolean {
+  return explicitPairingRequested;
+}
 
 export function peekPairingTokenFromUrl(): string | null {
   return getPairingTokenFromUrl(new URL(window.location.href));
@@ -517,12 +525,13 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   await waitForAuthenticatedSessionAfterBootstrap();
   resolvedAuthenticatedGateState = { status: "authenticated" };
   bootstrapPromise = null;
+  explicitPairingRequested = false;
   stripPairingTokenFromUrl();
 }
 
 export async function createServerPairingCredential(input?: {
   readonly label?: string;
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes?: ReadonlyArray<AuthGrantScope>;
   // T3-CUSTOM(expbkt3): mint a device-bound credential for a managed BK desktop.
   readonly requireProofOfPossession?: boolean;
 }): Promise<AuthPairingCredentialResult> {
@@ -680,6 +689,31 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  // An explicit pairing link replaces this browser's grant, even when the
+  // current cookie or a cached gate already authenticates it. Keep that intent
+  // after stripping the token, which causes the router to load this gate again.
+  if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
+    explicitPairingRequested = false;
+  } else if (peekPairingTokenFromUrl()) {
+    explicitPairingRequested = true;
+  }
+  if (explicitPairingRequested) {
+    // T3-CUSTOM(expbkt3): BEGIN — keep the managed offline gate on this path too;
+    // an unreachable managed primary cannot redeem the link anyway.
+    let currentSession: AuthSessionState;
+    try {
+      currentSession = await fetchSessionState();
+    } catch (error) {
+      const offlineState = await resolveManagedOfflineAuthGateState(error);
+      if (offlineState !== null) {
+        return offlineState;
+      }
+      throw error;
+    }
+    // T3-CUSTOM(expbkt3): END
+    return { status: "requires-auth", auth: currentSession.auth };
+  }
+
   const urlCredential = takePairingTokenFromUrl();
   const previousPromise = bootstrapPromise;
   if (urlCredential) {
@@ -720,4 +754,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  explicitPairingRequested = false;
 }

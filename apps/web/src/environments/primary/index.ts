@@ -12,6 +12,8 @@ export {
   createServerPairingCredential,
   // T3-CUSTOM(expbkt3): fetchSessionState feeds the fork's managed offline gate.
   fetchSessionState,
+  // T3-CUSTOM(expbkt3): the /pair route prefers a pending pairing link over the Clerk gate.
+  isExplicitPairingRequested,
   isPrimaryEnvironmentPairingCredentialRejectedError,
   // T3-CUSTOM(expbkt3): BEGIN — member-devices settings section.
   listServerClientSessions,

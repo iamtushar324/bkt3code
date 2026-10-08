@@ -309,7 +309,9 @@ it.layer(
       const links = yield* serverAuth.listPairingLinks();
       const link = links.find((candidate) => candidate.id === selfIssued.id);
       expect(link?.subject).toBe(`clerk:${MEMBER_ID}`);
-      expect(link?.scopes).toEqual([...AuthStandardClientScopes]);
+      // Upstream's wire model lists the full grant under `permissions`; `scopes` keeps
+      // only the vocabulary older clients know. The stored grant is unchanged.
+      expect(link?.permissions).toEqual([...AuthStandardClientScopes]);
     }).pipe(Effect.provide(environmentAuthLayer)),
   );
 

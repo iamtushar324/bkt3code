@@ -5,6 +5,7 @@
  */
 // T3-CUSTOM(expbkt3): END
 import {
+  type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
@@ -44,8 +45,17 @@ export interface McpThreadCaller {
 export interface McpClientCaller {
   readonly sessionId: string;
   readonly label: string;
-  readonly runtimeModeCeiling: RuntimeMode;
+  /** Read only, or the most the threads it starts or changes may run with. */
+  readonly access: AuthMcpClientAccess;
 }
+
+/**
+ * The runtime mode a client caller's writes are capped at. A read-only client
+ * never reaches a write (`McpToolAccess` refuses it first), so it maps to the
+ * lowest mode rather than to nothing.
+ */
+export const clientRuntimeModeCeiling = (client: McpClientCaller | undefined): RuntimeMode =>
+  client === undefined || client.access === "read-only" ? "approval-required" : client.access;
 
 /**
  * Who is calling and what they may do. Tool parameters choose the target
