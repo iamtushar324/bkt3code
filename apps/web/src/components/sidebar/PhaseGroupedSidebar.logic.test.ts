@@ -546,6 +546,22 @@ describe("resolvePhaseSidebarWorktreeView", () => {
 
     expect(view.sharingByPath.size).toBe(0);
   });
+
+  it("does not count subagent threads, which run in their parent's worktree", () => {
+    // XFN-59: a session that had spawned 11 subagents showed "×12".
+    const subagent = (title: string) => ({
+      ...thread(title, "/w/session"),
+      lineage: { relationshipToParent: "subagent" } as never,
+    });
+    const view = resolvePhaseSidebarWorktreeView([
+      thread("Session", "/w/session"),
+      subagent("Explore"),
+      subagent("Review"),
+    ]);
+
+    expect(view.sharingByPath.size).toBe(0);
+    expect(view.codenameByPath.get("/w/session")).toBe(resolveWorktreeCodename("/w/session"));
+  });
 });
 
 describe("phaseSidebarWorktreeRowProps", () => {

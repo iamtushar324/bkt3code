@@ -460,7 +460,12 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
                     accessibilityLabel={subagentCountLabel}
                     className="shrink-0 flex-row items-center gap-0.5 self-center"
                   >
-                    <SymbolView name="cpu" size={10} tintColor="#0ea5e9" type="monochrome" />
+                    <SymbolView
+                      name="cpu"
+                      size={10}
+                      tintColorClassName="accent-adaptive-sky-600-400"
+                      type="monochrome"
+                    />
                     <Text className="font-t3-mono text-[11px] tabular-nums text-adaptive-sky-600-400">
                       {activeSubagentCount}
                     </Text>

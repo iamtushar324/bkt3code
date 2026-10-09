@@ -117,4 +117,8 @@ export function syncPhaseSidebarGroupingFromStorageEvent(
 // never echoes this tab's own writes. Registered once, for the module's life.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("storage", syncPhaseSidebarGroupingFromStorageEvent);
+  // A dev hot reload replaces the module; drop the listener bound to the old store.
+  import.meta.hot?.dispose(() => {
+    window.removeEventListener("storage", syncPhaseSidebarGroupingFromStorageEvent);
+  });
 }

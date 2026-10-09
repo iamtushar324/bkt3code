@@ -796,7 +796,8 @@ export const layer = Layer.effect(
         // from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
         // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group; never fails.
-        const forkLaunchFields = yield* scheduledTaskCustomGroupFields(sql, active.id);
+        const forkLaunchFields =
+          active.threadId === null ? yield* scheduledTaskCustomGroupFields(sql, active.id) : {};
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
