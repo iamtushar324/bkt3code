@@ -15,10 +15,18 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-const PREVIEW_BROWSER_LABELS: Record<PreviewBrowserHostSetting, string> = {
-  client: "Client browser",
-  server: "Server browser",
-};
+// A list, not a keyed record: lint reads `LABELS.client` as raw RPC client access.
+const PREVIEW_BROWSER_OPTIONS: ReadonlyArray<{
+  readonly value: PreviewBrowserHostSetting;
+  readonly label: string;
+}> = [
+  { value: "client", label: "Client browser" },
+  { value: "server", label: "Server browser" },
+];
+
+function previewBrowserLabel(value: string | null): string {
+  return PREVIEW_BROWSER_OPTIONS.find((option) => option.value === value)?.label ?? "Mixed";
+}
 
 function isPreviewBrowserHostSetting(value: unknown): value is PreviewBrowserHostSetting {
   return value === "client" || value === "server";
@@ -55,15 +63,14 @@ export function PreviewBrowserHostRow() {
           }}
         >
           <SelectTrigger size="sm" aria-label="Preview browser">
-            <SelectValue>
-              {(value: string | null) =>
-                isPreviewBrowserHostSetting(value) ? PREVIEW_BROWSER_LABELS[value] : "Mixed"
-              }
-            </SelectValue>
+            <SelectValue>{(value: string | null) => previewBrowserLabel(value)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="client">{PREVIEW_BROWSER_LABELS.client}</SelectItem>
-            <SelectItem value="server">{PREVIEW_BROWSER_LABELS.server}</SelectItem>
+            {PREVIEW_BROWSER_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectPopup>
         </Select>
       }
