@@ -28,6 +28,16 @@ export function normalizeThreadCustomGroup(label: string): string {
   return label.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+/**
+ * The key of the sidebar's built-in section for sessions with no group. No
+ * custom group may take it: a group under this key would never be drawn.
+ */
+export const THREAD_CUSTOM_GROUP_RESERVED_KEY = "ungrouped";
+
+export function isReservedThreadCustomGroup(label: string): boolean {
+  return normalizeThreadCustomGroup(label) === THREAD_CUSTOM_GROUP_RESERVED_KEY;
+}
+
 // T3-CUSTOM(expbkt3): BEGIN — the shared registry of custom groups (XFN-59).
 //
 // A group used to exist only while some thread carried its label, plus

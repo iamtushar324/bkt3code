@@ -6,6 +6,7 @@
 // server re-derives every key from the label, whatever key a client sent, so
 // case-insensitive uniqueness holds even against a careless or older client.
 import {
+  isReservedThreadCustomGroup,
   normalizeThreadCustomGroup,
   type ThreadCustomGroupRegistry,
   type ThreadCustomGroupRegistryPatch,
@@ -20,7 +21,8 @@ import {
  * - Entries the patch omits are untouched.
  *
  * Existing entries are re-keyed first, so a stored key that is not the
- * normalized label cannot survive as a duplicate group.
+ * normalized label cannot survive as a duplicate group. A definition named
+ * like the built-in "Ungrouped" section is dropped: no sidebar draws it.
  */
 export function mergeThreadCustomGroupRegistry(
   current: ThreadCustomGroupRegistry,
@@ -28,12 +30,13 @@ export function mergeThreadCustomGroupRegistry(
 ): ThreadCustomGroupRegistry {
   const next = new Map<string, ThreadCustomGroupRegistry[string]>();
   for (const definition of Object.values(current)) {
+    if (isReservedThreadCustomGroup(definition.label)) continue;
     next.set(normalizeThreadCustomGroup(definition.label), definition);
   }
   for (const [key, definition] of Object.entries(patch)) {
     if (definition === null) {
       next.delete(normalizeThreadCustomGroup(key));
-    } else {
+    } else if (!isReservedThreadCustomGroup(definition.label)) {
       next.set(normalizeThreadCustomGroup(definition.label), definition);
     }
   }

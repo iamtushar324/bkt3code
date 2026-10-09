@@ -858,7 +858,7 @@ export const T3GroupListTool = readonlyTool(
 export const T3GroupSaveTool = mutatingTool(
   Tool.make("t3_group_save", {
     description:
-      "Save a custom group in the sidebar's Custom view, or change its colour. Use it to make an empty group before any session is in it, or to give a group a colour; every user and agent of this host sees the same groups and colours. Saving a group that already exists keeps its colour unless you pass color, and adopts your spelling of its name. This does not move any session: to put a session in a group, call t3_update_session with customGroup (or pass customGroup to t3_create_session).",
+      "Save a custom group in the sidebar's Custom view, or change its colour. Use it to make an empty group before any session is in it, or to give a group a colour; every user and agent of this host sees the same groups and colours. Saving a group that already exists keeps its colour unless you pass color, and adopts your spelling of its name. This does not move any session: to put a session in a group, call t3_update_session with customGroup (or pass customGroup to t3_create_session). Saved groups are host settings, so this needs a full-access caller, as t3_update_server_settings does. The name Ungrouped is reserved for the built-in section.",
     parameters: Schema.Struct({
       label: groupLabel(
         `Name of the group, 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. Matched case-insensitively against existing groups, so "Sprint 42" and "sprint 42" are the same group.`,
@@ -882,7 +882,7 @@ export const T3GroupSaveTool = mutatingTool(
 export const T3GroupRenameTool = mutatingTool(
   Tool.make("t3_group_rename", {
     description:
-      "Rename a custom group: every session you can see in it moves to the new name, and a saved group keeps its colour under the new name. Use it instead of re-filing sessions one at a time. A group that only exists through session labels stays unsaved; call t3_group_save afterwards to save it. The new name must not already be another group: to merge two groups, move the sessions with t3_update_session and then call t3_group_remove. Sessions you cannot see keep the old name; sessions running in broader modes than yours keep it too and are listed under skipped.",
+      "Rename a custom group: every non-archived session you can see in it moves to the new name, and a saved group keeps its colour under the new name. Use it instead of re-filing sessions one at a time. A group that only exists through session labels stays unsaved; call t3_group_save afterwards to save it. The new name must not already be another group: to merge two groups, move the sessions with t3_update_session and then call t3_group_remove. Sessions you cannot see keep the old name; sessions running in broader modes than yours keep it too and are listed under skipped. Needs a full-access caller, as t3_update_server_settings does.",
     parameters: Schema.Struct({
       label: groupLabel(
         "Current name of the group, matched case-insensitively, as shown by t3_group_list.",
@@ -900,7 +900,7 @@ export const T3GroupRenameTool = mutatingTool(
 export const T3GroupRemoveTool = mutatingTool(
   Tool.make("t3_group_remove", {
     description:
-      "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; sessions running in broader modes than yours keep it too and are listed under skipped.",
+      "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every non-archived session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; sessions running in broader modes than yours keep it too and are listed under skipped. Needs a full-access caller, as t3_update_server_settings does.",
     parameters: Schema.Struct({
       label: groupLabel(
         "Name of the group to remove, matched case-insensitively, as shown by t3_group_list.",

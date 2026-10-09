@@ -38,6 +38,17 @@ describe("threadCustomGroups server setting", () => {
     expect(cleared.threadCustomGroups).toEqual({ backlog: { label: "Backlog" } });
   });
 
+  it("drops a group named like the built-in Ungrouped section", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      threadCustomGroups: {
+        ungrouped: { label: "Ungrouped", colorId: "red" },
+        backlog: { label: "Backlog" },
+      },
+    });
+    expect(saved.threadCustomGroups).toEqual({ backlog: { label: "Backlog" } });
+    expect(mergeThreadCustomGroupRegistry({ x: { label: " UNGROUPED " } }, {})).toEqual({});
+  });
+
   it("removes a group with null and leaves the rest", () => {
     const both = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       threadCustomGroups: {

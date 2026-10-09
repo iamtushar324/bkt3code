@@ -228,6 +228,11 @@ it.layer(NodeServices.layer)("t3_group_save", (it) => {
         .groupSave({ label: "   " })
         .pipe(provide(settings.service), Effect.flip);
       expect(blank.message).toContain("label must not be blank");
+      // The sidebar's built-in section owns this name in any spelling.
+      const reserved = yield* __testing
+        .groupSave({ label: " UNGROUPED " })
+        .pipe(provide(settings.service), Effect.flip);
+      expect(reserved.message).toContain("built-in section for sessions with no group");
       expect(settings.patches).toHaveLength(0);
     }),
   );

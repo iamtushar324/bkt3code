@@ -31,7 +31,7 @@ import {
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { phaseSidebarFiltersActive } from "@t3tools/client-runtime/state/phase-sidebar-tree";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { isReservedThreadCustomGroup, type EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Alert, FlatList, Pressable, View } from "react-native";
@@ -243,6 +243,8 @@ export function PhaseSidebarPane(props: {
   } = customGroupRegistry;
   const renameCustomGroup = useCallback(
     (groupId: string, label: string) => {
+      // "Ungrouped" is the built-in section; the sessions must not move there.
+      if (isReservedThreadCustomGroup(label)) return;
       updateGrouping((current) => renamePhaseSidebarCustomGroup(current, groupId, label));
       renameSharedCustomGroup(groupId, label);
       for (const row of rows) {

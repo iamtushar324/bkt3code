@@ -24,6 +24,7 @@ import {
   // T3-CUSTOM(expbkt3): session lineage.
   type ThreadId,
   type VcsStatusResult,
+  isReservedThreadCustomGroup,
 } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import {
@@ -2982,6 +2983,8 @@ export function PhaseGroupedSidebar() {
   // group AND relabel its sessions, which may sit on other hosts.
   const renameCustomGroup = useCallback(
     (groupId: string, label: string) => {
+      // "Ungrouped" is the built-in section; the sessions must not move there.
+      if (isReservedThreadCustomGroup(label)) return;
       renameCustomGroupLocally(groupId, label);
       renameSharedCustomGroup(groupId, label);
       for (const row of rowsInCustomGroup(groupId)) void setThreadCustomGroup(row, label);

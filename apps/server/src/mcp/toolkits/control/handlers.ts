@@ -18,6 +18,7 @@ import {
   normalizeThreadCustomGroup,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
   // T3-CUSTOM(expbkt3): the shared custom-group registry and its colours.
+  isReservedThreadCustomGroup,
   isThreadCustomGroupColorId,
   ThreadCustomGroup,
   THREAD_CUSTOM_GROUP_COLOR_IDS,
@@ -541,6 +542,15 @@ function resolveGroupLabelInput(
       new T3ControlToolError({
         operation,
         message: `${field} is not a valid custom group name.`,
+      }),
+    );
+  }
+  // The sidebar's built-in section for sessions with no group owns this name.
+  if (isReservedThreadCustomGroup(label)) {
+    return Effect.fail(
+      new T3ControlToolError({
+        operation,
+        message: `${field} '${label}' is the sidebar's built-in section for sessions with no group. ${blankHint}`,
       }),
     );
   }
@@ -2034,14 +2044,14 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
   t3_list_comments: McpToolAccess.readsAsCaller(handlers.t3_list_comments),
   t3_reply_comment: McpToolAccess.actsAsCaller(handlers.t3_reply_comment),
   t3_user_presence: McpToolAccess.reads(handlers.t3_user_presence),
-  // T3-CUSTOM(expbkt3): the shared custom-group registry. Saving touches no
-  // session. Rename and remove re-file sessions they cannot name up front, so
-  // they declare no target: the caller check still runs, and the orchestrator
-  // holds each re-filed session to the caller's modes under its lock.
+  // T3-CUSTOM(expbkt3): the shared custom-group registry. It is environment
+  // settings, so writing it needs the full-access caller t3_update_server_settings
+  // needs, as the sidebar needs settings:write. The orchestrator still holds
+  // each re-filed session to the caller's modes under its lock.
   t3_group_list: McpToolAccess.reads(handlers.t3_group_list),
-  t3_group_save: McpToolAccess.writes(handlers.t3_group_save),
-  t3_group_rename: McpToolAccess.writesThreads(() => [], handlers.t3_group_rename),
-  t3_group_remove: McpToolAccess.writesThreads(() => [], handlers.t3_group_remove),
+  t3_group_save: McpToolAccess.writesEnvironment((input) => handlers.t3_group_save(input)),
+  t3_group_rename: McpToolAccess.writesEnvironment((input) => handlers.t3_group_rename(input)),
+  t3_group_remove: McpToolAccess.writesEnvironment((input) => handlers.t3_group_remove(input)),
 });
 
 /** The control handlers as a layer, for tests that build the toolkit directly. */

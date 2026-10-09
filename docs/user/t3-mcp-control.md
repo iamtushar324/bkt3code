@@ -140,8 +140,8 @@ Revoked access does not return automatically. Bifrost remains available under
 | `t3_update_session`         | Keep title, Linear issue tag, custom group, priority, branch, model, runtime mode, and interaction mode current.             |
 | `t3_group_list`             | List custom groups: saved ones with their colour, label-only ones, visible session counts, and the colour ids.               |
 | `t3_group_save`             | Save a custom group (an empty one too), or set or clear its colour. Shared by every user and agent of the host.              |
-| `t3_group_rename`           | Rename a custom group, keep its colour, and re-file every session the caller can see.                                        |
-| `t3_group_remove`           | Remove a custom group and its colour, and ungroup every session the caller can see. Removing a missing group is safe.        |
+| `t3_group_rename`           | Rename a custom group, keep its colour, and re-file every non-archived session the caller can see.                           |
+| `t3_group_remove`           | Remove a custom group and its colour, and ungroup every non-archived session the caller can see. Missing groups are safe.    |
 | `t3_session_action`         | Interrupt, stop, restart, archive or unarchive, settle or activate, snooze or unsnooze, or delete.                           |
 | `t3_respond_approval`       | Resolve a pending provider approval using the request's allowed decision.                                                    |
 | `t3_respond_user_input`     | Answer a pending structured user-input request.                                                                              |
@@ -223,11 +223,12 @@ label its own work rather than leaving it to whoever opens the sidebar:
     It moves no session: file sessions with `customGroup` as above.
   - `t3_group_rename` takes `label` and `newLabel`. A saved group moves to the
     new name with its colour; a label-only group is renamed on its sessions
-    and stays unsaved. Every session the caller can see is then re-filed. The
+    and stays unsaved. Every non-archived session the caller can see is then
+    re-filed; archived sessions keep the old label. The
     new name may not already be another group: to merge two groups, move the
     sessions with `t3_update_session`, then call `t3_group_remove`.
   - `t3_group_remove` takes `label`. It deletes the saved group and its colour
-    and ungroups every session the caller can see, as **Delete group** in the
+    and ungroups every non-archived session the caller can see, as **Delete group** in the
     sidebar does. The sessions stay. Removing a missing group is safe.
 
   Colour ids: `blue`, `violet`, `pink`, `red`, `orange`, `amber`, `lime`,
@@ -237,7 +238,9 @@ label its own work rather than leaving it to whoever opens the sidebar:
   and the orchestrator holds each one to the caller's runtime and interaction
   modes. A session it refuses keeps its label and is listed in `skipped` with
   the reason; the rest still move. Sessions the caller cannot see keep their
-  label. `t3_group_list` needs `t3.read`; the other three need `t3.control`.
+  label. `t3_group_list` needs `t3.read`; the other three need `t3.control`
+  and a full-access caller, as `t3_update_server_settings` does. No group may
+  take the name `Ungrouped`, the sidebar's built-in section.
   Clients that write the registry directly send a `threadCustomGroups`
   settings patch: a definition upserts one group, `null` removes one, and the
   server re-keys every entry by its label. Servers that support the registry

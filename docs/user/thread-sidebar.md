@@ -291,16 +291,18 @@ environment in focus).
 
 In Custom mode, hover a group's header, or move keyboard focus into it, to show
 its actions inside the header: **Change colour**, **Rename**, and **Delete**.
-Pick one of twelve colours, or **Default** for the neutral look; the header
-shows the colour as a dot and a tint, and so does the group chip on a thread
-row in the other modes. Renaming relabels every thread in the group, and
+Pick one of twelve colours, or **Default** for the neutral look; on the web
+and desktop the header shows the colour as a dot and a tint (on iOS and
+Android as a dot), and so does the group chip on a thread row in the other
+modes. **Ungrouped** is the built-in section, so no group can take that name. Renaming relabels every thread in the group, and
 deleting one returns its threads to **Ungrouped**; both change the group on
 every connected environment that has it. On iOS and Android, hold a group's
 header for the same actions, or use the **Group by** sheet. A group's
 position and whether it is collapsed stay on each device.
 
 Creating, recolouring, renaming, and deleting a shared group needs permission
-to change the environment's settings. An environment whose server is too old
+to change the environment's settings. Agents do it with the `t3_group_*` MCP
+tools, which need a full-access caller, the same as `t3_update_server_settings`. An environment whose server is too old
 to keep the shared list, or a connection without that permission, still lets
 you file threads; empty groups you create there are kept on your device only,
 as before, and the colour actions are hidden.
