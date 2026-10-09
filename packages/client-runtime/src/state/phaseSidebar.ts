@@ -52,6 +52,8 @@ import {
   scopedProjectKey,
   scopedThreadKey,
 } from "../environment/scoped.ts";
+// T3-CUSTOM(expbkt3): when a working row's current work started.
+import { resolveThreadWorkingStartedAt } from "./models.ts";
 import { deriveLogicalProjectKey } from "./projectGrouping.ts";
 import type { EnvironmentProject, EnvironmentThreadShell } from "./shell.ts";
 import {
@@ -1913,4 +1915,95 @@ export function buildPhaseSidebarRows(
       changeRequestUpdatedAt: vcsStatus?.pr?.updatedAt ?? null,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// T3-CUSTOM(expbkt3): row status — elapsed working time and running subagents.
+// ---------------------------------------------------------------------------
+
+/**
+ * Upstream's "working" rule, copied from `resolveSidebarThreadStatus` in
+ * apps/web/src/components/Sidebar.logic.ts (upstream-owned, and web-only, so
+ * mobile cannot import it): the runtime is preparing, queued, starting,
+ * running or waiting, and nothing waits on the user. A web test compares the
+ * two over every runtime status, so a change upstream fails CI here.
+ */
+export function phaseSidebarIsWorking(
+  thread: Pick<ThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+): boolean {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  const status = thread.runtime?.status;
+  return (
+    status === "preparing" ||
+    status === "queued" ||
+    status === "starting" ||
+    status === "running" ||
+    status === "waiting"
+  );
+}
+
+export interface PhaseSidebarWorkingStatus {
+  /** "Goal" while a native /goal keeps the agent going across turns, as upstream. */
+  readonly label: "Working" | "Goal";
+  /** When the current work started; null when the server cannot say. */
+  readonly startedAt: string | null;
+}
+
+/** The row's "Working 4m" status, or null when the row is not working. */
+export function resolvePhaseSidebarWorkingStatus(
+  thread: Pick<
+    ThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "runtime" | "latestRun" | "goal"
+  >,
+): PhaseSidebarWorkingStatus | null {
+  if (!phaseSidebarIsWorking(thread)) return null;
+  return {
+    label: thread.goal?.status === "active" ? "Goal" : "Working",
+    startedAt: resolveThreadWorkingStartedAt(thread),
+  };
+}
+
+/**
+ * Upstream's `formatWorkingDurationLabel`, copied for the same reason as
+ * `phaseSidebarIsWorking`: "42s", "4m", "1h 5m".
+ */
+export function formatPhaseSidebarWorkingDuration(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * The work badge to show beside the working status. While "Working 4m" shows,
+ * RUNNING and WORKING only repeat it; STARTING (a turn still booting) and
+ * MONITORING (a watch loop, not a turn) still add something.
+ */
+export function resolvePhaseSidebarVisibleWorkBadge(
+  badge: PhaseSidebarWorkBadge | null,
+  workingStatusShown: boolean,
+): PhaseSidebarWorkBadge | null {
+  if (badge === null || !workingStatusShown) return badge;
+  return badge.monitoring || badge.label === "Starting" ? badge : null;
+}
+
+/**
+ * Provider-native subagents running under the thread right now. Reads the
+ * shell's `activeSubagentCount` through a structural type, so a server that
+ * does not send it (or a shell type without it) reads as none.
+ */
+export function phaseSidebarActiveSubagentCount(thread: {
+  readonly id: unknown;
+  readonly activeSubagentCount?: number | null | undefined;
+}): number {
+  const count = thread.activeSubagentCount ?? 0;
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+}
+
+/** "1 subagent running", "3 subagents running"; null when there are none. */
+export function phaseSidebarSubagentCountLabel(count: number): string | null {
+  if (!Number.isFinite(count) || count <= 0) return null;
+  const whole = Math.floor(count);
+  return `${whole} subagent${whole === 1 ? "" : "s"} running`;
 }

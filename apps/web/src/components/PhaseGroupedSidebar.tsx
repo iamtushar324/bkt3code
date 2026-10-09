@@ -31,6 +31,8 @@ import {
   ActivityIcon,
   AlarmClockIcon,
   ArchiveIcon,
+  // T3-CUSTOM(expbkt3): running provider-native subagents on the row.
+  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -145,9 +147,10 @@ import { LinearIcon } from "./Icons";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 // T3-CUSTOM(expbkt3): owner avatar on rows started by someone else.
 import { PhaseSidebarOwnerAvatar } from "./sidebar/PhaseSidebarOwnerAvatar";
-// T3-CUSTOM(expbkt3): elapsed time for a running turn.
-import { PhaseRowWorkingDuration } from "./sidebar/PhaseRowWorkingDuration";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+// T3-CUSTOM(expbkt3): "Working 4m" for a working row, as upstream's sidebar says it.
+import { PhaseRowWorkingStatus } from "./sidebar/PhaseRowWorkingStatus";
+// T3-CUSTOM(expbkt3): the parked shelves, docked above the footer.
+import { PhaseSidebarShelfDock } from "./sidebar/PhaseSidebarShelfDock";
 import {
   hasUnseenCompletion,
   isTrailingDoubleClick,
@@ -207,6 +210,12 @@ import {
   // T3-CUSTOM(expbkt3): ownership and co-participant facets.
   phaseSidebarThreadParticipantIds,
   compactPhaseSidebarTimeLabel,
+  // T3-CUSTOM(expbkt3): row status — working time, subagents, parked shelves.
+  phaseSidebarActiveSubagentCount,
+  phaseSidebarSubagentCountLabel,
+  resolvePhaseSidebarShelfRows,
+  resolvePhaseSidebarVisibleWorkBadge,
+  resolvePhaseSidebarWorkingStatus,
   type PhaseSidebarAttentionKind,
   type PhaseSidebarPhaseId,
   type PhaseSidebarRow,
@@ -230,13 +239,17 @@ import { usePhaseSidebarTreeStore } from "../phaseSidebarTreeStore";
 // T3-CUSTOM(expbkt3): group by lifecycle / project / custom groups.
 import {
   buildPhaseSidebarSections,
+  isPhaseSidebarSectionCollapsed,
   listPhaseSidebarCustomGroups,
+  PHASE_SIDEBAR_SHELF_SECTIONS,
   PHASE_SIDEBAR_UNGROUPED_ID,
   phaseSidebarCustomGroupIdForRow,
   phaseSidebarLocalCustomGroupForThread,
+  phaseSidebarRowKey,
   phaseSidebarSectionPhase,
   type PhaseSidebarCustomGroupOption,
   type PhaseSidebarSection as PhaseSidebarGroupSection,
+  type PhaseSidebarShelfId,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { usePhaseSidebarGroupingStore } from "../phaseSidebarGroupingStore";
 import { PhaseSidebarGroupByPopover } from "./sidebar/PhaseSidebarGroupByPopover";
@@ -1306,8 +1319,16 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           ),
         );
   // T3-CUSTOM(expbkt3): END
-  // T3-CUSTOM(expbkt3): a running turn's start, for the elapsed-time label.
-  const workingStartedAt = sessionActive ? resolveThreadWorkingStartedAt(row.thread) : null;
+  // T3-CUSTOM(expbkt3): BEGIN — "Working 4m" in the time slot, by upstream's
+  // working rule (queued and waiting count; a pending approval or answer does
+  // not). A snoozed row keeps its wake time there instead. While it shows,
+  // RUNNING and WORKING would only repeat it; STARTING and MONITORING stay.
+  const workingStatus = section === "snoozed" ? null : resolvePhaseSidebarWorkingStatus(row.thread);
+  const visibleWorkBadge = resolvePhaseSidebarVisibleWorkBadge(workBadge, workingStatus !== null);
+  // Provider-native subagents running under this thread right now.
+  const activeSubagentCount = phaseSidebarActiveSubagentCount(row.thread);
+  const subagentCountLabel = phaseSidebarSubagentCountLabel(activeSubagentCount);
+  // T3-CUSTOM(expbkt3): END
 
   // T3-CUSTOM(expbkt3): links open in the integrated browser beside the open thread (this
   // row's when none is open); Cmd/Ctrl-click still goes to the system browser.
@@ -2136,6 +2157,27 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
               </TooltipPopup>
             </Tooltip>
           ) : null}
+          {/* T3-CUSTOM(expbkt3): provider-native subagents this thread is running
+              now. Unlike the subtree counters these are not rows of their own,
+              so the count shows whether the row is open or closed. */}
+          {subagentCountLabel !== null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    role="status"
+                    aria-label={subagentCountLabel}
+                    data-testid={`phase-thread-subagent-count-${row.thread.id}`}
+                    className="inline-flex shrink-0 items-center gap-0.5 text-[9px] font-semibold leading-none tabular-nums text-sky-600 dark:text-sky-300"
+                  />
+                }
+              >
+                <BotIcon aria-hidden className="size-2.5 shrink-0" />
+                {activeSubagentCount}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{subagentCountLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           {descendantUnreadCount > 0 ? (
             <Tooltip>
               <TooltipTrigger
@@ -2206,16 +2248,16 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           {/* T3-CUSTOM(expbkt3): END */}
           {/* T3-CUSTOM(expbkt3): a plan does not silence the work badge — a
               running row with a plan attached has to keep saying it is running. */}
-          {workBadge &&
+          {visibleWorkBadge &&
           (attentionKind === null || attentionKind === "plan" || attentionKind === "ask") ? (
             <span
               role="status"
               className={cn(
                 "rounded-sm px-1 py-0.5 text-[8px] font-black tracking-wide text-sky-700 dark:text-sky-300",
-                workBadge.monitoring ? "bg-sky-500/10" : "bg-sky-500/15",
+                visibleWorkBadge.monitoring ? "bg-sky-500/10" : "bg-sky-500/15",
               )}
             >
-              {workBadge.label.toUpperCase()}
+              {visibleWorkBadge.label.toUpperCase()}
             </span>
           ) : null}
           {/* T3-CUSTOM(expbkt3): A descendant is waiting on a human. Outlined
@@ -2315,14 +2357,15 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
           {jumpLabel ? (
             <Kbd className="h-4 min-w-0 rounded-sm px-1 text-[9px]">{jumpLabel}</Kbd>
           ) : null}
-          <span className="text-[9px] tabular-nums text-muted-foreground/50">
-            {/* T3-CUSTOM(expbkt3): a running turn shows how long it has run. */}
-            {workingStartedAt !== null ? (
-              <PhaseRowWorkingDuration startedAt={workingStartedAt} />
-            ) : (
-              timeLabel
-            )}
-          </span>
+          {/* T3-CUSTOM(expbkt3): a working row says so and for how long, as upstream. */}
+          {workingStatus !== null ? (
+            <PhaseRowWorkingStatus
+              status={workingStatus}
+              testId={`phase-thread-working-${row.thread.id}`}
+            />
+          ) : (
+            <span className="text-[9px] tabular-nums text-muted-foreground/50">{timeLabel}</span>
+          )}
         </span>
         {/* T3-CUSTOM(expbkt3): priority and provider stay anchored together at bottom-right. */}
         <span className="absolute right-2 bottom-2 flex h-3.5 items-center gap-1">
@@ -2960,55 +3003,53 @@ export function PhaseGroupedSidebar() {
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
   );
-  // The snoozed shelf is collapsed by default (out of the way, never gone);
-  // the settled tail stays open because it is the ordinary "what did I just
-  // finish" lookup.
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
-  // A parked row reached by route (deep link, or the row you just settled)
-  // always renders, even inside a collapsed or paged-out shelf: otherwise
-  // the thread you are looking at has no un-settle or wake affordance.
-  const pinRoutedRow = useCallback(
-    (rendered: ReadonlyArray<PhaseSidebarRow>, all: ReadonlyArray<PhaseSidebarRow>) => {
-      if (routeThreadKey === null) return rendered;
-      if (
-        rendered.some(
-          (row) =>
-            scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)) ===
-            routeThreadKey,
-        )
-      ) {
-        return rendered;
-      }
-      const routedRow = all.find(
-        (row) =>
-          scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)) ===
-          routeThreadKey,
-      );
-      return routedRow ? [...rendered, routedRow] : rendered;
-    },
-    [routeThreadKey],
+  // T3-CUSTOM(expbkt3): BEGIN — the parked shelves' collapse state is the
+  // persisted section state, under the keys mobile uses: both start collapsed
+  // and stay as the user left them across a remount (settings, the mobile-width
+  // sheet), a reload and other tabs. Nothing but the header click toggles them.
+  const snoozedShelfCollapsed = isPhaseSidebarSectionCollapsed(
+    PHASE_SIDEBAR_SHELF_SECTIONS.snoozed,
+    collapsedSectionKeys,
   );
-  const renderedSnoozedRows = useMemo(
-    () => pinRoutedRow(snoozedShelfExpanded ? snoozedRows : [], snoozedRows),
-    [pinRoutedRow, snoozedRows, snoozedShelfExpanded],
+  const settledShelfCollapsed = isPhaseSidebarSectionCollapsed(
+    PHASE_SIDEBAR_SHELF_SECTIONS.settled,
+    collapsedSectionKeys,
   );
-  const visibleSettledRows = useMemo(
-    () => pinRoutedRow(settledRows.slice(0, settledVisibleCount), settledRows),
-    [pinRoutedRow, settledRows, settledVisibleCount],
+  const toggleShelf = useCallback(
+    (shelf: PhaseSidebarShelfId) => toggleSectionCollapsed(PHASE_SIDEBAR_SHELF_SECTIONS[shelf].key),
+    [toggleSectionCollapsed],
   );
-  const hiddenSettledCount = settledRows.length - visibleSettledRows.length;
-  const renderedSettledRows = useMemo(
-    () => pinRoutedRow(settledShelfExpanded ? visibleSettledRows : [], visibleSettledRows),
-    [pinRoutedRow, settledShelfExpanded, visibleSettledRows],
+  // A collapsed shelf draws no rows, not even the open thread's (that made it
+  // look open); its header marks that the open thread is inside. An open shelf
+  // still adds the open thread when it is paged out, so it keeps its wake or
+  // un-settle action.
+  const snoozedShelf = useMemo(
+    () =>
+      resolvePhaseSidebarShelfRows({
+        rows: snoozedRows,
+        collapsed: snoozedShelfCollapsed,
+        keyOf: phaseSidebarRowKey,
+        routedKey: routeThreadKey,
+      }),
+    [routeThreadKey, snoozedRows, snoozedShelfCollapsed],
   );
+  const settledShelf = useMemo(
+    () =>
+      resolvePhaseSidebarShelfRows({
+        rows: settledRows,
+        collapsed: settledShelfCollapsed,
+        keyOf: phaseSidebarRowKey,
+        routedKey: routeThreadKey,
+        visibleCount: settledVisibleCount,
+      }),
+    [routeThreadKey, settledRows, settledShelfCollapsed, settledVisibleCount],
+  );
+  // T3-CUSTOM(expbkt3): END
   // Traversal, jump labels and shift-range selection operate on what is
-  // actually on screen, shelves included.
+  // actually on screen, in screen order: the list, then the docked shelves.
   const visibleRows = useMemo(
-    () => [...activeVisibleRows, ...renderedSnoozedRows, ...renderedSettledRows],
-    [activeVisibleRows, renderedSnoozedRows, renderedSettledRows],
+    () => [...activeVisibleRows, ...snoozedShelf.rendered, ...settledShelf.rendered],
+    [activeVisibleRows, snoozedShelf.rendered, settledShelf.rendered],
   );
   // T3-CUSTOM(expbkt3): BEGIN — environment markers are conditional on what is
   // actually rendered, not on how many environments are configured. With one
@@ -3144,8 +3185,10 @@ export function PhaseGroupedSidebar() {
         scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)) === routeThreadKey,
     ) &&
     !visibleRowByKey.has(routeThreadKey) &&
-    // T3-CUSTOM(expbkt3): a thread folded into a collapsed section is not
-    // hidden by the filters; it is one header click away.
+    // T3-CUSTOM(expbkt3): a thread folded into a collapsed section or shelf is
+    // not hidden by the filters; it is one header click away.
+    !snoozedShelf.containsRoutedThread &&
+    !settledShelf.containsRoutedThread &&
     !sections.some(
       (section) =>
         collapsedSectionKeys.has(section.key) &&
@@ -4101,92 +4144,8 @@ export function PhaseGroupedSidebar() {
                 : {})}
             />
           ))}
-          {/* T3-CUSTOM(expbkt3): BEGIN — parked shelves below the lifecycle
-              groups: out of the way, never gone, always undoable. */}
-          {snoozedRows.length > 0 ? (
-            <section className="mb-3" data-testid="phase-sidebar-snoozed-shelf">
-              <button
-                type="button"
-                onClick={toggleSnoozedShelf}
-                aria-expanded={snoozedShelfExpanded}
-                data-testid="phase-sidebar-snoozed-shelf-toggle"
-                className="mb-1 flex w-full cursor-pointer items-center gap-2 px-2 text-left"
-              >
-                <AlarmClockIcon
-                  aria-hidden
-                  className="size-2.5 shrink-0 text-blue-600 dark:text-blue-400"
-                />
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-                  Snoozed
-                </span>
-                <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
-                <span className="text-[9px] tabular-nums text-muted-foreground/55">
-                  {snoozedRows.length}
-                </span>
-                <ChevronDownIcon
-                  aria-hidden
-                  className={cn(
-                    "size-3 text-blue-600 transition-transform dark:text-blue-400",
-                    snoozedShelfExpanded && "rotate-180",
-                  )}
-                />
-              </button>
-              {/* T3-CUSTOM(expbkt3): a collapsed shelf renders no rows, so it must
-                  render no list either. An empty list left in the tree is where
-                  auto-animate re-inserts the row it is animating out, and it is
-                  animated in turn, so the two bounce the row between them and it
-                  blinks until the page is reloaded. The shelves are parked
-                  history: they lose nothing by not animating. */}
-              {renderedSnoozedRows.length > 0 ? (
-                <ul className="space-y-0.5">
-                  {renderedSnoozedRows.map((row) => renderThreadRow(row, "snoozed"))}
-                </ul>
-              ) : null}
-            </section>
-          ) : null}
-          {settledRows.length > 0 ? (
-            <section className="mb-3" data-testid="phase-sidebar-settled-shelf">
-              <button
-                type="button"
-                onClick={toggleSettledShelf}
-                aria-expanded={settledShelfExpanded}
-                data-testid="phase-sidebar-settled-shelf-toggle"
-                className="mb-1 flex w-full cursor-pointer items-center gap-2 px-2 text-left"
-              >
-                <CheckIcon aria-hidden className="size-2.5 shrink-0 text-muted-foreground/50" />
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-                  Settled
-                </span>
-                <span className="h-px flex-1 bg-sidebar-border/60" />
-                <span className="text-[9px] tabular-nums text-muted-foreground/55">
-                  {settledRows.length}
-                </span>
-                <ChevronDownIcon
-                  aria-hidden
-                  className={cn(
-                    "size-3 text-muted-foreground/50 transition-transform",
-                    settledShelfExpanded && "rotate-180",
-                  )}
-                />
-              </button>
-              {renderedSettledRows.length > 0 ? (
-                <ul className="space-y-0.5">
-                  {renderedSettledRows.map((row) => renderThreadRow(row, "settled"))}
-                </ul>
-              ) : null}
-              {settledShelfExpanded && hiddenSettledCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={showMoreSettled}
-                  className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:border-solid hover:border-input hover:text-foreground"
-                >
-                  Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                  <span className="text-muted-foreground/50">({hiddenSettledCount} hidden)</span>
-                </button>
-              ) : null}
-            </section>
-          ) : null}
-          {/* T3-CUSTOM(expbkt3): END */}
+          {/* T3-CUSTOM(expbkt3): the snoozed and settled shelves moved out of this
+              list into PhaseSidebarShelfDock, below it. */}
           {/* T3-CUSTOM(expbkt3): drafts alone are a populated sidebar, even when collapsed. */}
           {sections.every((section) => section.nodes.length === 0) &&
           visibleDraftCount === 0 &&
@@ -4203,6 +4162,25 @@ export function PhaseGroupedSidebar() {
           ) : null}
         </div>
       </SidebarContent>
+      {/* T3-CUSTOM(expbkt3): the parked shelves sit outside the scrolling list,
+          just above the footer, so their headers stay on screen and only the
+          list above gives up height when anything else in the sidebar grows. */}
+      <PhaseSidebarShelfDock
+        snoozed={{
+          count: snoozedRows.length,
+          collapsed: snoozedShelfCollapsed,
+          rows: snoozedShelf,
+        }}
+        settled={{
+          count: settledRows.length,
+          collapsed: settledShelfCollapsed,
+          rows: settledShelf,
+        }}
+        onToggle={toggleShelf}
+        settledPageSize={SETTLED_TAIL_PAGE_COUNT}
+        onShowMoreSettled={showMoreSettled}
+        renderRow={renderThreadRow}
+      />
       {/* Upstream removed SidebarSeparator; same classes inlined. */}
       <Separator className="mx-2 w-auto! bg-sidebar-border" data-sidebar="separator" />
       <SidebarChromeFooter />

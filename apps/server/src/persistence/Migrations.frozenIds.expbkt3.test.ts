@@ -25,6 +25,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         // Upstream 59-60, remapped into the 1000+ lane.
         [1049, "McpAppModelContext"],
         [1050, "ThreadSnapshotWindowIndexes"],
+        // BK sidebar custom group for scheduled task threads.
+        [1051, "ScheduledTaskCustomGroups"],
       ]);
       const after = yield* sql<{
         migration_id: number;

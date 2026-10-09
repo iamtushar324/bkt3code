@@ -100,6 +100,12 @@ import {
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+// T3-CUSTOM(expbkt3): BK sidebar custom group of scheduled task threads (XFN-59).
+import * as SqlClient from "effect/sql/SqlClient";
+import {
+  saveScheduledTaskCustomGroupForMcp,
+  withScheduledTaskCustomGroup,
+} from "../scheduledTasks/scheduledTaskCustomGroup.expbkt3.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -841,6 +847,8 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
+  // T3-CUSTOM(expbkt3): optional, so service layers built without SQLite still build.
+  const forkSql = yield* Effect.serviceOption(SqlClient.SqlClient);
   // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
   const forkAccess = yield* Effect.serviceOption(OrchestrationAccessControl);
   // T3-CUSTOM(expbkt3): explicit project targets (#15219) stay inside the actor's team
@@ -1483,7 +1491,8 @@ const make = Effect.gen(function* () {
           Option.isSome(modes) &&
           modes.value.every((mode) => withinLimits(caller.limits, mode)),
       );
-    });
+      // T3-CUSTOM(expbkt3): echo the task's custom group so a caller can read it back.
+    }).pipe(Effect.flatMap((summary) => withScheduledTaskCustomGroup(forkSql, summary)));
 
   /**
    * A scheduled task the caller may change: one whose runs execute at modes no
@@ -1577,6 +1586,8 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not schedule task: ${error.message}`),
             ),
           );
+        // T3-CUSTOM(expbkt3): the custom group of the threads this task's runs create.
+        yield* saveScheduledTaskCustomGroupForMcp(forkSql, task.id, input.customGroup);
         return yield* summarizeScheduledTask(scope, { parent, limits }, task);
       }),
     listScheduledTasks: (scope, input) =>
@@ -1652,6 +1663,8 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
             ),
           );
+        // T3-CUSTOM(expbkt3): a label sets the custom group, null removes it, omitted keeps it.
+        yield* saveScheduledTaskCustomGroupForMcp(forkSql, task.id, input.customGroup);
         return yield* summarizeScheduledTask(scope, { parent, limits }, task);
       }),
     deleteScheduledTask: (scope, input) =>
@@ -2191,6 +2204,10 @@ const make = Effect.gen(function* () {
                   interactionMode,
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
+                  // T3-CUSTOM(expbkt3): BK sidebar custom group for the new thread.
+                  ...(request.customGroup === undefined
+                    ? {}
+                    : { customGroup: request.customGroup }),
                 })
                 .pipe(
                   Effect.mapError((error) =>

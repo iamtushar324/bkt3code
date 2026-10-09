@@ -675,6 +675,8 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
               subtreeCount={item.node.descendantCount}
               swipe={resolveRowSwipe(item.node.row, item.shelf, nowIso, snoozeMenu)}
               timeLabel={resolveRowTimeLabel(item.node.row, item.shelf, nowIso)}
+              // T3-CUSTOM(expbkt3): a snoozed row keeps its wake time in that slot.
+              showWorkingStatus={item.shelf !== "snoozed"}
               viewerUserId={props.viewerUserId}
               worktreeView={worktreeView}
             />

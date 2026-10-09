@@ -182,11 +182,25 @@ label its own work rather than leaving it to whoever opens the sidebar:
   field of `t3_update_session` makes one issue the session's main tag (first
   in the list), and `null` there removes every Linear tag.
 - **Custom group** — `t3_update_session` with `customGroup`, or `null` to remove
-  the session from its group; `t3_create_session` accepts the same field. A
-  custom group is the shared label that sections the sidebar's Custom view and
-  backs its Group filter, so an agent fanning out work can file every child
-  under one label. Labels match case-insensitively; `t3_list_sessions` reports
-  each session's `customGroup` and takes a `customGroup` filter.
+  the session from its group. A custom group is the shared label that sections
+  the sidebar's Custom view and backs its Group filter, so an agent fanning out
+  work can file every child under one label. Labels match case-insensitively
+  and hold 1 to 48 characters; `t3_list_sessions` reports each session's
+  `customGroup` and takes a `customGroup` filter. Every API that creates a
+  session accepts `customGroup`, so an automation files its sessions as it
+  starts them:
+  - `t3_create_session`, `t3_thread_launch`, and each entry of `create_threads`.
+  - `t3_dispatch_command` and `POST /api/orchestration/dispatch`, on
+    `thread.create` and on a bootstrap `thread.turn.start`.
+  - `schedule_task`, for the session each run creates when
+    `bindToCurrentThread` is `false`. `update_scheduled_task` changes it, and
+    `null` removes it. Both return the task's `customGroup`, and so does
+    `list_scheduled_tasks`. A task bound to a thread keeps the label until it
+    is unbound. The web schedule editor does not show the label, and saving
+    there keeps it.
+
+  Delegated tasks (`delegate_task`) and forks inherit the parent's group.
+
 - **Pull requests** — `link_pull_request`, once per review, including each layer
   of a stack. A session can hold several; the sidebar shows the current one's
   number and opens the full list when there is more than one. Tag them

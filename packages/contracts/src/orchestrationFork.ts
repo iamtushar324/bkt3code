@@ -11,7 +11,7 @@ import {
   UserId,
 } from "./baseSchemas.ts";
 import { SourceControlProfileId } from "./sourceControlProfiles.ts";
-import { ThreadCustomGroup } from "./threadCustomGroup.ts";
+import { THREAD_CUSTOM_GROUP_MAX_LENGTH, ThreadCustomGroup } from "./threadCustomGroup.ts";
 import {
   ThreadLinearLink,
   ThreadLinearLinksAdd,
@@ -68,6 +68,50 @@ export const ForkThreadUpdateFields = {
   mattermostThreadUrl: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   parentEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
+};
+
+/**
+ * BK sidebar custom group on the APIs that create sessions (XFN-59), so an
+ * automation files the sessions it starts under a group the way a person
+ * does. One definition for every creation tool; validation is the shared
+ * `ThreadCustomGroup` schema (trimmed, non-blank, at most
+ * THREAD_CUSTOM_GROUP_MAX_LENGTH characters).
+ */
+const forkCustomGroupDescription = `BK sidebar custom group label for the new session; 1–${THREAD_CUSTOM_GROUP_MAX_LENGTH} chars. Files the session under that group in the sidebar's Custom view. Labels match case-insensitively, so reuse an existing label (t3_list_sessions shows them) to join its group. Omit to leave the session ungrouped.`;
+
+/** `customGroup` for a tool that creates sessions now (t3_thread_launch, create_threads). */
+export const ForkCustomGroupCreateField = {
+  customGroup: Schema.optional(
+    ThreadCustomGroup.annotate({ description: forkCustomGroupDescription }),
+  ),
+};
+
+const forkScheduledTaskCustomGroupDescription = `BK sidebar custom group label for the new session each run creates; 1–${THREAD_CUSTOM_GROUP_MAX_LENGTH} chars. Applies only to runs that launch a fresh thread (bindToCurrentThread:false); a task bound to a thread keeps the label for when it is unbound. Labels match case-insensitively, so reuse an existing label to join its group.`;
+
+/** `customGroup` for schedule_task: the group of the sessions the task's runs create. */
+export const ForkScheduledTaskCustomGroupFields = {
+  customGroup: Schema.optional(
+    ThreadCustomGroup.annotate({ description: forkScheduledTaskCustomGroupDescription }),
+  ),
+};
+
+/** `customGroup` for update_scheduled_task: a label sets it, null removes it, omitted keeps it. */
+export const ForkScheduledTaskCustomGroupUpdateFields = {
+  customGroup: Schema.optional(
+    Schema.NullOr(ThreadCustomGroup).annotate({
+      description: `${forkScheduledTaskCustomGroupDescription} Pass null to remove the label; omit to keep it.`,
+    }),
+  ),
+};
+
+/** The label a scheduled task's runs file their sessions under, in task summaries. */
+export const ForkScheduledTaskCustomGroupResultFields = {
+  customGroup: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "BK sidebar custom group of the sessions this task's runs create. Absent when the task has none.",
+    }),
+  ),
 };
 
 export const ForkThreadCommands = [
