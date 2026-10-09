@@ -18,6 +18,7 @@ import {
   makeEnvironmentHttpApiGroupClient,
 } from "@t3tools/client-runtime/rpc";
 import type {
+  AuthClientSession,
   AuthGrantScope,
   AuthPairingCredentialResult,
   EnvironmentId,
@@ -102,6 +103,44 @@ export async function revokeLocalServerPairingLink(
         }),
       );
       return result.revoked;
+    }),
+  );
+}
+
+/** Client sessions on the bundled backend (`GET /api/auth/clients`), including this app's own. */
+export async function listLocalServerClients(
+  environmentId: EnvironmentId,
+): Promise<ReadonlyArray<AuthClientSession>> {
+  const bearer = readLocalServerBearer(environmentId);
+  return await runLocalServerRequest(
+    Effect.gen(function* () {
+      const client = yield* makeEnvironmentHttpApiGroupClient(bearer.httpBaseUrl, "auth");
+      return yield* executeEnvironmentHttpRequest(
+        environmentEndpointUrl(bearer.httpBaseUrl, "/api/auth/clients"),
+        LOCAL_SERVER_REQUEST_TIMEOUT_MS,
+        client.clients({ headers: { authorization: bearer.authorization } }),
+      );
+    }),
+  );
+}
+
+/** Revoke one client session on the bundled backend, such as a lost phone's. */
+export async function revokeLocalServerClient(
+  environmentId: EnvironmentId,
+  sessionId: AuthClientSession["sessionId"],
+): Promise<void> {
+  const bearer = readLocalServerBearer(environmentId);
+  await runLocalServerRequest(
+    Effect.gen(function* () {
+      const client = yield* makeEnvironmentHttpApiGroupClient(bearer.httpBaseUrl, "auth");
+      return yield* executeEnvironmentHttpRequest(
+        environmentEndpointUrl(bearer.httpBaseUrl, "/api/auth/clients/revoke"),
+        LOCAL_SERVER_REQUEST_TIMEOUT_MS,
+        client.revokeClient({
+          headers: { authorization: bearer.authorization },
+          payload: { sessionId },
+        }),
+      );
     }),
   );
 }

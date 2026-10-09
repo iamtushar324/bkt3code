@@ -6,10 +6,13 @@
  * section pairs a phone (the T3 Code mobile app) with that local backend:
  *
  * 1. the local server's status and address,
- * 2. how a phone reaches it (network access and Tailscale HTTPS, both handled by
- *    the desktop bridge, which in a managed build acts on the bundled backend),
+ * 2. how a phone reaches it: network access (the desktop bridge, which in a
+ *    managed build acts on the bundled backend) and a direct address to dial,
+ *    the Mac's current Tailscale IP first, then its local network IP. No
+ *    Tailscale Serve and no MagicDNS: an IP path works on every Tailscale profile,
  * 3. an admin pairing link, code and QR code minted on the local server with the
- *    renderer's existing connection to it.
+ *    renderer's existing connection to it,
+ * 4. the devices paired with the local server, each with a Revoke button.
  *
  * Pure decisions and copy live in `localPhonePairing.logic.ts`; the HTTP calls
  * live in `localServerPairing.ts`.
@@ -24,9 +27,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { RefreshCwIcon } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
-import { isTailscaleHttpsEndpoint } from "../components/settings/ConnectionsSettings.logic";
 import {
   SettingsRow,
   SettingsSection,
@@ -53,31 +55,34 @@ import {
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentSessionState } from "../state/session";
 import {
-  bridgeChangeConfirmation,
   describeLocalPairingError,
   findBundledBackendEnvironment,
-  LOCAL_PHONE_PAIRING_LABEL,
   localServerStatus,
   type LocalServerStatus,
   networkAccessDescription,
+  networkChangeConfirmation,
   NO_PHONE_ADDRESS_MESSAGE,
   PAIR_PHONE_DESCRIPTION,
+  type PairedDevice,
+  pairedDevices,
   phonePairingExpiryLabel,
   phonePairingHostUrl,
+  phonePairingLabel,
   phonePairingUrl,
   phoneReachableEndpoints,
   selectPhonePairingEndpoint,
-  tailscaleHttpsDescription,
 } from "./localPhonePairing.logic";
 import {
   createLocalServerPairingCredential,
+  listLocalServerClients,
+  revokeLocalServerClient,
   revokeLocalServerPairingLink,
 } from "./localServerPairing";
 import { isBkManagedPrimary } from "./managedEnvironment";
 
 const EMPTY_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
-/** Tailscale Serve's port when the desktop has none saved (as on the Connections page). */
-const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+/** How often the paired devices list re-reads the server while it is on screen. */
+const PAIRED_DEVICES_REFRESH_MS = 15_000;
 const MISSING_SERVER_STATUS = localServerStatus({
   present: false,
   phase: null,
@@ -86,12 +91,12 @@ const MISSING_SERVER_STATUS = localServerStatus({
   canWriteAccess: false,
 });
 
-type BridgeChange = "network" | "tailscale";
-
 interface IssuedPairing {
   readonly id: string;
   readonly credential: string;
   readonly expiresAtMs: number;
+  /** The address the link was made for; its label names this path. */
+  readonly endpoint: AdvertisedEndpoint;
 }
 
 /** Renders only in a managed desktop build, the one build with a central primary. */
@@ -122,56 +127,41 @@ function LocalPhonePairingSettings() {
   const exposure = networkAccess.data?.serverExposureState ?? null;
   const advertisedEndpoints = networkAccess.data?.advertisedEndpoints ?? EMPTY_ENDPOINTS;
   const networkAccessible = exposure?.mode === "network-accessible";
-  const tailscalePort = exposure?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-  const tailscaleHttpsEndpoint = useMemo(
-    () => advertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null,
-    [advertisedEndpoints],
-  );
   const candidates = useMemo(
     () => phoneReachableEndpoints({ endpoints: advertisedEndpoints, networkAccessible }),
     [advertisedEndpoints, networkAccessible],
   );
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   const endpoint = selectPhonePairingEndpoint(candidates, selectedEndpointId);
-  const [updating, setUpdating] = useState<BridgeChange | null>(null);
+  const [updating, setUpdating] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
 
-  // Both bridge calls relaunch the whole app to rebind the bundled backend, so
-  // each one is confirmed first. A missing confirm host counts as "no".
-  const changeBridge = useCallback(
-    async (kind: BridgeChange, enable: boolean) => {
-      const bridge = window.desktopBridge;
-      if (!bridge) return;
-      const confirmed = await requestConfirmDialog(
-        bridgeChangeConfirmation({ kind, enable, tailscalePort }),
+  // The bridge relaunches the whole app to rebind the bundled backend, so the
+  // change is confirmed first. A missing confirm host counts as "no".
+  const changeNetwork = useCallback(async (enable: boolean) => {
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    const confirmed = await requestConfirmDialog(networkChangeConfirmation(enable));
+    if (confirmed !== true) return;
+    setUpdating(true);
+    setBridgeError(null);
+    try {
+      await bridge.setServerExposureMode(enable ? "network-accessible" : "local-only");
+      refreshDesktopNetworkAccessState();
+    } catch (cause) {
+      const message = describeLocalPairingError(cause, "Could not change network access.");
+      setBridgeError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not change network access",
+          description: message,
+        }),
       );
-      if (confirmed !== true) return;
-      setUpdating(kind);
-      setBridgeError(null);
-      try {
-        if (kind === "network") {
-          await bridge.setServerExposureMode(enable ? "network-accessible" : "local-only");
-        } else {
-          await bridge.setTailscaleServeEnabled({ enabled: enable, port: tailscalePort });
-        }
-        refreshDesktopNetworkAccessState();
-      } catch (cause) {
-        const title = kind === "network" ? "Network access" : "Tailscale HTTPS";
-        const message = describeLocalPairingError(cause, `Could not change ${title}.`);
-        setBridgeError(message);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Could not change ${title}`,
-            description: message,
-          }),
-        );
-      } finally {
-        setUpdating(null);
-      }
-    },
-    [tailscalePort],
-  );
+    } finally {
+      setUpdating(false);
+    }
+  }, []);
 
   const reachabilityRows = (
     <>
@@ -185,27 +175,13 @@ function LocalPhonePairingSettings() {
         control={
           <Switch
             checked={networkAccessible}
-            disabled={exposure === null || updating !== null}
-            onCheckedChange={(checked) => void changeBridge("network", Boolean(checked))}
+            disabled={exposure === null || updating}
+            onCheckedChange={(checked) => void changeNetwork(Boolean(checked))}
             aria-label="Make the local server reachable on my network"
           />
         }
       />
-      <SettingsRow
-        title="Tailscale HTTPS"
-        description={tailscaleHttpsDescription(tailscaleHttpsEndpoint)}
-        control={
-          tailscaleHttpsEndpoint === null ? undefined : (
-            <Switch
-              checked={tailscaleHttpsEndpoint.status === "available"}
-              disabled={updating !== null}
-              onCheckedChange={(checked) => void changeBridge("tailscale", Boolean(checked))}
-              aria-label="Serve the local server over Tailscale HTTPS"
-            />
-          )
-        }
-      />
-      {candidates.length > 1 ? (
+      {candidates.length > 0 ? (
         <EndpointPicker
           candidates={candidates}
           selectedId={endpoint?.id ?? null}
@@ -259,7 +235,7 @@ function EndpointPicker({
   return (
     <SettingsRow
       title="Phone connects through"
-      description="Pick an address your phone can reach. A tailnet address works anywhere on your tailnet. A local network address works only on the same Wi-Fi."
+      description="Select the address for this link. The Tailscale IP belongs to the Tailscale profile that is active now: to pair a path on another profile, switch the profile on this Mac, select Refresh, and make a new link. The local network IP works only on the same Wi-Fi."
     >
       <div
         role="radiogroup"
@@ -349,18 +325,20 @@ function BundledServerRows({
   const [error, setError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
+    if (endpoint === null) return;
     setGenerating(true);
     setError(null);
     const previous = issued;
     try {
       const created = await createLocalServerPairingCredential(environmentId, {
-        label: LOCAL_PHONE_PAIRING_LABEL,
+        label: phonePairingLabel(endpoint),
         scopes: AuthAdministrativeScopes,
       });
       setIssued({
         id: created.id,
         credential: created.credential,
         expiresAtMs: DateTime.toEpochMillis(created.expiresAt),
+        endpoint,
       });
       // A replaced admin link must not stay usable for the rest of its five minutes.
       if (previous !== null && previous.expiresAtMs > Date.now()) {
@@ -371,7 +349,7 @@ function BundledServerRows({
     } finally {
       setGenerating(false);
     }
-  }, [environmentId, issued]);
+  }, [endpoint, environmentId, issued]);
 
   const revoke = useCallback(async () => {
     if (issued === null) return;
@@ -426,15 +404,99 @@ function BundledServerRows({
         }
       >
         {issued ? (
-          <IssuedPairingPanel
-            issued={issued}
-            endpoint={endpoint}
-            revoking={revoking}
-            onRevoke={() => void revoke()}
-          />
+          <IssuedPairingPanel issued={issued} revoking={revoking} onRevoke={() => void revoke()} />
         ) : null}
       </SettingsRow>
+      {ready ? <PairedDevicesRow environmentId={environmentId} /> : null}
     </>
+  );
+}
+
+function PairedDevicesRow({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentPresentation["environmentId"];
+}) {
+  const [devices, setDevices] = useState<ReadonlyArray<PairedDevice> | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const sessions = await listLocalServerClients(environmentId);
+      const formatTime = (epochMs: number) =>
+        new Date(epochMs).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      setDevices(pairedDevices(sessions, formatTime));
+      setLoadError(null);
+    } catch (cause) {
+      setLoadError(describeLocalPairingError(cause, "Could not read the paired devices."));
+    }
+  }, [environmentId]);
+
+  // A phone pairs on its own time, so the list re-reads the server while it shows.
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), PAIRED_DEVICES_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const revoke = useCallback(
+    async (device: PairedDevice) => {
+      const confirmed = await requestConfirmDialog(
+        `Revoke ${device.title}?\nThis device loses its access to the local server at once. Pair it again to reconnect.`,
+      );
+      if (confirmed !== true) return;
+      setRevokingId(device.sessionId);
+      try {
+        await revokeLocalServerClient(environmentId, device.sessionId);
+        toastManager.add({ type: "success", title: "Device revoked" });
+        await load();
+      } catch (cause) {
+        const message = describeLocalPairingError(cause, "Could not revoke the device.");
+        toastManager.add(
+          stackedThreadToast({ type: "error", title: "Could not revoke", description: message }),
+        );
+      } finally {
+        setRevokingId(null);
+      }
+    },
+    [environmentId, load],
+  );
+
+  let description = "Phones and other clients paired with the local server on this Mac.";
+  if (devices !== null && devices.length === 0) description = "No device is paired yet.";
+  return (
+    <SettingsRow
+      title="Paired devices"
+      description={description}
+      status={loadError ? <span className="text-destructive">{loadError}</span> : null}
+    >
+      {devices !== null && devices.length > 0 ? (
+        <ul className="divide-y divide-border/50 border-t border-border/50">
+          {devices.map((device) => (
+            <li key={device.sessionId} className="flex items-center gap-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-foreground">{device.title}</p>
+                <p className="truncate text-2xs text-muted-foreground">{device.detail}</p>
+              </div>
+              <Button
+                size="xs"
+                variant="destructive-outline"
+                disabled={revokingId !== null}
+                onClick={() => void revoke(device)}
+              >
+                {revokingId === device.sessionId ? "Revoking…" : "Revoke"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </SettingsRow>
   );
 }
 
@@ -442,12 +504,10 @@ type CopyTarget = "Pairing link" | "Pairing code" | "Server address";
 
 function IssuedPairingPanel({
   issued,
-  endpoint,
   revoking,
   onRevoke,
 }: {
   readonly issued: IssuedPairing;
-  readonly endpoint: AdvertisedEndpoint | null;
   readonly revoking: boolean;
   readonly onRevoke: () => void;
 }) {
@@ -470,8 +530,8 @@ function IssuedPairingPanel({
   if (issued.expiresAtMs <= nowMs) {
     return <p className="py-2 text-xs text-muted-foreground">{expiryLabel}</p>;
   }
-  const url = endpoint ? phonePairingUrl(endpoint, issued.credential) : null;
-  const host = endpoint ? phonePairingHostUrl(endpoint) : null;
+  const url = phonePairingUrl(issued.endpoint, issued.credential);
+  const host = phonePairingHostUrl(issued.endpoint);
   const expiresAt = new Date(issued.expiresAtMs).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -484,20 +544,16 @@ function IssuedPairingPanel({
           Scan the QR code with the T3 Code app, or paste the link. To enter it by hand, use the
           server address and the pairing code.
         </p>
-        {url ? (
-          <CopyableValue
-            label="Pairing link"
-            value={url}
-            onCopy={() => copyToClipboard(url, "Pairing link")}
-          />
-        ) : null}
-        {host ? (
-          <CopyableValue
-            label="Server address"
-            value={host}
-            onCopy={() => copyToClipboard(host, "Server address")}
-          />
-        ) : null}
+        <CopyableValue
+          label="Pairing link"
+          value={url}
+          onCopy={() => copyToClipboard(url, "Pairing link")}
+        />
+        <CopyableValue
+          label="Server address"
+          value={host}
+          onCopy={() => copyToClipboard(host, "Server address")}
+        />
         <CopyableValue
           label="Pairing code"
           value={issued.credential}
@@ -510,17 +566,15 @@ function IssuedPairingPanel({
           </Button>
         </div>
       </div>
-      {url ? (
-        <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
-          <QRCodeSvg
-            value={url}
-            size={168}
-            level="M"
-            marginSize={1}
-            title="Pairing link. Scan it with the T3 Code app on your phone."
-          />
-        </div>
-      ) : null}
+      <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
+        <QRCodeSvg
+          value={url}
+          size={168}
+          level="M"
+          marginSize={1}
+          title="Pairing link. Scan it with the T3 Code app on your phone."
+        />
+      </div>
     </div>
   );
 }

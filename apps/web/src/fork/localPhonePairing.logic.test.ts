@@ -3,22 +3,29 @@ import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { type AdvertisedEndpoint, EnvironmentId } from "@t3tools/contracts";
+import {
+  type AdvertisedEndpoint,
+  type AuthClientSession,
+  AuthSessionId,
+  EnvironmentId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { desktopLocalConnectionId } from "../connection/desktopLocal";
 import {
-  bridgeChangeConfirmation,
   describeLocalPairingError,
   findBundledBackendEnvironment,
   localServerStatus,
   networkAccessDescription,
+  networkChangeConfirmation,
+  pairedDevices,
   phonePairingExpiryLabel,
   phonePairingHostUrl,
+  phonePairingLabel,
   phonePairingUrl,
   phoneReachableEndpoints,
   selectPhonePairingEndpoint,
-  tailscaleHttpsDescription,
 } from "./localPhonePairing.logic";
 
 function makeEndpoint(overrides: Partial<AdvertisedEndpoint>): AdvertisedEndpoint {
@@ -122,37 +129,34 @@ describe("findBundledBackendEnvironment", () => {
 describe("phoneReachableEndpoints", () => {
   const all = [loopback, lan, tailnetIp, magicDns, tailscaleHttps];
 
-  it("offers only Tailscale HTTPS while the server is limited to this Mac", () => {
-    const limited = phoneReachableEndpoints({ endpoints: all, networkAccessible: false });
-    expect(limited).toEqual([tailscaleHttps]);
-    const serveOff = [loopback, lan, tailscaleHttpsOff];
-    expect(phoneReachableEndpoints({ endpoints: serveOff, networkAccessible: false })).toEqual([]);
+  it("offers nothing while the server is limited to this Mac", () => {
+    expect(phoneReachableEndpoints({ endpoints: all, networkAccessible: false })).toEqual([]);
   });
 
-  it("ranks Tailscale HTTPS, then direct tailnet addresses, then the LAN", () => {
+  it("offers only direct IPs: the Tailscale IP first, then the local network IP", () => {
     const ranked = phoneReachableEndpoints({ endpoints: all, networkAccessible: true });
-    expect(ranked).toEqual([tailscaleHttps, magicDns, tailnetIp, lan]);
+    expect(ranked).toEqual([tailnetIp, lan]);
   });
 
-  it("never offers loopback or an unavailable endpoint", () => {
-    const endpoints = [loopback, tailscaleHttpsOff, lan];
-    expect(phoneReachableEndpoints({ endpoints, networkAccessible: true })).toEqual([lan]);
-    const onlyLoopback = { endpoints: [loopback], networkAccessible: true };
-    expect(phoneReachableEndpoints(onlyLoopback)).toEqual([]);
+  it("never offers Tailscale Serve, MagicDNS, loopback or an unavailable endpoint", () => {
+    const endpoints = [loopback, tailscaleHttpsOff, tailscaleHttps, magicDns];
+    expect(phoneReachableEndpoints({ endpoints, networkAccessible: true })).toEqual([]);
+    const lanOff = makeEndpoint({ status: "unavailable" });
+    expect(phoneReachableEndpoints({ endpoints: [lanOff], networkAccessible: true })).toEqual([]);
   });
 });
 
 describe("selectPhonePairingEndpoint", () => {
-  const candidates = [tailscaleHttps, magicDns, lan];
+  const candidates = [tailnetIp, lan];
 
   it("keeps the user's pick while it is offered", () => {
     expect(selectPhonePairingEndpoint(candidates, lan.id)).toBe(lan);
   });
 
   it("falls back to the best address when the pick is gone or absent", () => {
-    const stale = "desktop-lan:http://10.0.0.9:3774";
-    expect(selectPhonePairingEndpoint(candidates, stale)).toBe(tailscaleHttps);
-    expect(selectPhonePairingEndpoint(candidates, null)).toBe(tailscaleHttps);
+    const stale = "tailscale-ip:http://100.80.1.2:3774";
+    expect(selectPhonePairingEndpoint(candidates, stale)).toBe(tailnetIp);
+    expect(selectPhonePairingEndpoint(candidates, null)).toBe(tailnetIp);
     expect(selectPhonePairingEndpoint([], null)).toBeNull();
   });
 });
@@ -161,15 +165,20 @@ describe("phone pairing link", () => {
   const code = "ABCDEF123456";
 
   it("puts the code in the fragment of the endpoint's /pair page", () => {
-    const httpsLink = `https://mac.tail.ts.net/pair#token=${code}`;
     const tailnetLink = `http://100.64.0.7:3774/pair#token=${code}`;
-    expect(phonePairingUrl(tailscaleHttps, code)).toBe(httpsLink);
+    const lanLink = `http://192.168.1.42:3774/pair#token=${code}`;
     expect(phonePairingUrl(tailnetIp, code)).toBe(tailnetLink);
+    expect(phonePairingUrl(lan, code)).toBe(lanLink);
   });
 
   it("shows the host with its scheme and without a trailing slash", () => {
     expect(phonePairingHostUrl(tailscaleHttps)).toBe("https://mac.tail.ts.net");
-    expect(phonePairingHostUrl(magicDns)).toBe("http://mac.tail.ts.net:3774");
+    expect(phonePairingHostUrl(tailnetIp)).toBe("http://100.64.0.7:3774");
+  });
+
+  it("names the path in the label the paired session keeps", () => {
+    expect(phonePairingLabel(tailnetIp)).toBe("Phone (admin) via Tailscale IP 100.64.0.7");
+    expect(phonePairingLabel(lan)).toBe("Phone (admin) via Local network 192.168.1.42");
   });
 });
 
@@ -225,26 +234,60 @@ describe("row copy", () => {
     expect(open).toContain("same Wi-Fi");
   });
 
-  it("describes Tailscale HTTPS by whether Serve is up", () => {
-    expect(tailscaleHttpsDescription(null)).toContain("Start Tailscale");
-    expect(tailscaleHttpsDescription(tailscaleHttpsOff)).toContain("Tailscale Serve");
-    expect(tailscaleHttpsDescription(tailscaleHttps)).toContain("https://mac.tail.ts.net");
-  });
-
   it("asks one question per confirmation, which the dialog uses as its title", () => {
-    const confirmations = [
-      bridgeChangeConfirmation({ kind: "network", enable: true, tailscalePort: 443 }),
-      bridgeChangeConfirmation({ kind: "network", enable: false, tailscalePort: 443 }),
-      bridgeChangeConfirmation({ kind: "tailscale", enable: true, tailscalePort: 8443 }),
-      bridgeChangeConfirmation({ kind: "tailscale", enable: false, tailscalePort: 443 }),
-    ];
-    for (const confirmation of confirmations) {
+    for (const confirmation of [
+      networkChangeConfirmation(true),
+      networkChangeConfirmation(false),
+    ]) {
       const lines = confirmation.split("\n");
       expect(lines[0]?.endsWith("?")).toBe(true);
       expect(lines.filter((line) => line.trim().endsWith("?"))).toHaveLength(1);
       expect(confirmation).toContain("T3 Code restarts");
     }
-    expect(confirmations[2]).toContain("8443");
+  });
+});
+
+describe("pairedDevices", () => {
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const session = (overrides: Partial<AuthClientSession>): AuthClientSession => ({
+    sessionId: AuthSessionId.make("session-phone"),
+    userId: null,
+    subject: "pairing:anonymous",
+    scopes: [],
+    method: "bearer-access-token",
+    client: { label: "Phone (admin) via Tailscale IP 100.64.0.7", deviceType: "mobile" },
+    issuedAt: at("2026-10-09T10:00:00Z"),
+    expiresAt: at("2126-10-09T10:00:00Z"),
+    lastConnectedAt: at("2026-10-09T11:00:00Z"),
+    connected: false,
+    current: false,
+    ...overrides,
+  });
+  const formatTime = (epochMs: number) => new Date(epochMs).toISOString();
+
+  it("leaves out this app's own session and lists connected devices first", () => {
+    const own = session({ sessionId: AuthSessionId.make("session-own"), current: true });
+    const older = session({ sessionId: AuthSessionId.make("session-old") });
+    const live = session({
+      sessionId: AuthSessionId.make("session-live"),
+      client: { label: "Phone (admin) via Local network 192.168.1.42", deviceType: "mobile" },
+      connected: true,
+    });
+    const rows = pairedDevices([own, older, live], formatTime);
+    expect(rows.map((row) => row.sessionId)).toEqual(["session-live", "session-old"]);
+    expect(rows[0]?.detail).toBe("Mobile · Connected now");
+    expect(rows[1]?.title).toBe("Phone (admin) via Tailscale IP 100.64.0.7");
+    expect(rows[1]?.detail).toBe("Mobile · Last seen 2026-10-09T11:00:00.000Z");
+  });
+
+  it("falls back to the device type, then the subject, for a session without a label", () => {
+    const unlabeled = session({ client: { deviceType: "mobile" }, lastConnectedAt: null });
+    expect(pairedDevices([unlabeled], formatTime)[0]).toMatchObject({
+      title: "Mobile",
+      detail: "Mobile · Never connected",
+    });
+    const unknown = session({ client: { deviceType: "unknown" } });
+    expect(pairedDevices([unknown], formatTime)[0]?.title).toBe("pairing:anonymous");
   });
 });
 

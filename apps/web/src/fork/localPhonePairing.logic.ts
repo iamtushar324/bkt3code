@@ -14,24 +14,27 @@ import type {
   ConnectionTarget,
   EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
-import type { AdvertisedEndpoint, DesktopServerExposureMode } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  AuthClientSession,
+  DesktopServerExposureMode,
+} from "@t3tools/contracts";
 
-import {
-  isQrShareableEndpoint,
-  isTailscaleHttpsEndpoint,
-} from "../components/settings/ConnectionsSettings.logic";
+import * as DateTime from "effect/DateTime";
+
+import { isQrShareableEndpoint } from "../components/settings/ConnectionsSettings.logic";
 import { resolveDesktopPairingUrl } from "../components/settings/pairingUrls";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { BK_BUNDLED_BACKEND_ID } from "./managedEnvironment";
 
-/** Label stored on the pairing link, shown later in the server's client list. */
-export const LOCAL_PHONE_PAIRING_LABEL = "Phone (admin)";
+/** Prefix of the label stored on a pairing link; the paired session keeps the label. */
+const LOCAL_PHONE_PAIRING_LABEL = "Phone (admin)";
 
 export const PAIR_PHONE_DESCRIPTION =
   "Make a link, code and QR code for the T3 Code app on your phone. The phone gets admin access to this Mac's server. The code works once and expires after 5 minutes.";
 
 export const NO_PHONE_ADDRESS_MESSAGE =
-  "No address that a phone can reach. Turn on “Reachable on my network” or “Tailscale HTTPS” above.";
+  "No address that a phone can reach. Turn on “Reachable on my network” above, then select Refresh.";
 
 const NETWORK_ON_DESCRIPTION =
   "Phones on the same Wi-Fi or tailnet can reach the local server. Turning this off restarts T3 Code.";
@@ -39,18 +42,9 @@ const NETWORK_ON_DESCRIPTION =
 const NETWORK_OFF_DESCRIPTION =
   "Only this Mac can reach the local server. Turn this on to let a phone on the same Wi-Fi or tailnet connect. T3 Code restarts to apply it.";
 
-const TAILSCALE_MISSING_DESCRIPTION =
-  "Start Tailscale on this Mac to serve the local server over HTTPS on your tailnet.";
-
-const TAILSCALE_OFF_DESCRIPTION =
-  "Serve the local server over HTTPS on your tailnet with Tailscale Serve. Works even while the server is limited to this Mac. T3 Code restarts to apply it.";
-
 const NETWORK_ON_EFFECT = "A phone on the same Wi-Fi or tailnet can connect after you pair it.";
 
-const NETWORK_OFF_EFFECT =
-  "Phones connected over your network lose their connection. Tailscale HTTPS keeps working.";
-
-const TAILSCALE_OFF_EFFECT = "Phones that use the Tailscale HTTPS address lose their connection.";
+const NETWORK_OFF_EFFECT = "Paired phones lose their connection until you turn this on again.";
 
 const MISSING_DETAIL =
   "The local server on this Mac is not registered. It starts with the desktop app. Restart T3 Code if it does not appear.";
@@ -71,38 +65,52 @@ export function findBundledBackendEnvironment<
 }
 
 /**
- * Lower ranks first. Tailscale HTTPS works from anywhere on the tailnet and even
- * while the server listens on loopback only; a direct tailnet address beats a
- * LAN one because it keeps working when the phone leaves the Wi-Fi.
+ * Lower ranks first. The Mac's current Tailscale IP comes first: it belongs to
+ * the Tailscale profile that is active now, so switching profiles and selecting
+ * Refresh offers the other tailnet's IP. The local network IP comes next.
  */
 function phoneEndpointRank(endpoint: AdvertisedEndpoint): number {
-  if (isTailscaleHttpsEndpoint(endpoint)) return 0;
-  if (endpoint.id.startsWith("tailscale-magicdns:http://")) return 1;
-  if (endpoint.id.startsWith("tailscale-ip:")) return 2;
-  if (endpoint.reachability === "private-network") return 3;
-  if (endpoint.reachability === "lan") return 4;
-  return 5;
+  if (endpoint.id.startsWith("tailscale-ip:")) return 0;
+  if (endpoint.reachability === "lan") return 1;
+  return 2;
 }
 
 /**
- * Addresses a phone can dial, best first.
+ * Direct addresses a phone can dial, best first.
  *
- * Mirrors the Connections page: while the server is limited to this machine it
- * binds loopback, so only Tailscale Serve (which proxies to loopback) reaches
- * it; direct addresses count only once network access is on. Loopback and
- * unavailable endpoints never count, because a phone dialling them reaches
- * itself or nothing.
+ * Only plain IP addresses on the bundled server's own port: no Tailscale Serve
+ * (HTTPS) and no MagicDNS name, because a name or a Serve proxy belongs to one
+ * tailnet profile, while an IP path works the same way on every profile and on
+ * the local network. The server must listen on the network ("Reachable on my
+ * network"); while it is limited to this Mac it binds loopback and no direct
+ * address reaches it. Loopback and unavailable endpoints never count.
  */
 export function phoneReachableEndpoints(input: {
   readonly endpoints: ReadonlyArray<AdvertisedEndpoint>;
   readonly networkAccessible: boolean;
 }): ReadonlyArray<AdvertisedEndpoint> {
+  if (!input.networkAccessible) return [];
   const reachable = input.endpoints.filter(
     (endpoint) =>
       isQrShareableEndpoint(endpoint) &&
-      (input.networkAccessible || isTailscaleHttpsEndpoint(endpoint)),
+      (endpoint.id.startsWith("tailscale-ip:") || endpoint.id.startsWith("desktop-lan:")),
   );
   return reachable.toSorted((left, right) => phoneEndpointRank(left) - phoneEndpointRank(right));
+}
+
+/**
+ * The pairing link's label, e.g. "Phone (admin) via Tailscale IP 100.64.0.7".
+ * The server copies it onto the phone's session, so the paired devices list
+ * shows which path each phone uses.
+ */
+export function phonePairingLabel(endpoint: AdvertisedEndpoint): string {
+  let host = endpoint.httpBaseUrl;
+  try {
+    host = new URL(endpoint.httpBaseUrl).hostname;
+  } catch {
+    // Keep the raw base URL; the label is informational only.
+  }
+  return `${LOCAL_PHONE_PAIRING_LABEL} via ${endpoint.label} ${host}`;
 }
 
 /** The user's pick while it is still offered, else the best address, else null. */
@@ -143,37 +151,17 @@ export function networkAccessDescription(input: {
   return input.mode === "network-accessible" ? NETWORK_ON_DESCRIPTION : NETWORK_OFF_DESCRIPTION;
 }
 
-/** The "Tailscale HTTPS" row's description. No endpoint means Tailscale is not running. */
-export function tailscaleHttpsDescription(endpoint: AdvertisedEndpoint | null): string {
-  if (endpoint === null) return TAILSCALE_MISSING_DESCRIPTION;
-  if (endpoint.status !== "available") return TAILSCALE_OFF_DESCRIPTION;
-  const host = phonePairingHostUrl(endpoint);
-  return `Serving ${host}. Works even while the server is limited to this Mac.`;
-}
-
 /**
- * Confirmation for a desktop bridge change. Both changes relaunch the app, so
- * each one asks first. The first line is the question; the confirm dialog shows
- * it as the title and the rest as the description.
+ * Confirmation for the network access switch, which relaunches the app. The
+ * first line is the question; the confirm dialog shows it as the title and the
+ * rest as the description.
  */
-export function bridgeChangeConfirmation(input: {
-  readonly kind: "network" | "tailscale";
-  readonly enable: boolean;
-  readonly tailscalePort: number;
-}): string {
+export function networkChangeConfirmation(enable: boolean): string {
   const restart = "T3 Code restarts to apply this.";
-  if (input.kind === "network" && input.enable) {
+  if (enable) {
     return `Make the local server reachable on your network?\n${NETWORK_ON_EFFECT} ${restart}`;
   }
-  if (input.kind === "network") {
-    return `Limit the local server to this Mac?\n${NETWORK_OFF_EFFECT} ${restart}`;
-  }
-  if (input.enable) {
-    const port = input.tailscalePort;
-    const effect = `Tailscale Serve shares it on your tailnet over HTTPS (port ${port}).`;
-    return `Turn on Tailscale HTTPS?\n${effect} ${restart}`;
-  }
-  return `Turn off Tailscale HTTPS?\n${TAILSCALE_OFF_EFFECT} ${restart}`;
+  return `Limit the local server to this Mac?\n${NETWORK_OFF_EFFECT} ${restart}`;
 }
 
 export type LocalServerStatusKind =
@@ -230,4 +218,51 @@ export function describeLocalPairingError(cause: unknown, fallback: string): str
   if (cause instanceof Error && cause.message.trim().length > 0) return cause.message;
   if (typeof cause === "string" && cause.trim().length > 0) return cause;
   return fallback;
+}
+
+export interface PairedDevice {
+  readonly sessionId: AuthClientSession["sessionId"];
+  readonly title: string;
+  readonly detail: string;
+  readonly connected: boolean;
+}
+
+/**
+ * Sessions on the local server other than this app's own, as rows for the
+ * paired devices list: connected ones first, then the most recently seen.
+ * `formatTime` renders a last-seen time; it is injected so tests stay stable.
+ */
+export function pairedDevices(
+  sessions: ReadonlyArray<AuthClientSession>,
+  formatTime: (epochMs: number) => string,
+): ReadonlyArray<PairedDevice> {
+  const lastSeen = (session: AuthClientSession) =>
+    session.lastConnectedAt === null ? 0 : DateTime.toEpochMillis(session.lastConnectedAt);
+  return sessions
+    .filter((session) => !session.current)
+    .toSorted(
+      (left, right) =>
+        Number(right.connected) - Number(left.connected) || lastSeen(right) - lastSeen(left),
+    )
+    .map((session) => {
+      const client = session.client;
+      const device =
+        client.deviceType === "unknown"
+          ? null
+          : `${client.deviceType[0]?.toUpperCase() ?? ""}${client.deviceType.slice(1)}`;
+      const seen = session.connected
+        ? "Connected now"
+        : session.lastConnectedAt === null
+          ? "Never connected"
+          : `Last seen ${formatTime(DateTime.toEpochMillis(session.lastConnectedAt))}`;
+      const detail = [device, client.os ?? null, client.ipAddress ?? null, seen]
+        .filter((part): part is string => part !== null && part.length > 0)
+        .join(" · ");
+      return {
+        sessionId: session.sessionId,
+        title: client.label ?? device ?? session.subject,
+        detail,
+        connected: session.connected,
+      };
+    });
 }

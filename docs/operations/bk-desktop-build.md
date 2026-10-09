@@ -62,14 +62,24 @@ only) pairs a phone with the Mac's bundled backend, not with dev-server-1:
    in `connection/platform.ts`). Other desktop-local backends (WSL) keep upstream's
    standard scopes. The desktop bootstrap grant is administrative, so this asks for
    nothing the token does not already allow.
-2. The backend binds 127.0.0.1 by default. The section offers **Reachable on my
-   network** (binds 0.0.0.0, LAN and tailnet addresses) and **Tailscale HTTPS**
-   (Tailscale Serve, works while still bound to loopback). Both relaunch the app.
+2. The backend binds 127.0.0.1 by default. **Reachable on my network** binds it to
+   0.0.0.0 (it relaunches the app). The section then offers only direct IP addresses
+   on the bundled server's port: the Mac's current Tailscale IP first, then its local
+   network IP. It deliberately offers no Tailscale Serve (HTTPS) and no MagicDNS name:
+   an IP path works the same way on every Tailscale profile. To pair a second
+   tailnet, switch the Tailscale profile on the Mac, select **Refresh**, and make a
+   new link for the new Tailscale IP.
 3. **Generate pairing link** calls `POST /api/auth/pairing-token` on `bk-local` with
-   the administrative scopes and shows the link (`<address>/pair#token=<code>`), a QR
-   code, the address and the bare code. Codes expire after 5 minutes; regenerating
-   or **Revoke** removes the unused link. The phone gets every scope on the code,
-   so it can manage the Mac server's access too.
+   the administrative scopes and shows the link (`http://<ip>:<port>/pair#token=<code>`),
+   a QR code, the address and the bare code. The link's label names its path
+   ("Phone (admin) via Tailscale IP 100.x.y.z"), and the server copies that label onto
+   the phone's session. Codes expire after 5 minutes; regenerating or **Revoke**
+   removes the unused link. The phone gets every scope on the code, so it can manage
+   the Mac server's access too, and its session does not expire.
+4. **Paired devices** lists the local server's client sessions except this app's own
+   (`GET /api/auth/clients`, re-read every 15 s) with a **Revoke** button for each
+   (`POST /api/auth/clients/revoke`). This is the only place a managed build can
+   remove a lost phone.
 
 The calls reuse the renderer's existing bearer connection
 (`apps/web/src/fork/localServerPairing.ts`). They must never exchange the desktop
