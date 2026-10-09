@@ -27,3 +27,60 @@ export type ThreadCustomGroup = typeof ThreadCustomGroup.Type;
 export function normalizeThreadCustomGroup(label: string): string {
   return label.replace(/\s+/g, " ").trim().toLowerCase();
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — the shared registry of custom groups (XFN-59).
+//
+// A group used to exist only while some thread carried its label, plus
+// device-local empty placeholders. The registry lives in the host's server
+// settings (`threadCustomGroups`), so every user, client and agent of the host
+// sees the same groups, including empty ones, and the same colour for each.
+// It is keyed by `normalizeThreadCustomGroup(label)`. A thread label with no
+// registry entry still forms a group, drawn with the default look.
+
+/** Colours a custom group may use: the environment badge's palette. */
+export const THREAD_CUSTOM_GROUP_COLOR_IDS = [
+  "blue",
+  "violet",
+  "pink",
+  "red",
+  "orange",
+  "amber",
+  "lime",
+  "emerald",
+  "teal",
+  "cyan",
+  "indigo",
+  "slate",
+] as const;
+export type ThreadCustomGroupColorId = (typeof THREAD_CUSTOM_GROUP_COLOR_IDS)[number];
+
+export function isThreadCustomGroupColorId(value: string): value is ThreadCustomGroupColorId {
+  return (THREAD_CUSTOM_GROUP_COLOR_IDS as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * A stored colour id. Kept a plain bounded string, not the literal union, so a
+ * colour added by a newer client still decodes on an older one, which then
+ * draws the default look. Writers validate with `isThreadCustomGroupColorId`.
+ */
+export const ThreadCustomGroupColor = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
+export type ThreadCustomGroupColor = typeof ThreadCustomGroupColor.Type;
+
+export const ThreadCustomGroupDefinition = Schema.Struct({
+  /** The label as the user typed it; threads carry the same label. */
+  label: ThreadCustomGroup,
+  colorId: Schema.optionalKey(ThreadCustomGroupColor),
+});
+export type ThreadCustomGroupDefinition = typeof ThreadCustomGroupDefinition.Type;
+
+/** Keyed by `normalizeThreadCustomGroup(definition.label)`. */
+export const ThreadCustomGroupRegistry = Schema.Record(Schema.String, ThreadCustomGroupDefinition);
+export type ThreadCustomGroupRegistry = typeof ThreadCustomGroupRegistry.Type;
+
+/** A patch entry: a definition upserts the key, `null` removes it. */
+export const ThreadCustomGroupRegistryPatch = Schema.Record(
+  Schema.String,
+  Schema.NullOr(ThreadCustomGroupDefinition),
+);
+export type ThreadCustomGroupRegistryPatch = typeof ThreadCustomGroupRegistryPatch.Type;
+// T3-CUSTOM(expbkt3): END

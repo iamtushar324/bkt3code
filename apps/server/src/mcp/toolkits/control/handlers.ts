@@ -17,6 +17,13 @@ import {
   type ThreadComment,
   normalizeThreadCustomGroup,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  // T3-CUSTOM(expbkt3): the shared custom-group registry and its colours.
+  isThreadCustomGroupColorId,
+  ThreadCustomGroup,
+  THREAD_CUSTOM_GROUP_COLOR_IDS,
+  type ThreadCustomGroupColorId,
+  type ThreadCustomGroupDefinition,
+  type ThreadCustomGroupRegistry,
   type OrchestrationCommand,
   type OrchestrationThread,
   type OrchestrationThreadShell,
@@ -491,13 +498,33 @@ function resolveCustomGroupInput(
   value: string | null | undefined,
 ): Effect.Effect<string | null | undefined, T3ControlToolError> {
   if (value === undefined || value === null) return Effect.succeed(value);
+  return resolveGroupLabelInput(
+    operation,
+    "customGroup",
+    value,
+    "Pass a label, or null to remove the session from its group.",
+  );
+}
+
+const isThreadCustomGroupLabel = Schema.is(ThreadCustomGroup);
+
+/**
+ * T3-CUSTOM(expbkt3): a custom group name as a client would store it:
+ * single-spaced, trimmed, non-blank and short enough for a sidebar header.
+ * `field` names the tool parameter in the error, `blankHint` says what to pass.
+ */
+function resolveGroupLabelInput(
+  operation: string,
+  field: string,
+  value: string,
+  blankHint: string,
+): Effect.Effect<string, T3ControlToolError> {
   const label = value.replace(/\s+/g, " ").trim();
   if (label.length === 0) {
     return Effect.fail(
       new T3ControlToolError({
         operation,
-        message:
-          "customGroup must not be blank. Pass a label, or null to remove the session from its group.",
+        message: `${field} must not be blank. ${blankHint}`,
       }),
     );
   }
@@ -505,7 +532,15 @@ function resolveCustomGroupInput(
     return Effect.fail(
       new T3ControlToolError({
         operation,
-        message: `customGroup must be at most ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters; got ${label.length}.`,
+        message: `${field} must be at most ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters; got ${label.length}.`,
+      }),
+    );
+  }
+  if (!isThreadCustomGroupLabel(label)) {
+    return Effect.fail(
+      new T3ControlToolError({
+        operation,
+        message: `${field} is not a valid custom group name.`,
       }),
     );
   }
@@ -524,6 +559,127 @@ function matchesCustomGroupFilter(
     normalizeThreadCustomGroup(customGroup) === normalizeThreadCustomGroup(filter)
   );
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — the shared custom-group registry (XFN-59).
+
+/** Whether the caller may see `thread`: the rule t3_list_sessions applies. */
+function callerSeesThread(
+  scope: McpInvocationContext.McpInvocationScope,
+  thread: Pick<OrchestrationThreadShell, "id" | "ownerUserId" | "memberUserIds">,
+): boolean {
+  return (
+    McpInvocationContext.isExternalMcpOperator(scope) ||
+    (scope.actorUserId !== null
+      ? thread.ownerUserId === scope.actorUserId || thread.memberUserIds.includes(scope.actorUserId)
+      : thread.id === scope.thread?.threadId)
+  );
+}
+
+/** A colour id the registry accepts. Undefined keeps the colour; null clears it. */
+function resolveGroupColorInput(
+  operation: string,
+  value: string | null | undefined,
+): Effect.Effect<ThreadCustomGroupColorId | null | undefined, T3ControlToolError> {
+  if (value === undefined || value === null) return Effect.succeed(value);
+  const colorId = value.trim().toLowerCase();
+  if (!isThreadCustomGroupColorId(colorId)) {
+    return Effect.fail(
+      new T3ControlToolError({
+        operation,
+        message: `'${value}' is not a custom group colour. Pass one of ${THREAD_CUSTOM_GROUP_COLOR_IDS.join(", ")}, or null to clear the colour.`,
+      }),
+    );
+  }
+  return Effect.succeed(colorId);
+}
+
+/** The sessions among `threads` filed under the group whose key is `key`. */
+function sessionsInGroup<T extends Pick<OrchestrationThreadShell, "customGroup">>(
+  threads: ReadonlyArray<T>,
+  key: string,
+): ReadonlyArray<T> {
+  return threads.filter(
+    (thread) =>
+      thread.customGroup !== undefined &&
+      thread.customGroup !== null &&
+      normalizeThreadCustomGroup(thread.customGroup) === key,
+  );
+}
+
+interface CustomGroupSummary {
+  readonly label: string;
+  readonly colorId: string | null;
+  readonly registered: boolean;
+  sessionCount: number;
+}
+
+/**
+ * Every saved group, plus every group that exists only because a visible
+ * session carries its label, sorted by label. A label-only group takes the
+ * first spelling met, as the sidebar does.
+ */
+function describeCustomGroups(
+  registry: ThreadCustomGroupRegistry,
+  visibleThreads: ReadonlyArray<Pick<OrchestrationThreadShell, "customGroup">>,
+): ReadonlyArray<CustomGroupSummary> {
+  const groups = new Map<string, CustomGroupSummary>();
+  for (const definition of Object.values(registry)) {
+    groups.set(normalizeThreadCustomGroup(definition.label), {
+      label: definition.label,
+      colorId: definition.colorId ?? null,
+      registered: true,
+      sessionCount: 0,
+    });
+  }
+  for (const thread of visibleThreads) {
+    const label = thread.customGroup ?? null;
+    if (label === null) continue;
+    const key = normalizeThreadCustomGroup(label);
+    const group = groups.get(key);
+    if (group === undefined) {
+      groups.set(key, { label, colorId: null, registered: false, sessionCount: 1 });
+    } else {
+      group.sessionCount += 1;
+    }
+  }
+  return [...groups.values()].toSorted((left, right) =>
+    normalizeThreadCustomGroup(left.label).localeCompare(normalizeThreadCustomGroup(right.label)),
+  );
+}
+
+/**
+ * File each session under `customGroup` (null ungroups it). Every session is
+ * dispatched on its own, so one refusal — such as a session running above the
+ * caller's modes, which the orchestrator checks under the session's lock —
+ * is reported in `skipped` instead of stranding the rest half-moved.
+ */
+const moveGroupSessions = Effect.fn("T3ControlToolkit.moveGroupSessions")(function* (
+  operation: string,
+  sessionIds: ReadonlyArray<ThreadId>,
+  customGroup: string | null,
+) {
+  const dispatcher = yield* TurnStartBootstrap;
+  const crypto = yield* Crypto.Crypto;
+  const moved: Array<ThreadId> = [];
+  const skipped: Array<{ readonly sessionId: ThreadId; readonly reason: string }> = [];
+  for (const sessionId of sessionIds) {
+    const commandId = yield* makeCommandId(crypto, operation);
+    yield* dispatcher
+      .dispatch({ type: "thread.meta.update", commandId, threadId: sessionId, customGroup })
+      .pipe(
+        Effect.match({
+          onFailure: (cause) => {
+            skipped.push({ sessionId, reason: errorMessage(cause) });
+          },
+          onSuccess: () => {
+            moved.push(sessionId);
+          },
+        }),
+      );
+  }
+  return { moved, skipped };
+});
+// T3-CUSTOM(expbkt3): END
 
 function sessionSummary(
   thread: OrchestrationThreadShell,
@@ -851,13 +1007,9 @@ const handlers = {
       input.includeArchived === true && hasUserWideScope(scope)
         ? yield* query.getArchivedShellSnapshot().pipe(mapControlError(operation))
         : null;
-    const threads = [...shell.threads, ...(archived?.threads ?? [])].filter(
-      (thread) =>
-        McpInvocationContext.isExternalMcpOperator(scope) ||
-        (scope.actorUserId !== null
-          ? thread.ownerUserId === scope.actorUserId ||
-            thread.memberUserIds.includes(scope.actorUserId)
-          : thread.id === scope.thread?.threadId),
+    // T3-CUSTOM(expbkt3): the visibility rule is shared with t3_group_list.
+    const threads = [...shell.threads, ...(archived?.threads ?? [])].filter((thread) =>
+      callerSeesThread(scope, thread),
     );
     const projects = new Map(
       [...shell.projects, ...(archived?.projects ?? [])].map((project) => [
@@ -1650,6 +1802,180 @@ const handlers = {
   }),
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): BEGIN — the shared custom-group registry (XFN-59).
+  //
+  // Saved groups and colours live in the host's server settings; membership
+  // lives on each session's `customGroup`. Rename and remove change both:
+  // the registry first, then every session the caller can see.
+  t3_group_list: Effect.fn("T3ControlToolkit.groupList")(function* (input) {
+    const operation = "group-list";
+    const scope = yield* requireCapability(operation, "t3.read");
+    const query = yield* ProjectionSnapshotQuery;
+    const settingsService = yield* ServerSettingsService;
+    const [shell, settings] = yield* Effect.all([
+      query.getShellSnapshot(),
+      settingsService.getSettings,
+    ]).pipe(mapControlError(operation));
+    const visible = shell.threads.filter((thread) => callerSeesThread(scope, thread));
+    const groups = describeCustomGroups(settings.threadCustomGroups, visible);
+    const filter = input.label === undefined ? undefined : normalizeThreadCustomGroup(input.label);
+    return {
+      groups:
+        filter === undefined
+          ? groups
+          : groups.filter((group) => normalizeThreadCustomGroup(group.label) === filter),
+      colors: [...THREAD_CUSTOM_GROUP_COLOR_IDS],
+    };
+  }),
+
+  t3_group_save: Effect.fn("T3ControlToolkit.groupSave")(function* (input) {
+    const operation = "group-save";
+    yield* requireCapability(operation, "t3.control");
+    const label = yield* resolveGroupLabelInput(
+      operation,
+      "label",
+      input.label,
+      "Pass the name of the group.",
+    );
+    const color = yield* resolveGroupColorInput(operation, input.color);
+    const settingsService = yield* ServerSettingsService;
+    const current = yield* settingsService.getSettings.pipe(mapControlError(operation));
+    const key = normalizeThreadCustomGroup(label);
+    const existing = current.threadCustomGroups[key];
+    // An omitted colour keeps the saved one; null clears it.
+    const colorId = color === undefined ? existing?.colorId : (color ?? undefined);
+    const definition: ThreadCustomGroupDefinition = {
+      label,
+      ...(colorId === undefined ? {} : { colorId }),
+    };
+    const settings = yield* settingsService
+      .updateSettings({ threadCustomGroups: { [key]: definition } })
+      .pipe(mapControlError(operation));
+    const saved = settings.threadCustomGroups[key] ?? definition;
+    return {
+      saved: true,
+      created: existing === undefined,
+      group: { label: saved.label, colorId: saved.colorId ?? null },
+    };
+  }),
+
+  t3_group_rename: Effect.fn("T3ControlToolkit.groupRename")(function* (input) {
+    const operation = "group-rename";
+    const scope = yield* requireCapability(operation, "t3.control");
+    const label = yield* resolveGroupLabelInput(
+      operation,
+      "label",
+      input.label,
+      "Pass the current name of the group.",
+    );
+    const newLabel = yield* resolveGroupLabelInput(
+      operation,
+      "newLabel",
+      input.newLabel,
+      "Pass the new name of the group.",
+    );
+    const oldKey = normalizeThreadCustomGroup(label);
+    const newKey = normalizeThreadCustomGroup(newLabel);
+    const query = yield* ProjectionSnapshotQuery;
+    const settingsService = yield* ServerSettingsService;
+    const [shell, current] = yield* Effect.all([
+      query.getShellSnapshot(),
+      settingsService.getSettings,
+    ]).pipe(mapControlError(operation));
+    const visible = shell.threads.filter((thread) => callerSeesThread(scope, thread));
+    const existing = current.threadCustomGroups[oldKey];
+    const members = sessionsInGroup(visible, oldKey);
+    if (existing === undefined && members.length === 0) {
+      return yield* new T3ControlToolError({
+        operation,
+        message: `There is no custom group named '${label}'. Call t3_group_list to see the groups you can rename.`,
+      });
+    }
+    // Renaming onto another group would merge the two silently; make the
+    // caller say so by moving the sessions itself.
+    if (
+      newKey !== oldKey &&
+      (current.threadCustomGroups[newKey] !== undefined ||
+        sessionsInGroup(visible, newKey).length > 0)
+    ) {
+      return yield* new T3ControlToolError({
+        operation,
+        message: `A custom group named '${newLabel}' already exists. To merge the two, move the sessions with t3_update_session and then call t3_group_remove for '${label}'.`,
+      });
+    }
+    // Only a saved group stays saved: a group that exists through session
+    // labels alone is renamed on those sessions and nowhere else.
+    if (existing !== undefined) {
+      const patch: Record<string, ThreadCustomGroupDefinition | null> = {};
+      patch[oldKey] = null;
+      // Same key for a respelling: the definition then replaces the removal.
+      patch[newKey] = {
+        label: newLabel,
+        ...(existing.colorId === undefined ? {} : { colorId: existing.colorId }),
+      };
+      yield* settingsService
+        .updateSettings({ threadCustomGroups: patch })
+        .pipe(mapControlError(operation));
+    }
+    const { moved, skipped } = yield* moveGroupSessions(
+      operation,
+      members.filter((thread) => thread.customGroup !== newLabel).map((thread) => thread.id),
+      newLabel,
+    );
+    return {
+      renamed: true,
+      previousLabel: existing?.label ?? members[0]?.customGroup ?? label,
+      group: {
+        label: newLabel,
+        colorId: existing?.colorId ?? null,
+        registered: existing !== undefined,
+      },
+      sessionsMoved: moved.length,
+      movedSessionIds: moved,
+      skipped,
+    };
+  }),
+
+  t3_group_remove: Effect.fn("T3ControlToolkit.groupRemove")(function* (input) {
+    const operation = "group-remove";
+    const scope = yield* requireCapability(operation, "t3.control");
+    const label = yield* resolveGroupLabelInput(
+      operation,
+      "label",
+      input.label,
+      "Pass the name of the group to remove.",
+    );
+    const key = normalizeThreadCustomGroup(label);
+    const query = yield* ProjectionSnapshotQuery;
+    const settingsService = yield* ServerSettingsService;
+    const [shell, current] = yield* Effect.all([
+      query.getShellSnapshot(),
+      settingsService.getSettings,
+    ]).pipe(mapControlError(operation));
+    const visible = shell.threads.filter((thread) => callerSeesThread(scope, thread));
+    const existing = current.threadCustomGroups[key];
+    const members = sessionsInGroup(visible, key);
+    if (existing !== undefined) {
+      yield* settingsService
+        .updateSettings({ threadCustomGroups: { [key]: null } })
+        .pipe(mapControlError(operation));
+    }
+    const { moved, skipped } = yield* moveGroupSessions(
+      operation,
+      members.map((thread) => thread.id),
+      null,
+    );
+    return {
+      removed: existing !== undefined || moved.length > 0,
+      label: existing?.label ?? members[0]?.customGroup ?? label,
+      savedGroupRemoved: existing !== undefined,
+      sessionsUngrouped: moved.length,
+      ungroupedSessionIds: moved,
+      skipped,
+    };
+  }),
+  // T3-CUSTOM(expbkt3): END
+
   t3_dispatch_command: Effect.fn("T3ControlToolkit.dispatchCommand")(function* (input) {
     const operation = "dispatch-command";
     yield* requireExternalOperator(operation);
@@ -1708,6 +2034,14 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
   t3_list_comments: McpToolAccess.readsAsCaller(handlers.t3_list_comments),
   t3_reply_comment: McpToolAccess.actsAsCaller(handlers.t3_reply_comment),
   t3_user_presence: McpToolAccess.reads(handlers.t3_user_presence),
+  // T3-CUSTOM(expbkt3): the shared custom-group registry. Saving touches no
+  // session. Rename and remove re-file sessions they cannot name up front, so
+  // they declare no target: the caller check still runs, and the orchestrator
+  // holds each re-filed session to the caller's modes under its lock.
+  t3_group_list: McpToolAccess.reads(handlers.t3_group_list),
+  t3_group_save: McpToolAccess.writes(handlers.t3_group_save),
+  t3_group_rename: McpToolAccess.writesThreads(() => [], handlers.t3_group_rename),
+  t3_group_remove: McpToolAccess.writesThreads(() => [], handlers.t3_group_remove),
 });
 
 /** The control handlers as a layer, for tests that build the toolkit directly. */
@@ -1764,4 +2098,10 @@ export const __testing = {
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   linkLinear: handlers.t3_link_linear,
   unlinkLinear: handlers.t3_unlink_linear,
+  // T3-CUSTOM(expbkt3): the shared custom-group registry.
+  groupList: handlers.t3_group_list,
+  groupSave: handlers.t3_group_save,
+  groupRename: handlers.t3_group_rename,
+  groupRemove: handlers.t3_group_remove,
+  resolveGroupColorInput,
 };

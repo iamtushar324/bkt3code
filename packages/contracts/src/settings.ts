@@ -32,6 +32,8 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+// T3-CUSTOM(expbkt3): shared custom sidebar groups.
+import { ThreadCustomGroupRegistry, ThreadCustomGroupRegistryPatch } from "./threadCustomGroup.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 // T3-CUSTOM(expbkt3): default thread interaction mode.
@@ -1451,6 +1453,10 @@ export const ServerSettings = Schema.Struct({
   previewBrowser: PreviewBrowserHostSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed("client" as const)),
   ),
+  // T3-CUSTOM(expbkt3): the host's shared custom sidebar groups and their colours (XFN-59).
+  threadCustomGroups: ThreadCustomGroupRegistry.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1884,6 +1890,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   previewBrowser: Schema.optionalKey(PreviewBrowserHostSetting), // T3-CUSTOM(expbkt3)
+  // T3-CUSTOM(expbkt3): per-entry upsert; a null entry removes that group.
+  threadCustomGroups: Schema.optionalKey(ThreadCustomGroupRegistryPatch),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(

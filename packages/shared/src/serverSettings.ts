@@ -23,6 +23,8 @@ import {
   normalizeServerBackgroundActivitySettings,
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
+// T3-CUSTOM(expbkt3): shared custom-group registry, merged per entry (XFN-59).
+import { mergeThreadCustomGroupRegistry } from "./threadCustomGroupRegistry.expbkt3.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
@@ -281,6 +283,8 @@ export function applyServerSettingsPatch(
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
+    // T3-CUSTOM(expbkt3): merged per entry below; its `null` removals must not reach deepMerge.
+    threadCustomGroups: threadCustomGroupsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
@@ -423,6 +427,15 @@ export function applyServerSettingsPatch(
           usageModelAliases: mergeSettingsEntries(
             current.usageModelAliases,
             usageModelAliasesPatch,
+          ),
+        }
+      : {}),
+    // T3-CUSTOM(expbkt3): upsert or remove one custom group at a time, keyed by its label.
+    ...(threadCustomGroupsPatch !== undefined
+      ? {
+          threadCustomGroups: mergeThreadCustomGroupRegistry(
+            current.threadCustomGroups,
+            threadCustomGroupsPatch,
           ),
         }
       : {}),
