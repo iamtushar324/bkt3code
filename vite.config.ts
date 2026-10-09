@@ -203,6 +203,8 @@ export default defineConfig({
           // T3-CUSTOM(expbkt3): fork reads of session client metadata (member devices, session list).
           "apps/web/src/fork/memberDevices.ts",
           "apps/web/src/environments/primary/auth.ts",
+          // T3-CUSTOM(expbkt3): the local server's paired devices list reads session.client.
+          "apps/web/src/fork/localPhonePairing.logic.ts",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },

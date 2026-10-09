@@ -124,16 +124,19 @@ export async function listLocalServerClients(
   );
 }
 
-/** Revoke one client session on the bundled backend, such as a lost phone's. */
+/**
+ * Revoke one client session on the bundled backend, such as a lost phone's;
+ * resolves to whether the server still had it.
+ */
 export async function revokeLocalServerClient(
   environmentId: EnvironmentId,
   sessionId: AuthClientSession["sessionId"],
-): Promise<void> {
+): Promise<boolean> {
   const bearer = readLocalServerBearer(environmentId);
-  await runLocalServerRequest(
+  return await runLocalServerRequest(
     Effect.gen(function* () {
       const client = yield* makeEnvironmentHttpApiGroupClient(bearer.httpBaseUrl, "auth");
-      return yield* executeEnvironmentHttpRequest(
+      const result = yield* executeEnvironmentHttpRequest(
         environmentEndpointUrl(bearer.httpBaseUrl, "/api/auth/clients/revoke"),
         LOCAL_SERVER_REQUEST_TIMEOUT_MS,
         client.revokeClient({
@@ -141,6 +144,7 @@ export async function revokeLocalServerClient(
           payload: { sessionId },
         }),
       );
+      return result.revoked;
     }),
   );
 }

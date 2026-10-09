@@ -453,8 +453,11 @@ function PairedDevicesRow({
       if (confirmed !== true) return;
       setRevokingId(device.sessionId);
       try {
-        await revokeLocalServerClient(environmentId, device.sessionId);
-        toastManager.add({ type: "success", title: "Device revoked" });
+        const revoked = await revokeLocalServerClient(environmentId, device.sessionId);
+        toastManager.add({
+          type: "success",
+          title: revoked ? "Device revoked" : "Device already gone",
+        });
         await load();
       } catch (cause) {
         const message = describeLocalPairingError(cause, "Could not revoke the device.");
