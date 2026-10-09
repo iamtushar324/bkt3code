@@ -272,7 +272,7 @@ describe("recommend", () => {
     expect(recommendation.reason).toContain("Owner has this session open now");
   });
 
-  it("asks in chat, never on Mattermost, for active-elsewhere, idle (even with this session open) and background", () => {
+  it("asks in chat and waits, never on Mattermost, for active-elsewhere, idle (even with this session open) and background", () => {
     const cases: ReadonlyArray<[Partial<PresenceClientInput>, number]> = [
       [{ viewingThreadIds: [OTHER] }, 300],
       [stale, 600],
@@ -285,20 +285,20 @@ describe("recommend", () => {
         NOW,
         settled,
       );
-      expect(recommendation.action).toBe("ask-in-chat");
+      expect(recommendation.action).toBe("ask-in-chat-and-wait");
       expect(recommendation.suggestedFollowUpSeconds).toBe(followUp);
       expect(recommendation.reason).toContain("keep the session open");
       expect(recommendation.reason).not.toMatch(/mattermost/i);
     }
   });
 
-  it("asks in chat and keeps the session open for someone away for a while", () => {
+  it("asks in chat and waits, keeping the session open, for someone away for a while", () => {
     const recommendation = recommend(
       [derived(person({ authSessionLastConnectedAtMs: NOW - 2 * PRESENCE_RECENT_EVIDENCE_MS }))],
       NOW,
       settled,
     );
-    expect(recommendation.action).toBe("ask-in-chat");
+    expect(recommendation.action).toBe("ask-in-chat-and-wait");
     expect(recommendation.suggestedFollowUpSeconds).toBe(1800);
     expect(recommendation.reason).toContain("keep the session open");
     expect(recommendation.reason).not.toMatch(/mattermost/i);
@@ -315,7 +315,7 @@ describe("recommend", () => {
     expect(recommendation.suggestedFollowUpSeconds).toBe(60);
   });
 
-  it("waits rather than escalating while the tracker is warming up or has no report yet", () => {
+  it("waits for a reply while the tracker is warming up or has no report yet", () => {
     const justStarted = NOW - PRESENCE_WARMUP_MS / 2;
     expect(recommend([derived(person())], NOW, justStarted).action).toBe("wait-for-reply");
     expect(recommend([derived(person())], NOW, null).action).toBe("wait-for-reply");
@@ -323,7 +323,8 @@ describe("recommend", () => {
       "no client has reported since the server started",
     );
     expect(recommend([], NOW, justStarted).action).toBe("wait-for-reply");
-    expect(recommend([], NOW, settled).action).toBe("ask-in-chat");
+    expect(recommend([], NOW, settled).action).toBe("ask-in-chat-and-wait");
+    expect(recommend([], NOW, settled).reason).toContain("no client has reported for this session");
   });
 
   it("follows the best-placed person", () => {

@@ -84,7 +84,7 @@ const report = (threadId: ThreadId, query: PresenceQuery): PresenceReport =>
     people: [],
     attended: false,
     recommendation: {
-      action: "ask-in-chat",
+      action: "ask-in-chat-and-wait",
       reason: [query.threadId, query.userId ?? "", query.email ?? ""].join("|"),
       suggestedFollowUpSeconds: 1,
     },
