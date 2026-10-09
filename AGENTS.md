@@ -8,14 +8,15 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## Beknown fork and deployments
 
-This repository is the Beknown fork of T3 Code (`origin` = `iamtushar324/bkt3code`, which the old `beknown-work/bkt3code` name redirects to; `upstream` = `pingdotgg/t3code`). Four environments run on the shared dev server, each from its own clone:
+This repository is the Beknown fork of T3 Code (`origin` = `iamtushar324/bkt3code`, which the old `beknown-work/bkt3code` name redirects to; `upstream` = `pingdotgg/t3code`). Five environments run on the shared dev server, each from its own clone:
 
-| Environment            | Branch      | Worktree                            | Domain                       | Port  | Service              |
-| ---------------------- | ----------- | ----------------------------------- | ---------------------------- | ----- | -------------------- |
-| t3 (upstream-style)    | `t3main`    | `/home/ubuntu/repos/t3code`         | `t3.dev.beknown.live`        | 18082 | `t3-beknown.service` |
-| bkt3 (fork production) | `bkmain`    | `/home/ubuntu/repos/t3code-bkmain`  | `bkt3.dev.beknown.live`      | 18083 | `t3-bkmain.service`  |
-| expbkt3 (fork staging) | `expbkmain` | `/home/ubuntu/repos/t3code-expbkt3` | `expbkt3.dev.beknown.live`   | 18085 | `t3-expbkt3.service` |
-| stage (fresh-cut fork) | `stage`     | `/home/ubuntu/repos/t3code-stage`   | `stagebkt3.dev.beknown.live` | 18086 | `t3-stage.service`   |
+| Environment                        | Branch             | Worktree                             | Domain                       | Port  | Service               |
+| ---------------------------------- | ------------------ | ------------------------------------ | ---------------------------- | ----- | --------------------- |
+| t3 (upstream-style)                | `t3main`           | `/home/ubuntu/repos/t3code`          | `t3.dev.beknown.live`        | 18082 | `t3-beknown.service`  |
+| bkt3 (fork production)             | `bkmain`           | `/home/ubuntu/repos/t3code-nextbkt3` | `bkt3.dev.beknown.live`      | 18087 | `t3-nextbkt3.service` |
+| bkt3-bkp (old bkt3, frozen backup) | none (`7c0b134a7`) | `/home/ubuntu/repos/t3code-bkmain`   | `bkt3-bkp.dev.beknown.live`  | 18083 | `t3-bkmain.service`   |
+| expbkt3 (fork staging)             | `expbkmain`        | `/home/ubuntu/repos/t3code-expbkt3`  | `expbkt3.dev.beknown.live`   | 18085 | `t3-expbkt3.service`  |
+| stage (fresh-cut fork)             | `stage`            | `/home/ubuntu/repos/t3code-stage`    | `stagebkt3.dev.beknown.live` | 18086 | `t3-stage.service`    |
 
 Branch semantics:
 
@@ -23,9 +24,9 @@ Branch semantics:
 - `t3main` — `main` plus two fork-owned files: `.github/workflows/deploy-t3.yml` and a `.gitmodules` entry declaring the vendored alchemy gitlink so `actions/checkout` can clean credentials. Deploys t3.dev. Updated by merging `main` in; never force-pushed.
 - `bkmain` — the fork's production line. Deploys bkt3. All fork work merges here through pull requests.
 - `expbkmain` — long-lived staging branch for drastic changes, above all upstream merges. Deploys expbkt3, and is reset from `bkmain` between experiments.
-- `stage` — a fresh cut of upstream `main` (`de251fc29`, 2026-09-27) carrying only the fork features still in use, each behind the smallest seam. It runs on a copy of bkt3's database and is meant to replace `bkmain` once verified. It deploys like the others, through `.github/workflows/deploy-stage.yml` and the systemd timer; what it kept and dropped is in [expbkt3 customization boundaries](./docs/operations/expbkt3-customizations.md#stage-cut-2026-09-27).
+- `stage` — a fresh cut of upstream `main` (`de251fc29`, 2026-09-27) carrying only the fork features still in use, each behind the smallest seam. On 2026-10-09 `bkmain` was fast-forwarded to it and bkt3 production moved to the stage code on a cleaned copy of the old database; `bkmain` and `stage` were identical at that point. It deploys like the others, through `.github/workflows/deploy-stage.yml` and the systemd timer; what it kept and dropped is in [expbkt3 customization boundaries](./docs/operations/expbkt3-customizations.md#stage-cut-2026-09-27).
 
-Coding sessions always run on the bkt3 instance, in worktrees under `/home/ubuntu/.t3/bkt3-dev/worktrees/`. Do not start work in a deployment worktree; those are checkouts the deploy scripts fast-forward.
+Coding sessions always run on the bkt3 instance, in worktrees under `/home/ubuntu/.t3/nextbkt3-dev/worktrees/`. Do not start work in a deployment worktree; those are checkouts the deploy scripts fast-forward.
 
 How to update an environment: merge to its branch. The branch's GitHub Actions workflow validates and uploads a SHA-addressed build artifact, and a systemd timer on the box installs that exact artifact within a minute of the run turning green. Application code is never built on the server. Full detail, manual deploy commands, and the upstream-merge workflow are in [docs/operations/deployments.md](./docs/operations/deployments.md).
 

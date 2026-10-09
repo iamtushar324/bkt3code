@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXPECTED_BRANCH="bkmain"
-DEPLOYED_SHA_FILE="/home/ubuntu/.t3/bkt3-dev/deployed-sha"
+DEPLOYED_SHA_FILE="/home/ubuntu/.t3/nextbkt3-dev/deployed-sha"
 # The repository has been transferred once already; the old owner only still
 # resolves through GitHub's redirect. Read the slug from the checkout's origin
 # so a future transfer needs no change here.

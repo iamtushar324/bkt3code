@@ -7,20 +7,28 @@ This deployment serves the Beknown-maintained T3 Code branch at
 ## Isolation
 
 - Branch: `bkmain`
-- Worktree: `/home/ubuntu/repos/t3code-bkmain`
-- systemd service: `t3-bkmain.service`
-- Server address: `10.31.39.131:18083`
-- Persistent state: `/home/ubuntu/.t3/bkt3-dev`
+- Worktree: `/home/ubuntu/repos/t3code-nextbkt3`
+- systemd service: `t3-nextbkt3.service`
+- Server address: `10.31.39.131:18087`
+- Persistent state: `/home/ubuntu/.t3/nextbkt3-dev`
 - Swarm proxy: `bkt3-proxy`
 - Automatic deployment timer: `t3-bkmain-deploy.timer`
 - Web build: experimental control-center and MCP surfaces enabled
 
 `start.sh` refuses to run unless the worktree is currently on `bkmain`.
 
+The `nextbkt3` names are historical: production moved on 2026-10-09 from the old
+bkmain line to the `stage` code, on a cleaned copy of the old database. The old
+server is kept as a backup at `bkt3-bkp.dev.beknown.live`
+(`t3-bkmain.service`, `/home/ubuntu/repos/t3code-bkmain` frozen at `7c0b134a7`,
+port 18083, state `/home/ubuntu/.t3/bkt3-dev`). Nothing deploys to it. Never run
+these scripts from that checkout, and never move it off `7c0b134a7`: a restart
+on newer code would migrate the backup database.
+
 ## Manual deployment
 
 ```bash
-cd /home/ubuntu/repos/t3code-bkmain
+cd /home/ubuntu/repos/t3code-nextbkt3
 ./deploy/bkt3/deploy.sh
 ```
 
@@ -33,17 +41,17 @@ GitHub Actions; they do not run on the shared dev server.
 
 The checked-in systemd unit sets idle provider sessions to terminate after ten
 minutes with `T3CODE_PROVIDER_SESSION_INACTIVITY_MS=600000`. Artifact deployment
-does not install unit files. After changing `t3-bkmain.service`, install it and
+does not install unit files. After changing `t3-nextbkt3.service`, install it and
 reload systemd before the next drained restart:
 
 ```bash
-sudo install -m 0644 deploy/bkt3/t3-bkmain.service /etc/systemd/system/t3-bkmain.service
+sudo install -m 0644 deploy/bkt3/t3-nextbkt3.service /etc/systemd/system/t3-nextbkt3.service
 sudo systemctl daemon-reload
 ```
 
 > Deploying bkt3 from a session hosted **on** bkt3 kills that session. Agent
-> worktrees under `/home/ubuntu/.t3/bkt3-dev/worktrees/` run as children of
-> `t3-bkmain.service`, which this script restarts — interrupting every in-flight
+> worktrees under `/home/ubuntu/.t3/nextbkt3-dev/worktrees/` run as children of
+> `t3-nextbkt3.service`, which this script restarts — interrupting every in-flight
 > turn on the instance. Trigger a manual bkt3 deploy from the `t3.dev` instance
 > or from a human shell.
 
@@ -76,7 +84,7 @@ that space is not covered here.
 ```
 
 Idempotent registration of the `bkt3-proxy` swarm service that routes
-`bkt3.dev.beknown.live` to `10.31.39.131:18083`.
+`bkt3.dev.beknown.live` to `10.31.39.131:18087`.
 
 ## Automatic CI/CD
 

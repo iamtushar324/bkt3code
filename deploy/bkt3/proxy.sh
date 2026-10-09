@@ -5,7 +5,7 @@ set -euo pipefail
 
 SERVICE_NAME="bkt3-proxy"
 NETWORK_NAME="bk-dev"
-TARGET_ADDRESS="10.31.39.131:18083"
+TARGET_ADDRESS="10.31.39.131:18087"
 
 labels=(
   --label-add "traefik.enable=true"

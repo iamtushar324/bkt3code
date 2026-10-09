@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXPECTED_BRANCH="bkmain"
 SERVER_BUNDLE="$REPO_DIR/apps/server/dist/bin.mjs"
-BASE_DIR="/home/ubuntu/.t3/bkt3-dev"
+BASE_DIR="/home/ubuntu/.t3/nextbkt3-dev"
 
 CURRENT_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 if [[ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]]; then
@@ -32,7 +32,7 @@ mkdir -p "$TMPDIR"
 exec node "$SERVER_BUNDLE" serve \
   --mode web \
   --host "10.31.39.131" \
-  --port "18083" \
+  --port "18087" \
   --base-dir "$BASE_DIR" \
   --no-browser \
   "/home/ubuntu/repos"

@@ -15,9 +15,9 @@ if [[ ! "$REPOSITORY" =~ ^[^/]+/[^/]+$ ]]; then
   echo "ERROR: could not read the GitHub repository from origin in $REPO_DIR." >&2
   exit 1
 fi
-SERVICE_NAME="t3-bkmain.service"
-HEALTH_URL="http://10.31.39.131:18083/"
-DEPLOYED_SHA_FILE="/home/ubuntu/.t3/bkt3-dev/deployed-sha"
+SERVICE_NAME="t3-nextbkt3.service"
+HEALTH_URL="http://10.31.39.131:18087/"
+DEPLOYED_SHA_FILE="/home/ubuntu/.t3/nextbkt3-dev/deployed-sha"
 
 exec 9>"/tmp/bkt3-deploy.lock"
 if ! flock -n 9; then
@@ -82,7 +82,7 @@ trap cleanup EXIT
 # upstream leaves the new bundle loading old packages and crashing at start
 # (effect beta.78 vs beta.102 did exactly that). Sync dependencies whenever the
 # lockfile moves. This installs packages; it does not build application code.
-LOCK_HASH_FILE="/home/ubuntu/.t3/bkt3-dev/deployed-lock"
+LOCK_HASH_FILE="/home/ubuntu/.t3/nextbkt3-dev/deployed-lock"
 LOCK_HASH="$(sha256sum "$REPO_DIR/pnpm-lock.yaml" | cut -d" " -f1)"
 if [[ "$LOCK_HASH" != "$(cat "$LOCK_HASH_FILE" 2>/dev/null || true)" ]]; then
   echo "==> Lockfile changed; installing dependencies"
