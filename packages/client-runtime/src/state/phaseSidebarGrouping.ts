@@ -19,6 +19,11 @@
 // as placeholders for groups that have no session yet — but every new
 // placement is a `thread.meta.update { customGroup }` on the server.
 //
+// A host that keeps the shared registry (XFN-59, see
+// phaseSidebarCustomGroupRegistry.ts) also names its groups there, empty ones
+// included, with a colour each. Callers pass the merged registry in; a host
+// without it keeps the device-local placeholders above.
+//
 // HERMES: this also runs under React Native. Sort a copy with `.sort()`,
 // never `.toSorted()`.
 import { normalizeThreadCustomGroup, THREAD_CUSTOM_GROUP_MAX_LENGTH } from "@t3tools/contracts";
@@ -32,6 +37,10 @@ import {
   type PhaseSidebarPhaseId,
   type PhaseSidebarRow,
 } from "./phaseSidebar.ts";
+import {
+  EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY,
+  type PhaseSidebarCustomGroupRegistry,
+} from "./phaseSidebarCustomGroupRegistry.ts";
 import {
   buildPhaseSidebarFilteredTree,
   buildPhaseSidebarTree,
@@ -233,6 +242,21 @@ export function createPhaseSidebarCustomGroup(
 }
 
 /**
+ * Gives a group made in the shared registry the next manual-order slot on this
+ * device, so it lands last, where the user made it, rather than among the
+ * groups sorted by name. A group that already has a slot keeps it.
+ */
+export function rememberPhaseSidebarCustomGroupOrder(
+  preferences: PhaseSidebarGroupingPreferences,
+  id: string,
+): PhaseSidebarGroupingPreferences {
+  if (id === PHASE_SIDEBAR_UNGROUPED_ID || preferences.customGroupOrder.includes(id)) {
+    return preferences;
+  }
+  return { ...preferences, customGroupOrder: [...preferences.customGroupOrder, id] };
+}
+
+/**
  * The device-side half of a rename: the server half is a bulk
  * thread.meta.update of the section's sessions. Moves the local placeholder,
  * the manual-order slot and the collapse state from the old id to the new one.
@@ -382,18 +406,25 @@ export interface PhaseSidebarCustomGroupOption {
   readonly label: string;
   /** Sessions among `rows` filed here (fallback placements included). */
   readonly count: number;
+  /** Present when a host's shared registry holds the group. */
+  readonly shared?: true;
+  /** The group's colour id and hex value; absent for the default look. */
+  readonly colorId?: string;
+  readonly color?: string;
 }
 
 /**
- * The distinct custom groups across `rows` plus this device's empty
- * placeholders, in manual order: the stored order first, then legacy local
- * groups in their own order, then everything else by name. The display label
+ * The distinct custom groups across `rows`, the shared registry's groups and
+ * this device's empty placeholders, in manual order: the stored order first,
+ * then legacy local groups in their own order, then everything else by name.
+ * A registered group shows its registry label and colour; otherwise the label
  * is the first spelling met, so a section's name is stable while the group
  * exists.
  */
 export function listPhaseSidebarCustomGroups(
   rows: ReadonlyArray<PhaseSidebarRow>,
   preferences: PhaseSidebarGroupingPreferences,
+  registry: PhaseSidebarCustomGroupRegistry = EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY,
 ): ReadonlyArray<PhaseSidebarCustomGroupOption> {
   const byId = new Map<string, { label: string; count: number }>();
   for (const row of rows) {
@@ -403,6 +434,12 @@ export function listPhaseSidebarCustomGroups(
     const existing = byId.get(id);
     if (existing) existing.count += 1;
     else byId.set(id, { label: row.customGroup ?? id, count: 1 });
+  }
+  for (const entry of registry.values()) {
+    if (entry.id === PHASE_SIDEBAR_UNGROUPED_ID) continue;
+    const existing = byId.get(entry.id);
+    if (existing) existing.label = entry.label;
+    else byId.set(entry.id, { label: entry.label, count: 0 });
   }
   for (const group of preferences.customGroups) {
     const id = localGroupSectionId(group);
@@ -415,7 +452,18 @@ export function listPhaseSidebarCustomGroups(
     const id = localGroupSectionId(group);
     if (!rank.has(id)) rank.set(id, rank.size);
   }
-  const options = [...byId.entries()].map(([id, entry]) => ({ id, ...entry }));
+  const options = [...byId.entries()].map(([id, entry]): PhaseSidebarCustomGroupOption => {
+    const shared = registry.get(id);
+    if (shared === undefined) return { id, ...entry };
+    return {
+      id,
+      ...entry,
+      shared: true,
+      ...(shared.colorId !== null && shared.color !== null
+        ? { colorId: shared.colorId, color: shared.color }
+        : {}),
+    };
+  });
   options.sort((left, right) => {
     const byRank =
       (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
@@ -458,6 +506,9 @@ export interface PhaseSidebarSection {
    * so one list serves both kinds of section.
    */
   readonly collapsedByDefault: boolean;
+  /** A custom group's colour id and hex value, from the shared registry; absent otherwise. */
+  readonly colorId?: string;
+  readonly color?: string;
 }
 
 export interface PhaseSidebarSectionsResult {
@@ -479,6 +530,11 @@ export interface BuildPhaseSidebarSectionsInput {
    * apart.
    */
   readonly environmentLabelFor?: (environmentId: string) => string | null;
+  /**
+   * The merged shared registry (see phaseSidebarCustomGroupRegistry.ts): its
+   * groups render in custom mode even with no session, with their colours.
+   */
+  readonly customGroupRegistry?: PhaseSidebarCustomGroupRegistry;
 }
 
 /**
@@ -625,7 +681,11 @@ export function buildPhaseSidebarSections(
       // The registry is built from every row handed in, filtered or not, so a
       // group whose sessions a filter hid still renders (empty) rather than
       // vanishing and reappearing as the filter changes.
-      const registry = listPhaseSidebarCustomGroups(input.rows, grouping);
+      const registry = listPhaseSidebarCustomGroups(
+        input.rows,
+        grouping,
+        input.customGroupRegistry,
+      );
       // Placement is decided per ROOT: a child stays under its parent, which
       // is what nesting means. Filing a nested session moves nothing until it
       // is detached.
@@ -647,6 +707,9 @@ export function buildPhaseSidebarSections(
           summary: summarizeNodes(nodes),
           isUngrouped: false,
           collapsedByDefault: false,
+          ...(group.colorId !== undefined && group.color !== undefined
+            ? { colorId: group.colorId, color: group.color }
+            : {}),
         };
       });
       const ungrouped = nodesById.get(PHASE_SIDEBAR_UNGROUPED_ID) ?? [];

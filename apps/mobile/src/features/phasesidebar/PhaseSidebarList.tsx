@@ -24,6 +24,11 @@ import {
   type PhaseSidebarGroupingPreferences,
   type PhaseSidebarSection,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
+// T3-CUSTOM(expbkt3): shared custom groups and their colours (XFN-59).
+import {
+  PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS,
+  type PhaseSidebarCustomGroupRegistry,
+} from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
 import {
   comparePhaseSidebarRows,
   compactPhaseSidebarTimeLabel,
@@ -114,8 +119,17 @@ type PhaseSidebarListItem =
       readonly shelf: PhaseSidebarRowShelf;
     };
 
-/** What the header of a custom group can do, beyond collapsing. */
-export type PhaseSidebarSectionActionId = "rename" | "delete" | "move-up" | "move-down";
+/**
+ * What the header of a custom group can do, beyond collapsing. `color:<id>`
+ * sets the group's colour; `color:default` clears it.
+ */
+export type PhaseSidebarSectionActionId =
+  | "rename"
+  | "delete"
+  | "move-up"
+  | "move-down"
+  | "color:default"
+  | `color:${string}`;
 
 export interface PhaseSidebarListProps {
   readonly rows: ReadonlyArray<PhaseSidebarRow>;
@@ -127,6 +141,10 @@ export interface PhaseSidebarListProps {
   readonly sort?: PhaseSidebarSortPreferences;
   readonly sortOrder?: SidebarThreadSortOrder;
   readonly grouping: PhaseSidebarGroupingPreferences;
+  /** The hosts' merged shared groups: shown even when empty, with their colours. */
+  readonly customGroupRegistry?: PhaseSidebarCustomGroupRegistry;
+  /** Offer "Change colour" on a custom group's header. */
+  readonly canRecolorGroups?: boolean;
   readonly onChangeGrouping: (
     apply: (current: PhaseSidebarGroupingPreferences) => PhaseSidebarGroupingPreferences,
   ) => void;
@@ -296,6 +314,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
       grouping,
       ...(props.projectLabelFor ? { projectLabelFor: props.projectLabelFor } : {}),
       ...(props.environmentLabelFor ? { environmentLabelFor: props.environmentLabelFor } : {}),
+      ...(props.customGroupRegistry ? { customGroupRegistry: props.customGroupRegistry } : {}),
     });
     return {
       sections: [
@@ -311,6 +330,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
     filters,
     grouping,
     partition,
+    props.customGroupRegistry,
     props.environmentLabelFor,
     props.projectLabelFor,
     sort,
@@ -365,11 +385,13 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
   // placeholders); a row's own group is read straight off the row.
   const customGroups = useMemo(
     () =>
-      listPhaseSidebarCustomGroups(props.rows, grouping).map((group) => ({
-        id: group.id,
-        label: group.label,
-      })),
-    [grouping, props.rows],
+      listPhaseSidebarCustomGroups(props.rows, grouping, props.customGroupRegistry).map(
+        (group) => ({
+          id: group.id,
+          label: group.label,
+        }),
+      ),
+    [grouping, props.customGroupRegistry, props.rows],
   );
   const rowActionsFor = useCallback(
     (row: PhaseSidebarRow, _rowKey: string, depth: number): MenuAction[] =>
@@ -472,12 +494,37 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
         .map((section) => section.id),
     [sections],
   );
+  const canRecolorGroups = props.canRecolorGroups === true;
   const sectionMenuFor = useCallback(
     (section: PhaseSidebarSection): MenuAction[] => {
       const customIndex = customSectionIds.indexOf(section.id);
       const manual = grouping.groupOrder === "manual";
       return [
         { id: "rename", title: "Rename group", image: "pencil" },
+        ...(canRecolorGroups
+          ? [
+              {
+                id: "color",
+                title: "Change colour",
+                image: "paintbrush",
+                subactions: [
+                  {
+                    id: "color:default",
+                    title: "Default",
+                    image: "circle",
+                    state: section.colorId === undefined ? ("on" as const) : ("off" as const),
+                  },
+                  ...PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS.map((option) => ({
+                    id: `color:${option.id}`,
+                    title: option.label,
+                    image: "circle.fill",
+                    imageColor: option.value,
+                    state: section.colorId === option.id ? ("on" as const) : ("off" as const),
+                  })),
+                ],
+              },
+            ]
+          : []),
         ...(manual
           ? [
               {
@@ -502,7 +549,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
         },
       ];
     },
-    [customSectionIds, grouping.groupOrder],
+    [canRecolorGroups, customSectionIds, grouping.groupOrder],
   );
   // Reordering is presentation, so it stays in this list; rename and delete
   // relabel sessions on the server and go up to the pane.
@@ -552,6 +599,14 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
           tintColor={mutedColor}
           type="monochrome"
         />
+        {section.color !== undefined ? (
+          <View
+            accessibilityElementsHidden
+            className="h-2 w-2 rounded-full"
+            importantForAccessibility="no"
+            style={{ backgroundColor: section.color }}
+          />
+        ) : null}
         <Text
           className={cn(
             "font-t3-bold text-[11px] uppercase tracking-wide",

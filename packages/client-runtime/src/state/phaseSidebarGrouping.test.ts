@@ -27,12 +27,15 @@ import {
   phaseSidebarLocalCustomGroupForThread,
   phaseSidebarSectionKey,
   prunePhaseSidebarGrouping,
+  rememberPhaseSidebarCustomGroupOrder,
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
   togglePhaseSidebarSectionCollapsed,
   type PhaseSidebarGroupingPreferences,
 } from "./phaseSidebarGrouping.ts";
 import { phaseSidebarRowKey } from "./phaseSidebarTree.ts";
+// XFN-59: the shared registry feeds custom groups.
+import { buildPhaseSidebarCustomGroupRegistry } from "./phaseSidebarCustomGroupRegistry.ts";
 import type { EnvironmentThreadShell as ThreadShell } from "./shell.ts";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -483,5 +486,99 @@ describe("summarizeSidebarSessions unread", () => {
     expect(summarizeSidebarSessions([unseen], { now, snoozeSupported: () => false }).unread).toBe(
       0,
     );
+  });
+});
+
+// XFN-59: groups and colours from the hosts' shared registry.
+describe("custom groups from the shared registry", () => {
+  const custom: PhaseSidebarGroupingPreferences = {
+    ...DEFAULT_PHASE_SIDEBAR_GROUPING,
+    groupBy: "custom",
+  };
+  const registry = buildPhaseSidebarCustomGroupRegistry(
+    new Map([
+      [
+        "environment-local",
+        {
+          environment: { capabilities: { threadCustomGroupRegistry: true } },
+          settings: {
+            threadCustomGroups: {
+              "sprint 42": { label: "Sprint 42", colorId: "violet" },
+              backlog: { label: "Backlog" },
+              "release train": { label: "Release Train", colorId: "teal" },
+            },
+          },
+        },
+      ],
+    ]),
+    "environment-local",
+  );
+
+  it("lists registered groups with no session, with the registry label and colour", () => {
+    const rows = [
+      makeRow("a", { customGroup: "SPRINT 42" }),
+      makeRow("b", { customGroup: "Agent work" }),
+    ];
+    expect(listPhaseSidebarCustomGroups(rows, custom, registry)).toEqual([
+      { id: "agent work", label: "Agent work", count: 1 },
+      { id: "backlog", label: "Backlog", count: 0, shared: true },
+      {
+        id: "release train",
+        label: "Release Train",
+        count: 0,
+        shared: true,
+        colorId: "teal",
+        color: "#14b8a6",
+      },
+      {
+        id: "sprint 42",
+        label: "Sprint 42",
+        count: 1,
+        shared: true,
+        colorId: "violet",
+        color: "#8b5cf6",
+      },
+    ]);
+  });
+
+  it("renders empty registered groups as sections, coloured; a thread-only label keeps the default look", () => {
+    const rows = [
+      makeRow("a", { customGroup: "Sprint 42" }),
+      makeRow("b", { customGroup: "Agent work" }),
+      makeRow("c"),
+    ];
+    const result = sections(rows, custom, { customGroupRegistry: registry });
+    expect(
+      result.map((section) => [section.label, section.nodes.length, section.helperText]),
+    ).toEqual([
+      ["Agent work", 1, "1 session"],
+      ["Backlog", 0, "Empty"],
+      ["Release Train", 0, "Empty"],
+      ["Sprint 42", 1, "1 session"],
+      ["Ungrouped", 1, "Not placed in a group yet"],
+    ]);
+    const byLabel = new Map(result.map((section) => [section.label, section] as const));
+    expect(byLabel.get("Sprint 42")).toMatchObject({ colorId: "violet", color: "#8b5cf6" });
+    expect(byLabel.get("Agent work")?.color).toBeUndefined();
+    expect(byLabel.get("Backlog")?.colorId).toBeUndefined();
+    expect(byLabel.get("Ungrouped")?.color).toBeUndefined();
+  });
+
+  it("keeps device-local placeholders working when no host keeps the registry", () => {
+    const local: PhaseSidebarGroupingPreferences = {
+      ...custom,
+      customGroups: [{ id: "g", label: "Local only", threadKeys: [] }],
+    };
+    expect(sections([], local).map((section) => section.label)).toEqual(["Local only"]);
+  });
+
+  it("gives a registered group the next manual-order slot once", () => {
+    const first = rememberPhaseSidebarCustomGroupOrder(
+      { ...custom, customGroupOrder: ["bugs"] },
+      "backlog",
+    );
+    expect(first.customGroupOrder).toEqual(["bugs", "backlog"]);
+    expect(rememberPhaseSidebarCustomGroupOrder(first, "backlog")).toBe(first);
+    expect(rememberPhaseSidebarCustomGroupOrder(first, "ungrouped")).toBe(first);
   });
 });

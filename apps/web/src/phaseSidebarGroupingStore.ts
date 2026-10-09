@@ -14,6 +14,7 @@ import {
   deletePhaseSidebarCustomGroup,
   movePhaseSidebarCustomGroup,
   prunePhaseSidebarGrouping,
+  rememberPhaseSidebarCustomGroupOrder,
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
   setPhaseSidebarGroupBy,
@@ -36,6 +37,8 @@ interface PhaseSidebarGroupingStoreState {
   setGroupOrder: (order: PhaseSidebarGroupOrder) => void;
   /** Registers an empty placeholder; returns its section id, or null when blank. */
   createGroup: (label: string) => string | null;
+  /** Gives a group made in the shared registry this device's next manual-order slot. */
+  rememberGroupOrder: (id: string) => void;
   /** Device-side half of a rename (order slot, collapse state, placeholder). */
   renameGroup: (id: string, label: string) => void;
   /** Device-side half of a delete. */
@@ -59,6 +62,11 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
         if (result.preferences !== get().grouping) set({ grouping: result.preferences });
         return result.id;
       },
+      rememberGroupOrder: (id) =>
+        set((state) => {
+          const next = rememberPhaseSidebarCustomGroupOrder(state.grouping, id);
+          return next === state.grouping ? state : { grouping: next };
+        }),
       renameGroup: (id, label) =>
         set((state) => ({ grouping: renamePhaseSidebarCustomGroup(state.grouping, id, label) })),
       forgetGroup: (id) =>

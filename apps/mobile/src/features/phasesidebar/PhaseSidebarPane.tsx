@@ -25,6 +25,7 @@ import {
   movePhaseSidebarCustomGroup,
   PHASE_SIDEBAR_GROUP_BY_LABELS,
   phaseSidebarCustomGroupIdForRow,
+  rememberPhaseSidebarCustomGroupOrder,
   renamePhaseSidebarCustomGroup,
   type PhaseSidebarSection,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
@@ -73,6 +74,8 @@ import {
   type PhaseSidebarHostFilters,
 } from "./phaseSidebarHostFilters";
 import { usePhaseSidebarRows, usePhaseSidebarViewerUserId } from "./usePhaseSidebarRows";
+// T3-CUSTOM(expbkt3): shared custom groups and their colours (XFN-59).
+import { usePhaseSidebarCustomGroupRegistry } from "./usePhaseSidebarCustomGroupRegistry";
 import { selectPhaseSidebarDrafts } from "./phaseSidebarDrafts";
 
 function HeaderButton(props: {
@@ -172,11 +175,21 @@ export function PhaseSidebarPane(props: {
   const clearVisit = useClearPhaseSidebarThreadVisit();
   const grouping = usePhaseSidebarGrouping();
   const updateGrouping = useUpdatePhaseSidebarGrouping();
-  // Every custom group in view — the threads' shared labels plus this
-  // device's empty placeholders — for the row menu, the sheet and the filter.
+  // XFN-59: the hosts' shared groups (names, colours, empty groups) and the
+  // settings writes that change them. Without a host that keeps the registry,
+  // groups stay this device's placeholders.
+  const customGroupRegistry = usePhaseSidebarCustomGroupRegistry({
+    preferredEnvironmentId: viewerEnvironmentId,
+    scopeEnvironmentId: props.homeFilters.selectedEnvironmentId,
+  });
+  const sharedCustomGroups = customGroupRegistry.registry;
+  const canRecolorCustomGroups = customGroupRegistry.homeEnvironmentId !== null;
+  // Every custom group in view — the threads' shared labels, the registry's
+  // groups and this device's empty placeholders — for the row menu, the sheet
+  // and the filter.
   const customGroups = useMemo(
-    () => listPhaseSidebarCustomGroups(rows, grouping),
-    [grouping, rows],
+    () => listPhaseSidebarCustomGroups(rows, grouping, sharedCustomGroups),
+    [grouping, rows, sharedCustomGroups],
   );
 
   const [filters, setFilters] = useState<PhaseSidebarFilters>(EMPTY_PHASE_SIDEBAR_FILTERS);
@@ -220,27 +233,45 @@ export function PhaseSidebarPane(props: {
     },
     [updateThreadMetadata],
   );
-  // Renaming or deleting a group relabels every session filed under it.
+  // Renaming or deleting a group changes the registry on every host that holds
+  // it and relabels every session filed under it.
+  const {
+    createGroup: createSharedCustomGroup,
+    renameGroup: renameSharedCustomGroup,
+    deleteGroup: deleteSharedCustomGroup,
+    recolorGroup: recolorSharedCustomGroup,
+  } = customGroupRegistry;
   const renameCustomGroup = useCallback(
     (groupId: string, label: string) => {
       updateGrouping((current) => renamePhaseSidebarCustomGroup(current, groupId, label));
+      renameSharedCustomGroup(groupId, label);
       for (const row of rows) {
         if (phaseSidebarCustomGroupIdForRow(row) === groupId) {
           setThreadCustomGroup(row.thread, label);
         }
       }
     },
-    [rows, setThreadCustomGroup, updateGrouping],
+    [renameSharedCustomGroup, rows, setThreadCustomGroup, updateGrouping],
   );
   const deleteCustomGroup = useCallback(
     (groupId: string) => {
       updateGrouping((current) => deletePhaseSidebarCustomGroup(current, groupId));
+      deleteSharedCustomGroup(groupId);
       for (const row of rows) {
         if (phaseSidebarCustomGroupIdForRow(row) === groupId)
           setThreadCustomGroup(row.thread, null);
       }
     },
-    [rows, setThreadCustomGroup, updateGrouping],
+    [deleteSharedCustomGroup, rows, setThreadCustomGroup, updateGrouping],
+  );
+  const recolorCustomGroup = useCallback(
+    (groupId: string, colorId: string | null) =>
+      recolorSharedCustomGroup(
+        groupId,
+        customGroups.find((group) => group.id === groupId)?.label ?? groupId,
+        colorId,
+      ),
+    [customGroups, recolorSharedCustomGroup],
   );
 
   const projectLabelFor = useCallback(
@@ -404,6 +435,9 @@ export function PhaseSidebarPane(props: {
         case "move-up":
         case "move-down":
           return;
+        case "color:default":
+          recolorCustomGroup(section.id, null);
+          return;
         case "delete":
           Alert.alert(
             "Delete group?",
@@ -418,23 +452,34 @@ export function PhaseSidebarPane(props: {
             ],
           );
           return;
+        default:
+          if (actionId.startsWith("color:")) {
+            recolorCustomGroup(section.id, actionId.slice("color:".length));
+          }
+          return;
       }
     },
-    [deleteCustomGroup],
+    [deleteCustomGroup, recolorCustomGroup],
   );
   // "New group…" from a row files that row; from the sheet it is an empty
-  // placeholder until a session is moved in.
+  // group until a session is moved in. Either way it is registered on a host
+  // that keeps shared groups; without one, the empty group is a device-local
+  // placeholder, as before.
   const createCustomGroup = useCallback(
     (label: string, seedThreadKey: string | null) => {
+      const sharedId = createSharedCustomGroup(label);
+      if (sharedId !== null) {
+        updateGrouping((current) => rememberPhaseSidebarCustomGroupOrder(current, sharedId));
+      }
       const seed =
         seedThreadKey === null
           ? null
           : rows.find((row) => `${row.thread.environmentId}:${row.thread.id}` === seedThreadKey);
       if (seed) setThreadCustomGroup(seed.thread, label);
-      else
+      else if (sharedId === null)
         updateGrouping((current) => createPhaseSidebarCustomGroup(current, { label }).preferences);
     },
-    [rows, setThreadCustomGroup, updateGrouping],
+    [createSharedCustomGroup, rows, setThreadCustomGroup, updateGrouping],
   );
   const moveCustomGroup = useCallback(
     (orderedIds: ReadonlyArray<string>, id: string, direction: "up" | "down") =>
@@ -531,6 +576,7 @@ export function PhaseSidebarPane(props: {
             onDeleteGroup={deleteCustomGroup}
             onMoveGroup={moveCustomGroup}
             onOpenEnvironment={openEnvironmentAppearance}
+            {...(canRecolorCustomGroups ? { onRecolorGroup: recolorCustomGroup } : {})}
             onRenameGroup={renameCustomGroup}
           />
         ) : null}
@@ -549,6 +595,8 @@ export function PhaseSidebarPane(props: {
         activeThreadKey={props.selectedThreadKey}
         contentContainerStyle={props.contentContainerStyle}
         contentInsetAdjustmentBehavior={props.contentInsetAdjustmentBehavior}
+        canRecolorGroups={canRecolorCustomGroups}
+        customGroupRegistry={sharedCustomGroups}
         drafts={drafts}
         environmentAppearanceFor={environmentAppearanceFor}
         environmentLabelFor={environmentLabelFor}

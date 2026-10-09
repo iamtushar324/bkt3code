@@ -11,6 +11,8 @@
 export * from "@t3tools/client-runtime/state/phase-sidebar";
 
 import type { PhaseSidebarPhaseId } from "@t3tools/client-runtime/state/phase-sidebar";
+// T3-CUSTOM(expbkt3): a custom group's colour is an inline style (a hex value).
+import type { CSSProperties } from "react";
 // T3-CUSTOM(expbkt3): Linear tags on a session.
 import type { LinearIssueStatusSummary, ThreadLinearLink } from "@t3tools/contracts";
 import { linearIssueFromBranch, parseLinearLinkUrl } from "@t3tools/shared/linearIssue";
@@ -78,6 +80,46 @@ export function phaseSidebarSectionHeaderClassName(phaseId: PhaseSidebarPhaseId 
     "mb-1.5 flex min-h-7 items-center gap-2 rounded-md border px-2 py-1 shadow-[inset_0_1px_0_rgb(255_255_255/0.025)]",
     "border-border/60 bg-muted/40 text-foreground/80",
   );
+}
+
+/**
+ * T3-CUSTOM(expbkt3): a managed custom-group header (XFN-59). This wrapper is
+ * only the positioning context for the actions overlay below; the pill inside
+ * is the same toggle every other header is (with its bottom margin moved
+ * here), so all headers keep one width and the actions sit inside the pill.
+ */
+export const PHASE_SIDEBAR_SECTION_MANAGED_HEADER_CLASS_NAME = "group/section relative mb-1.5";
+
+/**
+ * T3-CUSTOM(expbkt3): a custom group's colour, change-colour, rename and delete
+ * actions. They float over the right end of the header pill (the count) on
+ * hover, or while keyboard focus is on the header or one of them, so they take
+ * no layout width and Tab still reaches them. Shown while the colour picker is
+ * open, as row actions are while their menu is.
+ */
+export function phaseSidebarSectionActionsClassName(isSurfaceOpen: boolean): string {
+  return cn(
+    "absolute top-1/2 right-1 z-10 hidden -translate-y-1/2 items-center gap-0.5 rounded-md border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm group-hover/section:flex group-has-[:focus-visible]/section:flex",
+    isSurfaceOpen && "flex",
+  );
+}
+
+/** T3-CUSTOM(expbkt3): one icon button in the header actions overlay. */
+export const PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME =
+  "flex cursor-pointer items-center justify-center rounded p-0.5 text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+
+/**
+ * T3-CUSTOM(expbkt3): a custom group's colour as a tinted border and surface,
+ * for its header pill and its row chip. Null (no colour) keeps the neutral look.
+ */
+export function phaseSidebarCustomGroupAccentStyle(
+  color: string | null | undefined,
+): CSSProperties | undefined {
+  if (color === null || color === undefined) return undefined;
+  return {
+    borderColor: `color-mix(in srgb, ${color} 45%, transparent)`,
+    backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`,
+  };
 }
 
 /**
