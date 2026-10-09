@@ -5,7 +5,7 @@ import { AuthPreviewOperateScope, FILL_PREVIEW_VIEWPORT } from "@t3tools/contrac
 import { useAtomValue } from "@effect/atom-react";
 import { type ComponentProps, useEffect, useMemo } from "react";
 
-import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { desktopOwnEnvironmentIdAtom } from "~/fork/desktopOwnEnvironment"; // T3-CUSTOM(expbkt3)
 
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
@@ -21,7 +21,8 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
-  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  // T3-CUSTOM(expbkt3): a managed build launched `bk-local`, not its dev-server-1 primary.
+  const primaryEnvironmentId = useAtomValue(desktopOwnEnvironmentIdAtom);
   const sessions = useMemo(
     () =>
       Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {

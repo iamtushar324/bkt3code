@@ -1,5 +1,7 @@
 // T3-CUSTOM(expbkt3): BK Add-ons groups server-owned connections and callbacks.
 import { BkAddonsIntegrationsSection } from "../../fork/BkAddonsIntegrationsSection";
+// T3-CUSTOM(expbkt3): pair a phone with the managed desktop's bundled local server.
+import { LocalPhonePairingSection } from "../../fork/LocalPhonePairingSection";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
@@ -50,6 +52,8 @@ export function ExperimentsSettingsPanel() {
     <SettingsPageContainer>
       {/* T3-CUSTOM(expbkt3): connections and callbacks remain in the Experiments route. */}
       <BkAddonsIntegrationsSection />
+      {/* T3-CUSTOM(expbkt3): renders only in the managed desktop build. */}
+      <LocalPhonePairingSection />
       <SettingsSection title="Experimental features">
         {/* T3-CUSTOM(expbkt3): BEGIN — native plan review. */}
         <SettingsRow

@@ -1390,6 +1390,22 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — preview browser host for this environment.
+/**
+ * Which browser hosts a preview tab opened against this environment.
+ *
+ * - `client`: a desktop app draws the tab in its own Electron browser, on the
+ *   user's machine, with that machine's network and logins. Agents' `preview_*`
+ *   tools also go to a connected desktop first. Clients with no browser of
+ *   their own (web, phone) still use the server browser.
+ * - `server`: the environment's headless browser hosts every tab and streams it.
+ *
+ * Server-owned, so every user of the host sees the same choice.
+ */
+export const PreviewBrowserHostSetting = Schema.Literals(["client", "server"]);
+export type PreviewBrowserHostSetting = typeof PreviewBrowserHostSetting.Type;
+// T3-CUSTOM(expbkt3): END
+
 export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
@@ -1429,6 +1445,10 @@ export const ServerSettings = Schema.Struct({
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  // T3-CUSTOM(expbkt3): which browser hosts preview tabs on this environment.
+  previewBrowser: PreviewBrowserHostSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed("client" as const)),
   ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
@@ -1862,6 +1882,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
+  previewBrowser: Schema.optionalKey(PreviewBrowserHostSetting), // T3-CUSTOM(expbkt3)
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(

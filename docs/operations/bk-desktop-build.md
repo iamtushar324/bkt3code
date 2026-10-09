@@ -39,9 +39,9 @@ continues using its existing data and staging begins with its own state.
 The bundled backend is single-user and keyless — no Clerk configuration ever
 reaches it, so it advertises no team capability and member surfaces stay
 hidden on local threads by design. Its state follows the channel rules above.
-The Connections settings intentionally do not show the
-local-backend admin rows (network exposure, WSL, pairing-link management):
-those manage a _primary_ local backend, which a managed build does not have.
+The Connections settings intentionally do not show the local-backend admin
+rows (network exposure, WSL, pairing-link management): those manage a
+_primary_ local backend, which a managed build does not have.
 
 To run agents on a teammate's Mac from elsewhere, install and launch `t3`
 separately on that Mac, expose it through an appropriate HTTPS/Tailscale or
@@ -51,6 +51,54 @@ remains a secondary environment; `bkt3.dev` or `stagebkt3.dev` stays primary.
 Every push to `stage` or `bkmain` triggers `.github/workflows/bk-desktop-release.yml` on a GitHub-hosted `macos-26` runner, which builds that branch's app and publishes it. Standard GitHub-hosted runners are free on public repositories, so this costs nothing and needs no machine of ours. Running apps poll every 4 minutes and download in the background, then raise a native notification when a build is ready. Clicking that notification **surfaces the update in the app; it does not restart** — see [Update behaviour](#update-behaviour).
 
 **A push is currently the only way to trigger a build.** The workflow declares `workflow_dispatch`, but GitHub only offers that trigger for workflows present on the repository's **default branch** — and this fork's default branch is `main`, the pure upstream mirror, which by design never carries fork-owned workflows. So the "Run workflow" button will not appear. Push to `stage` or `bkmain` instead, or build locally (see [Manual builds](#manual-builds)).
+
+### Connect a phone to the local server
+
+**Settings → BK Add-ons → Connect phone to local server** (managed desktop builds
+only) pairs a phone with the Mac's bundled backend, not with dev-server-1:
+
+1. The renderer's `bk-local` session is minted with `AuthAdministrativeScopes`
+   (`bkBundledBackendScopes` in `apps/web/src/fork/managedEnvironment.ts`, one seam
+   in `connection/platform.ts`). Other desktop-local backends (WSL) keep upstream's
+   standard scopes. The desktop bootstrap grant is administrative, so this asks for
+   nothing the token does not already allow.
+2. The backend binds 127.0.0.1 by default. The section offers **Reachable on my
+   network** (binds 0.0.0.0, LAN and tailnet addresses) and **Tailscale HTTPS**
+   (Tailscale Serve, works while still bound to loopback). Both relaunch the app.
+3. **Generate pairing link** calls `POST /api/auth/pairing-token` on `bk-local` with
+   the administrative scopes and shows the link (`<address>/pair#token=<code>`), a QR
+   code, the address and the bare code. Codes expire after 5 minutes; regenerating
+   or **Revoke** removes the unused link. The phone gets every scope on the code,
+   so it can manage the Mac server's access too.
+
+The calls reuse the renderer's existing bearer connection
+(`apps/web/src/fork/localServerPairing.ts`). They must never exchange the desktop
+bootstrap token again: the server replaces the subject's other bootstrap sessions
+(`replaceActiveForSubjectAndMethod` in `EnvironmentAuth.ts`), which would drop the
+renderer's own connection to `bk-local`.
+
+### Preview browser: client or server
+
+Since upstream `ac8e9453c` (merged into `stage` by PR #278) every T3 server can host
+browser tabs in its own headless Chromium and stream them to clients. The fork adds
+a host setting, `previewBrowser`, in **Settings → Integrations → Browser → Preview
+browser**. It is a server setting, so one change applies to every user of that host.
+
+| Value              | A tab the user opens                                                                                                                                                                                     | Agent `preview_*` tools       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `client` (default) | The desktop app draws it in its own Electron `<webview>` on the user's Mac, with that Mac's network and logins. Web and phone clients, which have no browser of their own, still get the server browser. | The server's headless browser |
+| `server`           | The host's headless browser runs it and every client streams it.                                                                                                                                         | The server's headless browser |
+
+Agents always use the server browser: upstream removed the desktop automation host
+(about 5.8k lines across desktop, web and client-runtime) in the same commit, so a
+desktop-drawn tab cannot be driven by an agent. Restoring that is a separate change.
+
+The rule lives in `apps/web/src/fork/previewBrowserHost*.ts` (one call in
+`browser/previewRuntime.ts`). A related fix in `apps/web/src/fork/desktopOwnEnvironment.ts`
+makes the managed build treat `bk-local`, not its dev-server-1 primary, as "the server
+this desktop launched". Before it, a stagebkt3 server tab rendered as a local webview that
+nothing drove, and a `bk-local` server tab waited 10 s and then streamed headless Chromium
+from the Mac.
 
 ## Managed builds are keyless
 
