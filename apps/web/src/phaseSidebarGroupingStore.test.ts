@@ -20,7 +20,9 @@ const collapsedKeys = () => new Set(store().grouping.collapsedSectionKeys);
 const storage = () => usePhaseSidebarGroupingStore.persist.getOptions().storage!;
 
 async function readStoredGrouping(): Promise<PhaseSidebarGroupingPreferences | undefined> {
-  const saved = await storage().getItem(PHASE_SIDEBAR_GROUPING_STORAGE_KEY);
+  const saved = (await storage().getItem(PHASE_SIDEBAR_GROUPING_STORAGE_KEY)) as {
+    readonly state: { readonly grouping?: PhaseSidebarGroupingPreferences };
+  } | null;
   return saved?.state.grouping;
 }
 

@@ -16,7 +16,7 @@ export function PhaseRowWorkingStatus(props: {
   return (
     <span
       data-testid={props.testId}
-      className="inline-flex shrink-0 items-center gap-0.5 text-[9px] font-medium leading-none text-info"
+      className="inline-flex shrink-0 items-center gap-0.5 text-3xs font-medium leading-none text-info"
     >
       <CircleDashedIcon aria-hidden className="size-2.5 shrink-0" />
       {/* The label alone is the live region, as upstream: a role="status"

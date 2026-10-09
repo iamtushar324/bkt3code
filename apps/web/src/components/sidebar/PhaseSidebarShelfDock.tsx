@@ -133,11 +133,11 @@ function PhaseSidebarShelf(props: {
         />
         {holdsOpenThread ? (
           <span
-            aria-hidden
-            title="The open thread is on this shelf"
             data-testid={`phase-sidebar-${id}-shelf-open-thread`}
             className="size-1.5 shrink-0 rounded-full bg-primary"
-          />
+          >
+            <span className="sr-only">The open thread is on this shelf</span>
+          </span>
         ) : null}
         <span className="text-[9px] tabular-nums text-muted-foreground/55">{shelf.count}</span>
         <ChevronDownIcon
