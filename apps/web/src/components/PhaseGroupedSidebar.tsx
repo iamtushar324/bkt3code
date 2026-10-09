@@ -24,6 +24,7 @@ import {
   // T3-CUSTOM(expbkt3): session lineage.
   type ThreadId,
   type VcsStatusResult,
+  isReservedThreadCustomGroup,
 } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import {
@@ -47,6 +48,8 @@ import {
   LaptopIcon,
   // T3-CUSTOM(expbkt3): Linear sub-issue tag.
   ListTreeIcon,
+  // T3-CUSTOM(expbkt3): a custom group's colour (XFN-59).
+  PaletteIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -254,7 +257,16 @@ import {
 import { usePhaseSidebarGroupingStore } from "../phaseSidebarGroupingStore";
 import { PhaseSidebarGroupByPopover } from "./sidebar/PhaseSidebarGroupByPopover";
 import { PhaseSidebarGroupNameDialog } from "./sidebar/PhaseSidebarGroupNameDialog";
-import { phaseSidebarSectionHeaderClassName } from "./sidebar/PhaseGroupedSidebar.logic";
+import {
+  PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
+  PHASE_SIDEBAR_SECTION_MANAGED_HEADER_CLASS_NAME,
+  phaseSidebarCustomGroupAccentStyle,
+  phaseSidebarSectionActionsClassName,
+  phaseSidebarSectionHeaderClassName,
+} from "./sidebar/PhaseGroupedSidebar.logic";
+// T3-CUSTOM(expbkt3): shared custom groups and their colours (XFN-59).
+import { PhaseSidebarGroupColorSwatches } from "./sidebar/PhaseSidebarGroupColorSwatches";
+import { usePhaseSidebarCustomGroupRegistry } from "./sidebar/usePhaseSidebarCustomGroupRegistry";
 import { MoveUnderSessionDialog } from "./sidebar/MoveUnderSessionDialog";
 import { NewThreadProjectPicker } from "./sidebar/NewThreadProjectPicker";
 // T3-CUSTOM(expbkt3): the dedicated unstarted-drafts group shares normal composer state.
@@ -1038,6 +1050,8 @@ interface PhaseThreadRowProps {
   readonly customGroupId?: string | null;
   /** The group's display label, shown as a chip outside Custom mode only. */
   readonly customGroupLabel?: string | null;
+  /** The group's colour (a hex value) from the shared registry, tinting that chip. */
+  readonly customGroupColor?: string | null;
   // T3-CUSTOM(expbkt3): END
 }
 
@@ -1129,6 +1143,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     groupActions,
     customGroupId,
     customGroupLabel,
+    customGroupColor,
   } = props;
   const threadRef = scopeThreadRef(row.thread.environmentId, row.thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -2374,6 +2389,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
               aria-label={`Group ${customGroupLabel}`}
               data-testid={`phase-thread-group-${row.thread.id}`}
               className="max-w-24 truncate rounded-sm border border-border/60 px-1 py-0.5 text-4xs font-medium text-muted-foreground"
+              style={phaseSidebarCustomGroupAccentStyle(customGroupColor)}
             >
               {customGroupLabel}
             </span>
@@ -2819,7 +2835,10 @@ export function PhaseGroupedSidebar() {
   const toggleSectionCollapsed = usePhaseSidebarGroupingStore(
     (state) => state.toggleSectionCollapsed,
   );
-  const createCustomGroup = usePhaseSidebarGroupingStore((state) => state.createGroup);
+  const createCustomGroupLocally = usePhaseSidebarGroupingStore((state) => state.createGroup);
+  const rememberCustomGroupOrder = usePhaseSidebarGroupingStore(
+    (state) => state.rememberGroupOrder,
+  );
   const renameCustomGroupLocally = usePhaseSidebarGroupingStore((state) => state.renameGroup);
   const forgetCustomGroup = usePhaseSidebarGroupingStore((state) => state.forgetGroup);
   const moveCustomGroup = usePhaseSidebarGroupingStore((state) => state.moveGroup);
@@ -2830,13 +2849,30 @@ export function PhaseGroupedSidebar() {
     readonly id: string;
     readonly label: string;
   } | null>(null);
+  // XFN-59: every connected host's shared groups (names, colours, empty
+  // groups), and the settings writes that change them. Without a host that
+  // keeps the registry, groups stay this device's placeholders.
+  const customGroupRegistry = usePhaseSidebarCustomGroupRegistry({
+    serverConfigs,
+    primaryEnvironmentId,
+  });
+  const sharedCustomGroups = customGroupRegistry.registry;
   // Every custom group in view, for the row menu, the popover and the filter.
   const customGroupOptions = useMemo(
-    () => listPhaseSidebarCustomGroups(allRows, grouping),
-    [allRows, grouping],
+    () => listPhaseSidebarCustomGroups(allRows, grouping, sharedCustomGroups),
+    [allRows, grouping, sharedCustomGroups],
   );
   const customGroupLabels = useMemo(
     () => new Map(customGroupOptions.map((group) => [group.id, group.label] as const)),
+    [customGroupOptions],
+  );
+  const customGroupColors = useMemo(
+    () =>
+      new Map(
+        customGroupOptions.flatMap((group) =>
+          group.color === undefined ? [] : [[group.id, group.color] as const],
+        ),
+      ),
     [customGroupOptions],
   );
   const projectLabelFor = useCallback(
@@ -2862,6 +2898,7 @@ export function PhaseGroupedSidebar() {
         grouping,
         projectLabelFor,
         environmentLabelFor,
+        customGroupRegistry: sharedCustomGroups,
       }),
     [
       activeRows,
@@ -2870,6 +2907,7 @@ export function PhaseGroupedSidebar() {
       grouping,
       projectLabelFor,
       rowSort,
+      sharedCustomGroups,
       sortOrder,
       titleForThreadKey,
     ],
@@ -2920,19 +2958,51 @@ export function PhaseGroupedSidebar() {
     (groupId: string) => allRows.filter((row) => phaseSidebarCustomGroupIdForRow(row) === groupId),
     [allRows],
   );
+  // A new group is written to the shared registry (the primary environment's
+  // settings), so every user and agent of that host sees it, empty or not; a
+  // host without the registry keeps today's device-local placeholder.
+  const {
+    createGroup: createSharedCustomGroup,
+    renameGroup: renameSharedCustomGroup,
+    deleteGroup: deleteSharedCustomGroup,
+    recolorGroup: recolorSharedCustomGroup,
+  } = customGroupRegistry;
+  const canRecolorCustomGroups = customGroupRegistry.homeEnvironmentId !== null;
+  const createCustomGroup = useCallback(
+    (label: string) => {
+      const sharedId = createSharedCustomGroup(label);
+      if (sharedId === null) {
+        createCustomGroupLocally(label);
+        return;
+      }
+      rememberCustomGroupOrder(sharedId);
+    },
+    [createCustomGroupLocally, createSharedCustomGroup, rememberCustomGroupOrder],
+  );
+  // Renaming and deleting change the registry on every host that holds the
+  // group AND relabel its sessions, which may sit on other hosts.
   const renameCustomGroup = useCallback(
     (groupId: string, label: string) => {
+      // "Ungrouped" is the built-in section; the sessions must not move there.
+      if (isReservedThreadCustomGroup(label)) return;
       renameCustomGroupLocally(groupId, label);
+      renameSharedCustomGroup(groupId, label);
       for (const row of rowsInCustomGroup(groupId)) void setThreadCustomGroup(row, label);
     },
-    [renameCustomGroupLocally, rowsInCustomGroup, setThreadCustomGroup],
+    [renameCustomGroupLocally, renameSharedCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
   );
   const deleteCustomGroup = useCallback(
     (groupId: string) => {
       forgetCustomGroup(groupId);
+      deleteSharedCustomGroup(groupId);
       for (const row of rowsInCustomGroup(groupId)) void setThreadCustomGroup(row, null);
     },
-    [forgetCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
+    [deleteSharedCustomGroup, forgetCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
+  );
+  const recolorCustomGroup = useCallback(
+    (groupId: string, colorId: string | null) =>
+      recolorSharedCustomGroup(groupId, customGroupLabels.get(groupId) ?? groupId, colorId),
+    [customGroupLabels, recolorSharedCustomGroup],
   );
   // Always offered, even before any group exists: "New group…" from a row is
   // how the first group gets made, whichever grouping mode is showing.
@@ -4009,6 +4079,7 @@ export function PhaseGroupedSidebar() {
         {...(groupActions ? { groupActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
         customGroupLabel={grouping.groupBy === "custom" ? null : (row.customGroup ?? null)}
+        customGroupColor={customGroupColors.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ?? null}
         linearIssueStatuses={linearStatusesForRow(row)}
         {...(tree ?? {})}
       />
@@ -4093,6 +4164,7 @@ export function PhaseGroupedSidebar() {
               onRenameGroup={renameCustomGroup}
               onDeleteGroup={deleteCustomGroup}
               onMoveGroup={moveCustomGroup}
+              {...(canRecolorCustomGroups ? { onRecolorGroup: recolorCustomGroup } : {})}
             />
             <PhaseFilterPopover
               repositories={repositoryOptions}
@@ -4140,6 +4212,12 @@ export function PhaseGroupedSidebar() {
                     onRenameGroup: () =>
                       setGroupRenameTarget({ id: section.id, label: section.label }),
                     onDeleteGroup: () => deleteCustomGroup(section.id),
+                    ...(canRecolorCustomGroups
+                      ? {
+                          onRecolorGroup: (colorId: string | null) =>
+                            recolorCustomGroup(section.id, colorId),
+                        }
+                      : {}),
                   }
                 : {})}
             />
@@ -4213,6 +4291,14 @@ export function PhaseGroupedSidebar() {
           if (!open) setGroupNameDialogRow(null);
         }}
         onSubmit={(label) => {
+          // "Ungrouped" is the built-in section, not a group to file the row in.
+          if (isReservedThreadCustomGroup(label)) {
+            setGroupNameDialogRow(null);
+            return;
+          }
+          // XFN-59: the group is registered too, so it outlives this session.
+          const sharedId = createSharedCustomGroup(label);
+          if (sharedId !== null) rememberCustomGroupOrder(sharedId);
           if (groupNameDialogRow) void setThreadCustomGroup(groupNameDialogRow, label);
           setGroupNameDialogRow(null);
         }}
@@ -4257,6 +4343,11 @@ export function PhaseGroupedSidebar() {
  * or a custom group. The header is the collapse toggle; when closed it keeps
  * saying what it hides (running / needs input / unread) so nothing goes quiet
  * just because it was folded away.
+ *
+ * A custom group's header also carries its colour (a dot and a tint, from the
+ * shared registry) and its actions — colour, rename, delete — which float
+ * inside the right end of the pill on hover or keyboard focus, so a managed
+ * header is exactly as wide as every other one (XFN-59).
  */
 function PhaseSidebarSectionBlock({
   section,
@@ -4266,6 +4357,7 @@ function PhaseSidebarSectionBlock({
   renderTreeNode,
   onRenameGroup,
   onDeleteGroup,
+  onRecolorGroup,
 }: {
   readonly section: PhaseSidebarGroupSection;
   readonly collapsed: boolean;
@@ -4275,10 +4367,76 @@ function PhaseSidebarSectionBlock({
   /** Custom groups are managed from their header; absent on every other section. */
   readonly onRenameGroup?: () => void;
   readonly onDeleteGroup?: () => void;
+  /** Absent when no connected host keeps shared groups for this session. */
+  readonly onRecolorGroup?: (colorId: string | null) => void;
 }) {
   const { summary } = section;
   const phaseId = phaseSidebarSectionPhase(section);
-  const manageable = onRenameGroup !== undefined || onDeleteGroup !== undefined;
+  const headerPhaseId = section.kind === "lifecycle" ? section.phaseId : phaseId;
+  const manageable =
+    onRenameGroup !== undefined || onDeleteGroup !== undefined || onRecolorGroup !== undefined;
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const toggle = (
+    <button
+      type="button"
+      aria-expanded={!collapsed}
+      aria-label={`${section.label}, ${section.nodes.length} session${section.nodes.length === 1 ? "" : "s"}${collapsed ? ", collapsed" : ""}`}
+      onClick={() => onToggleCollapsed(section.key)}
+      className={cn(
+        phaseSidebarSectionHeaderClassName(headerPhaseId),
+        "w-full cursor-pointer text-left",
+        // The managed wrapper holds the bottom margin, so the overlay centres on the pill.
+        manageable && "mb-0",
+      )}
+      // A phase tone (a closed group hiding urgent work) outranks the group colour.
+      style={headerPhaseId === null ? phaseSidebarCustomGroupAccentStyle(section.color) : undefined}
+    >
+      <ChevronDownIcon
+        aria-hidden
+        className={cn("size-3 shrink-0 transition-transform", collapsed && "-rotate-90")}
+      />
+      {section.color !== undefined ? (
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: section.color }}
+        />
+      ) : null}
+      <span className="truncate text-[11px] font-bold uppercase tracking-[0.1em]">
+        {section.label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[9px] text-current/55">
+        {section.helperText}
+      </span>
+      {collapsed && summary.attention > 0 ? (
+        <span
+          className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-red-700 dark:text-red-300"
+          aria-label={`${summary.attention} waiting on you`}
+        >
+          {summary.attention}
+        </span>
+      ) : null}
+      {collapsed && summary.running > 0 ? (
+        <span
+          className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+          aria-label={`${summary.running} running`}
+        >
+          {summary.running}
+        </span>
+      ) : null}
+      {collapsed && summary.unread > 0 ? (
+        <span
+          className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300"
+          aria-label={`${summary.unread} unread`}
+        >
+          {summary.unread}
+        </span>
+      ) : null}
+      <span className="min-w-4 rounded-full bg-background/45 px-1.5 py-0.5 text-center text-[9px] font-semibold tabular-nums text-current/70">
+        {section.nodes.length}
+      </span>
+    </button>
+  );
   return (
     <section
       className="mb-3"
@@ -4288,68 +4446,46 @@ function PhaseSidebarSectionBlock({
     >
       {/* A quiet boundary before live agent work. */}
       {showRunningDivider ? <RunningSessionDivider /> : null}
-      <div className={cn(manageable && "group/section flex items-stretch gap-0.5")}>
-        <button
-          type="button"
-          aria-expanded={!collapsed}
-          aria-label={`${section.label}, ${section.nodes.length} session${section.nodes.length === 1 ? "" : "s"}${collapsed ? ", collapsed" : ""}`}
-          onClick={() => onToggleCollapsed(section.key)}
-          className={cn(
-            phaseSidebarSectionHeaderClassName(
-              section.kind === "lifecycle" ? section.phaseId : phaseId,
-            ),
-            "w-full cursor-pointer text-left",
-            manageable && "min-w-0 flex-1",
-          )}
-        >
-          <ChevronDownIcon
-            aria-hidden
-            className={cn("size-3 shrink-0 transition-transform", collapsed && "-rotate-90")}
-          />
-          <span className="truncate text-[11px] font-bold uppercase tracking-[0.1em]">
-            {section.label}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-[9px] text-current/55">
-            {section.helperText}
-          </span>
-          {collapsed && summary.attention > 0 ? (
-            <span
-              className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-red-700 dark:text-red-300"
-              aria-label={`${summary.attention} waiting on you`}
-            >
-              {summary.attention}
-            </span>
-          ) : null}
-          {collapsed && summary.running > 0 ? (
-            <span
-              className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
-              aria-label={`${summary.running} running`}
-            >
-              {summary.running}
-            </span>
-          ) : null}
-          {collapsed && summary.unread > 0 ? (
-            <span
-              className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300"
-              aria-label={`${summary.unread} unread`}
-            >
-              {summary.unread}
-            </span>
-          ) : null}
-          <span className="min-w-4 rounded-full bg-background/45 px-1.5 py-0.5 text-center text-[9px] font-semibold tabular-nums text-current/70">
-            {section.nodes.length}
-          </span>
-        </button>
-        {manageable ? (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/section:opacity-100">
+      {manageable ? (
+        <div className={PHASE_SIDEBAR_SECTION_MANAGED_HEADER_CLASS_NAME}>
+          {toggle}
+          <span
+            className={phaseSidebarSectionActionsClassName(colorPickerOpen)}
+            data-testid="phase-sidebar-section-actions"
+          >
+            {onRecolorGroup ? (
+              <Popover open={colorPickerOpen} onOpenChange={setColorPickerOpen}>
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`Change colour of group ${section.label}`}
+                      className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
+                    />
+                  }
+                >
+                  <PaletteIcon aria-hidden className="size-3" />
+                </PopoverTrigger>
+                <PopoverPopup align="end" padding="compact">
+                  <PhaseSidebarGroupColorSwatches
+                    groupLabel={section.label}
+                    value={section.colorId ?? null}
+                    onSelect={(colorId) => {
+                      onRecolorGroup(colorId);
+                      setColorPickerOpen(false);
+                    }}
+                  />
+                </PopoverPopup>
+              </Popover>
+            ) : null}
             {onRenameGroup ? (
               <button
                 type="button"
                 aria-label={`Rename group ${section.label}`}
                 onClick={onRenameGroup}
-                className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
               >
-                <PencilIcon className="size-3" />
+                <PencilIcon aria-hidden className="size-3" />
               </button>
             ) : null}
             {onDeleteGroup ? (
@@ -4357,14 +4493,19 @@ function PhaseSidebarSectionBlock({
                 type="button"
                 aria-label={`Delete group ${section.label}`}
                 onClick={onDeleteGroup}
-                className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                className={cn(
+                  PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
+                  "hover:text-destructive",
+                )}
               >
-                <Trash2Icon className="size-3" />
+                <Trash2Icon aria-hidden className="size-3" />
               </button>
             ) : null}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        toggle
+      )}
       {collapsed ? null : section.nodes.length === 0 ? (
         <p className="px-2 py-1 text-[10px] text-muted-foreground/60">
           Empty — use “Move to group” on a session.

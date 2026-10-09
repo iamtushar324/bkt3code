@@ -239,12 +239,20 @@ export interface PhaseSidebarWorktreeView {
 }
 
 export function resolvePhaseSidebarWorktreeView(
-  threads: ReadonlyArray<Pick<ThreadShell, "title" | "worktreePath" | "archivedAt">>,
+  threads: ReadonlyArray<
+    Pick<ThreadShell, "title" | "worktreePath" | "archivedAt"> & {
+      readonly lineage?: ThreadShell["lineage"];
+    }
+  >,
 ): PhaseSidebarWorktreeView {
   const titlesByPath = new Map<string, string[]>();
   for (const thread of threads) {
     const worktreePath = thread.worktreePath?.trim();
     if (!worktreePath || thread.archivedAt != null) continue;
+    // Subagent threads run in their parent's worktree and never get a row, so
+    // they must not make one session's worktree read as shared (XFN-59: a
+    // session with 11 subagents showed "×12").
+    if (thread.lineage?.relationshipToParent === "subagent") continue;
     titlesByPath.set(worktreePath, [...(titlesByPath.get(worktreePath) ?? []), thread.title]);
   }
 

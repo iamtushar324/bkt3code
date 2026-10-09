@@ -446,6 +446,10 @@
       "types": "./src/state/phaseSidebarGrouping.ts",
       "default": "./src/state/phaseSidebarGrouping.ts"
     },
+    "./state/phase-sidebar-custom-group-registry": {
+      "types": "./src/state/phaseSidebarCustomGroupRegistry.ts",
+      "default": "./src/state/phaseSidebarCustomGroupRegistry.ts"
+    },
     "./state/thread-execution-presentation": {
       "types": "./src/state/threadExecutionPresentation.ts",
       "default": "./src/state/threadExecutionPresentation.ts"

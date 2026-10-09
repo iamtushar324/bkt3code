@@ -169,6 +169,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   // T3-CUSTOM(expbkt3): server understands customGroup on thread.create and
   // thread.meta.update. Same version-skew contract as threadPriority.
   threadCustomGroup: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): server keeps the shared custom-group registry (names
+  // and colours) in `threadCustomGroups` server settings, merged per entry.
+  threadCustomGroupRegistry: Schema.optionalKey(Schema.Boolean),
   /** T3-CUSTOM(expbkt3): durable manual Linear tags on thread metadata. */
   threadLinearIssue: Schema.optionalKey(Schema.Boolean),
   /** T3-CUSTOM(expbkt3): several Linear tags per thread — `linearLinks` on thread

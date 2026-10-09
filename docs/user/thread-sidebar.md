@@ -276,9 +276,37 @@ The sidebar's **Group by** control (the caption above the thread list, or the
 A custom group is a label on the thread itself, so everyone who can see the
 thread sees the same group, on every device. To file a thread, open its menu
 and choose **Move to group**, pick an existing group or **New group…**, or
-**Remove from group**. In Custom mode, a group's header offers rename and
-delete; renaming relabels every thread in the group, and deleting one returns
-its threads to **Ungrouped**.
+**Remove from group**.
+
+<!-- T3-CUSTOM(expbkt3): XFN-59 shared group registry, colours and header actions. -->
+
+The groups themselves are shared too. Each environment keeps a list of its
+groups, with a colour for each, in its server settings, so a group you create
+appears for every user, device, and agent of that environment, even before any
+thread is in it. Create one with **New** in the **Group by** menu, or with
+**New group…** from a thread's menu. With several environments connected, the
+sidebar shows the groups of all of them; when two environments disagree about
+a group's name or colour, the primary environment wins (on mobile, the
+environment in focus).
+
+In Custom mode, hover a group's header, or move keyboard focus into it, to show
+its actions inside the header: **Change colour**, **Rename**, and **Delete**.
+Pick one of twelve colours, or **Default** for the neutral look; on the web
+and desktop the header shows the colour as a dot and a tint (on iOS and
+Android as a dot), and so does the group chip on a thread row in the other
+modes. **Ungrouped** is the built-in section, so the sidebar does not let a group
+take that name. Renaming relabels every thread in the group, and
+deleting one returns its threads to **Ungrouped**; both change the group on
+every connected environment that has it. On iOS and Android, hold a group's
+header for the same actions, or use the **Group by** sheet. A group's
+position and whether it is collapsed stay on each device.
+
+Creating, recolouring, renaming, and deleting a shared group needs permission
+to change the environment's settings. Agents do it with the `t3_group_*` MCP
+tools, which need a full-access caller, the same as `t3_update_server_settings`. An environment whose server is too old
+to keep the shared list, or a connection without that permission, still lets
+you file threads; empty groups you create there are kept on your device only,
+as before, and the colour actions are hidden.
 
 Groups also work as a filter in every grouping mode: the filter menu's
 **Group** facet narrows the list to the selected groups, or to ungrouped
@@ -288,6 +316,11 @@ Agents can file the sessions they work on or create: `t3_update_session`
 accepts `customGroup` (or `null` to clear it), and `t3_list_sessions` reports
 and filters on it. Labels match case-insensitively, so an agent that reuses a
 label you typed joins your group.
+
+Agents manage the shared groups themselves with `t3_group_list` (every group,
+with its colour), `t3_group_save` (create a group, or change its colour),
+`t3_group_rename`, and `t3_group_remove`. Their changes appear in every
+connected sidebar at once.
 
 <!-- T3-CUSTOM(expbkt3): XFN-59 creation APIs that take a custom group. -->
 

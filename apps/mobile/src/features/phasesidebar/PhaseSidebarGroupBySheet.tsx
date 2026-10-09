@@ -2,8 +2,9 @@
 // groups — plus the management of those groups. Same chip idiom as the filter
 // sheet so the two read as one control set.
 //
-// The groups are the threads' shared labels; the pane owns the reads and the
-// server writes, this sheet only asks. Naming a group is an inline text field
+// The groups are the threads' shared labels plus the hosts' shared registry
+// (names and colours, XFN-59); the pane owns the reads and the server writes,
+// this sheet only asks. Naming a group is an inline text field
 // rather than a system prompt: `Alert.prompt` is iOS-only, and a field the
 // user can see is easier to correct than a dialog that has already closed.
 import {
@@ -18,6 +19,8 @@ import {
   type PhaseSidebarGroupingPreferences,
   type PhaseSidebarGroupOrder,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
+// T3-CUSTOM(expbkt3): a custom group's colour (XFN-59).
+import { PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, TextInput, View } from "react-native";
@@ -85,6 +88,8 @@ export function PhaseSidebarGroupBySheet(props: {
     id: string,
     direction: "up" | "down",
   ) => void;
+  /** Absent when no connected host keeps shared groups for this session. */
+  readonly onRecolorGroup?: (id: string, colorId: string | null) => void;
   readonly onClose: () => void;
   /** Opens the host appearance sheet for one environment. */
   readonly onOpenEnvironment: (environmentId: EnvironmentId) => void;
@@ -92,6 +97,9 @@ export function PhaseSidebarGroupBySheet(props: {
   const { grouping, groups, intent, onChange } = props;
   const iconColor = String(useUniwindTheme()["--color-icon"]);
   const placeholderColor = String(useUniwindTheme()["--color-foreground-tertiary"]);
+  const checkColor = String(useUniwindTheme()["--color-primary-foreground"]);
+  // The group whose colour swatches are open inline, if any.
+  const [colorEditingId, setColorEditingId] = useState<string | null>(null);
   // The inline editor: null when closed, otherwise what it is naming.
   const [editor, setEditor] = useState<
     | { readonly kind: "create"; readonly seedThreadKey: string | null; readonly label: string }
@@ -176,61 +184,134 @@ export function PhaseSidebarGroupBySheet(props: {
           ) : null}
           {groups.map((group, index) =>
             editor?.kind === "rename" && editor.groupId === group.id ? null : (
-              <View className="flex-row items-center gap-2 py-1" key={group.id}>
-                <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
-                  {group.label}
-                </Text>
-                <Text className="font-t3-mono text-[10px] text-foreground-muted">
-                  {group.count}
-                </Text>
-                {grouping.groupOrder === "manual" ? (
-                  <>
+              <View key={group.id}>
+                <View className="flex-row items-center gap-2 py-1">
+                  <View
+                    accessibilityElementsHidden
+                    className={cn(
+                      "h-2.5 w-2.5 rounded-full",
+                      group.color === undefined && "border border-foreground-tertiary",
+                    )}
+                    importantForAccessibility="no"
+                    style={group.color === undefined ? undefined : { backgroundColor: group.color }}
+                  />
+                  <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
+                    {group.label}
+                  </Text>
+                  <Text className="font-t3-mono text-[10px] text-foreground-muted">
+                    {group.count}
+                  </Text>
+                  {grouping.groupOrder === "manual" ? (
+                    <>
+                      <Pressable
+                        accessibilityLabel={`Move ${group.label} up`}
+                        disabled={index === 0}
+                        hitSlop={6}
+                        onPress={() => props.onMoveGroup(orderedIds, group.id, "up")}
+                        style={{ opacity: index === 0 ? 0.3 : 1 }}
+                      >
+                        <SymbolView
+                          name="arrow.up"
+                          size={13}
+                          tintColor={iconColor}
+                          type="monochrome"
+                        />
+                      </Pressable>
+                      <Pressable
+                        accessibilityLabel={`Move ${group.label} down`}
+                        disabled={index === groups.length - 1}
+                        hitSlop={6}
+                        onPress={() => props.onMoveGroup(orderedIds, group.id, "down")}
+                        style={{ opacity: index === groups.length - 1 ? 0.3 : 1 }}
+                      >
+                        <SymbolView
+                          name="arrow.down"
+                          size={13}
+                          tintColor={iconColor}
+                          type="monochrome"
+                        />
+                      </Pressable>
+                    </>
+                  ) : null}
+                  {props.onRecolorGroup ? (
                     <Pressable
-                      accessibilityLabel={`Move ${group.label} up`}
-                      disabled={index === 0}
+                      accessibilityLabel={`Change colour of ${group.label}`}
+                      accessibilityState={{ expanded: colorEditingId === group.id }}
                       hitSlop={6}
-                      onPress={() => props.onMoveGroup(orderedIds, group.id, "up")}
-                      style={{ opacity: index === 0 ? 0.3 : 1 }}
+                      onPress={() =>
+                        setColorEditingId((current) => (current === group.id ? null : group.id))
+                      }
                     >
                       <SymbolView
-                        name="arrow.up"
+                        name="paintbrush"
                         size={13}
                         tintColor={iconColor}
                         type="monochrome"
                       />
                     </Pressable>
+                  ) : null}
+                  <Pressable
+                    accessibilityLabel={`Rename ${group.label}`}
+                    hitSlop={6}
+                    onPress={() =>
+                      setEditor({ kind: "rename", groupId: group.id, label: group.label })
+                    }
+                  >
+                    <SymbolView name="pencil" size={13} tintColor={iconColor} type="monochrome" />
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Delete ${group.label}`}
+                    hitSlop={6}
+                    onPress={() => props.onDeleteGroup(group.id)}
+                  >
+                    <SymbolView name="trash" size={13} tintColor={iconColor} type="monochrome" />
+                  </Pressable>
+                </View>
+                {props.onRecolorGroup && colorEditingId === group.id ? (
+                  <View className="flex-row flex-wrap items-center gap-2 pb-2 pl-4">
                     <Pressable
-                      accessibilityLabel={`Move ${group.label} down`}
-                      disabled={index === groups.length - 1}
-                      hitSlop={6}
-                      onPress={() => props.onMoveGroup(orderedIds, group.id, "down")}
-                      style={{ opacity: index === groups.length - 1 ? 0.3 : 1 }}
+                      accessibilityLabel="Default colour"
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: group.colorId === undefined }}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1",
+                        group.colorId === undefined ? "border-primary" : "border-border",
+                      )}
+                      onPress={() => {
+                        props.onRecolorGroup?.(group.id, null);
+                        setColorEditingId(null);
+                      }}
                     >
-                      <SymbolView
-                        name="arrow.down"
-                        size={13}
-                        tintColor={iconColor}
-                        type="monochrome"
-                      />
+                      <Text className="text-xs text-foreground">Default</Text>
                     </Pressable>
-                  </>
+                    {PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS.map((option) => {
+                      const active = group.colorId === option.id;
+                      return (
+                        <Pressable
+                          accessibilityLabel={option.label}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                          className="h-7 w-7 items-center justify-center rounded-full"
+                          key={option.id}
+                          onPress={() => {
+                            props.onRecolorGroup?.(group.id, option.id);
+                            setColorEditingId(null);
+                          }}
+                          style={{ backgroundColor: option.value }}
+                        >
+                          {active ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={11}
+                              tintColor={checkColor}
+                              type="monochrome"
+                            />
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 ) : null}
-                <Pressable
-                  accessibilityLabel={`Rename ${group.label}`}
-                  hitSlop={6}
-                  onPress={() =>
-                    setEditor({ kind: "rename", groupId: group.id, label: group.label })
-                  }
-                >
-                  <SymbolView name="pencil" size={13} tintColor={iconColor} type="monochrome" />
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Delete ${group.label}`}
-                  hitSlop={6}
-                  onPress={() => props.onDeleteGroup(group.id)}
-                >
-                  <SymbolView name="trash" size={13} tintColor={iconColor} type="monochrome" />
-                </Pressable>
               </View>
             ),
           )}

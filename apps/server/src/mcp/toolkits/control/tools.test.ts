@@ -26,6 +26,11 @@ it("exports self-documenting, provider-compatible T3 control tools", () => {
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   expect(T3ControlToolkit.tools.t3_link_linear).toBeDefined();
   expect(T3ControlToolkit.tools.t3_unlink_linear).toBeDefined();
+  // T3-CUSTOM(expbkt3): the shared custom-group registry.
+  expect(T3ControlToolkit.tools.t3_group_list).toBeDefined();
+  expect(T3ControlToolkit.tools.t3_group_save).toBeDefined();
+  expect(T3ControlToolkit.tools.t3_group_rename).toBeDefined();
+  expect(T3ControlToolkit.tools.t3_group_remove).toBeDefined();
 
   for (const tool of tools) {
     const schema = Tool.getJsonSchema(tool) as {

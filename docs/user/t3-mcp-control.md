@@ -138,6 +138,10 @@ Revoked access does not return automatically. Bifrost remains available under
 | `t3_get_configuration`      | Discover redacted server settings and the live provider/model catalog, including supported model options.                    |
 | `t3_send_prompt`            | Start or steer a turn and optionally select model, runtime mode, and plan/default interaction mode.                          |
 | `t3_update_session`         | Keep title, Linear issue tag, custom group, priority, branch, model, runtime mode, and interaction mode current.             |
+| `t3_group_list`             | List custom groups: saved ones with their colour, label-only ones, visible session counts, and the colour ids.               |
+| `t3_group_save`             | Save a custom group (an empty one too), or set or clear its colour. Shared by every user and agent of the host.              |
+| `t3_group_rename`           | Rename a custom group, keep its colour, and re-file every non-archived session the caller can see.                           |
+| `t3_group_remove`           | Remove a custom group and its colour, and ungroup every non-archived session the caller can see. Missing groups are safe.    |
 | `t3_session_action`         | Interrupt, stop, restart, archive or unarchive, settle or activate, snooze or unsnooze, or delete.                           |
 | `t3_respond_approval`       | Resolve a pending provider approval using the request's allowed decision.                                                    |
 | `t3_respond_user_input`     | Answer a pending structured user-input request.                                                                              |
@@ -200,6 +204,48 @@ label its own work rather than leaving it to whoever opens the sidebar:
     there keeps it.
 
   Delegated tasks (`delegate_task`) and forks inherit the parent's group.
+
+  The groups themselves belong to the host. A saved group stays in the sidebar
+  with no session in it and may carry a colour; every user, client, and agent
+  sees the same groups and colours. They live in the `threadCustomGroups`
+  server setting, keyed by the lower-cased, single-spaced label. A label that
+  only sessions carry still forms a group, drawn with the default look. Four
+  tools manage groups:
+
+  - `t3_group_list` returns every saved group and every label a session the
+    caller can see carries, sorted by label. Each has `label`, `colorId`
+    (`null` for the default look), `registered` (saved), and `sessionCount`
+    (visible, non-archived sessions). `colors` lists the accepted colour ids.
+    Pass `label` to read one group.
+  - `t3_group_save` takes `label` and an optional `color`. It saves an empty
+    group or sets its colour; `null` clears the colour and an omitted `color`
+    keeps it. Another spelling of a saved name replaces the stored spelling.
+    It moves no session: file sessions with `customGroup` as above.
+  - `t3_group_rename` takes `label` and `newLabel`. A saved group moves to the
+    new name with its colour; a label-only group is renamed on its sessions
+    and stays unsaved. Every non-archived session the caller can see is then
+    re-filed; archived sessions keep the old label. The
+    new name may not already be another group: to merge two groups, move the
+    sessions with `t3_update_session`, then call `t3_group_remove`.
+  - `t3_group_remove` takes `label`. It deletes the saved group and its colour
+    and ungroups every non-archived session the caller can see, as **Delete group** in the
+    sidebar does. The sessions stay. Removing a missing group is safe.
+
+  Colour ids: `blue`, `violet`, `pink`, `red`, `orange`, `amber`, `lime`,
+  `emerald`, `teal`, `cyan`, `indigo`, `slate`.
+
+  Rename and remove re-file each session with its own `thread.meta.update`.
+  A session whose update fails keeps its label and is listed in `skipped`
+  with the reason; the rest still move. Sessions the caller cannot see keep their
+  label. `t3_group_list` needs `t3.read`; the other three need `t3.control`
+  and a full-access caller, as `t3_update_server_settings` does. `t3_group_save`,
+  a new name in `t3_group_rename`, and `customGroup` refuse the name
+  `Ungrouped`, the sidebar's built-in section; pass it as the current name to
+  `t3_group_remove` to clear it from sessions that got it another way.
+  Clients that write the registry directly send a `threadCustomGroups`
+  settings patch: a definition upserts one group, `null` removes one, and the
+  server re-keys every entry by its label. Servers that support the registry
+  advertise the `threadCustomGroupRegistry` capability.
 
 - **Pull requests** — `link_pull_request`, once per review, including each layer
   of a stack. A session can hold several; the sidebar shows the current one's

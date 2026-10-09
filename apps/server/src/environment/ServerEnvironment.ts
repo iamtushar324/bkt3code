@@ -253,6 +253,8 @@ export const make = Effect.gen(function* () {
       threadPriority: true,
       // T3-CUSTOM(expbkt3): custom sidebar groups on thread metadata.
       threadCustomGroup: true,
+      // T3-CUSTOM(expbkt3): shared custom-group registry with colours (XFN-59).
+      threadCustomGroupRegistry: true,
       // T3-CUSTOM(expbkt3): durable manual Linear tags.
       threadLinearIssue: true,
       // T3-CUSTOM(expbkt3): several Linear tags per thread (add/remove).

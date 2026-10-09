@@ -14,6 +14,8 @@ import {
   ThreadId,
   ThreadPriority,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  // T3-CUSTOM(expbkt3): the shared custom-group registry and its colours.
+  THREAD_CUSTOM_GROUP_COLOR_IDS,
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   THREAD_LINEAR_LINKS_MAX,
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
@@ -79,6 +81,9 @@ const projectDependencies = [
   ServerSettingsService,
 ];
 const updateProjectDependencies = [...dependencies, ServerSettingsService];
+// T3-CUSTOM(expbkt3): the custom-group tools read and write the registry in
+// server settings.
+const groupRegistryDependencies = [...dependencies, ServerSettingsService];
 const sessionDependencies = [...dependencies, ...ownershipDependencies];
 const sessionCreationDependencies = [
   ...sessionDependencies,
@@ -820,6 +825,94 @@ export const T3UserPresenceTool = readonlyTool(
 );
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — the shared custom-group registry (XFN-59).
+//
+// A custom group files sessions under a section of the sidebar's Custom view.
+// Sessions join one through t3_update_session / t3_create_session customGroup;
+// these tools manage the groups themselves: saved (possibly empty) groups and
+// their colours live in the host's server settings, shared by every user and
+// agent. Names avoid "create", "file", "agent" and "command" for the same
+// classifier reason as t3_show_ui.
+const groupColorIds = THREAD_CUSTOM_GROUP_COLOR_IDS.join(", ");
+
+const groupLabel = (description: string) => described(Schema.String, description);
+
+export const T3GroupListTool = readonlyTool(
+  Tool.make("t3_group_list", {
+    description: `List the custom groups that organise sessions in the sidebar's Custom view: every saved group (shared by all users and agents of this host, with its colour) and every group label carried by a session you can see. Each group reports its label, colorId (null for the default look), registered (true when it is saved, so it stays even with no sessions in it) and sessionCount (your visible, non-archived sessions in it). The result also lists the colour ids t3_group_save accepts: ${groupColorIds}. Call this before filing a session so you reuse an existing group's exact name.`,
+    parameters: Schema.Struct({
+      // An empty struct serializes as `anyOf [object, array]`, which some
+      // providers reject, so the list takes one optional filter.
+      label: Schema.optional(
+        groupLabel(
+          "Return only the group with this label, matched case-insensitively. Omit to list every group.",
+        ),
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies: groupRegistryDependencies,
+  }).annotate(Tool.Title, "List custom session groups"),
+);
+
+export const T3GroupSaveTool = mutatingTool(
+  Tool.make("t3_group_save", {
+    description:
+      "Save a custom group in the sidebar's Custom view, or change its colour. Use it to make an empty group before any session is in it, or to give a group a colour; every user and agent of this host sees the same groups and colours. Saving a group that already exists keeps its colour unless you pass color, and adopts your spelling of its name. This does not move any session: to put a session in a group, call t3_update_session with customGroup (or pass customGroup to t3_create_session). Saved groups are host settings, so this needs a full-access caller, as t3_update_server_settings does. The name Ungrouped is reserved for the built-in section.",
+    parameters: Schema.Struct({
+      label: groupLabel(
+        `Name of the group, 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. Matched case-insensitively against existing groups, so "Sprint 42" and "sprint 42" are the same group.`,
+      ),
+      color: Schema.optional(
+        described(
+          Schema.NullOr(Schema.String),
+          `Colour id for the group, one of: ${groupColorIds}. Pass null to clear the colour and use the default look; omit to keep the current colour.`,
+        ),
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies: groupRegistryDependencies,
+  })
+    .annotate(Tool.Title, "Save custom session group")
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true),
+);
+
+export const T3GroupRenameTool = mutatingTool(
+  Tool.make("t3_group_rename", {
+    description:
+      "Rename a custom group: every non-archived session you can see in it moves to the new name, and a saved group keeps its colour under the new name. Use it instead of re-filing sessions one at a time. A group that only exists through session labels stays unsaved; call t3_group_save afterwards to save it. The new name must not already be another group: to merge two groups, move the sessions with t3_update_session and then call t3_group_remove. Sessions you cannot see keep the old name; a session whose update fails keeps it too and is listed under skipped with the reason. Needs a full-access caller, as t3_update_server_settings does.",
+    parameters: Schema.Struct({
+      label: groupLabel(
+        "Current name of the group, matched case-insensitively, as shown by t3_group_list.",
+      ),
+      newLabel: groupLabel(
+        `New name for the group, 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. A different spelling of the current name (for example a capital letter) only changes how it is written.`,
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies: groupRegistryDependencies,
+  }).annotate(Tool.Title, "Rename custom session group"),
+);
+
+export const T3GroupRemoveTool = mutatingTool(
+  Tool.make("t3_group_remove", {
+    description:
+      "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every non-archived session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; a session whose update fails keeps it too and is listed under skipped with the reason. Pass Ungrouped to clear that label from sessions that got it another way. Needs a full-access caller, as t3_update_server_settings does.",
+    parameters: Schema.Struct({
+      label: groupLabel(
+        "Name of the group to remove, matched case-insensitively, as shown by t3_group_list.",
+      ),
+    }),
+    success: Schema.Unknown,
+    failure: T3ControlFailure,
+    dependencies: groupRegistryDependencies,
+  }).annotate(Tool.Title, "Remove custom session group"),
+);
+// T3-CUSTOM(expbkt3): END
+
 export const T3ControlToolkit = Toolkit.make(
   T3ListSessionsTool,
   T3GetSessionTool,
@@ -849,4 +942,9 @@ export const T3ControlToolkit = Toolkit.make(
   T3ReplyCommentTool,
   // T3-CUSTOM(expbkt3): user presence.
   T3UserPresenceTool,
+  // T3-CUSTOM(expbkt3): the shared custom-group registry.
+  T3GroupListTool,
+  T3GroupSaveTool,
+  T3GroupRenameTool,
+  T3GroupRemoveTool,
 );
