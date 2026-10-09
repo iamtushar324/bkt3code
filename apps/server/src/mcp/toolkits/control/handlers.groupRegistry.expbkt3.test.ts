@@ -373,4 +373,18 @@ it.layer(NodeServices.layer)("t3_group_remove", (it) => {
       expect(dispatcher.dispatched).toHaveLength(0);
     }),
   );
+
+  it.effect("accepts the reserved Ungrouped name as the group to clear", () =>
+    Effect.gen(function* () {
+      const settings = makeSettings();
+      const dispatcher = makeDispatcher();
+      // A stray "Ungrouped" label can reach sessions through other tools; the
+      // agent must be able to clear it, so only new names are refused.
+      const result = yield* __testing
+        .groupRemove({ label: "Ungrouped" })
+        .pipe(provide(settings.service, dispatcher.service));
+      expect(result).toMatchObject({ removed: false, savedGroupRemoved: false });
+      expect(settings.patches).toHaveLength(0);
+    }),
+  );
 });
