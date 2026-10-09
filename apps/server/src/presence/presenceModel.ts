@@ -5,8 +5,13 @@
  * the tracker keeps after a lease expires) and the durable facts the server
  * already stores (auth-session last-seen, last message in the thread) into one
  * answer an agent can act on before it stops: who is relevant to this session,
- * whether each of them is looking at it right now, and whether to ask in chat,
- * ping Mattermost, or simply wait.
+ * whether each of them is looking at it right now, and whether to ask in chat
+ * now or re-check shortly first.
+ *
+ * Presence never recommends a Mattermost message. Whoever is or is not at the
+ * keyboard, the question goes in the session chat and the session stays open:
+ * people read T3 on their phones. When an agent may post to Mattermost is set
+ * by the global agent instructions, not by presence.
  *
  * Nothing here touches a service, so every branch is unit-tested in
  * `presenceModel.test.ts`.
@@ -25,8 +30,8 @@ export const PRESENCE_LEASE_TTL_MS = 45_000;
 export const PRESENCE_WARMUP_MS = 2 * PRESENCE_HEARTBEAT_INTERVAL_MS;
 /**
  * Durable evidence younger than this (a message, an auth-session reconnect)
- * means the person was here a moment ago and is worth waiting for before
- * escalating to Mattermost.
+ * means the person was here a moment ago, so a missing live client is worth a
+ * quick re-check rather than a conclusion that they are away.
  */
 export const PRESENCE_RECENT_EVIDENCE_MS = 2 * 60_000;
 /**
@@ -46,11 +51,13 @@ export type PresenceState =
 
 export type PresenceRole = "owner" | "member" | "last-sender" | "viewer";
 
-export type PresenceAction =
-  | "ask-in-chat"
-  | "ask-in-chat-and-notify"
-  | "notify-mattermost"
-  | "wait-for-reply";
+/**
+ * `ask-in-chat`: ask in the session chat and keep the session open.
+ * `wait-for-reply`: ask in chat too, but the picture is not settled yet
+ * (the person was here moments ago, or the server just restarted), so
+ * re-check after `suggestedFollowUpSeconds`.
+ */
+export type PresenceAction = "ask-in-chat" | "wait-for-reply";
 
 /** One client as the tracker last saw it. Times are epoch milliseconds. */
 export interface PresenceClientInput {
@@ -407,10 +414,10 @@ export function recommend(
   const warmingUp = isWarmingUp(nowMs, trackingSinceMs);
   if (best === undefined) {
     return {
-      action: warmingUp ? "wait-for-reply" : "notify-mattermost",
+      action: warmingUp ? "wait-for-reply" : "ask-in-chat",
       reason: warmingUp
-        ? `nobody is linked to this session and ${describeWarmup(nowMs, trackingSinceMs)}; re-check before escalating`
-        : "nobody is linked to this session and no client has reported",
+        ? `nobody is linked to this session and ${describeWarmup(nowMs, trackingSinceMs)}; ask in chat and re-check shortly`
+        : "nobody is linked to this session and no client has reported; ask in chat and keep the session open",
       suggestedFollowUpSeconds: warmingUp ? 60 : 1800,
     };
   }
@@ -424,20 +431,20 @@ export function recommend(
       };
     case "active-elsewhere":
       return {
-        action: "ask-in-chat-and-notify",
-        reason: `${label} is active but in another session (${best.stateReason}); ask in chat and send a short Mattermost pointer`,
+        action: "ask-in-chat",
+        reason: `${label} is active but in another session (${best.stateReason}); ask in chat and keep the session open`,
         suggestedFollowUpSeconds: 300,
       };
     case "idle":
       return {
-        action: "ask-in-chat-and-notify",
-        reason: `${label} has T3 open but has not touched it lately (${best.stateReason}); ask in chat and nudge on Mattermost`,
+        action: "ask-in-chat",
+        reason: `${label} has T3 open but has not touched it lately (${best.stateReason}); ask in chat and keep the session open`,
         suggestedFollowUpSeconds: 600,
       };
     case "background":
       return {
-        action: "ask-in-chat-and-notify",
-        reason: `${label} is connected but T3 is in the background (${best.stateReason}); ask in chat and notify on Mattermost`,
+        action: "ask-in-chat",
+        reason: `${label} is connected but T3 is in the background (${best.stateReason}); ask in chat and keep the session open`,
         suggestedFollowUpSeconds: 900,
       };
     case "away":
@@ -449,14 +456,14 @@ export function recommend(
         return {
           action: "wait-for-reply",
           reason: warmingUp
-            ? `${describeWarmup(nowMs, trackingSinceMs)}, so a missing client is not evidence of absence; ask in chat, then re-check before escalating`
-            : `${label} was seen ${describeAgo(nowMs, nowMs - (best.secondsSinceSeen ?? 0) * 1000)} but has no live client; ask in chat and re-check shortly before notifying`,
+            ? `${describeWarmup(nowMs, trackingSinceMs)}, so a missing client is not evidence of absence; ask in chat, then re-check shortly`
+            : `${label} was seen ${describeAgo(nowMs, nowMs - (best.secondsSinceSeen ?? 0) * 1000)} but has no live client; ask in chat and re-check shortly`,
           suggestedFollowUpSeconds: 60,
         };
       }
       return {
-        action: "notify-mattermost",
-        reason: `${label} has no live client (${best.stateReason}); ask in chat, send a Mattermost DM, and keep waiting`,
+        action: "ask-in-chat",
+        reason: `${label} has no live client (${best.stateReason}); ask in chat and keep the session open, they read it when they come back`,
         suggestedFollowUpSeconds: 1800,
       };
     }

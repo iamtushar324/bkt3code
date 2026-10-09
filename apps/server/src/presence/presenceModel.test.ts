@@ -272,7 +272,7 @@ describe("recommend", () => {
     expect(recommendation.reason).toContain("Owner has this session open now");
   });
 
-  it("asks in chat and notifies for active-elsewhere, idle (even with this session open) and background", () => {
+  it("asks in chat, never on Mattermost, for active-elsewhere, idle (even with this session open) and background", () => {
     const cases: ReadonlyArray<[Partial<PresenceClientInput>, number]> = [
       [{ viewingThreadIds: [OTHER] }, 300],
       [stale, 600],
@@ -285,19 +285,23 @@ describe("recommend", () => {
         NOW,
         settled,
       );
-      expect(recommendation.action).toBe("ask-in-chat-and-notify");
+      expect(recommendation.action).toBe("ask-in-chat");
       expect(recommendation.suggestedFollowUpSeconds).toBe(followUp);
+      expect(recommendation.reason).toContain("keep the session open");
+      expect(recommendation.reason).not.toMatch(/mattermost/i);
     }
   });
 
-  it("notifies on Mattermost for someone away for a while", () => {
+  it("asks in chat and keeps the session open for someone away for a while", () => {
     const recommendation = recommend(
       [derived(person({ authSessionLastConnectedAtMs: NOW - 2 * PRESENCE_RECENT_EVIDENCE_MS }))],
       NOW,
       settled,
     );
-    expect(recommendation.action).toBe("notify-mattermost");
+    expect(recommendation.action).toBe("ask-in-chat");
     expect(recommendation.suggestedFollowUpSeconds).toBe(1800);
+    expect(recommendation.reason).toContain("keep the session open");
+    expect(recommendation.reason).not.toMatch(/mattermost/i);
   });
 
   it("waits for a reply when the person was here moments ago", () => {
@@ -319,7 +323,7 @@ describe("recommend", () => {
       "no client has reported since the server started",
     );
     expect(recommend([], NOW, justStarted).action).toBe("wait-for-reply");
-    expect(recommend([], NOW, settled).action).toBe("notify-mattermost");
+    expect(recommend([], NOW, settled).action).toBe("ask-in-chat");
   });
 
   it("follows the best-placed person", () => {
