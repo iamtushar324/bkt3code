@@ -1395,10 +1395,11 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
  * Which browser hosts a preview tab opened against this environment.
  *
  * - `client`: a desktop app draws the tab in its own Electron browser, on the
- *   user's machine, with that machine's network and logins. Agents' `preview_*`
- *   tools also go to a connected desktop first. Clients with no browser of
- *   their own (web, phone) still use the server browser.
+ *   user's machine, with that machine's network and logins. Clients with no
+ *   browser of their own (web, phone) still use the server browser.
  * - `server`: the environment's headless browser hosts every tab and streams it.
+ *
+ * Agents' `preview_*` tools always use the server browser, in both modes.
  *
  * Server-owned, so every user of the host sees the same choice.
  */
