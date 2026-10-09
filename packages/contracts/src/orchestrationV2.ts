@@ -1910,6 +1910,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   hasPendingAsyncUserInput: Schema.optional(Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  // T3-CUSTOM(expbkt3): XFN-59 — provider-native subagents (Claude Agent/Task tool and
+  // the like) still running under this thread, counted from its subagent turn items.
+  // Excludes delegate_task children, which are threads with their own runs.
+  // Omitted when none and by servers that predate it; read an absent field as 0.
+  activeSubagentCount: Schema.optional(NonNegativeInt),
   // Normalized post-settlement background work for sidebar Waiting pills.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(

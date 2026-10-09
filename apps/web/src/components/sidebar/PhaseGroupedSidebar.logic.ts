@@ -289,3 +289,39 @@ export function resolvePhaseSidebarLinearTags(
         : `${primary.label} (${primary.statusText})`;
   return { entries, primary, label };
 }
+
+/** T3-CUSTOM(expbkt3): what one parked shelf (snoozed, settled) renders. */
+export interface PhaseSidebarShelfRows<Row> {
+  /** The rows on screen: none while the shelf is collapsed. */
+  readonly rendered: ReadonlyArray<Row>;
+  /** Rows an expanded shelf pages out behind "Show more"; 0 while collapsed. */
+  readonly hiddenCount: number;
+  /** The open thread is parked on this shelf, whether or not it is on screen. */
+  readonly containsRoutedThread: boolean;
+}
+
+/**
+ * T3-CUSTOM(expbkt3): a collapsed shelf renders no rows — not even the open
+ * thread's, which used to be drawn inside it and made the shelf look open.
+ * Its header says the open thread is in there instead. An expanded shelf
+ * pages in `visibleCount` rows and adds the open thread when it is paged out,
+ * so a thread reached by route still has its wake or un-settle action.
+ */
+export function resolvePhaseSidebarShelfRows<Row>(input: {
+  readonly rows: ReadonlyArray<Row>;
+  readonly collapsed: boolean;
+  readonly keyOf: (row: Row) => string;
+  readonly routedKey: string | null;
+  /** How many rows an expanded shelf pages in; all of them when omitted. */
+  readonly visibleCount?: number;
+}): PhaseSidebarShelfRows<Row> {
+  const { rows, keyOf, routedKey } = input;
+  const routedIndex = routedKey === null ? -1 : rows.findIndex((row) => keyOf(row) === routedKey);
+  const containsRoutedThread = routedIndex !== -1;
+  if (input.collapsed) return { rendered: [], hiddenCount: 0, containsRoutedThread };
+  const page = rows.slice(0, Math.max(0, input.visibleCount ?? rows.length));
+  const routedRow = containsRoutedThread ? rows[routedIndex] : undefined;
+  const rendered =
+    routedRow !== undefined && routedIndex >= page.length ? [...page, routedRow] : page;
+  return { rendered, hiddenCount: rows.length - rendered.length, containsRoutedThread };
+}

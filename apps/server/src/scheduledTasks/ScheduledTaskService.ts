@@ -53,6 +53,11 @@ import {
   type WebhookRequest,
 } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+// T3-CUSTOM(expbkt3): BK sidebar custom group of the threads a task launches (XFN-59).
+import {
+  deleteScheduledTaskCustomGroup,
+  scheduledTaskCustomGroupFields,
+} from "./scheduledTaskCustomGroup.expbkt3.ts";
 
 /** Path prefix of the environment route that receives webhook requests. */
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -619,6 +624,8 @@ export const layer = Layer.effect(
       sql
         .withTransaction(
           sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${id}`.pipe(
+            // T3-CUSTOM(expbkt3): the task's custom group goes with it.
+            Effect.andThen(deleteScheduledTaskCustomGroup(sql, id)),
             Effect.andThen(sql`DELETE FROM scheduled_tasks WHERE task_id = ${id}`),
           ),
         )
@@ -788,6 +795,8 @@ export const layer = Layer.effect(
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
+        // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group; never fails.
+        const forkLaunchFields = yield* scheduledTaskCustomGroupFields(sql, active.id);
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
@@ -796,6 +805,7 @@ export const layer = Layer.effect(
           active.threadId === null
             ? yield* Effect.exit(
                 threadLaunch.launch({
+                  ...forkLaunchFields, // T3-CUSTOM(expbkt3)
                   commandId,
                   projectId: active.projectId,
                   title: active.title,

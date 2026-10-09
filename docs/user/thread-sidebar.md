@@ -187,6 +187,32 @@ project URL; **Remove Linear tag** takes one off. Agents add tags with
 `t3_link_linear`. When a session has more than one tag, click the chip to see
 and open all of them.
 
+## Read the BK sidebar
+
+With the **BK sidebar** on, a working thread shows **◌ Working** and how long its
+current work has run, such as `Working 4m`, where other rows show their age. It
+reads **Goal** while a native `/goal` keeps the agent going. Queued and waiting
+work counts; a thread that waits for your approval or answer shows that instead.
+The separate **RUNNING** badge stays hidden while the timer shows; **STARTING** and
+**MONITORING** still appear. On iOS and Android the same label replaces the row's
+age. A snoozed row keeps its wake time.
+
+A robot icon with a number shows how many of the agent's own subagents run right
+now under that thread. Hover it on web and desktop for the count in words. The
+count shows whether the thread's child sessions are expanded or collapsed.
+
+Collapsed groups stay collapsed. Each device remembers which lifecycle, project,
+and custom groups you closed, and which parked shelves you opened, across reloads
+and settings visits. On web and desktop, every tab and window of the app follows
+a change you make in one of them.
+
+On web and desktop, **Snoozed** and **Settled** sit at the bottom of the sidebar,
+just above the settings and usage icons. Both start collapsed, and their headers
+stay on screen however long the thread list grows. An open shelf scrolls on its
+own; the settled shelf also keeps **Show more**. A collapsed shelf shows no rows,
+even when you have one of its threads open; a dot on its header marks that the open
+thread is inside.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
@@ -259,6 +285,20 @@ Groups also work as a filter in every grouping mode: the filter menu's
 threads.
 
 Agents can file the sessions they work on or create: `t3_update_session`
-accepts `customGroup` (or `null` to clear it), `t3_create_session` accepts it
-at creation, and `t3_list_sessions` reports and filters on it. Labels match
-case-insensitively, so an agent that reuses a label you typed joins your group.
+accepts `customGroup` (or `null` to clear it), and `t3_list_sessions` reports
+and filters on it. Labels match case-insensitively, so an agent that reuses a
+label you typed joins your group.
+
+<!-- T3-CUSTOM(expbkt3): XFN-59 creation APIs that take a custom group. -->
+
+Automations can file a session as they create it. These APIs accept
+`customGroup`:
+
+- `t3_create_session`, `t3_thread_launch`, and each entry of `create_threads`.
+- `t3_dispatch_command` and `POST /api/orchestration/dispatch`, on
+  `thread.create` and on a bootstrap `thread.turn.start`.
+- `schedule_task` and `update_scheduled_task`, for the new session that each
+  run creates when the task is not bound to a thread. `null` on an update
+  removes the label.
+
+Sessions made by `delegate_task` and by a fork take the parent's group.

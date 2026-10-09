@@ -74,6 +74,11 @@ import type * as Statement from "effect/sql/Statement";
 
 // T3-CUSTOM(expbkt3): ownership and fork metadata travel with both shell paths.
 import { forkThreadMetadata } from "./forkMetadata.expbkt3.ts";
+// T3-CUSTOM(expbkt3): XFN-59 running provider-native subagent count on both shell paths.
+import {
+  activeSubagentCountShellField,
+  countActiveProviderNativeSubagents,
+} from "./activeSubagentCount.expbkt3.ts";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
@@ -1413,6 +1418,8 @@ export function threadShellFromProjection(
           request.kind === "user_input" &&
           request.responseCapability.type === "message",
       ),
+    // T3-CUSTOM(expbkt3): XFN-59 running provider-native subagents for the sidebar.
+    ...activeSubagentCountShellField(countActiveProviderNativeSubagents(projection)),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
     id: projection.thread.id,
@@ -1564,6 +1571,8 @@ type ShellThreadState = {
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
   // T3-CUSTOM(expbkt3): async questions do not block provider state.
   readonly hasPendingAsyncUserInput?: boolean;
+  // T3-CUSTOM(expbkt3): XFN-59 running provider-native subagents for the sidebar.
+  readonly activeSubagentCount?: number;
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
@@ -1688,6 +1697,8 @@ function shellFromState(input: {
     hasPendingAsyncUserInput:
       (input.state.thread.pendingAsyncUserInputIds?.length ?? 0) > 0 ||
       (input.state.hasPendingAsyncUserInput ?? false),
+    // T3-CUSTOM(expbkt3): XFN-59 running provider-native subagents for the sidebar.
+    ...activeSubagentCountShellField(input.state.activeSubagentCount),
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
     id: input.state.thread.id,
@@ -5544,6 +5555,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           pendingRuntimeRequest,
           // T3-CUSTOM(expbkt3): read the independent async question state.
           hasPendingAsyncUserInput: row.has_pending_async_user_input === 1,
+          // T3-CUSTOM(expbkt3): XFN-59 rows are already active and not rolled back.
+          activeSubagentCount: countActiveProviderNativeSubagents({
+            turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
+          }),
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null

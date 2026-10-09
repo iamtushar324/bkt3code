@@ -685,6 +685,22 @@ export function isPhaseSidebarSectionCollapsed(
   return collapsedSectionKeys.has(section.key) !== section.collapsedByDefault;
 }
 
+/** The parked shelves, by the row section they hold. */
+export type PhaseSidebarShelfId = "snoozed" | "settled";
+
+/**
+ * The shelves' collapse identities. Web and mobile both read and toggle these
+ * keys in `collapsedSectionKeys`, so a shelf the user closed stays closed on
+ * every surface and across remounts. Shelves start closed; a key in the list
+ * records that the user opened one.
+ */
+export const PHASE_SIDEBAR_SHELF_SECTIONS: Readonly<
+  Record<PhaseSidebarShelfId, Pick<PhaseSidebarSection, "key" | "collapsedByDefault">>
+> = {
+  snoozed: { key: phaseSidebarSectionKey("lifecycle", "snoozed"), collapsedByDefault: true },
+  settled: { key: phaseSidebarSectionKey("lifecycle", "settled"), collapsedByDefault: true },
+};
+
 /**
  * The parked shelves under the grouped sections: snoozed and settled sessions,
  * as flat lists in the order the caller partitioned them (wake time, then
@@ -701,7 +717,7 @@ export function buildPhaseSidebarShelfSections(input: {
       (index.get(phaseSidebarRowKey(left)) ?? 0) - (index.get(phaseSidebarRowKey(right)) ?? 0);
   };
   const shelf = (
-    id: "snoozed" | "settled",
+    id: PhaseSidebarShelfId,
     label: string,
     helperText: string,
     rows: ReadonlyArray<PhaseSidebarRow>,
@@ -709,7 +725,7 @@ export function buildPhaseSidebarShelfSections(input: {
     if (rows.length === 0) return null;
     const nodes = buildPhaseSidebarTree(rows, { compareSiblings: keepOrder(rows) });
     return {
-      key: phaseSidebarSectionKey("lifecycle", id),
+      ...PHASE_SIDEBAR_SHELF_SECTIONS[id],
       kind: "lifecycle",
       id,
       label,
@@ -718,7 +734,6 @@ export function buildPhaseSidebarShelfSections(input: {
       nodes,
       summary: summarizeNodes(nodes),
       isUngrouped: false,
-      collapsedByDefault: true,
     };
   };
   return [

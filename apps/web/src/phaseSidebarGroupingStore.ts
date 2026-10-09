@@ -4,8 +4,9 @@
 // A fork-owned store rather than a client setting: the shape is decided by
 // client-runtime (which mobile shares), every edit is one of its pure
 // operations, and keeping it here adds no hunks to an upstream-owned file.
-// Only presentation lives here — the manual section order, collapse state and
-// this device's legacy placements. Which group a session is IN is the thread's
+// Only presentation lives here — the manual section order, collapse state
+// (the lifecycle, project and custom groups, and the snoozed and settled
+// shelves) and this device's legacy placements. Which group a session is IN is the thread's
 // own `customGroup` label on the server, written through thread.meta.update.
 import {
   createPhaseSidebarCustomGroup,
@@ -94,3 +95,26 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
     },
   ),
 );
+
+/**
+ * Another tab or window of this app wrote the blob. Adopt it at once: every
+ * write here persists the WHOLE blob, so a tab still holding the old state
+ * would otherwise put back a group the user just collapsed elsewhere (its
+ * first unrelated write, such as the automatic ghost-key prune, is enough).
+ * Rehydrating applies the stored value without writing it back.
+ *
+ * `key === null` is a `localStorage.clear()` in the other tab.
+ */
+export function syncPhaseSidebarGroupingFromStorageEvent(
+  event: Pick<StorageEvent, "key">,
+): boolean {
+  if (event.key !== null && event.key !== PHASE_SIDEBAR_GROUPING_STORAGE_KEY) return false;
+  void usePhaseSidebarGroupingStore.persist.rehydrate();
+  return true;
+}
+
+// Browsers fire `storage` only in the OTHER documents of the origin, so this
+// never echoes this tab's own writes. Registered once, for the module's life.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", syncPhaseSidebarGroupingFromStorageEvent);
+}

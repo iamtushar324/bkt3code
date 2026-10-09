@@ -133,6 +133,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          // T3-CUSTOM(expbkt3): BK sidebar custom group for the new thread.
+          ...(input.customGroup === undefined ? {} : { customGroup: input.customGroup }),
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {

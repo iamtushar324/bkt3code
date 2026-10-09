@@ -17,6 +17,8 @@ import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): BK sidebar custom group at launch (XFN-59).
+import { ForkCustomGroupCreateField } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -129,6 +131,8 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
       }),
     ),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
+    // T3-CUSTOM(expbkt3): BK sidebar custom group for the new thread.
+    ...ForkCustomGroupCreateField,
   }),
   success: Schema.Struct({
     threadId: ThreadId,

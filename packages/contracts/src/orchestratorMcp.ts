@@ -37,6 +37,13 @@ import {
   ProviderOptionSelectionValue,
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+// T3-CUSTOM(expbkt3): BK sidebar custom group on session creation APIs (XFN-59).
+import {
+  ForkCustomGroupCreateField,
+  ForkScheduledTaskCustomGroupFields,
+  ForkScheduledTaskCustomGroupResultFields,
+  ForkScheduledTaskCustomGroupUpdateFields,
+} from "./orchestrationFork.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
@@ -237,6 +244,8 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   target: Schema.optional(OrchestratorMcpTarget),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  // T3-CUSTOM(expbkt3): BK sidebar custom group for the new thread.
+  ...ForkCustomGroupCreateField,
 });
 export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 
@@ -535,6 +544,8 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  // T3-CUSTOM(expbkt3): BK sidebar custom group for the threads its runs create.
+  ...ForkScheduledTaskCustomGroupFields,
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
 
@@ -557,6 +568,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])).annotate({
     description: "Whether requests must carry a valid signature.",
   }),
+  // T3-CUSTOM(expbkt3): BK sidebar custom group of the threads its runs create.
+  ...ForkScheduledTaskCustomGroupResultFields,
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -587,6 +600,8 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): set (label), remove (null) or keep (omitted) the task's custom group.
+  ...ForkScheduledTaskCustomGroupUpdateFields,
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

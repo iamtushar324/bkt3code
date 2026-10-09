@@ -204,6 +204,8 @@ import Migration1050 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
 // T3-CUSTOM(expbkt3): review comments are sent once; this records when.
 import Migration1048 from "./Migrations/1048_ThreadCommentLastSent.ts";
+// T3-CUSTOM(expbkt3): BK sidebar custom group for scheduled task threads.
+import Migration1051 from "./Migrations/1051_ScheduledTaskCustomGroups.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -329,6 +331,8 @@ const migrationEntries = [
   // T3-CUSTOM(expbkt3): upstream 59-60 remapped above the shipped 1048 migration.
   [1049, "McpAppModelContext", Migration1049],
   [1050, "ThreadSnapshotWindowIndexes", Migration1050],
+  // T3-CUSTOM(expbkt3): BK sidebar custom group for scheduled task threads.
+  [1051, "ScheduledTaskCustomGroups", Migration1051],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

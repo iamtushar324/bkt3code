@@ -63,16 +63,18 @@ only) pairs a phone with the Mac's bundled backend, not with dev-server-1:
    standard scopes. The desktop bootstrap grant is administrative, so this asks for
    nothing the token does not already allow.
 2. The backend binds 127.0.0.1 by default. **Reachable on my network** binds it to
-   0.0.0.0 (it relaunches the app). The section then offers only direct IP addresses
-   on the bundled server's port: the Mac's current Tailscale IP first, then its local
-   network IP. It deliberately offers no Tailscale Serve (HTTPS) and no MagicDNS name:
-   an IP path works the same way on every Tailscale profile. To pair a second
-   tailnet, switch the Tailscale profile on the Mac, select **Refresh**, and make a
-   new link for the new Tailscale IP.
+   0.0.0.0 (it relaunches the app). The section then offers direct addresses on the
+   bundled server's port, best first: the Mac's MagicDNS name
+   (`http://<mac>.<tailnet>.ts.net:<port>`), its Tailscale IP, then its local network
+   IP. It offers no Tailscale Serve (HTTPS) proxy. To reach the Mac from several
+   tailnets, keep the Mac on one Tailscale profile and share it into the others:
+   Tailscale reaches a shared device only by its full MagicDNS name, so that one link
+   works from every tailnet it is shared with ([Tailscale: sharing](https://tailscale.com/kb/1084/sharing)).
+   MagicDNS must be on in the tailnet the phone uses.
 3. **Generate pairing link** calls `POST /api/auth/pairing-token` on `bk-local` with
-   the administrative scopes and shows the link (`http://<ip>:<port>/pair#token=<code>`),
+   the administrative scopes and shows the link (`http://<address>:<port>/pair#token=<code>`),
    a QR code, the address and the bare code. The link's label names its path
-   ("Phone (admin) via Tailscale IP 100.x.y.z"), and the server copies that label onto
+   ("Phone (admin) via Tailscale MagicDNS mac.tailnet.ts.net"), and the server copies that label onto
    the phone's session. Codes expire after 5 minutes; regenerating or **Revoke**
    removes the unused link. The phone gets every scope on the code, so it can manage
    the Mac server's access too, and its session does not expire.

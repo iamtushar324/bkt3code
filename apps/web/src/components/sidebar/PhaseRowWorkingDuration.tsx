@@ -1,5 +1,5 @@
-// T3-CUSTOM(expbkt3): how long a running session's current turn has run, in
-// the row's time slot — the same label and rule as upstream's sidebar.
+// T3-CUSTOM(expbkt3): how long a working session's current work has run — the
+// same label as upstream's sidebar. PhaseRowWorkingStatus places it.
 import { useEffect, useState } from "react";
 
 import { formatWorkingDurationLabel } from "../Sidebar.logic";

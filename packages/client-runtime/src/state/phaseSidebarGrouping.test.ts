@@ -23,6 +23,7 @@ import {
   isPhaseSidebarSectionCollapsed,
   listPhaseSidebarCustomGroups,
   movePhaseSidebarCustomGroup,
+  PHASE_SIDEBAR_SHELF_SECTIONS,
   phaseSidebarLocalCustomGroupForThread,
   phaseSidebarSectionKey,
   prunePhaseSidebarGrouping,
@@ -302,6 +303,21 @@ describe("buildPhaseSidebarShelfSections", () => {
     // The toggle list records a move away from the default.
     expect(isPhaseSidebarSectionCollapsed(shelves[0]!, new Set())).toBe(true);
     expect(isPhaseSidebarSectionCollapsed(shelves[0]!, new Set([shelves[0]!.key]))).toBe(false);
+  });
+
+  // T3-CUSTOM(expbkt3): web toggles the shelves by these keys without building them.
+  it("keys each shelf by the shared shelf identity, so web and mobile persist one state", () => {
+    const shelves = buildPhaseSidebarShelfSections({
+      snoozedRows: [makeRow("a")],
+      settledRows: [makeRow("b")],
+    });
+    expect(shelves.map((section) => [section.key, section.collapsedByDefault])).toEqual([
+      [PHASE_SIDEBAR_SHELF_SECTIONS.snoozed.key, true],
+      [PHASE_SIDEBAR_SHELF_SECTIONS.settled.key, true],
+    ]);
+    expect(PHASE_SIDEBAR_SHELF_SECTIONS.settled.key).toBe(
+      phaseSidebarSectionKey("lifecycle", "settled"),
+    );
   });
 });
 

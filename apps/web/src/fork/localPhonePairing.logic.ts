@@ -64,26 +64,31 @@ export function findBundledBackendEnvironment<
   return bundled ?? null;
 }
 
+/** Direct MagicDNS (`http://<mac>.<tailnet>.ts.net:<port>`), not the Tailscale Serve HTTPS URL. */
+const DIRECT_MAGIC_DNS_PREFIX = "tailscale-magicdns:http://";
+
 /**
- * Lower ranks first. The Mac's current Tailscale IP comes first: it belongs to
- * the Tailscale profile that is active now, so switching profiles and selecting
- * Refresh offers the other tailnet's IP. The local network IP comes next.
+ * Lower ranks first. The MagicDNS name comes first: a Mac shared into other
+ * tailnets keeps that one full name in all of them (Tailscale reaches a shared
+ * device only by its full `<host>.<tailnet>.ts.net` name), so one link works
+ * from every tailnet the Mac is shared with. The Tailscale IP comes next, then
+ * the local network IP.
  */
 function phoneEndpointRank(endpoint: AdvertisedEndpoint): number {
-  if (endpoint.id.startsWith("tailscale-ip:")) return 0;
-  if (endpoint.reachability === "lan") return 1;
-  return 2;
+  if (endpoint.id.startsWith(DIRECT_MAGIC_DNS_PREFIX)) return 0;
+  if (endpoint.id.startsWith("tailscale-ip:")) return 1;
+  if (endpoint.reachability === "lan") return 2;
+  return 3;
 }
 
 /**
  * Direct addresses a phone can dial, best first.
  *
- * Only plain IP addresses on the bundled server's own port: no Tailscale Serve
- * (HTTPS) and no MagicDNS name, because a name or a Serve proxy belongs to one
- * tailnet profile, while an IP path works the same way on every profile and on
- * the local network. The server must listen on the network ("Reachable on my
- * network"); while it is limited to this Mac it binds loopback and no direct
- * address reaches it. Loopback and unavailable endpoints never count.
+ * Only addresses on the bundled server's own port: the Mac's MagicDNS name, its
+ * Tailscale IP and its local network IP. No Tailscale Serve (HTTPS) proxy. The
+ * server must listen on the network ("Reachable on my network"); while it is
+ * limited to this Mac it binds loopback and no direct address reaches it.
+ * Loopback and unavailable endpoints never count.
  */
 export function phoneReachableEndpoints(input: {
   readonly endpoints: ReadonlyArray<AdvertisedEndpoint>;
@@ -93,13 +98,15 @@ export function phoneReachableEndpoints(input: {
   const reachable = input.endpoints.filter(
     (endpoint) =>
       isQrShareableEndpoint(endpoint) &&
-      (endpoint.id.startsWith("tailscale-ip:") || endpoint.id.startsWith("desktop-lan:")),
+      (endpoint.id.startsWith(DIRECT_MAGIC_DNS_PREFIX) ||
+        endpoint.id.startsWith("tailscale-ip:") ||
+        endpoint.id.startsWith("desktop-lan:")),
   );
   return reachable.toSorted((left, right) => phoneEndpointRank(left) - phoneEndpointRank(right));
 }
 
 /**
- * The pairing link's label, e.g. "Phone (admin) via Tailscale IP 100.64.0.7".
+ * The pairing link's label, e.g. "Phone (admin) via Tailscale MagicDNS mac.tail.ts.net".
  * The server copies it onto the phone's session, so the paired devices list
  * shows which path each phone uses.
  */

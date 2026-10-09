@@ -103,6 +103,13 @@ export interface EnvironmentThreadShell {
   readonly parentEnvironmentId: EnvironmentId | null;
   readonly hasPendingAsyncUserInput: boolean;
   readonly backgroundLiveness: "working" | "monitoring" | null;
+  /**
+   * XFN-59: provider-native subagents (Claude Agent/Task tool and the like)
+   * still running under this thread. Excludes delegate_task child sessions,
+   * which the sidebar counts as child threads. `presentThreadShell` always
+   * sets it (0 when none); optional only so hand-built fixtures stay valid.
+   */
+  readonly activeSubagentCount?: number;
   // T3-CUSTOM(expbkt3): END
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
@@ -259,6 +266,7 @@ export function presentThreadShell(
     backgroundLiveness: backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
       ? "monitoring"
       : null,
+    activeSubagentCount: thread.activeSubagentCount ?? 0,
     // T3-CUSTOM(expbkt3): END
     environmentId,
     id: thread.id,

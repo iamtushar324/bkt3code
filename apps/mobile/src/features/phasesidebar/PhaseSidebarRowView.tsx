@@ -15,10 +15,14 @@
 // and silently renders as black in dark mode.
 import {
   formatThreadPriority,
+  // T3-CUSTOM(expbkt3): running subagents and "Working 4m", as on web.
+  phaseSidebarActiveSubagentCount,
   phaseSidebarRowOwnerAvatarUserId,
+  phaseSidebarSubagentCountLabel,
   phaseSidebarWorktreeRowProps,
   resolvePhaseSidebarMattermostLink,
   resolvePhaseSidebarProviderCode,
+  resolvePhaseSidebarWorkingStatus,
   type PhaseSidebarRow,
   type PhaseSidebarWorktreeView,
 } from "@t3tools/client-runtime/state/phase-sidebar";
@@ -51,6 +55,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { EnvironmentBadge } from "../environments/EnvironmentBadge";
 import type { MobileEnvironmentAppearance } from "../environments/environmentAppearance";
 import { PhaseSidebarRowStatus } from "./PhaseSidebarRowStatus";
+import { PhaseSidebarRowWorkingLabel } from "./PhaseSidebarRowWorkingLabel";
 // T3-CUSTOM(expbkt3): Linear tags on a session.
 import {
   phaseSidebarLinearChipLabel,
@@ -93,6 +98,11 @@ export interface PhaseSidebarRowViewProps {
   readonly linearStatuses: ReadonlyArray<LinearIssueStatusSummary>;
   /** Relative age ("2h") or, for a snoozed row, when it wakes. */
   readonly timeLabel: string;
+  /**
+   * T3-CUSTOM(expbkt3): replace the time label with "Working 4m" while the row
+   * works. False on the snoozed shelf, whose time label is the wake time.
+   */
+  readonly showWorkingStatus?: boolean;
   readonly onPress: (row: PhaseSidebarRow) => void;
   /** Mutable because MenuView's prop type is not readonly. */
   readonly actions: MenuAction[];
@@ -174,6 +184,13 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   });
   const providerCode = resolvePhaseSidebarProviderCode(row.providerKind);
   const priority = thread.priority ?? null;
+  // T3-CUSTOM(expbkt3): BEGIN — upstream's working rule and the native
+  // subagents the thread runs now; both read the same way on web.
+  const workingStatus =
+    props.showWorkingStatus === false ? null : resolvePhaseSidebarWorkingStatus(thread);
+  const activeSubagentCount = phaseSidebarActiveSubagentCount(thread);
+  const subagentCountLabel = phaseSidebarSubagentCountLabel(activeSubagentCount);
+  // T3-CUSTOM(expbkt3): END
   const actionsMenuRef = useRef<MenuComponentRef>(null);
   const linearMenuRef = useRef<MenuComponentRef>(null);
   // T3-CUSTOM(expbkt3): one tag opens at once; several open a list to pick from,
@@ -436,15 +453,32 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
                 >
                   {thread.title}
                 </Text>
+                {/* T3-CUSTOM(expbkt3): provider-native subagents running now, in
+                    the subtree counter's style, whether the row is open or not. */}
+                {subagentCountLabel === null ? null : (
+                  <View
+                    accessibilityLabel={subagentCountLabel}
+                    className="shrink-0 flex-row items-center gap-0.5 self-center"
+                  >
+                    <SymbolView name="cpu" size={10} tintColor="#0ea5e9" type="monochrome" />
+                    <Text className="font-t3-mono text-[11px] tabular-nums text-adaptive-sky-600-400">
+                      {activeSubagentCount}
+                    </Text>
+                  </View>
+                )}
                 <PhaseSidebarRowStatus row={row} />
-                <Text
-                  className={cn(
-                    "shrink-0 font-t3-mono text-[11px] tabular-nums",
-                    unread ? "text-adaptive-sky-600-400" : "text-foreground-tertiary",
-                  )}
-                >
-                  {props.timeLabel}
-                </Text>
+                {workingStatus === null ? (
+                  <Text
+                    className={cn(
+                      "shrink-0 font-t3-mono text-[11px] tabular-nums",
+                      unread ? "text-adaptive-sky-600-400" : "text-foreground-tertiary",
+                    )}
+                  >
+                    {props.timeLabel}
+                  </Text>
+                ) : (
+                  <PhaseSidebarRowWorkingLabel status={workingStatus} />
+                )}
               </View>
 
               {/* The metadata lane. Order matches web so the two read the same. */}
