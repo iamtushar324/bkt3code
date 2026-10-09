@@ -7,9 +7,9 @@
  *
  * 1. the local server's status and address,
  * 2. how a phone reaches it: network access (the desktop bridge, which in a
- *    managed build acts on the bundled backend) and a direct address to dial,
- *    the Mac's current Tailscale IP first, then its local network IP. No
- *    Tailscale Serve and no MagicDNS: an IP path works on every Tailscale profile,
+ *    managed build acts on the bundled backend) and a direct address to dial:
+ *    the Mac's MagicDNS name first (one name for every tailnet the Mac is shared
+ *    with), then its Tailscale IP, then its local network IP. No Tailscale Serve,
  * 3. an admin pairing link, code and QR code minted on the local server with the
  *    renderer's existing connection to it,
  * 4. the devices paired with the local server, each with a Revoke button.
@@ -235,7 +235,7 @@ function EndpointPicker({
   return (
     <SettingsRow
       title="Phone connects through"
-      description="Select the address for this link. The Tailscale IP belongs to the Tailscale profile that is active now: to pair a path on another profile, switch the profile on this Mac, select Refresh, and make a new link. The local network IP works only on the same Wi-Fi."
+      description="Select the address for this link. The MagicDNS name works from every tailnet you share this Mac with, so keep the Mac on one Tailscale profile and share it. The Tailscale IP belongs to the profile that is active now. The local network IP works only on the same Wi-Fi."
     >
       <div
         role="radiogroup"

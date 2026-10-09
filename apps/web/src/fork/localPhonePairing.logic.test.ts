@@ -133,13 +133,13 @@ describe("phoneReachableEndpoints", () => {
     expect(phoneReachableEndpoints({ endpoints: all, networkAccessible: false })).toEqual([]);
   });
 
-  it("offers only direct IPs: the Tailscale IP first, then the local network IP", () => {
+  it("offers MagicDNS first, then the Tailscale IP, then the local network IP", () => {
     const ranked = phoneReachableEndpoints({ endpoints: all, networkAccessible: true });
-    expect(ranked).toEqual([tailnetIp, lan]);
+    expect(ranked).toEqual([magicDns, tailnetIp, lan]);
   });
 
-  it("never offers Tailscale Serve, MagicDNS, loopback or an unavailable endpoint", () => {
-    const endpoints = [loopback, tailscaleHttpsOff, tailscaleHttps, magicDns];
+  it("never offers Tailscale Serve, loopback or an unavailable endpoint", () => {
+    const endpoints = [loopback, tailscaleHttpsOff, tailscaleHttps];
     expect(phoneReachableEndpoints({ endpoints, networkAccessible: true })).toEqual([]);
     const lanOff = makeEndpoint({ status: "unavailable" });
     expect(phoneReachableEndpoints({ endpoints: [lanOff], networkAccessible: true })).toEqual([]);
@@ -147,7 +147,7 @@ describe("phoneReachableEndpoints", () => {
 });
 
 describe("selectPhonePairingEndpoint", () => {
-  const candidates = [tailnetIp, lan];
+  const candidates = [magicDns, tailnetIp, lan];
 
   it("keeps the user's pick while it is offered", () => {
     expect(selectPhonePairingEndpoint(candidates, lan.id)).toBe(lan);
@@ -155,8 +155,8 @@ describe("selectPhonePairingEndpoint", () => {
 
   it("falls back to the best address when the pick is gone or absent", () => {
     const stale = "tailscale-ip:http://100.80.1.2:3774";
-    expect(selectPhonePairingEndpoint(candidates, stale)).toBe(tailnetIp);
-    expect(selectPhonePairingEndpoint(candidates, null)).toBe(tailnetIp);
+    expect(selectPhonePairingEndpoint(candidates, stale)).toBe(magicDns);
+    expect(selectPhonePairingEndpoint(candidates, null)).toBe(magicDns);
     expect(selectPhonePairingEndpoint([], null)).toBeNull();
   });
 });
@@ -177,6 +177,9 @@ describe("phone pairing link", () => {
   });
 
   it("names the path in the label the paired session keeps", () => {
+    expect(phonePairingLabel(magicDns)).toBe(
+      "Phone (admin) via Tailscale MagicDNS mac.tail.ts.net",
+    );
     expect(phonePairingLabel(tailnetIp)).toBe("Phone (admin) via Tailscale IP 100.64.0.7");
     expect(phonePairingLabel(lan)).toBe("Phone (admin) via Local network 192.168.1.42");
   });
