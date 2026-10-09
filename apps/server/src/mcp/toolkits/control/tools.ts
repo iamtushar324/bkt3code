@@ -882,7 +882,7 @@ export const T3GroupSaveTool = mutatingTool(
 export const T3GroupRenameTool = mutatingTool(
   Tool.make("t3_group_rename", {
     description:
-      "Rename a custom group: every non-archived session you can see in it moves to the new name, and a saved group keeps its colour under the new name. Use it instead of re-filing sessions one at a time. A group that only exists through session labels stays unsaved; call t3_group_save afterwards to save it. The new name must not already be another group: to merge two groups, move the sessions with t3_update_session and then call t3_group_remove. Sessions you cannot see keep the old name; sessions running in broader modes than yours keep it too and are listed under skipped. Needs a full-access caller, as t3_update_server_settings does.",
+      "Rename a custom group: every non-archived session you can see in it moves to the new name, and a saved group keeps its colour under the new name. Use it instead of re-filing sessions one at a time. A group that only exists through session labels stays unsaved; call t3_group_save afterwards to save it. The new name must not already be another group: to merge two groups, move the sessions with t3_update_session and then call t3_group_remove. Sessions you cannot see keep the old name; a session whose update fails keeps it too and is listed under skipped with the reason. Needs a full-access caller, as t3_update_server_settings does.",
     parameters: Schema.Struct({
       label: groupLabel(
         "Current name of the group, matched case-insensitively, as shown by t3_group_list.",
@@ -900,7 +900,7 @@ export const T3GroupRenameTool = mutatingTool(
 export const T3GroupRemoveTool = mutatingTool(
   Tool.make("t3_group_remove", {
     description:
-      "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every non-archived session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; sessions running in broader modes than yours keep it too and are listed under skipped. Needs a full-access caller, as t3_update_server_settings does.",
+      "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every non-archived session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; a session whose update fails keeps it too and is listed under skipped with the reason. Pass Ungrouped to clear that label from sessions that got it another way. Needs a full-access caller, as t3_update_server_settings does.",
     parameters: Schema.Struct({
       label: groupLabel(
         "Name of the group to remove, matched case-insensitively, as shown by t3_group_list.",

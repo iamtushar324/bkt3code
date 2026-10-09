@@ -4291,6 +4291,11 @@ export function PhaseGroupedSidebar() {
           if (!open) setGroupNameDialogRow(null);
         }}
         onSubmit={(label) => {
+          // "Ungrouped" is the built-in section, not a group to file the row in.
+          if (isReservedThreadCustomGroup(label)) {
+            setGroupNameDialogRow(null);
+            return;
+          }
           // XFN-59: the group is registered too, so it outlives this session.
           const sharedId = createSharedCustomGroup(label);
           if (sharedId !== null) rememberCustomGroupOrder(sharedId);

@@ -469,6 +469,8 @@ export function PhaseSidebarPane(props: {
   // placeholder, as before.
   const createCustomGroup = useCallback(
     (label: string, seedThreadKey: string | null) => {
+      // "Ungrouped" is the built-in section, not a group to file a row in.
+      if (isReservedThreadCustomGroup(label)) return;
       const sharedId = createSharedCustomGroup(label);
       if (sharedId !== null) {
         updateGrouping((current) => rememberPhaseSidebarCustomGroupOrder(current, sharedId));

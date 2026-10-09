@@ -294,7 +294,8 @@ its actions inside the header: **Change colour**, **Rename**, and **Delete**.
 Pick one of twelve colours, or **Default** for the neutral look; on the web
 and desktop the header shows the colour as a dot and a tint (on iOS and
 Android as a dot), and so does the group chip on a thread row in the other
-modes. **Ungrouped** is the built-in section, so no group can take that name. Renaming relabels every thread in the group, and
+modes. **Ungrouped** is the built-in section, so the sidebar does not let a group
+take that name. Renaming relabels every thread in the group, and
 deleting one returns its threads to **Ungrouped**; both change the group on
 every connected environment that has it. On iOS and Android, hold a group's
 header for the same actions, or use the **Group by** sheet. A group's

@@ -234,13 +234,14 @@ label its own work rather than leaving it to whoever opens the sidebar:
   Colour ids: `blue`, `violet`, `pink`, `red`, `orange`, `amber`, `lime`,
   `emerald`, `teal`, `cyan`, `indigo`, `slate`.
 
-  Rename and remove re-file each session with its own `thread.meta.update`,
-  and the orchestrator holds each one to the caller's runtime and interaction
-  modes. A session it refuses keeps its label and is listed in `skipped` with
-  the reason; the rest still move. Sessions the caller cannot see keep their
+  Rename and remove re-file each session with its own `thread.meta.update`.
+  A session whose update fails keeps its label and is listed in `skipped`
+  with the reason; the rest still move. Sessions the caller cannot see keep their
   label. `t3_group_list` needs `t3.read`; the other three need `t3.control`
-  and a full-access caller, as `t3_update_server_settings` does. No group may
-  take the name `Ungrouped`, the sidebar's built-in section.
+  and a full-access caller, as `t3_update_server_settings` does. `t3_group_save`,
+  a new name in `t3_group_rename`, and `customGroup` refuse the name
+  `Ungrouped`, the sidebar's built-in section; pass it as the current name to
+  `t3_group_remove` to clear it from sessions that got it another way.
   Clients that write the registry directly send a `threadCustomGroups`
   settings patch: a definition upserts one group, `null` removes one, and the
   server re-keys every entry by its label. Servers that support the registry

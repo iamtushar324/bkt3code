@@ -519,6 +519,7 @@ function resolveGroupLabelInput(
   field: string,
   value: string,
   blankHint: string,
+  options?: { readonly allowReserved?: boolean },
 ): Effect.Effect<string, T3ControlToolError> {
   const label = value.replace(/\s+/g, " ").trim();
   if (label.length === 0) {
@@ -546,7 +547,9 @@ function resolveGroupLabelInput(
     );
   }
   // The sidebar's built-in section for sessions with no group owns this name.
-  if (isReservedThreadCustomGroup(label)) {
+  // A current name may still be it, so a label that reached sessions some
+  // other way can be renamed or removed.
+  if (options?.allowReserved !== true && isReservedThreadCustomGroup(label)) {
     return Effect.fail(
       new T3ControlToolError({
         operation,
@@ -1877,6 +1880,7 @@ const handlers = {
       "label",
       input.label,
       "Pass the current name of the group.",
+      { allowReserved: true },
     );
     const newLabel = yield* resolveGroupLabelInput(
       operation,
@@ -1954,6 +1958,7 @@ const handlers = {
       "label",
       input.label,
       "Pass the name of the group to remove.",
+      { allowReserved: true },
     );
     const key = normalizeThreadCustomGroup(label);
     const query = yield* ProjectionSnapshotQuery;
@@ -2046,8 +2051,8 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
   t3_user_presence: McpToolAccess.reads(handlers.t3_user_presence),
   // T3-CUSTOM(expbkt3): the shared custom-group registry. It is environment
   // settings, so writing it needs the full-access caller t3_update_server_settings
-  // needs, as the sidebar needs settings:write. The orchestrator still holds
-  // each re-filed session to the caller's modes under its lock.
+  // needs, as the sidebar needs settings:write. A full-access caller is above
+  // every mode limit, so a re-filed session is skipped only when its update fails.
   t3_group_list: McpToolAccess.reads(handlers.t3_group_list),
   t3_group_save: McpToolAccess.writesEnvironment((input) => handlers.t3_group_save(input)),
   t3_group_rename: McpToolAccess.writesEnvironment((input) => handlers.t3_group_rename(input)),
