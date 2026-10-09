@@ -467,7 +467,7 @@ describe("UserPresenceService.report", () => {
         expect(owner.connected).toBe(true);
         expect(report.attended).toBe(false);
         expect(owner.lastSeenAt).toBe(iso(START - 2 * MINUTE));
-        expect(report.recommendation.action).toBe("notify-mattermost");
+        expect(report.recommendation.action).toBe("ask-in-chat-and-wait");
 
         // A login that arrives later is mapped from the change stream, not a re-read.
         yield* PubSub.publish(harness.sessionChanges, {
@@ -501,7 +501,7 @@ describe("UserPresenceService.report", () => {
         expect(member.state).toBe("active-elsewhere");
         expect(member.clients[0]?.viewingAnotherSession).toBe(true);
         expect(mentions(next, String(otherThreadId))).toBe(false);
-        expect(next.recommendation.action).toBe("ask-in-chat-and-notify");
+        expect(next.recommendation.action).toBe("ask-in-chat-and-wait");
       }),
     ),
   );
