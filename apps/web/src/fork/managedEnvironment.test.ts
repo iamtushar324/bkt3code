@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { AuthAdministrativeScopes } from "@t3tools/contracts";
 
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
 import {
   __resetBkManagedEnvironmentForTests,
   __setBkManagedEnvironmentForTests,
+  BK_BUNDLED_BACKEND_ID,
+  bkBundledBackendScopes,
   bkPrimaryRegistrationCacheKey,
   isBkManagedPrimary,
   parseBkManagedEnvironment,
@@ -105,5 +108,23 @@ describe("bkPrimaryRegistrationCacheKey", () => {
   it("moves the primary to its own slot so the bundled backend keeps 'primary'", () => {
     __setBkManagedEnvironmentForTests(STAGING);
     expect(bkPrimaryRegistrationCacheKey("primary")).not.toBe("primary");
+  });
+});
+
+describe("bkBundledBackendScopes", () => {
+  afterEach(() => {
+    __resetBkManagedEnvironmentForTests();
+  });
+
+  it("keeps upstream's scopes for every backend in an unmanaged build", () => {
+    expect(bkBundledBackendScopes(BK_BUNDLED_BACKEND_ID)).toBeNull();
+    expect(bkBundledBackendScopes("wsl:Ubuntu")).toBeNull();
+  });
+
+  it("asks for admin scopes for the managed build's bundled backend only", () => {
+    __setBkManagedEnvironmentForTests(STAGING);
+    expect(BK_BUNDLED_BACKEND_ID).toBe("bk-local");
+    expect(bkBundledBackendScopes(BK_BUNDLED_BACKEND_ID)).toEqual(AuthAdministrativeScopes);
+    expect(bkBundledBackendScopes("wsl:Ubuntu")).toBeNull();
   });
 });

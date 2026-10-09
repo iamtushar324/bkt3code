@@ -31,6 +31,7 @@ import {
   PermissionsDefaultRow,
   StartingModeDefaultRow,
 } from "./NewThreadModeSettings.expbkt3";
+import { PreviewBrowserHostRow } from "./PreviewBrowserHostSetting.expbkt3"; // T3-CUSTOM(expbkt3)
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -547,6 +548,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               />
             }
           />
+          {/* T3-CUSTOM(expbkt3): host preview browser. */}
+          <PreviewBrowserHostRow />
         </>
       )}
     </SettingsSection>

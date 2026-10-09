@@ -52,7 +52,7 @@ import {
 } from "../environments/primary/target";
 // T3-CUSTOM(expbkt3): BEGIN - cache slot for the primary registration in managed builds,
 // and the DPoP authorization a managed primary connection is prepared with.
-import { bkPrimaryRegistrationCacheKey } from "../fork/managedEnvironment";
+import { bkBundledBackendScopes, bkPrimaryRegistrationCacheKey } from "../fork/managedEnvironment";
 import { readManagedPrimaryDpopAuthorization } from "../fork/managedPrimaryConnection";
 import {
   primaryRegistrationFallback,
@@ -422,7 +422,8 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,
-    scopes: AuthStandardClientScopes,
+    // T3-CUSTOM(expbkt3): the managed bundled backend keeps admin scopes for phone pairing.
+    scopes: bkBundledBackendScopes(entry.id) ?? AuthStandardClientScopes,
     clientMetadata: clientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Keep the desktop pool's stable backend id in the connection id. The

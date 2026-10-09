@@ -652,6 +652,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
+  // T3-CUSTOM(expbkt3): which browser hosts preview tabs on this environment.
+  {
+    id: "preview-browser-host",
+    title: "Preview browser",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["client server desktop local mac headless stream tab webview host"],
+  },
   {
     id: "device-hosts",
     title: "Device hosts",
@@ -940,6 +948,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Session callbacks",
     to: "/settings/experiments",
     searchTerms: ["experiments bk add-ons addons webhook delivery history retry notification"],
+  },
+  {
+    id: "connect-phone-local",
+    title: "Connect phone to local server",
+    to: "/settings/experiments",
+    desktopOnly: true,
+    searchTerms: [
+      "experiments bk add-ons addons mobile phone pair pairing qr code link local mac admin owner tailscale lan",
+    ],
   },
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): server-wide plan submission tool experiment.

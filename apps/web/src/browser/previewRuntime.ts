@@ -2,15 +2,17 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 import { isElectron } from "~/env";
+import { desktopOwnEnvironmentIdAtom } from "~/fork/desktopOwnEnvironment"; // T3-CUSTOM(expbkt3)
+import { forkPreviewRuntimeFor } from "~/fork/previewBrowserHost"; // T3-CUSTOM(expbkt3)
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
   readEnvironmentSupportsServerBrowser,
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
-  return readEnvironmentSupportsServerBrowser(environmentId) ? "server" : undefined;
+  // T3-CUSTOM(expbkt3): the host's previewBrowser setting can keep tabs in the desktop app.
+  return forkPreviewRuntimeFor(environmentId, readEnvironmentSupportsServerBrowser(environmentId));
 }
 
 /** Electron hosts its own browser tabs; other clients need the environment to host them. */
@@ -45,5 +47,7 @@ export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
   snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
 ): boolean {
-  return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
+  // T3-CUSTOM(expbkt3): a managed build launched `bk-local`, not its dev-server-1 primary.
+  const ownEnvironmentId = useAtomValue(desktopOwnEnvironmentIdAtom);
+  return rendersServerTabNatively(environmentId, ownEnvironmentId, snapshot);
 }
