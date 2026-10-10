@@ -63,7 +63,8 @@ import {
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
 const AUTHORIZATION_CODE_TTL_MS = 60_000;
 const MAX_CLIENT_NAME_LENGTH = 100;
-const MAX_REDIRECT_URIS = 5;
+// T3-CUSTOM(expbkt3): Google's MCP connector registers more than upstream's 5 redirect URIs.
+const MAX_REDIRECT_URIS = 20;
 const MAX_REDIRECT_URI_LENGTH = 512;
 const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
