@@ -106,6 +106,8 @@ import {
   saveScheduledTaskCustomGroupForMcp,
   withScheduledTaskCustomGroup,
 } from "../scheduledTasks/scheduledTaskCustomGroup.expbkt3.ts";
+// T3-CUSTOM(expbkt3): team mode lists and changes only the caller's scheduled tasks.
+import { callerMayManageScheduledTask } from "./scheduledTaskAccess.expbkt3.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -853,6 +855,24 @@ const make = Effect.gen(function* () {
   const forkAccess = yield* Effect.serviceOption(OrchestrationAccessControl);
   // T3-CUSTOM(expbkt3): explicit project targets (#15219) stay inside the actor's team
   // access; the caller's own project is already authorized through its thread.
+  // T3-CUSTOM(expbkt3): BEGIN — scheduled tasks the caller may manage.
+  const mayManage = (scope: McpInvocationScope, task: ScheduledTask) =>
+    callerMayManageScheduledTask({
+      scope,
+      task,
+      sql: forkSql,
+      threads: threadManagement,
+      access: forkAccess,
+    });
+  const requireManagedScheduledTask = (scope: McpInvocationScope, task: ScheduledTask) =>
+    mayManage(scope, task).pipe(
+      Effect.flatMap((allowed) =>
+        allowed
+          ? Effect.void
+          : Effect.fail(failure("task_not_found", `Scheduled task ${task.id} was not found.`)),
+      ),
+    );
+  // T3-CUSTOM(expbkt3): END
   const requireForkTargetProject = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
@@ -1603,10 +1623,14 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not list scheduled tasks: ${error.message}`),
             ),
           );
+        // T3-CUSTOM(expbkt3): only the tasks this caller may manage.
+        const visible = yield* Effect.filter(
+          tasks.filter((task) => projectId === undefined || task.projectId === projectId),
+          (task) => mayManage(scope, task),
+        );
         return {
-          tasks: yield* Effect.forEach(
-            tasks.filter((task) => projectId === undefined || task.projectId === projectId),
-            (task) => summarizeScheduledTask(scope, { parent, limits }, task),
+          tasks: yield* Effect.forEach(visible, (task) =>
+            summarizeScheduledTask(scope, { parent, limits }, task),
           ),
         };
       }),
@@ -1614,7 +1638,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
-        // T3-CUSTOM(expbkt3): team access bounds a project other than the caller's own.
+        // T3-CUSTOM(expbkt3): team access bounds a project other than the caller's own,
+        // and another person's task is not found.
+        yield* requireManagedScheduledTask(scope, existing);
         yield* requireForkTargetProject(scope, parent, existing.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         if (
@@ -1671,7 +1697,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
-        // T3-CUSTOM(expbkt3): team access bounds a project other than the caller's own.
+        // T3-CUSTOM(expbkt3): team access bounds a project other than the caller's own,
+        // and another person's task is not found.
+        yield* requireManagedScheduledTask(scope, existing);
         yield* requireForkTargetProject(scope, parent, existing.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks

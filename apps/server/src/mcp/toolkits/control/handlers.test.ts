@@ -56,3 +56,34 @@ it.effect("hides an inaccessible session from a user-bound session", () =>
     expect(error.message).toBe(`T3 session ${inaccessibleThreadId} was not found.`);
   }),
 );
+
+// T3-CUSTOM(expbkt3): a user-wide credential minted for a session still means
+// that session when the call names none; only a caller without one must name it.
+it.effect("defaults a user-wide in-session agent to its own session", () =>
+  Effect.gen(function* () {
+    const resolved = yield* provideAuthorization(
+      __testing.resolveSessionId("control-test", undefined, "t3.control"),
+    );
+    expect(resolved).toBe(ThreadId.make("thread-current"));
+    const named = yield* provideAuthorization(
+      __testing.resolveSessionId("control-test", ThreadId.make("thread-current"), "t3.control"),
+    );
+    expect(named).toBe(ThreadId.make("thread-current"));
+  }),
+);
+
+it.effect("asks a caller with no session of its own to name one", () =>
+  Effect.gen(function* () {
+    const error = yield* __testing.resolveSessionId("control-test", undefined, "t3.read").pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation,
+        principal: "external-user",
+        thread: undefined,
+      }),
+      Effect.provideService(OrchestrationAccessControl, accessControl),
+      Effect.flip,
+    );
+    expect(error).toBeInstanceOf(T3ControlToolError);
+    expect(error.message).toMatch(/^sessionId is required for a user-wide MCP call:/);
+  }),
+);

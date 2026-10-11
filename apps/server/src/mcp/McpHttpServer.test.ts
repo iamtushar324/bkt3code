@@ -1027,6 +1027,8 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
+            // T3-CUSTOM(expbkt3): an OAuth client lists the probe only when it asks for every tool.
+            "x-t3-mcp-tools": "all",
             ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
           };
           const initialize = yield* httpClient.post("/mcp", {

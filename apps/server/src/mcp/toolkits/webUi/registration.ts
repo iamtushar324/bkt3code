@@ -12,6 +12,7 @@ import { Tool, Toolkit } from "effect/ai";
 import type * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { JsonToolResult } from "../../jsonToolResult.expbkt3.ts";
 import {
   invokeWebUiRpcCalls,
   type WebUiRpcBridgeServices,
@@ -213,7 +214,7 @@ const webUiTool = <const Name extends string>(
     description: options.description,
     // The hand-written schemas are JSON Schema objects; `as const` makes their arrays readonly.
     parameters: options.inputSchema as JsonSchema.JsonSchema,
-    success: Schema.Unknown,
+    success: JsonToolResult,
     failure: WebUiToolFailure,
   })
     .annotate(Tool.Title, options.title)
@@ -224,7 +225,7 @@ const webUiTool = <const Name extends string>(
     Name,
     {
       readonly parameters: typeof Schema.Unknown;
-      readonly success: typeof Schema.Unknown;
+      readonly success: typeof JsonToolResult;
       readonly failure: typeof WebUiToolFailure;
       readonly failureMode: "error";
     },

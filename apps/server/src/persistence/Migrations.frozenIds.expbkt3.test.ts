@@ -27,6 +27,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         [1050, "ThreadSnapshotWindowIndexes"],
         // BK sidebar custom group for scheduled task threads.
         [1051, "ScheduledTaskCustomGroups"],
+        [1052, "ScheduledTaskForkOptions"],
       ]);
       const after = yield* sql<{
         migration_id: number;

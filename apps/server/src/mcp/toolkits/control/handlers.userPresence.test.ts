@@ -79,7 +79,7 @@ it.effect("refuses another session for an in-session credential", () =>
       __testing.userPresence({ sessionId: otherThreadId }).pipe(provide(service, invocation())),
     );
     expect(error).toBeInstanceOf(T3ControlToolError);
-    expect(error.message).toBe("An in-session agent may only control its own T3 session.");
+    expect(error.message).toMatch(/^An in-session agent may only control its own T3 session\./);
     expect(queries).toEqual([]);
   }),
 );
@@ -117,7 +117,7 @@ it.effect("defaults a user-bound provider credential to its own session too", ()
       capabilities: new Set(["t3.read", "t3.session.create"]),
     });
     const error = yield* Effect.flip(__testing.userPresence({}).pipe(provide(service, external)));
-    expect(error.message).toBe("sessionId is required for a user-wide MCP call.");
+    expect(error.message).toMatch(/^sessionId is required for a user-wide MCP call:/);
   }),
 );
 
