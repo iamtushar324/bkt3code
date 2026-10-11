@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { OrchestrationV2StoredEvent } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { changeOf } from "./wait.ts";
 
@@ -55,6 +56,17 @@ describe("changeOf", () => {
       "failed",
     );
     expect(changeOf(stored({ type: "run.updated", payload: { status: "running" } }))).toBeNull();
+  });
+
+  it("skips the second update a stopped run gets when its checkpoint lands", () => {
+    const stopped = (occurredMs: number) =>
+      stored({
+        type: "run.updated",
+        occurredAt: DateTime.makeUnsafe(occurredMs),
+        payload: { id: "run-1", status: "interrupted", completedAt: DateTime.makeUnsafe(1_000) },
+      });
+    expect(changeOf(stopped(1_000))?.what).toBe("run interrupted");
+    expect(changeOf(stopped(9_000))).toBeNull();
   });
 
   it("reports a question asked while the agent keeps working, in either input form", () => {

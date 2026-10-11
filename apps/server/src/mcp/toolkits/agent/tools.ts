@@ -88,6 +88,9 @@ const changing = <T extends Tool.Any>(tool: T): T =>
     .annotate(Tool.Idempotent, false)
     .annotate(Tool.OpenWorld, false) as T;
 
+const destructive = <T extends Tool.Any>(tool: T): T =>
+  changing(tool).annotate(Tool.Destructive, true) as T;
+
 export const WhoamiTool = readOnly(
   Tool.make("t3_whoami", {
     description:
@@ -132,7 +135,9 @@ export const InboxTool = readOnly(
 
 const ChoiceValue = Schema.Union([Schema.Int, Schema.String]);
 
-export const AnswerTool = changing(
+// Answering can approve any command (approve_always saves the rule) or discard
+// a plan, so clients that run non-destructive tools without asking still ask.
+export const AnswerTool = destructive(
   Tool.make("t3_answer", {
     description:
       "Answer what a session waits for, as the person you act for. Pass one of: choice (an option number or label, or a list for a multi-select question), text (your own answer), answers (one entry per question when a request asks several), decision (for an approval), or plan (approve, revise with feedback, or discard). Omit requestId to answer the oldest open item. The tool refuses when nothing of that kind waits, when the request was already answered, and when an agent tries to answer in its own session. Get the options from t3_inbox or t3_session_brief.",

@@ -61,8 +61,10 @@ export const loadVisibleSessions = Effect.fn("agentToolkit.loadVisibleSessions")
   options: { readonly archived: boolean },
 ) {
   const visible = visibleTo(caller.scope);
+  // Without a location the snapshot reads every archived session too, the
+  // heaviest shell query there is; read the archive only when asked for.
   const active = yield* caller.threads
-    .getShellSnapshot()
+    .getShellSnapshot({ location: "active" })
     .pipe(Effect.mapError(() => unavailable("the session list")));
   const archived = options.archived
     ? yield* caller.threads
@@ -71,9 +73,7 @@ export const loadVisibleSessions = Effect.fn("agentToolkit.loadVisibleSessions")
     : undefined;
   return {
     active: active.threads.filter(visible).toSorted(byNewest),
-    archived: [...active.archivedThreads, ...(archived?.archivedThreads ?? [])]
-      .filter(visible)
-      .toSorted(byNewest),
+    archived: (archived?.archivedThreads ?? []).filter(visible).toSorted(byNewest),
     sequence: active.snapshotSequence,
   } satisfies VisibleSessions;
 });
@@ -131,8 +131,18 @@ export const resolveSession = Effect.fn("agentToolkit.resolveSession")(function*
     }
     return direct;
   }
-  const sessions = input.sessions ?? (yield* loadVisibleSessions(caller, { archived: true }));
-  const matches = matchSessionRef(ref, [...sessions.active, ...sessions.archived]);
+  // Active sessions first; the archive only when none of them matches.
+  const sessions = input.sessions ?? (yield* loadVisibleSessions(caller, { archived: false }));
+  const activeMatches = matchSessionRef(ref, sessions.active);
+  const matches =
+    activeMatches.length > 0
+      ? activeMatches
+      : matchSessionRef(
+          ref,
+          sessions.archived.length > 0
+            ? sessions.archived
+            : (yield* loadVisibleSessions(caller, { archived: true })).archived,
+        );
   const [first] = matches;
   if (first !== undefined && matches.length === 1) return first;
   if (first === undefined) {

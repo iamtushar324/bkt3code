@@ -21,11 +21,16 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import type { Tool } from "effect/ai";
 
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import {
+  DispatchModeLimit,
+  type DispatchModeRefusal,
+} from "../../../orchestration-v2/DispatchModeLimit.ts";
 import type { OrchestratorV2Error } from "../../../orchestration-v2/Orchestrator.ts";
 import { PlanReviewService } from "../../../planreview/PlanReviewService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
@@ -47,7 +52,14 @@ import {
   type VisibleSessions,
 } from "./context.ts";
 import { modelSelectionFor, resolveModel } from "./models.ts";
-import { EMPTY_PENDING, loadPendingDetail, planIsCurrent, type PendingDetail } from "./pending.ts";
+import {
+  EMPTY_PENDING,
+  loadPendingDetail,
+  planIsCurrent,
+  type PendingApproval,
+  type PendingDetail,
+  type PendingQuestion,
+} from "./pending.ts";
 import {
   DECISION_NAMES,
   messageExcerpt,
@@ -65,6 +77,7 @@ import {
 } from "./render.ts";
 import {
   AgentToolkit,
+  type AgentToolError,
   type AnswerTool,
   type FindSessionsTool,
   type InboxTool,
@@ -207,15 +220,64 @@ const callerKind = (scope: McpInvocationContext.McpInvocationScope) =>
 const commandIdFor = Effect.fn("agentToolkit.commandIdFor")(function* (
   scope: McpInvocationContext.McpInvocationScope,
   operation: string,
+  target: string,
   clientRequestId: string | undefined,
 ) {
+  // The target is part of the id, so one clientRequestId reused for another
+  // session or request is a new command, not a conflict.
   if (clientRequestId !== undefined && clientRequestId.trim().length > 0) {
     return CommandId.make(
-      `mcp:agent:${operation}:${encodeURIComponent(scope.requestNamespace)}:${encodeURIComponent(clientRequestId.trim())}`,
+      `mcp:agent:${operation}:${stableUuid(`${scope.requestNamespace}\u0000${target}\u0000${clientRequestId.trim()}`)}`,
     );
   }
   const crypto = yield* Crypto.Crypto;
   return CommandId.make(`mcp:agent:${operation}:${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
+});
+
+/**
+ * Lets the orchestrator re-check, under the session's lock, that the target
+ * still runs within the caller's modes: its user may raise them while this
+ * call runs (see McpToolAccess.writesThreads).
+ */
+const withModeLimit =
+  (caller: Caller) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
+      return yield* effect.pipe(
+        Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+        Effect.catch((error) =>
+          Effect.flatMap(Ref.get(refused), (refusal) =>
+            Effect.fail<E | AgentToolError>(
+              refusal === undefined
+                ? error
+                : fail(
+                    "mode_escalation_denied",
+                    `Session ${refusal.threadId} now runs in ${refusal.runtimeMode}/${refusal.interactionMode} mode, above yours; its user changed it while this call ran.`,
+                  ),
+            ),
+          ),
+        ),
+      );
+    });
+
+/** A question as `format: "json"` returns it: long texts cut like the Markdown. */
+const boundQuestion = (pending: PendingQuestion): PendingQuestion => ({
+  ...pending,
+  questions: pending.questions.map((question) => ({
+    ...question,
+    question: cutText(question.question, 1_000),
+    options: question.options.map((option) => ({
+      ...option,
+      description: cutText(option.description, 300),
+    })),
+  })),
+});
+
+/** An approval as `format: "json"` returns it; a heredoc command can be very long. */
+const boundApproval = (approval: PendingApproval): PendingApproval => ({
+  ...approval,
+  prompt: approval.prompt === null ? null : cutText(approval.prompt, 2_000),
 });
 
 const STALE_REQUEST =
@@ -267,22 +329,8 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
   const sender =
     own === undefined
       ? null
-      : yield* caller.threads
-          .getTimelinePage(own.id, {
-            afterPosition: Math.max(-1, own.visibleItemCount - 41),
-            limit: 40,
-            view: "messages",
-          })
-          .pipe(
-            Effect.map((page) => {
-              const last = page.items
-                .map((row) => row.item)
-                .filter((item) => item.type === "user_message")
-                .at(-1);
-              return last?.type === "user_message" ? (last.sentByUserId ?? null) : null;
-            }),
-            Effect.orElseSucceed(() => null),
-          );
+      : ((yield* recentMessages(caller, own, 6)).findLast((message) => message.role === "User")
+          ?.sentByUserId ?? null);
 
   const lines = [
     `## You act as ${me?.name ?? me?.email ?? (scope.actorUserId === null ? "this server's operator" : scope.actorUserId)}${me?.email !== null && me?.email !== undefined && me.name !== null ? ` (${me.email})` : ""}`,
@@ -372,6 +420,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       : candidates.entries.filter((entry) => wanted.has(entry.kind));
   const limit = input.limit ?? 20;
   const context = contextFor(caller, projects, nowMs, origin);
+  let unreadReads = 0;
   const loaded = yield* Effect.forEach(matching.slice(0, limit), (candidate) =>
     Effect.gen(function* () {
       const detail: PendingDetail =
@@ -382,6 +431,9 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
             });
       // The shell keeps a plan flagged after a newer run answered it.
       if (candidate.kind === "plan" && !planIsCurrent(candidate.shell, detail.plan)) return null;
+      // Each last-reply read scans that session's timeline index; a few are enough.
+      const readReply = candidate.kind === "unread" && unreadReads < 8;
+      if (readReply) unreadReads += 1;
       return {
         kind: candidate.kind,
         shell: candidate.shell,
@@ -395,7 +447,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
               : null,
         approval: candidate.kind === "approval" ? detail.approval : null,
         plan: candidate.kind === "plan" ? detail.plan : null,
-        lastReply: candidate.kind === "unread" ? yield* lastReply(caller, candidate.shell) : null,
+        lastReply: readReply ? yield* lastReply(caller, candidate.shell) : null,
       } satisfies InboxEntry;
     }),
   );
@@ -435,8 +487,8 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       session: sessionData(entry.shell, entry.context),
       urgent: matching.find((candidate) => candidate.shell.id === entry.shell.id)?.urgent ?? false,
       waitingSince: isoFromMillis(entry.waitingSinceMs),
-      question: entry.question,
-      approval: entry.approval,
+      question: entry.question === null ? null : boundQuestion(entry.question),
+      approval: entry.approval === null ? null : boundApproval(entry.approval),
       plan:
         entry.plan === null
           ? null
@@ -569,6 +621,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
             ? fail("request_stale", `${error.detail} Read what waits now with t3_inbox.`)
             : fail("dispatch_failed", "T3 Code could not record the plan review. Try again."),
         ),
+        withModeLimit(caller),
       );
     answered = `${input.plan === "approve" ? "Approved" : input.plan === "revise" ? "Asked for changes to" : "Discarded"} the plan "${open.title}"${submitted.turnStarted ? "; the agent is working on it" : ""}.`;
   } else if (input.decision !== undefined) {
@@ -595,12 +648,17 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     yield* caller.threads
       .dispatch({
         type: "runtime-request.respond",
-        commandId: yield* commandIdFor(scope, "answer", input.clientRequestId),
+        commandId: yield* commandIdFor(
+          scope,
+          "answer",
+          `${shell.id}\u0000${approval.requestId}`,
+          input.clientRequestId,
+        ),
         threadId: shell.id,
         requestId: RuntimeRequestId.make(approval.requestId),
         decision,
       })
-      .pipe(Effect.mapError(dispatchError));
+      .pipe(Effect.mapError(dispatchError), withModeLimit(caller));
     answered = `Sent ${input.decision} for the ${approval.requestKind} request${approval.prompt === null ? "" : ` \`${oneLine(approval.prompt, 120)}\``}.`;
   } else {
     const open = [...(detail.question === null ? [] : [detail.question]), ...detail.asyncQuestions];
@@ -619,12 +677,17 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     yield* caller.threads
       .dispatch({
         type: "runtime-request.respond",
-        commandId: yield* commandIdFor(scope, "answer", input.clientRequestId),
+        commandId: yield* commandIdFor(
+          scope,
+          "answer",
+          `${shell.id}\u0000${target.requestId}`,
+          input.clientRequestId,
+        ),
         threadId: shell.id,
         requestId: RuntimeRequestId.make(target.requestId),
         answers: answers.success,
       })
-      .pipe(Effect.mapError(dispatchError));
+      .pipe(Effect.mapError(dispatchError), withModeLimit(caller));
     answered = `Answered ${target.questions.length === 1 ? `"${oneLine(target.questions[0]?.header ?? "the question", 80)}"` : `${target.questions.length} questions`}: ${Object.values(
       answers.success,
     )
@@ -749,24 +812,27 @@ const recentMessages = Effect.fn("agentToolkit.recentMessages")(function* (
   count: number,
 ) {
   if (count === 0) return [] as ReadonlyArray<BriefMessage>;
-  const window = Math.max(count * 8, 40);
-  const page = yield* caller.threads
-    .getTimelinePage(shell.id, {
-      afterPosition: Math.max(-1, shell.visibleItemCount - window - 1),
-      limit: window,
-      view: "messages",
-    })
-    .pipe(Effect.option);
-  if (Option.isNone(page)) return [] as ReadonlyArray<BriefMessage>;
-  return page.value.items
-    .flatMap((row): ReadonlyArray<BriefMessage> =>
+  // Positions count every visible item, tool calls included, so widen the
+  // window from the end until it holds enough messages or reaches the start.
+  let window = Math.max(count * 8, 40);
+  let found: ReadonlyArray<BriefMessage> = [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const afterPosition = Math.max(-1, shell.visibleItemCount - window - 1);
+    const page = yield* caller.threads
+      .getTimelinePage(shell.id, { afterPosition, limit: window, view: "messages" })
+      .pipe(Effect.option);
+    if (Option.isNone(page)) return found;
+    found = page.value.items.flatMap((row): ReadonlyArray<BriefMessage> =>
       row.item.type === "user_message"
         ? [{ role: "User", text: row.item.text, sentByUserId: row.item.sentByUserId ?? null }]
         : row.item.type === "assistant_message"
           ? [{ role: "Agent", text: row.item.text, sentByUserId: null }]
           : [],
-    )
-    .slice(-count);
+    );
+    if (found.length >= count || afterPosition === -1) break;
+    window *= 4;
+  }
+  return found.slice(-count);
 });
 
 /** The agent's newest reply. The shell does not carry it, so it is read from the timeline. */
@@ -791,12 +857,20 @@ const correctPlanFlags = Effect.fn("agentToolkit.correctPlanFlags")(function* (
   let left = budget;
   return yield* Effect.forEach(shells, (shell) =>
     Effect.gen(function* () {
-      if (!shell.hasActionableProposedPlan || left <= 0) return shell;
+      const latestRunId = shell.latestRunId;
+      if (!shell.hasActionableProposedPlan || latestRunId === null || left <= 0) return shell;
       left -= 1;
-      const detail = yield* loadPendingDetail(caller, shell, { includePlan: true });
-      return planIsCurrent(shell, detail.plan)
-        ? shell
-        : { ...shell, hasActionableProposedPlan: false };
+      // Only the latest run's plan items: a small read, no plan history.
+      const fromLatestRun = yield* caller.threads
+        .getThreadRecords(shell.id, ["turnItems"], {
+          turnItemTypes: ["proposed_plan"],
+          turnItemRunIds: [latestRunId],
+        })
+        .pipe(
+          Effect.map((records) => records.turnItems.length > 0),
+          Effect.orElseSucceed(() => true),
+        );
+      return fromLatestRun ? shell : { ...shell, hasActionableProposedPlan: false };
     }),
   );
 });
@@ -898,9 +972,9 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     owner: personName(people, shell.ownerUserId ?? null),
     tagged: members,
     waitsOn: {
-      approval: detail.approval,
-      question: detail.question,
-      asyncQuestions: detail.asyncQuestions,
+      approval: detail.approval === null ? null : boundApproval(detail.approval),
+      question: detail.question === null ? null : boundQuestion(detail.question),
+      asyncQuestions: detail.asyncQuestions.map(boundQuestion),
       plan:
         detail.plan === null
           ? null
@@ -1019,24 +1093,38 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
 
   const interactionMode = interactionModeFor(input.mode);
   const workspace = workspaceFor(input.workspace);
+  const startInput = {
+    projectId: project.id,
+    prompt,
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(modelSelection === undefined ? {} : { modelSelection }),
+    ...(interactionMode === undefined ? {} : { interactionMode }),
+    ...(workspace === undefined ? {} : { workspace }),
+    ...(input.group === undefined ? {} : { customGroup: input.group }),
+    ...(input.tag === undefined ? {} : { tagUserIds: input.tag, inheritParentTags: true }),
+    ...(parent === undefined ? {} : { parentSessionId: parent.id }),
+  };
   const created =
     existing !== null
       ? null
-      : yield* createSession(
-          {
-            projectId: project.id,
-            prompt,
-            ...(input.title === undefined ? {} : { title: input.title }),
-            ...(modelSelection === undefined ? {} : { modelSelection }),
-            ...(interactionMode === undefined ? {} : { interactionMode }),
-            ...(workspace === undefined ? {} : { workspace }),
-            ...(input.group === undefined ? {} : { customGroup: input.group }),
-            ...(input.tag === undefined ? {} : { tagUserIds: input.tag, inheritParentTags: true }),
-            ...(parent === undefined ? {} : { parentSessionId: parent.id }),
-          },
-          started,
-          { sessionId },
-        ).pipe(
+      : yield* createSession(startInput, started, { sessionId }).pipe(
+          // A saved project default broader than this caller may start falls
+          // back to the caller's own modes, the most it may hand a session.
+          Effect.catch((error) =>
+            error._tag === "OrchestratorMcpFailure" &&
+            (error.code === "runtime_mode_escalation_denied" ||
+              error.code === "interaction_mode_escalation_denied")
+              ? createSession(
+                  {
+                    ...startInput,
+                    runtimeMode: started.runtimeMode,
+                    interactionMode: interactionMode ?? started.interactionMode,
+                  },
+                  started,
+                  { sessionId },
+                )
+              : Effect.fail(error),
+          ),
           Effect.mapError((error) =>
             error._tag === "OrchestratorMcpFailure"
               ? error
@@ -1051,7 +1139,8 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
     return yield* fail("start_failed", "T3 Code did not return the new session.");
 
   let waitNote: string | null = null;
-  if (input.waitFor === "first-reply") {
+  // A retry finds the session it started; its current state is the answer.
+  if (input.waitFor === "first-reply" && existing === null) {
     const outcome = yield* waitForChange({
       caller,
       afterSequence: 0,
@@ -1147,7 +1236,7 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
       : ifBusy === "interrupt"
         ? "restart"
         : "queue";
-  const commandId = yield* commandIdFor(scope, "send", input.clientRequestId);
+  const commandId = yield* commandIdFor(scope, "send", shell.id, input.clientRequestId);
   const sent = yield* caller.threads
     .sendToThread({
       projectId: shell.projectId,
@@ -1161,7 +1250,7 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
       createdBy: scope.thread === undefined ? "user" : "agent",
       creationSource: "mcp",
     })
-    .pipe(Effect.mapError(sendError));
+    .pipe(Effect.mapError(sendError), withModeLimit(caller));
   const delivery =
     sent.delivery === "queued"
       ? "queued after the current turn"
@@ -1198,6 +1287,10 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
   let sessions: VisibleSessions | undefined;
   let threadIds: Set<string> | null = null;
   if (input.sessions !== undefined && input.sessions.length > 0) {
+    // One snapshot for every reference that is not an exact id.
+    if (input.sessions.length > 1) {
+      sessions = yield* loadVisibleSessions(caller, { archived: false });
+    }
     const resolved: Array<SessionShell> = [];
     for (const ref of input.sessions) {
       resolved.push(yield* resolveSession({ caller, ref, nowMs, sessions }));
@@ -1290,7 +1383,18 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
       sequence: match.sequence,
     },
     session: sessionData(shell, context),
-    waitsOn: detail,
+    waitsOn: {
+      approval: detail.approval === null ? null : boundApproval(detail.approval),
+      question: detail.question === null ? null : boundQuestion(detail.question),
+      asyncQuestions: detail.asyncQuestions.map(boundQuestion),
+      plan:
+        detail.plan === null || attention !== "plan"
+          ? null
+          : {
+              title: planTitle(detail.plan.markdown),
+              excerpt: cutText(detail.plan.markdown, 4_000),
+            },
+    },
   });
 });
 

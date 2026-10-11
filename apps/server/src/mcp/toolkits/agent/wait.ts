@@ -8,7 +8,8 @@
  * a state: a request that opens, a run that ends. A session that already
  * waited before the cursor does not end the wait again; t3_inbox lists those.
  */
-import type { OrchestrationV2StoredEvent, ThreadId } from "@t3tools/contracts";
+import { type OrchestrationV2StoredEvent, RunId, type ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,6 +30,8 @@ export interface WaitMatch {
   readonly change: WaitChange;
   /** What happened, in a few words. */
   readonly what: string;
+  /** The run that ended, for a finished or failed run. */
+  readonly runId?: string | undefined;
 }
 
 export interface WaitOutcome {
@@ -61,13 +64,29 @@ export function changeOf(stored: OrchestrationV2StoredEvent): Omit<WaitMatch, "s
     case "run.updated": {
       const run = event.payload;
       if (run.status === "failed") {
-        return { threadId: event.threadId, change: "failed", what: "the run failed" };
+        return {
+          threadId: event.threadId,
+          change: "failed",
+          what: "the run failed",
+          runId: run.id,
+        };
       }
       if (!FINISHED_STATUSES.has(run.status)) return null;
+      // A stopped run gets a second update when its checkpoint lands; that
+      // one keeps the stop's completion time, which is older than the event.
+      if (
+        run.status !== "completed" &&
+        run.completedAt !== null &&
+        run.completedAt !== undefined &&
+        DateTime.toEpochMillis(event.occurredAt) - DateTime.toEpochMillis(run.completedAt) > 1_000
+      ) {
+        return null;
+      }
       return {
         threadId: event.threadId,
         change: "finished",
         what: run.status === "completed" ? "finished its turn" : `run ${run.status}`,
+        runId: run.id,
       };
     }
     case "turn-item.updated": {
@@ -126,6 +145,18 @@ export const waitForChange = Effect.fn("agentToolkit.waitForChange")(function* (
       return allowed;
     });
 
+  /** Whether the run that just ended left a plan that waits for review. */
+  const runProposedPlan = (threadId: ThreadId, runId: string) =>
+    caller.threads
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["proposed_plan"],
+        turnItemRunIds: [RunId.make(runId)],
+      })
+      .pipe(
+        Effect.map((records) => records.turnItems.length > 0),
+        Effect.orElseSucceed(() => false),
+      );
+
   const onlyThread =
     input.threadIds !== null && input.threadIds.size === 1
       ? ([...input.threadIds][0] as ThreadId)
@@ -140,9 +171,18 @@ export const waitForChange = Effect.fn("agentToolkit.waitForChange")(function* (
       Stream.mapEffect((stored) =>
         Effect.gen(function* () {
           lastSeen = Math.max(lastSeen, stored.sequence);
-          const change = changeOf(stored);
-          if (change === null || !input.until.has(change.change)) return null;
-          if (!(yield* mayReport(change.threadId))) return null;
+          let change = changeOf(stored);
+          if (change === null || !(yield* mayReport(change.threadId))) return null;
+          // A plan waits on a person once the run that proposed it ends.
+          if (
+            change.change === "finished" &&
+            change.runId !== undefined &&
+            input.until.has("needs-human") &&
+            (yield* runProposedPlan(change.threadId, change.runId))
+          ) {
+            change = { ...change, change: "needs-human", what: "proposed a plan to review" };
+          }
+          if (!input.until.has(change.change)) return null;
           return { ...change, sequence: stored.sequence } satisfies WaitMatch;
         }),
       ),
