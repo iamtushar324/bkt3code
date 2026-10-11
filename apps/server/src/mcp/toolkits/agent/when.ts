@@ -158,15 +158,15 @@ export const resolveWhen = (
     ...(["in", "at", "every", "daily"] as const).filter((key) => input[key] !== undefined),
     ...(input.webhook === true ? ["webhook"] : []),
   ];
+  if (input.weekdays !== undefined && input.daily === undefined) {
+    return Result.fail('weekdays goes with daily, such as daily: "09:00".');
+  }
   if (given.length !== 1) {
     return Result.fail(
       given.length === 0
         ? 'Say when: in ("10m"), at (an ISO time or "09:00"), every ("2h"), daily ("09:00") or webhook: true.'
         : `Pass one of in, at, every, daily and webhook, not ${given.join(" and ")}.`,
     );
-  }
-  if (input.weekdays !== undefined && input.daily === undefined) {
-    return Result.fail("weekdays goes with daily.");
   }
   const zone = input.timeZone === undefined ? serverZone() : namedZone(input.timeZone);
   if (zone === null) {
