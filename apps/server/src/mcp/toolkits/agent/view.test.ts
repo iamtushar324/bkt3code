@@ -193,5 +193,15 @@ describe("sessionStateOf", () => {
       "settled",
     );
     expect(sessionStateOf(shell({}), NOW)).toBe("idle");
+    // A turn that ended on a background command the agent waits for still runs.
+    expect(
+      sessionStateOf(
+        shell({
+          status: "completed",
+          pendingBackgroundTasks: [{ kind: "command", wakesAgent: true }],
+        }),
+        NOW,
+      ),
+    ).toBe("running");
   });
 });

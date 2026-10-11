@@ -261,6 +261,19 @@ const withModeLimit =
       );
     });
 
+/**
+ * The session's newest event, taken before a write, so the next t3_wait
+ * starts from there and cannot miss a reply that comes fast.
+ */
+const sessionCursor = (caller: Caller, threadId: ThreadId) =>
+  caller.threads.getThreadEventSequence(threadId).pipe(
+    Effect.map((sequence): string | undefined => String(sequence)),
+    Effect.orElseSucceed((): string | undefined => undefined),
+  );
+
+const waitHint = (ref: string, cursor: string | undefined) =>
+  callHint("t3_wait", { sessions: [ref], ...(cursor === undefined ? {} : { cursor }) });
+
 /** A question as `format: "json"` returns it: long texts cut like the Markdown. */
 const boundQuestion = (pending: PendingQuestion): PendingQuestion => ({
   ...pending,
@@ -278,6 +291,7 @@ const boundQuestion = (pending: PendingQuestion): PendingQuestion => ({
 const boundApproval = (approval: PendingApproval): PendingApproval => ({
   ...approval,
   prompt: approval.prompt === null ? null : cutText(approval.prompt, 2_000),
+  command: approval.command === null ? null : cutText(approval.command, 4_000),
 });
 
 const STALE_REQUEST =
@@ -537,6 +551,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     );
   }
   yield* assertTargetWithinLimits(caller.limits, shell);
+  const cursor = yield* sessionCursor(caller, shell.id);
   const asked = [
     input.plan !== undefined ? "plan" : null,
     input.decision !== undefined ? "decision" : null,
@@ -705,9 +720,9 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     [
       `## ${answered}`,
       `${sessionHeading(now, context)} — ${sessionActivity(now, nowMs)}`,
-      `Next: ${callHint("t3_wait", { sessions: [ref] })} to hear when it needs you again.`,
+      `Next: ${waitHint(ref, cursor)} to hear when it needs you again.`,
     ].join("\n"),
-    { answered, session: sessionData(now, context) },
+    { answered, session: sessionData(now, context), cursor: cursor ?? null },
   );
 });
 
@@ -1139,6 +1154,8 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
     return yield* fail("start_failed", "T3 Code did not return the new session.");
 
   let waitNote: string | null = null;
+  // A new session's events all follow cursor 0; a retry's follow its newest one.
+  let cursor = existing === null ? "0" : yield* sessionCursor(caller, newId);
   // A retry finds the session it started; its current state is the answer.
   if (input.waitFor === "first-reply" && existing === null) {
     const outcome = yield* waitForChange({
@@ -1149,6 +1166,7 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
       timeoutMs: (input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS) * 1000,
       includeSubagents: true,
     });
+    cursor = String(outcome.cursor);
     if (outcome.match === null) {
       waitNote = `No reply within ${input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS}s; it is still working.`;
     }
@@ -1174,9 +1192,10 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
     ...(waitNote === null ? [] : ["", waitNote]),
     ...(outcomeLines.length === 0 ? [] : ["", ...outcomeLines]),
     "",
-    `Next: ${callHint("t3_wait", { sessions: [ref] })} for its next question or finish, or ${callHint("t3_session_brief", { session: ref })}.`,
+    `Next: ${waitHint(ref, cursor)} for its next question or finish, or ${callHint("t3_session_brief", { session: ref })}.`,
   ];
   return result(lines.join("\n"), {
+    cursor: cursor ?? null,
     started: existing === null,
     session:
       shell === null || context === null ? { sessionId: newId, ref } : sessionData(shell, context),
@@ -1227,6 +1246,7 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
     );
   }
   yield* assertTargetWithinLimits(caller.limits, shell);
+  const cursor = yield* sessionCursor(caller, shell.id);
   const busy = shell.activeRunId !== null;
   const ifBusy = input.ifBusy ?? "queue";
   const mode = !busy
@@ -1263,9 +1283,10 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
     [
       `## Message ${delivery}`,
       `\`${ref}\` ${shell.title} · run ${sent.run.id} (${sent.run.status})`,
-      `Next: ${callHint("t3_wait", { sessions: [ref] })} to hear when it answers, asks or fails.`,
+      `Next: ${waitHint(ref, cursor)} to hear when it answers, asks or fails.`,
     ].join("\n"),
     {
+      cursor: cursor ?? null,
       sessionId: shell.id,
       ref,
       delivery: sent.delivery,

@@ -12,5 +12,5 @@ export const MCP_SERVER_INSTRUCTIONS = [
   "- t3_wait: wait for the next question, approval, finish or failure with a cursor. Do not poll t3_inbox.",
   "Name a session by its id, the first 8 characters of its id, a T3 link, a Linear key, a pull request URL or its title. Inside a session, omit it to mean your own.",
   'Results are short Markdown that ends with the next call; pass format: "json" for data. Pass clientRequestId on writes so a retry does not act twice.',
-  "For anything these do not cover, the t3_ui_* tools reach every action of the web app.",
+  "For anything these do not cover, t3_ui_list_tools and t3_ui_call reach every action of the web app.",
 ].join("\n");

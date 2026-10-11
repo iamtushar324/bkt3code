@@ -142,7 +142,9 @@ export const renderApproval = (
   lines.push(
     `   Asks to approve a ${approval.requestKind}${what.length === 0 ? "" : `: ${oneLine(what, 200)}`}`,
   );
-  if (approval.prompt !== null) lines.push(`   \`${oneLine(approval.prompt, 400)}\``);
+  if (approval.command !== null) lines.push(`   Command: \`${oneLine(approval.command, 600)}\``);
+  if (approval.file !== null) lines.push(`   File: \`${approval.file}\``);
+  if (approval.prompt !== null) lines.push(`   Why: ${oneLine(approval.prompt, 400)}`);
   lines.push(
     `   Decisions: ${approval.options
       .map((option) => `${DECISION_NAMES[option.decision]} (${option.label})`)

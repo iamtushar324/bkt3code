@@ -148,9 +148,9 @@ omits it to mean its own.
 | `t3_send_message`  | Send to a session. It refuses while a question or approval is open, so the question is not lost.              |
 | `t3_wait`          | Wait for the next question, approval, finish or failure, with a cursor so no change is missed.                |
 
-An agent signed in through OAuth lists only these eight tools, the `t3_ui_*`
-tools and `t3_thread_read`, so its context does not fill with tool
-descriptions. To list every tool, send the header `x-t3-mcp-tools: all` or
+An agent signed in through OAuth lists only these eight tools,
+`t3_ui_list_tools`, `t3_ui_call` and `t3_thread_read` (about 8,000 tokens of
+descriptions), so its context does not fill with tool descriptions. To list every tool, send the header `x-t3-mcp-tools: all` or
 connect to `/mcp?tools=all`. Agents inside a session and Settings-issued
 credentials always list every tool. The server also sends a short "start here"
 guide in the MCP `instructions` when a client connects.

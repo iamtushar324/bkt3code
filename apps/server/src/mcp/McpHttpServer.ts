@@ -61,11 +61,7 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 // T3-CUSTOM(expbkt3): compact parity bridge for the authenticated web UI RPCs.
-import {
-  WEB_UI_MCP_TOOL_NAMES,
-  WebUiRpcHandlers,
-  WebUiRpcToolkit,
-} from "./toolkits/webUi/registration.ts";
+import { WebUiRpcHandlers, WebUiRpcToolkit } from "./toolkits/webUi/registration.ts";
 // T3-CUSTOM(expbkt3): task-shaped tools for agents that drive T3 from outside.
 import { AgentToolkitHandlers } from "./toolkits/agent/handlers.ts";
 import { MCP_SERVER_INSTRUCTIONS } from "./toolkits/agent/instructions.ts";
@@ -188,12 +184,15 @@ const requestsEveryTool = (request: HttpServerRequest.HttpServerRequest) =>
 /**
  * What an OAuth client lists by default: the agent toolkit, which does most
  * jobs in one call, the web UI bridge for everything else, and the full-history
- * read the briefs point to. The other tools cost such a client tens of
+ * read the briefs point to (about 8,000 tokens of descriptions). The other tools cost such a client tens of
  * thousands of tokens of descriptions, and many of them refuse it anyway.
  */
 const AGENT_TOOL_LIST: ReadonlySet<string> = new Set([
   ...AGENT_TOOL_NAMES,
-  ...WEB_UI_MCP_TOOL_NAMES,
+  // The two bridge tools that reach every web app action; t3_ui_get_tool and
+  // t3_ui_batch each carry the whole action list again in their schemas.
+  "t3_ui_list_tools",
+  "t3_ui_call",
   "t3_thread_read",
 ]);
 
