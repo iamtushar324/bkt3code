@@ -3,7 +3,7 @@ import type { OrchestrationThread } from "@t3tools/contracts";
 
 import { boundSessionDetail, SESSION_DETAIL_MAX_CHARS } from "./sessionDetail.ts";
 
-const at = (minute: number) => new Date(Date.UTC(2026, 9, 11, 9, minute)).toISOString();
+const at = (minute: number) => `2026-10-11T09:${String(minute).padStart(2, "0")}:00.000Z`;
 
 const message = (index: number, text: string) => ({
   id: `message-${index}`,

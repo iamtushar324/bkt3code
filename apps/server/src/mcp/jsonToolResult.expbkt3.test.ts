@@ -9,6 +9,7 @@ import { JsonToolResult, toJsonValue } from "./jsonToolResult.expbkt3.ts";
 const handlerValue = () => ({
   sessionId: "thread-1",
   snoozedUntil: undefined,
+  // @effect-diagnostics-next-line globalDate:off - a Date is the value under test
   updatedAt: new Date(Date.UTC(2026, 9, 11)),
   nested: [{ cost: Number.NaN, kept: 1 }],
 });
