@@ -118,19 +118,30 @@ const optionalSessionId = {
   ),
 };
 
+// Every control tool acts inside this T3 server, so none is open-world. MCP
+// reads a missing destructiveHint as true, so changes that lose nothing say so.
 const readonlyTool = <T extends Tool.Any>(tool: T): T =>
   tool
     .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false)
-    .annotate(Tool.Idempotent, true) as T;
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false) as T;
 
+/** Changes something without losing anything: a message, a tag, a setting of one session. */
 const mutatingTool = <T extends Tool.Any>(tool: T): T =>
-  tool.annotate(Tool.Readonly, false).annotate(Tool.Destructive, true) as T;
+  tool
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.OpenWorld, false) as T;
+
+/** Can delete or replace something a person cannot get back. */
+const destructiveTool = <T extends Tool.Any>(tool: T): T =>
+  mutatingTool(tool).annotate(Tool.Destructive, true) as T;
 
 export const T3ListSessionsTool = readonlyTool(
   Tool.make("t3_list_sessions", {
     description:
-      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary. User-bound agents see every session accessible to that user; external operators see all sessions.",
+      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary. User-bound agents see every session accessible to that user; external operators see all sessions. To see what waits on a person, prefer t3_inbox; to find a session by title, ticket or pull request, prefer t3_find_sessions.",
     parameters: Schema.Struct({
       includeArchived: Schema.optional(
         described(
@@ -164,7 +175,7 @@ export const T3ListSessionsTool = readonlyTool(
 export const T3GetSessionTool = readonlyTool(
   Tool.make("t3_get_session", {
     description:
-      "Inspect an accessible T3 Code session deeply: metadata, provider session status, recent messages, activities, proposed plans, and checkpoints. Omit sessionId for the caller's current session. The result stays under about 60,000 characters: long messages, plan text and tool payloads are cut, only the newest plan keeps its text, and `omitted` lists what was cut. Read full history with t3_thread_read.",
+      "Inspect an accessible T3 Code session deeply: metadata, provider session status, recent messages, activities, proposed plans, and checkpoints. Omit sessionId for the caller's current session. For where a session stands, prefer the shorter t3_session_brief. The result stays under about 60,000 characters: long messages, plan text and tool payloads are cut, only the newest plan keeps its text, and `omitted` lists what was cut. Read full history with t3_thread_read.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       messageLimit: Schema.optional(
@@ -204,7 +215,7 @@ export const T3ListProjectsTool = readonlyTool(
 export const T3SendPromptTool = mutatingTool(
   Tool.make("t3_send_prompt", {
     description:
-      "Send or steer a prompt in a T3 Code session through the same durable orchestration path as the UI. Optionally change the model, sandbox/runtime mode, or plan/default interaction mode for this turn.",
+      "Send or steer a prompt in a T3 Code session through the same durable orchestration path as the UI. Optionally change the model, sandbox/runtime mode, or plan/default interaction mode for this turn. Prefer t3_send_message, which will not lose a question or approval the session has open.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       prompt: described(
@@ -297,7 +308,7 @@ export const T3UpdateSessionTool = mutatingTool(
   }).annotate(Tool.Title, "Update T3 session"),
 );
 
-export const T3SessionActionTool = mutatingTool(
+export const T3SessionActionTool = destructiveTool(
   Tool.make("t3_session_action", {
     description:
       "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete.",
@@ -331,10 +342,10 @@ export const T3SessionActionTool = mutatingTool(
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
 
-export const T3RespondApprovalTool = mutatingTool(
+export const T3RespondApprovalTool = destructiveTool(
   Tool.make("t3_respond_approval", {
     description:
-      "Resolve a pending provider approval in a T3 session. Obtain requestId and allowed decisions from t3_get_session before responding.",
+      "Resolve a pending provider approval in a T3 session. Obtain requestId and allowed decisions from t3_get_session before responding. Prefer t3_answer, which reads the open request itself.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       requestId: described(
@@ -355,7 +366,7 @@ export const T3RespondApprovalTool = mutatingTool(
 export const T3RespondUserInputTool = mutatingTool(
   Tool.make("t3_respond_user_input", {
     description:
-      "Answer a pending structured user-input request in a T3 session. Obtain requestId and question IDs/options from t3_get_session.",
+      "Answer a pending structured user-input request in a T3 session. Obtain requestId and question IDs/options from t3_get_session. Prefer t3_answer, which takes an option number or label and reads the open request itself.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       requestId: described(
@@ -410,7 +421,7 @@ export const T3CreateProjectTool = mutatingTool(
     .annotate(Tool.Idempotent, true),
 );
 
-export const T3UpdateProjectTool = mutatingTool(
+export const T3UpdateProjectTool = destructiveTool(
   Tool.make("t3_update_project", {
     description:
       "Update an existing T3 project, including its default agent model and project actions. External operators only; omitted fields remain unchanged.",
@@ -439,7 +450,7 @@ export const T3UpdateProjectTool = mutatingTool(
 export const T3CreateSessionTool = mutatingTool(
   Tool.make("t3_create_session", {
     description:
-      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags. An omitted model, runtimeMode or interactionMode follows the project's saved new-thread defaults, then the host's — including the host's starting mode, which may be plan; pass interactionMode: \"default\" to force build mode.",
+      "Create a user-owned T3 Code session in an accessible project and optionally start its first prompt. Available to user-bound provider sessions, personal external users, and external operators. The new session is tagged with your session's audience — its owner and everyone tagged on it — so delegated work stays visible to the people who asked for it; override with tagUserIds or inheritParentTags. An omitted model, runtimeMode or interactionMode follows the project's saved new-thread defaults, then the host's — including the host's starting mode, which may be plan; pass interactionMode: \"default\" to force build mode. For a one-call start with a project name and a model alias, prefer t3_start_session.",
     parameters: Schema.Struct({
       projectId: described(Schema.String, "Target project ID obtained from t3_list_projects."),
       title: Schema.optional(
@@ -552,7 +563,7 @@ export const T3CreateSessionTool = mutatingTool(
   }).annotate(Tool.Title, "Create T3 session"),
 );
 
-export const T3DispatchCommandTool = mutatingTool(
+export const T3DispatchCommandTool = destructiveTool(
   Tool.make("t3_dispatch_command", {
     description:
       "External-operator escape hatch for advanced T3 automation. Dispatch any validated OrchestrationCommand through T3's durable command gate. Not available to an in-session agent; prefer the focused tools whenever possible.",
@@ -612,7 +623,7 @@ export const T3GetConfigurationTool = readonlyTool(
   }).annotate(Tool.Title, "Get T3 configuration and model catalog"),
 );
 
-export const T3UpdateServerSettingsTool = mutatingTool(
+export const T3UpdateServerSettingsTool = destructiveTool(
   Tool.make("t3_update_server_settings", {
     description:
       "External-operator-only settings control. Apply a validated server settings patch through the same persistence service as the UI. Use t3_get_configuration first. The result is redacted, and rotating or disabling external MCP access can immediately invalidate this credential.",
@@ -898,7 +909,7 @@ export const T3GroupRenameTool = mutatingTool(
   }).annotate(Tool.Title, "Rename custom session group"),
 );
 
-export const T3GroupRemoveTool = mutatingTool(
+export const T3GroupRemoveTool = destructiveTool(
   Tool.make("t3_group_remove", {
     description:
       "Remove a custom group, like Delete group in the sidebar: the saved group and its colour are deleted, and every non-archived session you can see in it leaves the group. The sessions themselves stay, ungrouped. Removing a group that does not exist is safe. Sessions you cannot see keep the label; a session whose update fails keeps it too and is listed under skipped with the reason. Pass Ungrouped to clear that label from sessions that got it another way. Needs a full-access caller, as t3_update_server_settings does.",
