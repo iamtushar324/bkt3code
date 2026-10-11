@@ -154,6 +154,11 @@ import { isForkThreadCommand, planForkThreadCommand } from "./forkCommands.expbk
 import { forkThreadMetadata } from "./forkMetadata.expbkt3.ts";
 // T3-CUSTOM(expbkt3): actor context follows captured native services.
 import { CurrentOrchestrationActorUserId } from "./forkActor.expbkt3.ts";
+// T3-CUSTOM(expbkt3): an adapter continuation starts past a held queue.
+import {
+  isAdapterContinuationDispatch,
+  nextStartableQueuedRun,
+} from "./QueueHeldContinuation.expbkt3.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -618,7 +623,8 @@ function delegatedTaskTerminalStatus(
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  // T3-CUSTOM(expbkt3): skip held runs; an unheld adapter continuation behind them may start.
+  return nextStartableQueuedRun(projection);
 }
 
 function latestStableRun(
@@ -1284,7 +1290,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.runs.some(isBlockingRun) ||
-        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        // T3-CUSTOM(expbkt3): held runs wait for the user; an unheld continuation may still start.
+        nextQueuedRun(projection) === undefined
       ) {
         return;
       }
@@ -5053,7 +5060,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: "queued",
-          ...(projection.runs.some(
+          // T3-CUSTOM(expbkt3): an adapter continuation never copies a held queue's hold.
+          ...(!isAdapterContinuationDispatch(command) &&
+          projection.runs.some(
             (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
           )
             ? { queueHeld: true }
