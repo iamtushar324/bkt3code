@@ -141,7 +141,7 @@ export const T3ListSessionsTool = readonlyTool(
       attentionOnly: Schema.optional(
         described(
           Schema.Boolean,
-          "When true, return only sessions currently requiring human attention.",
+          "When true, return only sessions currently requiring human attention: an open question or approval, or a plan or failure in a session that is not snoozed or settled. Prefer t3_inbox, which also returns each question's options and the call that answers it.",
         ),
       ),
       limit: Schema.optional(

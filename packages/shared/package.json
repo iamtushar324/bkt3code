@@ -43,6 +43,10 @@
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
     },
+    "./sessionAttention": {
+      "types": "./src/sessionAttention.ts",
+      "import": "./src/sessionAttention.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

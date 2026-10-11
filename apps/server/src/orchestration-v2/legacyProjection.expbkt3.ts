@@ -79,8 +79,11 @@ export function legacyThreadShell(
       lastError: shell.lastError,
       updatedAt: wire.updatedAt,
     },
+    // The provider's own sign-in is not an approval a person gives (as in the web shell).
     hasPendingApprovals:
-      shell.pendingRuntimeRequest !== null && shell.pendingRuntimeRequest.kind !== "user_input",
+      shell.pendingRuntimeRequest !== null &&
+      shell.pendingRuntimeRequest.kind !== "user_input" &&
+      shell.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput: shell.pendingRuntimeRequest?.kind === "user_input",
     hasPendingAsyncUserInput: shell.hasPendingAsyncUserInput ?? false,
   });

@@ -81,6 +81,10 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  // T3-CUSTOM(expbkt3): the public origin this request reached, when it is not
+  // a loopback address, so tool results can link to sessions the way the
+  // caller reaches this server.
+  readonly requestOrigin?: string | undefined;
 }
 
 // T3-CUSTOM(expbkt3): BEGIN — MCP control-plane operator/session-creation gating.
