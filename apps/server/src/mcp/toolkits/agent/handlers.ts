@@ -252,13 +252,14 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
   const people = yield* loadPeople();
   const projects = yield* loadProjects();
   const sessions = yield* loadVisibleSessions(caller, { archived: false });
+  const active = yield* correctPlanFlags(caller, sessions.active);
   const context = contextFor(caller, projects, nowMs, origin);
-  const inbox = inboxCandidates(sessions.active, nowMs, { includeSnoozed: false });
+  const inbox = inboxCandidates(active, nowMs, { includeSnoozed: false });
   const waiting = new Map<InboxKind, number>();
   for (const entry of inbox.entries) {
     waiting.set(entry.kind, (waiting.get(entry.kind) ?? 0) + 1);
   }
-  const running = sessions.active.filter(
+  const running = active.filter(
     (shell) => !isSubagent(shell) && sessionStateOf(shell, nowMs) === "running",
   ).length;
   const me = scope.actorUserId === null ? undefined : people.get(scope.actorUserId);
@@ -346,7 +347,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
   const origin = yield* linkOrigin(caller.scope);
   const projects = yield* loadProjects();
   const sessions = yield* loadVisibleSessions(caller, { archived: false });
-  let pool = sessions.active;
+  let pool = yield* correctPlanFlags(caller, sessions.active);
   if (input.project !== undefined) {
     const project = yield* resolveProject(
       input.project,
@@ -702,6 +703,7 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
   if (input.query !== undefined && input.query.trim().length > 0) {
     pool = matchSessionRef(input.query, pool);
   }
+  pool = yield* correctPlanFlags(caller, pool);
   pool = pool.filter((shell) => {
     const current = sessionStateOf(shell, nowMs);
     return state === "any" || (state === "active" ? ACTIVE_STATES.has(current) : current === state);
@@ -775,6 +777,30 @@ const lastReply = (caller: Caller, shell: SessionShell) =>
     ),
   );
 
+/**
+ * The shell flags a plan as long as its plan artifact stays active, and an
+ * approval does not end that; nor does an agent that answers a revision in
+ * chat. A plan from an older run than the session's latest one was answered,
+ * so its flag is cleared here, for up to `budget` flagged sessions per call.
+ */
+const correctPlanFlags = Effect.fn("agentToolkit.correctPlanFlags")(function* (
+  caller: Caller,
+  shells: ReadonlyArray<SessionShell>,
+  budget = 40,
+) {
+  let left = budget;
+  return yield* Effect.forEach(shells, (shell) =>
+    Effect.gen(function* () {
+      if (!shell.hasActionableProposedPlan || left <= 0) return shell;
+      left -= 1;
+      const detail = yield* loadPendingDetail(caller, shell, { includePlan: true });
+      return planIsCurrent(shell, detail.plan)
+        ? shell
+        : { ...shell, hasActionableProposedPlan: false };
+    }),
+  );
+});
+
 /** The session's goal: the provider's own, else the first message. */
 const goalOf = Effect.fn("agentToolkit.goalOf")(function* (caller: Caller, shell: SessionShell) {
   if (shell.goal?.objective !== undefined) return shell.goal.objective;
@@ -791,7 +817,10 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
   const caller = yield* loadAgentCaller("t3.read");
   const nowMs = yield* Clock.currentTimeMillis;
   const origin = yield* linkOrigin(caller.scope);
-  const shell = yield* resolveSession({ caller, ref: input.session, nowMs });
+  const [shell] = yield* correctPlanFlags(caller, [
+    yield* resolveSession({ caller, ref: input.session, nowMs }),
+  ]);
+  if (shell === undefined) return yield* fail("session_not_found", "The session was not found.");
   const ref = shortRef(shell.id);
   const projects = yield* loadProjects();
   const people = yield* loadPeople();
