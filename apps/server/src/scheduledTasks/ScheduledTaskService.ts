@@ -65,6 +65,7 @@ import {
   deleteScheduledTaskForkOptions,
   scheduledTaskForkLaunchFields,
   scheduledTaskForkOptionsForRun,
+  scheduledTaskOwner,
   scheduledPromptText,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): watches — tasks that run once another session changes.
@@ -825,10 +826,11 @@ export const layer = Layer.effect(
         const prompt = webhook?.prompt ?? active.prompt;
         // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group and
         // takes its owner, tags and links; the dispatch acts for the owner. Never fails.
+        const forkOwner = scheduledTaskOwner(active, forkOptions);
         const forkLaunchFields =
           active.threadId === null
             ? {
-                ...scheduledTaskForkLaunchFields(forkOptions),
+                ...scheduledTaskForkLaunchFields(forkOptions, forkOwner),
                 ...(yield* scheduledTaskCustomGroupFields(sql, active.id)),
               }
             : {};
@@ -860,7 +862,7 @@ export const layer = Layer.effect(
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
                   })
-                  .pipe(asScheduledTaskOwner(forkOptions)),
+                  .pipe(asScheduledTaskOwner(forkOwner, trigger)),
               )
             : yield* Effect.exit(
                 threadManagement
@@ -881,7 +883,7 @@ export const layer = Layer.effect(
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
                   })
-                  .pipe(asScheduledTaskOwner(forkOptions)),
+                  .pipe(asScheduledTaskOwner(forkOwner, trigger)),
               );
         // T3-CUSTOM(expbkt3): END
 
@@ -921,6 +923,9 @@ export const layer = Layer.effect(
             threadManagement,
             taskId: task.id,
             options: forkOptions,
+            owner: forkOwner,
+            trigger,
+            startedAtIso,
             exit: result,
             launchedThreadId:
               result._tag === "Success" && "resumed" in result.value ? result.value.threadId : null,

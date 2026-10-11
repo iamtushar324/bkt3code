@@ -103,7 +103,10 @@ const pad = (value: number) => String(value).padStart(2, "0");
 const partsIn = (at: DateTime.DateTime, zone: DateTime.TimeZone) =>
   DateTime.toParts(DateTime.setZone(at, zone));
 
-/** The instant a wall-clock time in `zone` names, or null inside a gap the zone skips. */
+/**
+ * The instant a wall-clock time in `zone` names. A time inside a gap the zone
+ * skips resolves to the later reading ("compatible"); null only for bad parts.
+ */
 const wallClock = (
   parts: { year: number; month: number; day: number; hour: number; minute: number },
   zone: DateTime.TimeZone,
@@ -135,6 +138,8 @@ export interface ResolvedWhen {
 
 /** Whether `input` names a time at all. */
 export const hasWhen = (input: WhenInput) =>
+  input.weekdays !== undefined ||
+  input.timeZone !== undefined ||
   input.in !== undefined ||
   input.at !== undefined ||
   input.every !== undefined ||
@@ -271,7 +276,7 @@ const resolveAt = (text: string, zone: DateTime.TimeZone, nowMs: number): number
     return null;
   }
   if (HAS_OFFSET.test(text)) {
-    return Option.match(DateTime.make(text), {
+    return Option.match(DateTime.make(text.replace(/z$/, "Z")), {
       onNone: () => null,
       onSome: DateTime.toEpochMillis,
     });

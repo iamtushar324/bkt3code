@@ -25,13 +25,17 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import {
+  asScheduledTaskOwner,
+  ownerSignature,
   readScheduledTaskForkOptions,
+  scheduledTaskOwner,
   writeScheduledTaskForkOptions,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 
 const projectId = ProjectId.make("project:scheduled-fork-options");
 const owner = UserId.make("user:owner");
 const teammate = UserId.make("user:teammate");
+const starter = UserId.make("user:starter");
 const launchedThreadId = ThreadId.make("thread:launched");
 const boundThreadId = ThreadId.make("thread:bound");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
@@ -48,7 +52,7 @@ const baseTask = {
   interactionMode: "default" as const,
 };
 
-it.effect("runs as the owner, tags new sessions, snoozes quiet ones and pauses after one run", () =>
+it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses after one run", () =>
   Effect.gen(function* () {
     const launches: Array<{
       readonly input: ThreadLaunchService.ThreadLaunchInput;
@@ -105,14 +109,18 @@ it.effect("runs as the owner, tags new sessions, snoozes quiet ones and pauses a
       const { task: fresh } = yield* scheduled.upsert({ ...baseTask, threadId: null });
       yield* writeScheduledTaskForkOptions(sql, fresh.id, {
         ownerUserId: owner,
+        signed: ownerSignature(fresh),
         memberUserIds: [teammate],
         priority: 2,
         quiet: true,
         runOnce: true,
       });
-      const { task: afterRun } = yield* scheduled.runNow({ id: fresh.id });
+      // A manual run acts for whoever started it; the session still lists the owner.
+      const { task: afterRun } = yield* scheduled
+        .runNow({ id: fresh.id })
+        .pipe(Effect.provideService(CurrentOrchestrationActorUserId, starter));
       expect(launches).toHaveLength(1);
-      expect(launches[0]?.actor).toBe(owner);
+      expect(launches[0]?.actor).toBe(starter);
       expect(launches[0]?.input).toMatchObject({
         ownerUserId: owner,
         memberUserIds: [teammate],
@@ -136,11 +144,12 @@ it.effect("runs as the owner, tags new sessions, snoozes quiet ones and pauses a
       const { task: bound } = yield* scheduled.upsert({ ...baseTask, threadId: boundThreadId });
       yield* writeScheduledTaskForkOptions(sql, bound.id, {
         ownerUserId: owner,
+        signed: ownerSignature(bound),
         keepThreadModel: true,
       });
       yield* scheduled.runNow({ id: bound.id });
       expect(sends).toHaveLength(1);
-      expect(sends[0]?.actor).toBe(owner);
+      expect(sends[0]?.actor).toBeNull();
       expect(sends[0]?.input.mode).toBe("queue");
       expect("modelSelection" in (sends[0]?.input ?? {})).toBe(false);
       const { tasks: stillRunning } = yield* scheduled.list();
@@ -181,7 +190,14 @@ it.effect("a task without options runs as nobody, as upstream's do", () =>
                 } as unknown as ThreadLaunchService.ThreadLaunchResult;
               }),
           }),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadArchivedError({
+                  threadId: input.threadId,
+                }),
+              ),
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
         ),
       ),
@@ -193,6 +209,10 @@ it.effect("a task without options runs as nobody, as upstream's do", () =>
       expect(actors).toEqual([null]);
       expect(afterRun.enabled).toBe(true);
       expect(afterRun.nextRunAt).not.toBeNull();
+      // Its session archived, an app-made task fails each run but stays on.
+      const { task: bound } = yield* scheduled.upsert({ ...baseTask, threadId: boundThreadId });
+      const { task: failed } = yield* scheduled.runNow({ id: bound.id });
+      expect(failed).toMatchObject({ enabled: true, lastRunStatus: "failed" });
     }).pipe(Effect.provide(services));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -244,6 +264,7 @@ it.effect("a watch waits without counting runs, then sends one note and ends", (
       });
       yield* writeScheduledTaskForkOptions(sql, task.id, {
         ownerUserId: owner,
+        signed: ownerSignature(task),
         keepThreadModel: true,
         runOnce: true,
         watch: { threadId: watchedThreadId, until: [], since: "2026-10-11T12:00:00.000Z" },
@@ -268,4 +289,28 @@ it.effect("a watch waits without counting runs, then sends one note and ends", (
       expect(fired).toMatchObject({ enabled: false, nextRunAt: null, runCount: 1 });
     }).pipe(Effect.provide(services));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run acts for the owner only while the task holds what the owner saved", () =>
+  Effect.gen(function* () {
+    const task = { prompt: "Check the build.", threadId: boundThreadId, projectId };
+    const options = { ownerUserId: owner, signed: ownerSignature(task) };
+    expect(scheduledTaskOwner(task, options)).toBe(owner);
+    expect(scheduledTaskOwner({ ...task, prompt: "Something else." }, options)).toBeUndefined();
+    expect(scheduledTaskOwner({ ...task, threadId: null }, options)).toBeUndefined();
+    expect(scheduledTaskOwner(task, { ownerUserId: owner })).toBeUndefined();
+
+    const actor = Effect.gen(function* () {
+      return yield* CurrentOrchestrationActorUserId;
+    });
+    expect(yield* actor.pipe(asScheduledTaskOwner(owner, "scheduled"))).toBe(owner);
+    expect(yield* actor.pipe(asScheduledTaskOwner(owner, "webhook"))).toBe(owner);
+    expect(
+      yield* actor.pipe(
+        asScheduledTaskOwner(owner, "manual"),
+        Effect.provideService(CurrentOrchestrationActorUserId, starter),
+      ),
+    ).toBe(starter);
+    expect(yield* actor.pipe(asScheduledTaskOwner(undefined, "scheduled"))).toBeNull();
+  }),
 );

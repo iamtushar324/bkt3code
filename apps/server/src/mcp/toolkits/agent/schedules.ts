@@ -39,6 +39,7 @@ import {
   writeScheduledTaskCustomGroup,
 } from "../../../scheduledTasks/scheduledTaskCustomGroup.expbkt3.ts";
 import {
+  ownerSignature,
   readAllScheduledTaskForkOptions,
   writeScheduledTaskForkOptions,
   type ScheduledTaskForkOptions,
@@ -53,7 +54,7 @@ import {
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type * as McpToolAccess from "../../McpToolAccess.ts";
-import { assertTargetWithinLimits, type Caller } from "../../threadAccess.ts";
+import { assertLiveCaller, assertTargetWithinLimits, type Caller } from "../../threadAccess.ts";
 import {
   fail,
   loadAgentCaller,
@@ -272,7 +273,8 @@ const webhookUrlOf = (task: ScheduledTask, context: ScheduleContext) =>
 
 /** Whether the caller may see a webhook URL: its token starts runs at the task's modes. */
 const mayRun = (task: ScheduledTask, context: ScheduleContext) =>
-  assertTargetWithinLimits(context.caller.limits, task).pipe(
+  assertLiveCaller(context.caller).pipe(
+    Effect.andThen(assertTargetWithinLimits(context.caller.limits, task)),
     Effect.exit,
     Effect.map(Exit.isSuccess),
   );
@@ -610,6 +612,32 @@ const saveOptions = Effect.fn("agentToolkit.saveScheduleOptions")(function* (
   }
 });
 
+/**
+ * Saves a new schedule so it never runs without its options: it is made
+ * paused, takes its options, signed by its owner, and only then starts. A
+ * failed options write deletes it again.
+ */
+const saveNewSchedule = Effect.fn("agentToolkit.saveNewSchedule")(function* (
+  upsert: ScheduledTaskUpsertInput,
+  options: ScheduledTaskForkOptions,
+  group: ThreadCustomGroup | null | undefined,
+) {
+  const service = yield* ScheduledTaskService;
+  const failed = (error: { readonly message: string }) => fail("schedule_failed", error.message);
+  const { task: draft } = yield* service
+    .upsert({ ...upsert, enabled: false })
+    .pipe(Effect.mapError(failed));
+  const signed: ScheduledTaskForkOptions =
+    options.ownerUserId === undefined ? options : { ...options, signed: ownerSignature(draft) };
+  yield* saveOptions(draft.id, signed, group).pipe(
+    Effect.tapError(() => service.delete({ id: draft.id }).pipe(Effect.ignore)),
+  );
+  const { task } = yield* service
+    .setEnabled({ id: draft.id, enabled: true })
+    .pipe(Effect.mapError(failed));
+  return { task, options: signed };
+});
+
 const createSchedule = Effect.fn("agentToolkit.createSchedule")(function* (
   input: ScheduleInput,
   started: McpToolAccess.StartedModes,
@@ -692,7 +720,9 @@ const createSchedule = Effect.fn("agentToolkit.createSchedule")(function* (
       usableProjects(scope, context.projects, context.visible.active),
     );
     const settings = yield* newSessionSettings(input, caller, started, project);
-    const owner = scope.actorUserId ?? project.ownerUserId ?? null;
+    // Runs act for the person this caller acts for; a caller acting for
+    // nobody makes a schedule that runs as nobody.
+    const owner = scope.actorUserId;
     const extra = yield* newSessionOptions(
       input,
       context,
@@ -717,12 +747,13 @@ const createSchedule = Effect.fn("agentToolkit.createSchedule")(function* (
     input.clientRequestId === undefined
       ? undefined
       : yield* commandIdFor(scope, "schedule", target, input.clientRequestId);
-  const service = yield* ScheduledTaskService;
-  const { task } = yield* service
-    .upsert({ ...upsert, ...(commandId === undefined ? {} : { commandId }) })
-    .pipe(Effect.mapError((error) => fail("schedule_failed", error.message)));
-  yield* saveOptions(task.id, options, group);
-  return yield* reportSchedule("Scheduled", { task, options }, context, [
+  const saved = yield* saveNewSchedule(
+    { ...upsert, ...(commandId === undefined ? {} : { commandId }) },
+    options,
+    group,
+  );
+  const { task } = saved;
+  return yield* reportSchedule("Scheduled", saved, context, [
     task.webhook === undefined
       ? `Next: ${callHint("t3_schedules", {})} to see it, or ${callHint("t3_schedule", { action: "run_now", id: shortRef(task.id) })} to try it now.`
       : `Next: send a request to the webhook URL to run it; ${callHint("t3_schedules", {})} shows it again.`,
@@ -776,7 +807,13 @@ const updateSchedule = Effect.fn("agentToolkit.updateSchedule")(function* (
       `${misplaced.join(", ")} ${misplaced.length === 1 ? "applies" : "apply"} only to schedules that start new sessions; this one sends into a session.`,
     );
   }
-  yield* assertTargetWithinLimits(context.caller.limits, task);
+  yield* assertWithinModes(view, context);
+  if (view.options.watch !== undefined && hasWhen(input)) {
+    return yield* fail(
+      "watch_has_no_time",
+      "A watch runs when its session changes, not on a clock. Delete it and use t3_schedule for a timed prompt.",
+    );
+  }
   const when = hasWhen(input) ? resolveWhen(input, context.nowMs) : undefined;
   if (when !== undefined && Result.isFailure(when)) {
     return yield* fail("invalid_when", when.failure);
@@ -829,8 +866,40 @@ const updateSchedule = Effect.fn("agentToolkit.updateSchedule")(function* (
       creationSource: task.creationSource,
     })
     .pipe(Effect.mapError((error) => fail("schedule_failed", error.message)));
-  yield* saveOptions(saved.id, options, group);
-  return yield* reportSchedule("Updated", { task: saved, options }, context, []);
+  // The person who saves the prompt is the person its runs act for.
+  const { ownerUserId: _formerOwner, signed: _formerSigned, ...unowned } = options;
+  const owned: ScheduledTaskForkOptions =
+    context.caller.scope.actorUserId === null
+      ? unowned
+      : {
+          ...unowned,
+          ownerUserId: context.caller.scope.actorUserId,
+          signed: ownerSignature(saved),
+        };
+  yield* saveOptions(saved.id, owned, group);
+  return yield* reportSchedule("Updated", { task: saved, options: owned }, context, []);
+});
+
+/**
+ * A caller changes or runs a schedule only within its own modes: the modes
+ * the schedule starts sessions at, and those of the session it sends into
+ * now, which that session's user may have raised since it was saved.
+ */
+const assertWithinModes = Effect.fn("agentToolkit.assertScheduleWithinModes")(function* (
+  view: ScheduleView,
+  context: ScheduleContext,
+) {
+  const { caller } = context;
+  yield* assertTargetWithinLimits(caller.limits, view.task);
+  if (view.task.threadId === null) return;
+  const bound =
+    context.sessions.get(view.task.threadId) ??
+    (yield* caller.threads
+      .getThreadShell(view.task.threadId)
+      .pipe(Effect.orElseSucceed(() => null)));
+  if (bound !== null && bound.deletedAt === null) {
+    yield* assertTargetWithinLimits(caller.limits, bound);
+  }
 });
 
 export const schedule = Effect.fn("agentToolkit.schedule")(function* (
@@ -858,6 +927,7 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       return yield* updateSchedule(input, started, view, context);
     case "pause":
     case "resume": {
+      if (action === "resume") yield* assertWithinModes(view, context);
       const { task } = yield* service
         .setEnabled({ id: view.task.id, enabled: action === "resume" })
         .pipe(Effect.mapError(failed));
@@ -869,6 +939,7 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       );
     }
     case "delete": {
+      yield* assertWithinModes(view, context);
       yield* service.delete({ id: view.task.id }).pipe(Effect.mapError(failed));
       return result(
         `## Deleted: \`${ref}\` ${oneLine(view.task.title, 80)}\n\nIt will not run again.`,
@@ -886,11 +957,16 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
           "A webhook schedule runs when its URL receives a request; send one to run it.",
         );
       }
-      yield* assertTargetWithinLimits(context.caller.limits, view.task);
-      const bound =
-        view.task.threadId === null ? undefined : context.sessions.get(view.task.threadId);
-      if (bound !== undefined) yield* assertTargetWithinLimits(context.caller.limits, bound);
+      yield* assertWithinModes(view, context);
       const { task } = yield* service.runNow({ id: view.task.id }).pipe(Effect.mapError(failed));
+      if (view.options.watch !== undefined && task.runCount === view.task.runCount) {
+        return yield* reportSchedule(
+          "Checked: no change yet",
+          { task, options: view.options },
+          context,
+          ["The watch keeps checking every minute."],
+        );
+      }
       return yield* reportSchedule("Ran now", { task, options: view.options }, context, [
         task.threadId === null
           ? `Next: ${callHint("t3_find_sessions", { query: task.title })} finds the session it started.`
@@ -964,9 +1040,8 @@ export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
     input.clientRequestId === undefined
       ? undefined
       : yield* commandIdFor(scope, "notify", `${watched.id}>${target.id}`, input.clientRequestId);
-  const service = yield* ScheduledTaskService;
-  const { task } = yield* service
-    .upsert({
+  const { task, options } = yield* saveNewSchedule(
+    {
       title: `Watch ${watchedRef} ${oneLine(watched.title, 60)}`,
       prompt: input.note?.trim() || "Check it, then carry on with your work.",
       enabled: true,
@@ -980,15 +1055,15 @@ export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
       createdBy: scope.thread === undefined ? "user" : "agent",
       creationSource: "mcp",
       ...(commandId === undefined ? {} : { commandId }),
-    })
-    .pipe(Effect.mapError((error) => fail("schedule_failed", error.message)));
-  const options: ScheduledTaskForkOptions = {
-    ...(scope.actorUserId === null ? {} : { ownerUserId: scope.actorUserId }),
-    keepThreadModel: true,
-    runOnce: true,
-    watch: { threadId: watched.id, until: [...until], since: isoFromMillis(nowMs) },
-  };
-  yield* saveOptions(task.id, options, undefined);
+    },
+    {
+      ...(scope.actorUserId === null ? {} : { ownerUserId: scope.actorUserId }),
+      keepThreadModel: true,
+      runOnce: true,
+      watch: { threadId: watched.id, until: [...until], since: isoFromMillis(nowMs) },
+    },
+    undefined,
+  );
   const working = isWorking(watched);
   const targetText =
     caller.caller !== undefined && target.id === caller.caller.id

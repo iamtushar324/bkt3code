@@ -11,6 +11,7 @@
 // without options runs as upstream's do) and deletes them with the task.
 import {
   CommandId,
+  type ScheduledTask,
   ThreadId,
   ThreadPriority,
   TrimmedNonEmptyString,
@@ -29,9 +30,22 @@ import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.e
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ScheduledTaskWatch } from "./scheduledTaskWatch.expbkt3.ts";
 
+/** What the owner saved: a run acts for them only while the task still holds it. */
+const OwnerSignature = Schema.Struct({
+  prompt: Schema.String,
+  threadId: Schema.NullOr(Schema.String),
+  projectId: Schema.String,
+});
+
 export const ScheduledTaskForkOptions = Schema.Struct({
   /** The person a run acts for: the launched session's owner and the sender of a prompt. */
   ownerUserId: Schema.optional(UserId),
+  /**
+   * The prompt and target the owner saved. A task edited since (in the app,
+   * or by a tool that does not record an owner) runs as nobody, so nobody's
+   * words go out under the owner's name.
+   */
+  signed: Schema.optional(OwnerSignature),
   /** People tagged on every session a run launches. */
   memberUserIds: Schema.optional(Schema.Array(UserId)),
   priority: Schema.optional(ThreadPriority),
@@ -119,9 +133,12 @@ export const scheduledTaskForkOptionsForRun = (
     ),
   );
 
-/** The launch fields of a session a run starts. */
-export const scheduledTaskForkLaunchFields = (options: ScheduledTaskForkOptions) => ({
-  ...(options.ownerUserId === undefined ? {} : { ownerUserId: options.ownerUserId }),
+/** The launch fields of a session a run starts for `owner`. */
+export const scheduledTaskForkLaunchFields = (
+  options: ScheduledTaskForkOptions,
+  owner: UserId | undefined,
+) => ({
+  ...(owner === undefined ? {} : { ownerUserId: owner }),
   ...(options.memberUserIds === undefined || options.memberUserIds.length === 0
     ? {}
     : { memberUserIds: options.memberUserIds }),
@@ -130,17 +147,42 @@ export const scheduledTaskForkLaunchFields = (options: ScheduledTaskForkOptions)
   ...(options.parentThreadId === undefined ? {} : { parentThreadId: options.parentThreadId }),
 });
 
+/** The signature that lets `task` run as its owner. */
+export const ownerSignature = (
+  task: Pick<ScheduledTask, "prompt" | "threadId" | "projectId">,
+): typeof OwnerSignature.Type => ({
+  prompt: task.prompt,
+  threadId: task.threadId,
+  projectId: task.projectId,
+});
+
 /**
- * Runs a dispatch as the task's owner, so the session it launches is theirs
- * and a prompt it sends carries their name, as if they sent it. A task
- * without an owner runs as nobody, as upstream's do.
+ * The person a run acts for: the owner, while the task still holds the
+ * prompt and target the owner saved; otherwise nobody.
+ */
+export const scheduledTaskOwner = (
+  task: Pick<ScheduledTask, "prompt" | "threadId" | "projectId">,
+  options: ScheduledTaskForkOptions,
+): UserId | undefined =>
+  options.ownerUserId !== undefined &&
+  options.signed !== undefined &&
+  options.signed.prompt === task.prompt &&
+  options.signed.threadId === task.threadId &&
+  options.signed.projectId === task.projectId
+    ? options.ownerUserId
+    : undefined;
+
+/**
+ * Runs a dispatch as `owner`, so the session it launches is theirs and a
+ * prompt it sends carries their name. A manual run keeps the actor of whoever
+ * started it, and a task without an owner runs as nobody, as upstream's do.
  */
 export const asScheduledTaskOwner =
-  (options: ScheduledTaskForkOptions) =>
+  (owner: UserId | undefined, trigger: "scheduled" | "manual" | "webhook") =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    options.ownerUserId === undefined
+    owner === undefined || trigger === "manual"
       ? effect
-      : Effect.provideService(effect, CurrentOrchestrationActorUserId, options.ownerUserId);
+      : Effect.provideService(effect, CurrentOrchestrationActorUserId, owner);
 
 /**
  * The text a run sends. A run acts for its owner, so its message carries their
@@ -164,20 +206,27 @@ const GONE_TARGET_TAGS: ReadonlySet<string> = new Set([
   "ThreadManagementThreadNotFoundError",
 ]);
 
-/** Why a run should pause its task, or null to leave it as it is. */
+/**
+ * Why a run should pause its task, or null to leave it as it is; `error` is
+ * the run's new error text, or null to keep the run's own. Only tasks with
+ * options pause: one made in the app keeps upstream's behavior.
+ */
 export const scheduledTaskPauseReason = (
   options: ScheduledTaskForkOptions,
   exit: Exit.Exit<unknown, unknown>,
-): string | null => {
+): { readonly error: string | null } | null => {
+  if (Object.keys(options).length === 0) return null;
   if (Exit.isFailure(exit)) {
     const error = Cause.squash(exit.cause);
     const tag =
       typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "";
     if (GONE_TARGET_TAGS.has(tag)) {
-      return "The session this task sends to is archived or deleted, so the task is paused.";
+      return {
+        error: "The session this task sends to is archived or deleted, so the task is paused.",
+      };
     }
   }
-  return options.runOnce === true ? "Ran once." : null;
+  return options.runOnce === true ? { error: null } : null;
 };
 
 /**
@@ -190,6 +239,10 @@ export const afterScheduledTaskRun = (input: {
   readonly threadManagement: ThreadManagementService.ThreadManagementServiceShape;
   readonly taskId: ScheduledTaskId;
   readonly options: ScheduledTaskForkOptions;
+  readonly owner: UserId | undefined;
+  readonly trigger: "scheduled" | "manual" | "webhook";
+  /** The run's start, so a task deleted and made again under the same id is left alone. */
+  readonly startedAtIso: string;
   readonly exit: Exit.Exit<unknown, unknown>;
   readonly launchedThreadId: ThreadId | null;
   readonly nextRunAtIso: string | null;
@@ -211,7 +264,7 @@ export const afterScheduledTaskRun = (input: {
           snoozedUntil,
         })
         .pipe(
-          asScheduledTaskOwner(input.options),
+          asScheduledTaskOwner(input.owner, input.trigger),
           Effect.catch((cause) =>
             Effect.logWarning("Could not snooze a quiet scheduled task's session", {
               taskId: input.taskId,
@@ -222,13 +275,12 @@ export const afterScheduledTaskRun = (input: {
     }
     const reason = scheduledTaskPauseReason(input.options, input.exit);
     if (reason !== null) {
-      const failed = Exit.isFailure(input.exit);
       yield* input.sql`
         UPDATE scheduled_tasks
         SET enabled = 0,
             next_run_at = NULL,
-            last_run_error = CASE WHEN ${failed ? 1 : 0} = 1 THEN ${reason} ELSE last_run_error END
-        WHERE task_id = ${input.taskId}
+            last_run_error = COALESCE(${reason.error}, last_run_error)
+        WHERE task_id = ${input.taskId} AND last_run_at = ${input.startedAtIso}
       `;
       changed = true;
     }

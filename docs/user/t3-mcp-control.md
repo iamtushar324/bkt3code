@@ -179,9 +179,11 @@ person.
 Say when with one of `in` (`"10m"`, once), `at` (an ISO time or `"09:00"`,
 once), `every` (`"2h"`), `daily` (`"09:00"`, with `weekdays` and `timeZone`) or
 `webhook: true`. A one-time schedule pauses after its run, and a schedule whose
-session is archived or deleted pauses itself. Runs act for the person who made
-the schedule, so the sessions they start belong to that person and appear in
-their sidebar. A daily time given in another time zone is converted to server
+session is archived or deleted pauses itself. Runs act for the person who last
+saved the schedule with `t3_schedule`, so the sessions they start belong to that
+person and appear in their sidebar. A schedule edited elsewhere, such as in the
+app, runs as nobody until it is saved again with `t3_schedule`, and `run_now`
+acts for whoever starts it. A daily time given in another time zone is converted to server
 time when it is saved; a zone that changes its clocks shifts by an hour until
 the schedule is saved again.
 
