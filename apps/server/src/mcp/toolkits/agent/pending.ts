@@ -9,6 +9,7 @@
 import {
   type OrchestrationV2TurnItem,
   type ProviderApprovalDecision,
+  type RunId,
   UserInputRequestedPayload,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -42,6 +43,9 @@ export interface PendingApproval {
   readonly title: string | null;
   readonly prompt: string | null;
   readonly appName: string | null;
+  /** The exact command or file the request is about, when the run's tool item names it. */
+  readonly command: string | null;
+  readonly file: string | null;
   readonly options: ReadonlyArray<ApprovalOptionView>;
   readonly askedAt: string | null;
 }
@@ -84,6 +88,38 @@ const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ApprovalOptionView> = [
 ];
 
 const decodeAsyncPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+
+const UNFINISHED_ITEM_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+]);
+
+/** The command or file an open approval is about: the newest unfinished tool item of its run. */
+const approvalSubject = (caller: Caller, shell: SessionShell, runId: RunId | null) =>
+  runId === null
+    ? Effect.succeed({ command: null, file: null })
+    : caller.threads
+        .getThreadRecords(shell.id, ["turnItems"], {
+          turnItemTypes: ["command_execution", "file_change"],
+          turnItemRunIds: [runId],
+        })
+        .pipe(
+          Effect.map(({ turnItems }) => {
+            const open = turnItems
+              .filter((item) => UNFINISHED_ITEM_STATUSES.has(item.status))
+              .toSorted(
+                (left, right) =>
+                  right.updatedAt.epochMilliseconds - left.updatedAt.epochMilliseconds,
+              )[0];
+            return {
+              command: open?.type === "command_execution" ? open.input : null,
+              file: open?.type === "file_change" ? open.fileName : null,
+            };
+          }),
+          Effect.orElseSucceed(() => ({ command: null, file: null })),
+        );
 
 type TurnItemType = OrchestrationV2TurnItem["type"];
 
@@ -131,12 +167,16 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         askedAt: toIso(request.createdAt),
       };
     } else if (item?.type === "approval_request") {
+      // The approval item carries the agent's description; the tool item of
+      // the same run that still runs carries the exact command or file.
+      const subject = yield* approvalSubject(caller, shell, item.runId);
       approval = {
         requestId: request.id,
         requestKind: item.requestKind,
         title: item.title,
         prompt: item.prompt ?? null,
         appName: item.appName ?? null,
+        ...subject,
         options:
           item.options === undefined || item.options.length === 0
             ? DEFAULT_APPROVAL_OPTIONS
@@ -150,6 +190,8 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         title: null,
         prompt: null,
         appName: null,
+        command: null,
+        file: null,
         options: DEFAULT_APPROVAL_OPTIONS,
         askedAt: toIso(request.createdAt),
       };

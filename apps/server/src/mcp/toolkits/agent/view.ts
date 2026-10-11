@@ -8,6 +8,7 @@
  */
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { parseLinearIssueUrl, threadLinearLinks } from "@t3tools/shared/linearIssue";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   classifySessionAttention,
   type SessionAttentionKind,
@@ -54,9 +55,15 @@ export const toMillis = (value: DateTime.Utc | null | undefined): number | null 
 export const toIso = (value: DateTime.Utc | null | undefined): string | null =>
   value === null || value === undefined ? null : DateTime.formatIso(value);
 
-/** A run is preparing, queued, starting, running or waiting. */
+/**
+ * A run is preparing, queued, starting, running or waiting, or the turn ended
+ * on background work that will wake the agent (a background command, a
+ * subagent, a monitor), which the sidebar shows as working too.
+ */
 export const isAgentActive = (shell: SessionShell): boolean =>
-  shell.activeRunId !== null || ACTIVE_STATUSES.has(shell.activityRunStatus ?? shell.status);
+  shell.activeRunId !== null ||
+  ACTIVE_STATUSES.has(shell.activityRunStatus ?? shell.status) ||
+  backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []);
 
 export const attentionOf = (shell: SessionShell): SessionAttentionKind | null =>
   classifySessionAttention({
