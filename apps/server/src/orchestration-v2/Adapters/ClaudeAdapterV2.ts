@@ -5768,6 +5768,82 @@ export function makeClaudeAdapterV2(
           return subagent?.task.status === "running" ? settled : null;
         });
 
+        // T3-CUSTOM(expbkt3) BEGIN: a subagent that ends between turns completes its card at once.
+        // Subagent ends already shown on their cards while the root was idle.
+        // Each frame still waits in the wake buffer: until a continuation
+        // drains it, it pins the session as the running subagent did, and the
+        // drain does not apply it to the card a second time.
+        const subagentEndsShownBetweenTurns = new WeakSet<SDKMessage>();
+        const hasUndrainedSubagentEndShownBetweenTurns = Ref.get(wakeBuffers).pipe(
+          Effect.map((buffers) =>
+            [...buffers.values()].some((entry) =>
+              entry.messages.some((message) => subagentEndsShownBetweenTurns.has(message)),
+            ),
+          ),
+        );
+        // A running subagent's end reaches its card at once, through the turn
+        // that settled last, as its progress does. That covers a nested
+        // subagent too, whose end never wakes the root. Call it after
+        // bufferWakeMessage, which reads the running status to name the wake
+        // and offer the continuation. A subagent with work still in the wake
+        // buffer (its resume's task_started, or its own frames) ends only when
+        // the drain replays that work, in order.
+        const showSubagentEndBetweenTurns = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
+        ) {
+          const taskId = message.task_id;
+          const settled = settledTurnByNativeThread.get(nativeThreadId);
+          const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+          if (
+            settled === undefined ||
+            settled.ignoredTaskIds.has(taskId) ||
+            subagent === undefined ||
+            subagent.task.status !== "running" ||
+            (yield* isKnownOpaqueBackgroundTaskOnNativeThread(nativeThreadId, taskId))
+          ) {
+            return;
+          }
+          const runToolUseId = subagent.runToolUseId;
+          const taskIdsByToolUseId = yield* Ref.get(sessionSubagentTaskIdsByToolUseId);
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          const hasBufferedWork = buffered.some((entry) => {
+            if (entry.type === "system" && entry.subtype === "task_started") {
+              return entry.task_id === taskId;
+            }
+            const parentToolUseId = parentToolUseIdFromSdkMessage(entry);
+            return (
+              parentToolUseId !== null &&
+              (parentToolUseId === runToolUseId ||
+                taskIdsByToolUseId.get(parentToolUseId) === taskId)
+            );
+          });
+          if (hasBufferedWork) {
+            return;
+          }
+          subagentEndsShownBetweenTurns.add(message);
+          // As for an end inside a turn: a resume says again whether it is backgrounded.
+          yield* Ref.update(backgroundedSubagentTaskIds, (current) => {
+            if (!current.has(taskId)) return current;
+            const updated = new Set(current);
+            updated.delete(taskId);
+            return updated;
+          });
+          yield* updateClaudeSubagentNode({
+            context: settled,
+            taskId,
+            ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+            result: message.summary,
+            status:
+              message.status === "completed"
+                ? "completed"
+                : message.status === "stopped"
+                  ? "cancelled"
+                  : "failed",
+          });
+        });
+        // T3-CUSTOM(expbkt3) END
+
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -5918,6 +5994,8 @@ export function makeClaudeAdapterV2(
             // on the roster; clearing first would drop the wake pin.
             if (message.type === "system" && message.subtype === "task_notification") {
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
+              // T3-CUSTOM(expbkt3): a subagent that ends between turns completes its card at once.
+              yield* showSubagentEndBetweenTurns(liveQuery.nativeThreadId, message);
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
                 message,
@@ -6382,7 +6460,12 @@ export function makeClaudeAdapterV2(
               message,
               activeContext: context,
             });
-            if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+            // T3-CUSTOM(expbkt3): a drained end that its card already shows is not applied again.
+            if (
+              !wasBackgroundTask &&
+              !context.ignoredTaskIds.has(message.task_id) &&
+              !subagentEndsShownBetweenTurns.has(message)
+            ) {
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
@@ -7942,6 +8025,10 @@ export function makeClaudeAdapterV2(
               if (subagent.task.status === "running") {
                 return true;
               }
+            }
+            // T3-CUSTOM(expbkt3): an end shown between turns pins until its continuation drains it.
+            if (yield* hasUndrainedSubagentEndShownBetweenTurns) {
+              return true;
             }
             const buffers = yield* Ref.get(wakeBuffers);
             for (const entry of buffers.values()) {
