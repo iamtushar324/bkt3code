@@ -27,6 +27,7 @@ describe("parseDuration", () => {
     expect(parseDuration("2 hours")).toBe(7_200_000);
     expect(parseDuration("1d 3h")).toBe(97_200_000);
     expect(parseDuration("1w")).toBe(604_800_000);
+    expect(parseDuration("90s")).toBe(90_000);
   });
 
   it("rejects what is not a duration", () => {

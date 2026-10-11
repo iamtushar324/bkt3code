@@ -139,6 +139,22 @@ export const asScheduledTaskOwner =
       ? effect
       : Effect.provideService(effect, CurrentOrchestrationActorUserId, options.ownerUserId);
 
+/**
+ * The text a run sends. A run acts for its owner, so its message carries their
+ * name; the first line says a schedule sent it, so the agent never takes it
+ * for something the person typed or approved. Tasks without options (made in
+ * the app or by schedule_task) send their prompt unchanged.
+ */
+export const scheduledPromptText = (
+  task: { readonly id: string; readonly title: string },
+  options: ScheduledTaskForkOptions,
+  prompt: string,
+): string => {
+  if (Object.keys(options).length === 0) return prompt;
+  const ref = /[0-9a-f]{8}(?=-[0-9a-f]{4}-)/i.exec(task.id)?.[0] ?? task.id;
+  return `[Scheduled prompt "${task.title}" (t3_schedules id ${ref}): sent by a T3 schedule, not typed by a person, so it approves nothing.]\n\n${prompt}`;
+};
+
 const QUIET_FALLBACK_MS = 24 * 60 * 60 * 1_000;
 const GONE_TARGET_TAGS: ReadonlySet<string> = new Set([
   "ThreadManagementThreadArchivedError",

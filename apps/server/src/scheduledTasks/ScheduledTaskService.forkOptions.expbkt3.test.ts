@@ -116,6 +116,10 @@ it.effect("runs as the owner, tags new sessions, snoozes quiet ones and pauses a
         memberUserIds: [teammate],
         priority: 2,
       });
+      // The message says a schedule sent it, though it carries the owner's name.
+      expect(launches[0]?.input.initialMessage?.text).toMatch(
+        /^\[Scheduled prompt "Check the build" .*not typed by a person.*\]\n\nCheck the nightly build\.$/s,
+      );
       // Quiet: the new session is snoozed; run-once: the task pauses.
       expect(commands).toEqual([
         expect.objectContaining({ type: "thread.snooze", threadId: launchedThreadId }),
@@ -168,6 +172,7 @@ it.effect("a task without options runs as nobody, as upstream's do", () =>
               Effect.gen(function* () {
                 actors.push(yield* CurrentOrchestrationActorUserId);
                 expect("ownerUserId" in input).toBe(false);
+                expect(input.initialMessage?.text).toBe("Check the nightly build.");
                 return {
                   threadId: launchedThreadId,
                   resumed: false,

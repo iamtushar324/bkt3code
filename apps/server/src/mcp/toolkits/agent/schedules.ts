@@ -266,7 +266,7 @@ const mayRun = (task: ScheduledTask, context: ScheduleContext) =>
 const stateOf = (view: ScheduleView) =>
   view.task.enabled
     ? "active"
-    : view.options.runOnce === true && view.task.runCount > 0
+    : view.options.runOnce === true && view.task.lastRunStatus === "succeeded"
       ? "done"
       : "paused";
 
@@ -602,7 +602,7 @@ const createSchedule = Effect.fn("agentToolkit.createSchedule")(function* (
     if (misplaced.length > 0) {
       return yield* fail(
         "new_session_option",
-        `${misplaced.join(", ")} apply to new sessions. Pass project to start a new session on each run, or leave them out to send into a session.`,
+        `${misplaced.join(", ")} ${misplaced.length === 1 ? "applies" : "apply"} to new sessions. Pass project to start a new session on each run, or leave them out to send into a session.`,
       );
     }
     const shell = yield* resolveSession({
@@ -733,7 +733,7 @@ const updateSchedule = Effect.fn("agentToolkit.updateSchedule")(function* (
   if (task.threadId !== null && misplaced.length > 0) {
     return yield* fail(
       "new_session_option",
-      `${misplaced.join(", ")} apply only to schedules that start new sessions; this one sends into a session.`,
+      `${misplaced.join(", ")} ${misplaced.length === 1 ? "applies" : "apply"} only to schedules that start new sessions; this one sends into a session.`,
     );
   }
   yield* assertTargetWithinLimits(context.caller.limits, task);

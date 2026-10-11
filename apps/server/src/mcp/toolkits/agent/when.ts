@@ -19,6 +19,7 @@ import * as Result from "effect/Result";
 
 const MINUTE_MS = 60_000;
 const UNIT_MS: ReadonlyArray<readonly [RegExp, number]> = [
+  [/^(s|sec|secs|second|seconds)$/, 1_000],
   [/^(m|min|mins|minute|minutes)$/, MINUTE_MS],
   [/^(h|hr|hrs|hour|hours)$/, 60 * MINUTE_MS],
   [/^(d|day|days)$/, 24 * 60 * MINUTE_MS],

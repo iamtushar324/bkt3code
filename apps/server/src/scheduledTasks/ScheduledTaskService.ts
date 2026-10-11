@@ -65,6 +65,7 @@ import {
   deleteScheduledTaskForkOptions,
   scheduledTaskForkLaunchFields,
   scheduledTaskForkOptionsForRun,
+  scheduledPromptText,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 
 /** Path prefix of the environment route that receives webhook requests. */
@@ -819,6 +820,7 @@ export const layer = Layer.effect(
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         // T3-CUSTOM(expbkt3): BEGIN — dispatch as the task's owner (forkOptions).
+        const text = scheduledPromptText(active, forkOptions, prompt);
         const result =
           active.threadId === null
             ? yield* Effect.exit(
@@ -835,7 +837,7 @@ export const layer = Layer.effect(
                     initialMessage: {
                       messageId,
                       scheduledTaskId: active.id,
-                      text: prompt,
+                      text,
                       attachments: [],
                     },
                     createdBy: active.createdBy,
@@ -851,7 +853,7 @@ export const layer = Layer.effect(
                     threadId: ThreadId.make(active.threadId),
                     messageId,
                     scheduledTaskId: active.id,
-                    text: prompt,
+                    text,
                     attachments: [],
                     // keepThreadModel sends with the session's own model.
                     ...(forkOptions.keepThreadModel === true
