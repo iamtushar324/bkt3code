@@ -199,7 +199,7 @@ it.layer(NodeServices.layer)("t3_link_linear and t3_unlink_linear", (it) => {
       const error = yield* __testing
         .linkLinear({ urls: [ISSUE_43] })
         .pipe(provide(external), Effect.flip);
-      expect(error.message).toBe("sessionId is required for a user-wide MCP call.");
+      expect(error.message).toMatch(/^sessionId is required for a user-wide MCP call:/);
       expect(dispatched).toHaveLength(0);
     }),
   );
