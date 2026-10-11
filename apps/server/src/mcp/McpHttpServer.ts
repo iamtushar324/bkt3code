@@ -863,11 +863,11 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
  */
+// T3-CUSTOM(expbkt3): every tool is listed only for callers whose tool list includes it.
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  // T3-CUSTOM(expbkt3): every tool is listed only for callers whose tool list includes it.
   McpServer.toolkit(withCallerToolLists(toolkit)).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
