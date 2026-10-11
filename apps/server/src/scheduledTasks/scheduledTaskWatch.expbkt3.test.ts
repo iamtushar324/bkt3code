@@ -1,6 +1,6 @@
 // T3-CUSTOM(expbkt3): what fires a watch on another session.
 import { describe, expect, it } from "@effect/vitest";
-import { type OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import { type OrchestrationV2ThreadShell, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { watchedChange, watchNoteText, WATCH_CHANGES } from "./scheduledTaskWatch.expbkt3.ts";
@@ -77,7 +77,10 @@ describe("watchedChange", () => {
 describe("watchNoteText", () => {
   it("says what changed, how to read it, and that a person did not type it", () => {
     const text = watchNoteText({
-      task: { id: "scheduled-task:aaaaaaaa-1111-2222-3333-444444444444", prompt: "Merge it next." },
+      task: {
+        id: ScheduledTaskId.make("scheduled-task:aaaaaaaa-1111-2222-3333-444444444444"),
+        prompt: "Merge it next.",
+      },
       watch: { threadId: ThreadId.make("mcp:11111111-2222-3333-4444-555555555555") },
       title: "Child work",
       change: { change: "needs-human", what: "asks a question" },
