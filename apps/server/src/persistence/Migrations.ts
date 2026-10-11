@@ -206,6 +206,8 @@ import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
 import Migration1048 from "./Migrations/1048_ThreadCommentLastSent.ts";
 // T3-CUSTOM(expbkt3): BK sidebar custom group for scheduled task threads.
 import Migration1051 from "./Migrations/1051_ScheduledTaskCustomGroups.ts";
+// T3-CUSTOM(expbkt3): owner, tags, loudness and run-once of scheduled tasks.
+import Migration1052 from "./Migrations/1052_ScheduledTaskForkOptions.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -333,6 +335,8 @@ const migrationEntries = [
   [1050, "ThreadSnapshotWindowIndexes", Migration1050],
   // T3-CUSTOM(expbkt3): BK sidebar custom group for scheduled task threads.
   [1051, "ScheduledTaskCustomGroups", Migration1051],
+  // T3-CUSTOM(expbkt3): owner, tags, loudness and run-once of scheduled tasks.
+  [1052, "ScheduledTaskForkOptions", Migration1052],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

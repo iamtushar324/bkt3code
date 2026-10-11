@@ -8,24 +8,20 @@
  * does not act twice.
  */
 import {
-  CommandId,
   MessageId,
   type ModelSelection,
   type OrchestrationUser,
   type ProviderApprovalDecision,
-  type ProviderInteractionMode,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import type { Tool } from "effect/ai";
 
-import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import {
   DispatchModeLimit,
@@ -34,7 +30,6 @@ import {
 import type { OrchestratorV2Error } from "../../../orchestration-v2/Orchestrator.ts";
 import { PlanReviewService } from "../../../planreview/PlanReviewService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
-import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { assertTargetWithinLimits, dispatchFailure, type Caller } from "../../threadAccess.ts";
@@ -108,59 +103,18 @@ import {
   type SessionState,
 } from "./view.ts";
 import { WAIT_CHANGES, waitForChange, type WaitChange } from "./wait.ts";
-
-const result = (markdown: string, data: unknown) => ({ markdown, data });
-
-/** 64-bit FNV-1a of `text`, seeded, as 16 hex digits. */
-const fnv64 = (text: string, seed: bigint) => {
-  let hash = 0xcbf29ce484222325n ^ seed;
-  for (const unit of new TextEncoder().encode(text)) {
-    hash ^= BigInt(unit);
-    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
-  }
-  // FNV-1a mixes the last characters weakly into the high bits; finish with
-  // MurmurHash3's fmix64 so ids of similar texts differ from the first digit.
-  hash ^= hash >> 33n;
-  hash = (hash * 0xff51afd7ed558ccdn) & 0xffffffffffffffffn;
-  hash ^= hash >> 33n;
-  hash = (hash * 0xc4ceb9fe1a85ec53n) & 0xffffffffffffffffn;
-  hash ^= hash >> 33n;
-  return hash.toString(16).padStart(16, "0");
-};
-
-/**
- * A UUID-shaped id that is the same for the same text, so a session started
- * with a clientRequestId is found again on retry and still has a short id.
- */
-const stableUuid = (text: string) => {
-  const hex = `${fnv64(text, 0n)}${fnv64(text, 0x9e3779b97f4a7c15n)}`;
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-};
+import { listSchedules, notifyMe, schedule } from "./schedules.ts";
+import {
+  commandIdFor,
+  interactionModeFor,
+  linkOrigin,
+  loadPeople,
+  personName,
+  result,
+  stableUuid,
+} from "./support.ts";
 
 const DEFAULT_WAIT_SECONDS = 50;
-
-/**
- * The origin session links use: the one the request reached, else the
- * server's configured public MCP URL. An agent inside a session reaches the
- * server on loopback, which is no link for a person.
- */
-const linkOrigin = Effect.fn("agentToolkit.linkOrigin")(function* (
-  scope: McpInvocationContext.McpInvocationScope,
-) {
-  if (scope.requestOrigin !== undefined) return scope.requestOrigin;
-  const settings = yield* Effect.serviceOption(ServerSettingsService);
-  if (Option.isNone(settings)) return undefined;
-  const publicUrl = yield* settings.value.getSettings.pipe(
-    Effect.map((current) => current.experimental.externalMcp.publicUrl),
-    Effect.orElseSucceed(() => ""),
-  );
-  if (publicUrl.length === 0) return undefined;
-  try {
-    return new URL(publicUrl).origin;
-  } catch {
-    return undefined;
-  }
-});
 
 /** The web link and project title a session renders with. */
 const contextFor =
@@ -194,20 +148,6 @@ const sessionData = (shell: SessionShell, context: SessionContext) => ({
   link: context.link,
 });
 
-const loadPeople = Effect.fn("agentToolkit.loadPeople")(function* () {
-  const directory = yield* ClerkDirectory;
-  const members = yield* directory
-    .listOrgMembers()
-    .pipe(Effect.orElseSucceed((): ReadonlyArray<OrchestrationUser> => []));
-  return new Map(members.map((member): [string, OrchestrationUser] => [member.id, member]));
-});
-
-const personName = (people: ReadonlyMap<string, OrchestrationUser>, userId: string | null) => {
-  if (userId === null) return null;
-  const person = people.get(userId);
-  return person?.name ?? person?.email ?? userId;
-};
-
 /** How the caller reached T3, in a few words. */
 const callerKind = (scope: McpInvocationContext.McpInvocationScope) =>
   scope.thread !== undefined
@@ -215,24 +155,6 @@ const callerKind = (scope: McpInvocationContext.McpInvocationScope) =>
     : scope.principal === "external-operator"
       ? `operator client "${scope.client?.label ?? "operator"}"`
       : `MCP client "${scope.client?.label ?? "external"}"`;
-
-/** A command id for a write: stable for a clientRequestId, so a retry does nothing new. */
-const commandIdFor = Effect.fn("agentToolkit.commandIdFor")(function* (
-  scope: McpInvocationContext.McpInvocationScope,
-  operation: string,
-  target: string,
-  clientRequestId: string | undefined,
-) {
-  // The target is part of the id, so one clientRequestId reused for another
-  // session or request is a new command, not a conflict.
-  if (clientRequestId !== undefined && clientRequestId.trim().length > 0) {
-    return CommandId.make(
-      `mcp:agent:${operation}:${stableUuid(`${scope.requestNamespace}\u0000${target}\u0000${clientRequestId.trim()}`)}`,
-    );
-  }
-  const crypto = yield* Crypto.Crypto;
-  return CommandId.make(`mcp:agent:${operation}:${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
-});
 
 /**
  * Lets the orchestrator re-check, under the session's lock, that the target
@@ -372,6 +294,7 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
     '2. `t3_find_sessions {"query":"…"}` — a session by title, ticket, pull request or branch.',
     '3. `t3_start_session {"project":"…","prompt":"…"}` — start new work in one call.',
     "4. `t3_wait` — wait for the next question, approval, finish or failure; do not poll.",
+    '5. `t3_schedule {"prompt":"…","in":"30m"}` — send a prompt later or on a clock; `t3_schedules` lists them.',
   );
   return result(lines.join("\n"), {
     user:
@@ -1018,11 +941,6 @@ const workspaceFor = (workspace: string | undefined) => {
   return { mode: "existing-worktree" as const, path: value };
 };
 
-export const interactionModeFor = (
-  mode: "build" | "plan" | undefined,
-): ProviderInteractionMode | undefined =>
-  mode === "plan" ? "plan" : mode === "build" ? "default" : undefined;
-
 /** What a session did first: its question, its approval, its reply or its failure. */
 const firstOutcome = Effect.fn("agentToolkit.firstOutcome")(function* (
   caller: Caller,
@@ -1432,6 +1350,13 @@ export const AgentToolkitHandlers = McpToolAccess.toLayer(AgentToolkit, {
   ),
   t3_send_message: McpToolAccess.writes(sendMessage),
   t3_wait: McpToolAccess.reads(wait),
+  // Creating may start sessions on each run, at modes no broader than the caller's.
+  t3_schedule: McpToolAccess.startsThreads(
+    (input) => ({ interactionMode: interactionModeFor(input.mode) }),
+    schedule,
+  ),
+  t3_schedules: McpToolAccess.reads(listSchedules),
+  t3_notify_me: McpToolAccess.writes(notifyMe),
 });
 
 export const __testing = {

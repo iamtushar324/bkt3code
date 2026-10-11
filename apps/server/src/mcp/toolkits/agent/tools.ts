@@ -30,6 +30,7 @@ import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/Proj
 import { PlanReviewService } from "../../../planreview/PlanReviewService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { JsonToolResult } from "../../jsonToolResult.expbkt3.ts";
@@ -421,6 +422,185 @@ export const WaitTool = readOnly(
   }).annotate(Tool.Title, "Wait for a change"),
 );
 
+const SCHEDULE_REF_HELP =
+  "The schedule: its id or the first 8 characters of its id, from t3_schedules, or its title.";
+
+export const ScheduleTool = destructive(
+  Tool.make("t3_schedule", {
+    description:
+      'Schedule a prompt, in one call. By default the prompt is sent into a session (your own when you are in one, or the one you name) as a queued message, so it never interrupts a turn: use it to remind yourself, check back on work, or nudge another session. Pass project instead to start a new session on every run, with the same options as t3_start_session plus quiet (snoozed while it works, so it only surfaces when it finishes, fails or asks). Say when with exactly one of: in ("10m", once), at (an ISO time or "09:00", once), every ("2h"), daily ("09:00", with weekdays and timeZone), or webhook: true. Runs act for the person you act for: new sessions are theirs and show in their sidebar. Other actions take id: update, pause, resume, delete, run_now.',
+    parameters: Schema.Struct({
+      action: Schema.optional(
+        described(
+          Schema.Literals(["create", "update", "pause", "resume", "delete", "run_now"]),
+          "create (the default) makes a schedule; the others change the one id names.",
+        ),
+      ),
+      id: Schema.optional(described(Schema.String, SCHEDULE_REF_HELP)),
+      prompt: Schema.optional(
+        described(Schema.String, "What to send on each run. Required to create."),
+      ),
+      title: Schema.optional(described(Schema.String, "A name for the schedule.")),
+      in: Schema.optional(
+        described(Schema.String, 'Run once after this delay: "10m", "2h", "1d 3h". At least 1m.'),
+      ),
+      at: Schema.optional(
+        described(
+          Schema.String,
+          'Run once at this time: an ISO time ("2026-10-12T09:00", with an offset or read in timeZone) or "HH:MM" for its next occurrence.',
+        ),
+      ),
+      every: Schema.optional(
+        described(Schema.String, 'Repeat at this interval: "30m", "2h", "1d". At least 1m.'),
+      ),
+      daily: Schema.optional(
+        described(Schema.String, 'Run every day at this wall-clock time, "HH:MM", in timeZone.'),
+      ),
+      weekdays: Schema.optional(
+        described(
+          Schema.Array(Schema.Union([Schema.String, Schema.Int])),
+          'With daily, only on these days: "mon" … "sun", "weekdays", "weekends", or 0 (Sunday) to 6.',
+        ),
+      ),
+      timeZone: Schema.optional(
+        described(
+          Schema.String,
+          "IANA time zone for daily and at, such as Asia/Kolkata. Defaults to the server's zone.",
+        ),
+      ),
+      webhook: Schema.optional(
+        described(
+          Schema.Boolean,
+          "Run on each request to the schedule's URL instead of on a clock. The prompt may use {{body.path}} placeholders.",
+        ),
+      ),
+      session: Schema.optional(
+        sessionRef(
+          `Send the prompt into this session. ${SESSION_REF_HELP} Omit for your own session.`,
+        ),
+      ),
+      project: Schema.optional(
+        described(
+          Schema.String,
+          "Start a new session in this project on every run, instead of sending into a session: its name, path or id.",
+        ),
+      ),
+      model: Schema.optional(
+        described(Schema.String, "For new sessions: a model alias (opus, sonnet, codex) or id."),
+      ),
+      effort: Schema.optional(described(Schema.String, "For new sessions: reasoning effort.")),
+      mode: Schema.optional(
+        described(
+          Schema.Literals(["build", "plan"]),
+          "For new sessions: build works on the task; plan proposes a plan first.",
+        ),
+      ),
+      workspace: Schema.optional(
+        described(
+          Schema.String,
+          "For new sessions: new-worktree, project-root, or an existing worktree path.",
+        ),
+      ),
+      group: Schema.optional(described(Schema.String, "For new sessions: a custom sidebar group.")),
+      tag: Schema.optional(
+        described(Schema.Array(Schema.String), "For new sessions: people to tag, by email or id."),
+      ),
+      parent: Schema.optional(
+        described(Schema.String, "For new sessions: a session to file each one under, as a child."),
+      ),
+      priority: Schema.optional(
+        described(
+          Schema.Literals([0, 1, 2, 3, 4]),
+          "For new sessions: priority 0 (none) to 4, as in the sidebar; 1 is urgent.",
+        ),
+      ),
+      linear: Schema.optional(
+        described(Schema.String, "For new sessions: a Linear issue URL to tag each one with."),
+      ),
+      quiet: Schema.optional(
+        described(
+          Schema.Boolean,
+          "For new sessions: snooze each one while it works, so it surfaces only when it finishes, fails or asks a person. Defaults to false.",
+        ),
+      ),
+      clientRequestId: Schema.optional(
+        described(
+          Schema.String,
+          "Your own id for this create, so a retry with the same id returns the same schedule.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [
+      ...dependencies,
+      ScheduledTaskService,
+      ServerSettingsService,
+      GitWorkflowService,
+      ProviderRegistry,
+    ],
+  }).annotate(Tool.Title, "Schedule a prompt"),
+);
+
+export const SchedulesTool = readOnly(
+  Tool.make("t3_schedules", {
+    description:
+      "List the schedules you can manage: what each sends, where (a session or new sessions in a project), when it runs next, its last run and who it acts for. Use the short id with t3_schedule to update, pause, resume, delete or run one now.",
+    parameters: Schema.Struct({
+      session: Schema.optional(
+        sessionRef(`Only schedules that send into this session. ${SESSION_REF_HELP}`),
+      ),
+      project: Schema.optional(described(Schema.String, "Only schedules in this project.")),
+      includePaused: Schema.optional(
+        described(
+          Schema.Boolean,
+          "Also list paused and finished one-time schedules. Defaults to true.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [...dependencies, ScheduledTaskService],
+  }).annotate(Tool.Title, "List schedules"),
+);
+
+export const NotifyMeTool = changing(
+  Tool.make("t3_notify_me", {
+    description:
+      "Get one message in your session when another session waits on a person, finishes its turn or fails, instead of polling it or reading its transcript. T3 checks every minute, sends one note with what changed and the call to read it, then the watch ends. It survives server restarts and your own turn ending. Outside a T3 session, pass to (the session to notify) or use t3_wait. A watch is listed by t3_schedules and cancelled with t3_schedule action delete.",
+    parameters: Schema.Struct({
+      session: sessionRef(`The session to watch. ${SESSION_REF_HELP}`),
+      until: Schema.optional(
+        described(
+          Schema.Array(Schema.Literals(["needs-human", "finished", "failed"])),
+          "Which changes send the note. Defaults to all three.",
+        ),
+      ),
+      to: Schema.optional(
+        sessionRef("The session to send the note into. Omit for your own session."),
+      ),
+      note: Schema.optional(
+        described(
+          Schema.String,
+          "Your own words to add to the note, such as what to do next. Keep the context you will need.",
+        ),
+      ),
+      clientRequestId: Schema.optional(
+        described(
+          Schema.String,
+          "Your own id for this watch, so a retry with the same id does not watch twice.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [...dependencies, ScheduledTaskService],
+  }).annotate(Tool.Title, "Notify me when a session changes"),
+);
+
 export const AgentToolkit = Toolkit.make(
   WhoamiTool,
   InboxTool,
@@ -430,6 +610,9 @@ export const AgentToolkit = Toolkit.make(
   StartSessionTool,
   SendMessageTool,
   WaitTool,
+  ScheduleTool,
+  SchedulesTool,
+  NotifyMeTool,
 );
 
 export const AGENT_TOOL_NAMES = Object.keys(AgentToolkit.tools);
