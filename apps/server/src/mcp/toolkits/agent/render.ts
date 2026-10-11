@@ -88,12 +88,6 @@ export const renderSessionLine = (
   ];
   const goal = shell.goal?.objective;
   if (goal !== undefined) lines.push(`   Goal: ${oneLine(goal, 160)}`);
-  const latest = shell.latestVisibleMessage;
-  if (latest !== null && latest.text.trim().length > 0) {
-    lines.push(
-      `   Latest ${latest.role === "user" ? "message" : "reply"}: ${oneLine(latest.text, 160)}`,
-    );
-  }
   if (context.link !== null) lines.push(`   Link: ${context.link}`);
   return lines.join("\n");
 };
@@ -119,7 +113,11 @@ export const renderQuestion = (
     );
     lines.push(...renderOptions(question, several ? "      " : "     "));
   });
-  const base = { session: sessionRef, requestId: pending.requestId };
+  // t3_answer picks the blocking question first, so only a question asked while
+  // the agent works needs its (long) request id.
+  const base = pending.async
+    ? { session: sessionRef, requestId: pending.requestId }
+    : { session: sessionRef };
   const first = pending.questions[0];
   const example = several
     ? callHint("t3_answer", {
@@ -154,9 +152,7 @@ export const renderApproval = (
     if (option.warning !== undefined)
       lines.push(`   Warning on ${DECISION_NAMES[option.decision]}: ${option.warning}`);
   }
-  lines.push(
-    `   → ${callHint("t3_answer", { session: sessionRef, requestId: approval.requestId, decision: "approve" })}`,
-  );
+  lines.push(`   → ${callHint("t3_answer", { session: sessionRef, decision: "approve" })}`);
   return lines;
 };
 
@@ -194,6 +190,8 @@ export interface InboxEntry {
   readonly question: PendingQuestion | null;
   readonly approval: PendingApproval | null;
   readonly plan: PendingPlan | null;
+  /** The agent's newest reply, read for unread results only. */
+  readonly lastReply: string | null;
 }
 
 export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
@@ -226,8 +224,7 @@ export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
       );
       break;
     case "unread": {
-      const latest = shell.latestVisibleMessage;
-      if (latest !== null) lines.push(`   Last reply: ${oneLine(latest.text, 300)}`);
+      if (entry.lastReply !== null) lines.push(`   Last reply: ${oneLine(entry.lastReply, 300)}`);
       lines.push(`   → read more with ${callHint("t3_session_brief", { session: ref })}`);
       break;
     }

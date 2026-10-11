@@ -98,6 +98,25 @@ import { WAIT_CHANGES, waitForChange, type WaitChange } from "./wait.ts";
 
 const result = (markdown: string, data: unknown) => ({ markdown, data });
 
+/** 64-bit FNV-1a of `text`, seeded, as 16 hex digits. */
+const fnv64 = (text: string, seed: bigint) => {
+  let hash = 0xcbf29ce484222325n ^ seed;
+  for (const unit of new TextEncoder().encode(text)) {
+    hash ^= BigInt(unit);
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+};
+
+/**
+ * A UUID-shaped id that is the same for the same text, so a session started
+ * with a clientRequestId is found again on retry and still has a short id.
+ */
+const stableUuid = (text: string) => {
+  const hex = `${fnv64(text, 0n)}${fnv64(text, 0x9e3779b97f4a7c15n)}`;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
 const DEFAULT_WAIT_SECONDS = 50;
 
 /**
@@ -366,6 +385,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
               : null,
         approval: candidate.kind === "approval" ? detail.approval : null,
         plan: candidate.kind === "plan" ? detail.plan : null,
+        lastReply: candidate.kind === "unread" ? yield* lastReply(caller, candidate.shell) : null,
       } satisfies InboxEntry;
     }),
   );
@@ -404,10 +424,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
           ? null
           : { title: planTitle(entry.plan.markdown), excerpt: oneLine(entry.plan.markdown, 600) },
       error: entry.kind === "failed" ? (entry.shell.lastError ?? null) : null,
-      lastReply:
-        entry.kind === "unread"
-          ? (entry.shell.latestVisibleMessage?.text.slice(0, 600) ?? null)
-          : null,
+      lastReply: entry.kind === "unread" ? (entry.lastReply?.slice(0, 600) ?? null) : null,
     })),
   });
 });
@@ -723,6 +740,14 @@ const recentMessages = Effect.fn("agentToolkit.recentMessages")(function* (
     .slice(-count);
 });
 
+/** The agent's newest reply. The shell does not carry it, so it is read from the timeline. */
+const lastReply = (caller: Caller, shell: SessionShell) =>
+  recentMessages(caller, shell, 4).pipe(
+    Effect.map(
+      (messages) => messages.findLast((message) => message.role === "Agent")?.text ?? null,
+    ),
+  );
+
 /** The session's goal: the provider's own, else the first message. */
 const goalOf = Effect.fn("agentToolkit.goalOf")(function* (caller: Caller, shell: SessionShell) {
   if (shell.goal?.objective !== undefined) return shell.goal.objective;
@@ -875,12 +900,12 @@ const firstOutcome = Effect.fn("agentToolkit.firstOutcome")(function* (
       oneLine(shell.lastError ?? "The run failed without an error message.", 600),
     ];
   }
-  const latest = shell.latestVisibleMessage;
-  return latest === null || latest.role === "user"
+  const reply = yield* lastReply(caller, shell);
+  return reply === null
     ? []
     : [
         "### First reply",
-        cutText(latest.text.trim(), 1_500),
+        cutText(reply.trim(), 1_500),
         ...(attention === "plan" ? ["", ...renderPlan(null, ref, 0)] : []),
       ];
 });
@@ -929,7 +954,7 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
     input.clientRequestId === undefined || input.clientRequestId.trim().length === 0
       ? undefined
       : ThreadId.make(
-          `mcp:start:${encodeURIComponent(scope.requestNamespace)}:${encodeURIComponent(input.clientRequestId.trim())}`,
+          `mcp:${stableUuid(`${scope.requestNamespace}\u0000start\u0000${input.clientRequestId.trim()}`)}`,
         );
   const existing =
     sessionId === undefined
@@ -1181,6 +1206,8 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     attention === null || attention === "failed"
       ? EMPTY_PENDING
       : yield* loadPendingDetail(caller, shell, { includePlan: attention === "plan" });
+  const reply =
+    match.change === "finished" && attention === null ? yield* lastReply(caller, shell) : null;
   const lines = [
     `## \`${ref}\` ${match.what}`,
     `${sessionHeading(shell, context)} — ${sessionActivity(shell, context.nowMs)}`,
@@ -1191,9 +1218,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     ...(attention === "failed"
       ? [`   Error: ${oneLine(shell.lastError ?? "no message", 400)}`]
       : []),
-    ...(match.change === "finished" && attention === null && shell.latestVisibleMessage !== null
-      ? [`   Last reply: ${oneLine(shell.latestVisibleMessage.text, 400)}`]
-      : []),
+    ...(reply === null ? [] : [`   Last reply: ${oneLine(reply, 400)}`]),
     ...(context.link === null ? [] : [`   Link: ${context.link}`]),
     `Next: ${callHint("t3_wait", { ...(input.sessions === undefined ? {} : { sessions: input.sessions }), cursor })} to keep watching.`,
   ];
