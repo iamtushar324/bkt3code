@@ -162,9 +162,12 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
     ];
   });
 
+  // Ordinals restart in every run, so the newest plan is the newest update.
   const planItem = turnItems
     .filter((item) => item.type === "proposed_plan")
-    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    .toSorted(
+      (left, right) => right.updatedAt.epochMilliseconds - left.updatedAt.epochMilliseconds,
+    )[0];
   const plan =
     planItem?.type === "proposed_plan"
       ? { markdown: planItem.markdown, proposedAt: toIso(planItem.updatedAt) }

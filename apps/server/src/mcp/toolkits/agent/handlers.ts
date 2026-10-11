@@ -512,9 +512,19 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
           fail("unavailable", "T3 Code could not read the plan review. Try again."),
         ),
       );
-    const open = documents
-      .filter((document) => document.status === "open")
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    const newestFirst = documents.toSorted((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    );
+    const open = newestFirst.find((document) => document.status === "open");
+    const awaitingRevision = newestFirst.find(
+      (document) => document.status === "changes-requested",
+    );
+    if (open === undefined && awaitingRevision !== undefined) {
+      return yield* fail(
+        "plan_revision_pending",
+        `The review of "${awaitingRevision.title}" waits for the agent's revised plan, and the agent has not posted one for review (it may have answered in chat). Ask it to post the revised plan with ${callHint("t3_send_message", { session: ref, message: "Post your revised plan for review." })}, then approve it.`,
+      );
+    }
     if (open === undefined) {
       return yield* fail(
         "nothing_waiting",
