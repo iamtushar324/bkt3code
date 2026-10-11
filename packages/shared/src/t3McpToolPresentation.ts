@@ -297,6 +297,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_wait: tool(["Wait", "Waiting", "Waited", "for a session change"], "thread-wait"),
   t3_schedule: tool(["Schedule", "Scheduling", "Scheduled", "a prompt"], "schedule-create"),
   t3_schedules: tool(["List", "Listing", "Listed", "schedules"], "schedule-list"),
+  t3_notify_me: tool(["Watch", "Watching", "Watching", "a T3 session"], "thread-wait"),
   // T3-CUSTOM(expbkt3): END
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),

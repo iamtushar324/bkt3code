@@ -130,7 +130,7 @@ Revoked access does not return automatically. Bifrost remains available under
 
 ## Start here: the agent tools
 
-Ten tools cover most work an agent does on T3 Code. Each does one whole job
+Eleven tools cover most work an agent does on T3 Code. Each does one whole job
 in one call and returns a short Markdown answer that ends with the exact next
 call. Pass `format: "json"` for the same facts as data. A session can be named
 by its id, the first 8 characters of its id, a T3 link, a Linear key such as
@@ -149,8 +149,9 @@ omits it to mean its own.
 | `t3_wait`          | Wait for the next question, approval, finish or failure, with a cursor so no change is missed.                |
 | `t3_schedule`      | Send a prompt later or on a clock, into a session or into a new session each run; also pause, resume, delete. |
 | `t3_schedules`     | List the schedules you can manage, with where they send, their next run and their last result.                |
+| `t3_notify_me`     | Get one message in your session when another session waits on a person, finishes or fails.                    |
 
-An agent signed in through OAuth lists only these ten tools,
+An agent signed in through OAuth lists only these eleven tools,
 `t3_ui_list_tools`, `t3_ui_call` and `t3_thread_read` (about 8,000 tokens of
 descriptions), so its context does not fill with tool descriptions. To list every tool, send the header `x-t3-mcp-tools: all` or
 connect to `/mcp?tools=all`. Agents inside a session and Settings-issued
@@ -183,6 +184,19 @@ the schedule, so the sessions they start belong to that person and appear in
 their sidebar. A daily time given in another time zone is converted to server
 time when it is saved; a zone that changes its clocks shifts by an hour until
 the schedule is saved again.
+
+A scheduled message starts with a line that says a schedule sent it, so the
+agent never takes it for something a person typed or approved.
+
+`t3_notify_me` replaces polling another session or reading its transcript.
+T3 checks the watched session every minute and sends one note into your
+session when it waits on a person, finishes its turn or fails; then the watch
+ends. Watches survive server restarts and are listed by `t3_schedules`.
+
+Callers that act for a user see and change only their own schedules, the ones
+that send into a session they can see, and ownerless ones in projects they can
+use. The same rule applies to `list_scheduled_tasks`,
+`update_scheduled_task` and `delete_scheduled_task`.
 
 ## Tools
 

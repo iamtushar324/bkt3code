@@ -27,6 +27,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 
 import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.expbkt3.ts";
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ScheduledTaskWatch } from "./scheduledTaskWatch.expbkt3.ts";
 
 export const ScheduledTaskForkOptions = Schema.Struct({
   /** The person a run acts for: the launched session's owner and the sender of a prompt. */
@@ -48,6 +49,8 @@ export const ScheduledTaskForkOptions = Schema.Struct({
   keepThreadModel: Schema.optional(Schema.Boolean),
   /** The IANA time zone a daily time was given in; for display only, the schedule is stored in server time. */
   timeZone: Schema.optional(Schema.String),
+  /** Run only once this session changes (see scheduledTaskWatch.expbkt3.ts). */
+  watch: Schema.optional(ScheduledTaskWatch),
 });
 export type ScheduledTaskForkOptions = typeof ScheduledTaskForkOptions.Type;
 

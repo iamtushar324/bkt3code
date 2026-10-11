@@ -103,7 +103,7 @@ import {
   type SessionState,
 } from "./view.ts";
 import { WAIT_CHANGES, waitForChange, type WaitChange } from "./wait.ts";
-import { listSchedules, schedule } from "./schedules.ts";
+import { listSchedules, notifyMe, schedule } from "./schedules.ts";
 import {
   commandIdFor,
   interactionModeFor,
@@ -1356,6 +1356,7 @@ export const AgentToolkitHandlers = McpToolAccess.toLayer(AgentToolkit, {
     schedule,
   ),
   t3_schedules: McpToolAccess.reads(listSchedules),
+  t3_notify_me: McpToolAccess.writes(notifyMe),
 });
 
 export const __testing = {

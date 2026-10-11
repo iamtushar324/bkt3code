@@ -566,6 +566,41 @@ export const SchedulesTool = readOnly(
   }).annotate(Tool.Title, "List schedules"),
 );
 
+export const NotifyMeTool = changing(
+  Tool.make("t3_notify_me", {
+    description:
+      "Get one message in your session when another session waits on a person, finishes its turn or fails, instead of polling it or reading its transcript. T3 checks every minute, sends one note with what changed and the call to read it, then the watch ends. It survives server restarts and your own turn ending. Outside a T3 session, pass to (the session to notify) or use t3_wait. A watch is listed by t3_schedules and cancelled with t3_schedule action delete.",
+    parameters: Schema.Struct({
+      session: sessionRef(`The session to watch. ${SESSION_REF_HELP}`),
+      until: Schema.optional(
+        described(
+          Schema.Array(Schema.Literals(["needs-human", "finished", "failed"])),
+          "Which changes send the note. Defaults to all three.",
+        ),
+      ),
+      to: Schema.optional(
+        sessionRef("The session to send the note into. Omit for your own session."),
+      ),
+      note: Schema.optional(
+        described(
+          Schema.String,
+          "Your own words to add to the note, such as what to do next. Keep the context you will need.",
+        ),
+      ),
+      clientRequestId: Schema.optional(
+        described(
+          Schema.String,
+          "Your own id for this watch, so a retry with the same id does not watch twice.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [...dependencies, ScheduledTaskService],
+  }).annotate(Tool.Title, "Notify me when a session changes"),
+);
+
 export const AgentToolkit = Toolkit.make(
   WhoamiTool,
   InboxTool,
@@ -577,6 +612,7 @@ export const AgentToolkit = Toolkit.make(
   WaitTool,
   ScheduleTool,
   SchedulesTool,
+  NotifyMeTool,
 );
 
 export const AGENT_TOOL_NAMES = Object.keys(AgentToolkit.tools);

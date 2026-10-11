@@ -67,6 +67,11 @@ import {
   scheduledTaskForkOptionsForRun,
   scheduledPromptText,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
+// T3-CUSTOM(expbkt3): watches — tasks that run once another session changes.
+import {
+  postponeScheduledTaskWatch,
+  scheduledTaskWatchNote,
+} from "./scheduledTaskWatch.expbkt3.ts";
 
 /** Path prefix of the environment route that receives webhook requests. */
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -790,6 +795,19 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
+        // T3-CUSTOM(expbkt3): a watch runs only once its session changed; until
+        // then a check just moves its next check on (scheduledTaskWatch.expbkt3.ts).
+        const forkOptions = yield* scheduledTaskForkOptionsForRun(sql, active.id);
+        const watchNote = yield* scheduledTaskWatchNote({
+          threadManagement,
+          task: active,
+          watch: forkOptions.watch,
+        });
+        if (watchNote === "unchanged") {
+          yield* postponeScheduledTaskWatch(sql, active, startedAt);
+          return active;
+        }
+
         yield* markRunning(active.id, startedAtIso);
         yield* notifyChanged;
 
@@ -807,7 +825,6 @@ export const layer = Layer.effect(
         const prompt = webhook?.prompt ?? active.prompt;
         // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group and
         // takes its owner, tags and links; the dispatch acts for the owner. Never fails.
-        const forkOptions = yield* scheduledTaskForkOptionsForRun(sql, active.id);
         const forkLaunchFields =
           active.threadId === null
             ? {
@@ -820,7 +837,7 @@ export const layer = Layer.effect(
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         // T3-CUSTOM(expbkt3): BEGIN — dispatch as the task's owner (forkOptions).
-        const text = scheduledPromptText(active, forkOptions, prompt);
+        const text = watchNote ?? scheduledPromptText(active, forkOptions, prompt);
         const result =
           active.threadId === null
             ? yield* Effect.exit(

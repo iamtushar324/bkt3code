@@ -44,6 +44,12 @@ import {
   type ScheduledTaskForkOptions,
 } from "../../../scheduledTasks/scheduledTaskForkOptions.expbkt3.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
+import {
+  isWorking,
+  WATCH_CHANGES,
+  watchedChange,
+  type WatchChange,
+} from "../../../scheduledTasks/scheduledTaskWatch.expbkt3.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type * as McpToolAccess from "../../McpToolAccess.ts";
@@ -69,8 +75,16 @@ import {
   personName,
   result,
 } from "./support.ts";
-import type { ScheduleTool, SchedulesTool } from "./tools.ts";
-import { callHint, cutText, oneLine, sessionLink, shortRef, type SessionShell } from "./view.ts";
+import type { NotifyMeTool, ScheduleTool, SchedulesTool } from "./tools.ts";
+import {
+  callHint,
+  cutText,
+  isoFromMillis,
+  oneLine,
+  sessionLink,
+  shortRef,
+  type SessionShell,
+} from "./view.ts";
 import { describeSchedule, formatInstant, hasWhen, resolveWhen } from "./when.ts";
 
 const decodeGroup = Schema.decodeUnknownOption(ThreadCustomGroup);
@@ -270,29 +284,51 @@ const stateOf = (view: ScheduleView) =>
       ? "done"
       : "paused";
 
+const WATCH_WORDS: Record<WatchChange, string> = {
+  "needs-human": "waits on a person",
+  finished: "finishes",
+  failed: "fails",
+};
+
+const watchWords = (until: ReadonlyArray<WatchChange>) => {
+  const words = (until.length === 0 ? WATCH_CHANGES : until).map((change) => WATCH_WORDS[change]);
+  return words.length <= 1
+    ? (words[0] ?? "")
+    : `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`;
+};
+
 const renderSchedule = Effect.fn("agentToolkit.renderSchedule")(function* (
   view: ScheduleView,
   context: ScheduleContext,
 ) {
   const { task, options } = view;
   const ref = shortRef(task.id);
-  const when = describeSchedule(task.schedule, {
-    runOnce: options.runOnce,
-    timeZone: options.timeZone,
-    nowMs: context.nowMs,
-  });
+  const watched =
+    options.watch === undefined ? undefined : context.sessions.get(options.watch.threadId);
+  const when =
+    options.watch === undefined
+      ? describeSchedule(task.schedule, {
+          runOnce: options.runOnce,
+          timeZone: options.timeZone,
+          nowMs: context.nowMs,
+        })
+      : `when session \`${shortRef(options.watch.threadId)}\`${watched === undefined ? "" : ` ${oneLine(watched.title, 50)}`} ${watchWords(options.watch.until)}, sends a note`;
   const target = targetOf(view, context);
   const state = stateOf(view);
   const next =
-    state === "active"
-      ? task.nextRunAt === null
-        ? task.schedule.type === "webhook"
-          ? "waits for a request"
-          : "no next run"
-        : `next ${formatInstant(task.nextRunAt, options.timeZone)}`
-      : state === "done"
-        ? "done: it ran once"
-        : "paused";
+    state === "active" && options.watch !== undefined
+      ? "checks every minute"
+      : state === "active"
+        ? task.nextRunAt === null
+          ? task.schedule.type === "webhook"
+            ? "waits for a request"
+            : "no next run"
+          : `next ${formatInstant(task.nextRunAt, options.timeZone)}`
+        : state === "done"
+          ? options.watch === undefined
+            ? "done: it ran once"
+            : "done: the note was sent"
+          : "paused";
   const last =
     task.lastRunAt === null
       ? "never ran"
@@ -321,6 +357,10 @@ const renderSchedule = Effect.fn("agentToolkit.renderSchedule")(function* (
       schedule: task.schedule,
       runOnce: options.runOnce === true,
       timeZone: options.timeZone ?? null,
+      watch:
+        options.watch === undefined
+          ? null
+          : { sessionId: options.watch.threadId, until: options.watch.until },
       target: target.data,
       nextRunAt: task.nextRunAt,
       lastRunAt: task.lastRunAt,
@@ -858,6 +898,111 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       ]);
     }
   }
+});
+
+// -- t3_notify_me -------------------------------------------------------------
+
+export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
+  input: Tool.Parameters<typeof NotifyMeTool>,
+) {
+  const caller = yield* loadAgentCaller("t3.control");
+  const { scope } = caller;
+  const { context } = yield* scheduleContext(caller);
+  const { nowMs } = context;
+  const watched = yield* resolveSession({
+    caller,
+    ref: input.session,
+    nowMs,
+    sessions: context.visible,
+  });
+  const target = yield* resolveSession({
+    caller,
+    ref: input.to,
+    nowMs,
+    sessions: context.visible,
+  }).pipe(
+    Effect.catch((error) =>
+      error._tag === "AgentToolError" && error.code === "session_required"
+        ? Effect.fail(
+            fail(
+              "session_required",
+              "Pass to: the session to send the note into. Outside a T3 session, t3_wait waits for a change instead.",
+            ),
+          )
+        : Effect.fail(error),
+    ),
+  );
+  const watchedRef = shortRef(watched.id);
+  if (watched.id === target.id) {
+    return yield* fail(
+      "same_session",
+      "A session cannot watch itself. Use t3_schedule to send yourself a prompt later.",
+    );
+  }
+  if (target.archivedAt !== null) {
+    return yield* fail(
+      "session_archived",
+      `Session ${shortRef(target.id)} is archived, so it cannot take the note.`,
+    );
+  }
+  yield* assertTargetWithinLimits(caller.limits, target);
+  const until = input.until === undefined || input.until.length === 0 ? WATCH_CHANGES : input.until;
+  // A question or approval that is open now needs no watch.
+  const now = watchedChange(watched, { until: ["needs-human"] }, nowMs);
+  if (until.includes("needs-human") && now !== null && now.change === "needs-human") {
+    return result(
+      [
+        `## \`${watchedRef}\` ${oneLine(watched.title, 80)} already ${now.what}`,
+        "No watch was made: it waits now.",
+        `Next: ${callHint("t3_session_brief", { session: watchedRef })}, then ${callHint("t3_answer", { session: watchedRef })}.`,
+      ].join("\n"),
+      { watching: false, sessionId: watched.id, ref: watchedRef, now: now.what },
+    );
+  }
+  yield* sqlClient;
+  const commandId =
+    input.clientRequestId === undefined
+      ? undefined
+      : yield* commandIdFor(scope, "notify", `${watched.id}>${target.id}`, input.clientRequestId);
+  const service = yield* ScheduledTaskService;
+  const { task } = yield* service
+    .upsert({
+      title: `Watch ${watchedRef} ${oneLine(watched.title, 60)}`,
+      prompt: input.note?.trim() || "Check it, then carry on with your work.",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 60_000 },
+      projectId: target.projectId,
+      threadId: target.id,
+      workspaceStrategy: { type: "root" },
+      modelSelection: target.modelSelection,
+      runtimeMode: target.runtimeMode,
+      interactionMode: target.interactionMode,
+      createdBy: scope.thread === undefined ? "user" : "agent",
+      creationSource: "mcp",
+      ...(commandId === undefined ? {} : { commandId }),
+    })
+    .pipe(Effect.mapError((error) => fail("schedule_failed", error.message)));
+  const options: ScheduledTaskForkOptions = {
+    ...(scope.actorUserId === null ? {} : { ownerUserId: scope.actorUserId }),
+    keepThreadModel: true,
+    runOnce: true,
+    watch: { threadId: watched.id, until: [...until], since: isoFromMillis(nowMs) },
+  };
+  yield* saveOptions(task.id, options, undefined);
+  const working = isWorking(watched);
+  const targetText =
+    caller.caller !== undefined && target.id === caller.caller.id
+      ? "your session"
+      : `session \`${shortRef(target.id)}\``;
+  return yield* reportSchedule(`Watching \`${watchedRef}\``, { task, options }, context, [
+    `T3 checks \`${watchedRef}\` every minute and sends one note into ${targetText} when it ${watchWords(until)}; then the watch ends. It survives restarts.`,
+    ...(working
+      ? []
+      : [
+          `\`${watchedRef}\` is not working now, so the note comes after its next turn. To start one, use t3_send_message.`,
+        ]),
+    `Cancel: ${callHint("t3_schedule", { action: "delete", id: shortRef(task.id) })}.`,
+  ]);
 });
 
 export const __testing = { findSchedule, withWhenOptions, stateOf };
