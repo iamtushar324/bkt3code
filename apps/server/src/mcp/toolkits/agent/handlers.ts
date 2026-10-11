@@ -29,7 +29,8 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import type { OrchestratorV2Error } from "../../../orchestration-v2/Orchestrator.ts";
 import { PlanReviewService } from "../../../planreview/PlanReviewService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
-import type * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { assertTargetWithinLimits, dispatchFailure, type Caller } from "../../threadAccess.ts";
 import { createSession } from "../control/handlers.ts";
@@ -99,12 +100,40 @@ const result = (markdown: string, data: unknown) => ({ markdown, data });
 
 const DEFAULT_WAIT_SECONDS = 50;
 
+/**
+ * The origin session links use: the one the request reached, else the
+ * server's configured public MCP URL. An agent inside a session reaches the
+ * server on loopback, which is no link for a person.
+ */
+const linkOrigin = Effect.fn("agentToolkit.linkOrigin")(function* (
+  scope: McpInvocationContext.McpInvocationScope,
+) {
+  if (scope.requestOrigin !== undefined) return scope.requestOrigin;
+  const settings = yield* Effect.serviceOption(ServerSettingsService);
+  if (Option.isNone(settings)) return undefined;
+  const publicUrl = yield* settings.value.getSettings.pipe(
+    Effect.map((current) => current.experimental.externalMcp.publicUrl),
+    Effect.orElseSucceed(() => ""),
+  );
+  if (publicUrl.length === 0) return undefined;
+  try {
+    return new URL(publicUrl).origin;
+  } catch {
+    return undefined;
+  }
+});
+
 /** The web link and project title a session renders with. */
 const contextFor =
-  (caller: Caller, projects: ReadonlyMap<string, ProjectSummary>, nowMs: number) =>
+  (
+    caller: Caller,
+    projects: ReadonlyMap<string, ProjectSummary>,
+    nowMs: number,
+    origin: string | undefined,
+  ) =>
   (shell: SessionShell): SessionContext => ({
     projectTitle: projects.get(shell.projectId)?.title ?? null,
-    link: sessionLink(caller.scope.requestOrigin, caller.scope.environmentId, shell.id),
+    link: sessionLink(origin, caller.scope.environmentId, shell.id),
     nowMs,
   });
 
@@ -191,12 +220,13 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
   const caller = yield* loadAgentCaller("t3.read");
   const { scope } = caller;
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const descriptor = yield* environment.getDescriptor;
   const people = yield* loadPeople();
   const projects = yield* loadProjects();
   const sessions = yield* loadVisibleSessions(caller, { archived: false });
-  const context = contextFor(caller, projects, nowMs);
+  const context = contextFor(caller, projects, nowMs, origin);
   const inbox = inboxCandidates(sessions.active, nowMs, { includeSnoozed: false });
   const waiting = new Map<InboxKind, number>();
   for (const entry of inbox.entries) {
@@ -287,6 +317,7 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
 const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<typeof InboxTool>) {
   const caller = yield* loadAgentCaller("t3.read");
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const projects = yield* loadProjects();
   const sessions = yield* loadVisibleSessions(caller, { archived: false });
   let pool = sessions.active;
@@ -313,7 +344,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       ? candidates.entries
       : candidates.entries.filter((entry) => wanted.has(entry.kind));
   const limit = input.limit ?? 20;
-  const context = contextFor(caller, projects, nowMs);
+  const context = contextFor(caller, projects, nowMs, origin);
   const entries = yield* Effect.forEach(matching.slice(0, limit), (candidate) =>
     Effect.gen(function* () {
       const detail: PendingDetail =
@@ -409,6 +440,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
   const caller = yield* loadAgentCaller("t3.control");
   const { scope } = caller;
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const shell = yield* resolveSession({ caller, ref: input.session, nowMs });
   const ref = shortRef(shell.id);
   if (scope.thread?.threadId === shell.id) {
@@ -560,7 +592,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     .pipe(Effect.orElseSucceed(() => null));
   const now = after ?? shell;
   const projects = yield* loadProjects();
-  const context = contextFor(caller, projects, nowMs)(now);
+  const context = contextFor(caller, projects, nowMs, origin)(now);
   return result(
     [
       `## ${answered}`,
@@ -586,6 +618,7 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
 ) {
   const caller = yield* loadAgentCaller("t3.read");
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const state = input.state ?? "active";
   const sessions = yield* loadVisibleSessions(caller, {
     archived: state === "archived" || state === "any",
@@ -633,7 +666,7 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
   const limit = input.limit ?? 20;
   const page = pool.slice(cursor, cursor + limit);
   const nextCursor = cursor + page.length < pool.length ? cursor + page.length : null;
-  const context = contextFor(caller, projects, nowMs);
+  const context = contextFor(caller, projects, nowMs, origin);
   const lines = [
     pool.length === 0
       ? "## No session matches"
@@ -705,11 +738,12 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
 ) {
   const caller = yield* loadAgentCaller("t3.read");
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const shell = yield* resolveSession({ caller, ref: input.session, nowMs });
   const ref = shortRef(shell.id);
   const projects = yield* loadProjects();
   const people = yield* loadPeople();
-  const context = contextFor(caller, projects, nowMs)(shell);
+  const context = contextFor(caller, projects, nowMs, origin)(shell);
   const include = new Set(input.include ?? []);
   const attention = attentionOf(shell);
   const detail = yield* loadPendingDetail(caller, shell, {
@@ -770,7 +804,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
         .slice(0, 15)
         .map(
           (child) =>
-            `- ${sessionHeading(child, contextFor(caller, projects, nowMs)(child))} — ${sessionActivity(child, nowMs)}`,
+            `- ${sessionHeading(child, contextFor(caller, projects, nowMs, origin)(child))} — ${sessionActivity(child, nowMs)}`,
         ),
     );
   }
@@ -797,7 +831,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     goal: goal === null ? null : cutText(goal, 800),
     messages: messages.map((message) => ({ ...message, text: cutText(message.text, 1_500) })),
     children: children.map((child) =>
-      sessionData(child, contextFor(caller, projects, nowMs)(child)),
+      sessionData(child, contextFor(caller, projects, nowMs, origin)(child)),
     ),
     tags: tagsOf(shell),
   });
@@ -855,9 +889,17 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
   input: Tool.Parameters<typeof StartSessionTool>,
   started: McpToolAccess.StartedModes,
 ) {
-  const caller = yield* loadAgentCaller("t3.session.create");
+  const caller = yield* loadAgentCaller("t3.control");
   const { scope } = caller;
+  // The same rule as t3_create_session: a user-bound credential, or an operator.
+  if (!McpInvocationContext.canCreateMcpSessions(scope)) {
+    return yield* fail(
+      "capability_denied",
+      "Starting sessions needs a user-bound credential or an operator client. Ask the person who approved this client for more access.",
+    );
+  }
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const projects = yield* loadProjects();
   const sessions = yield* loadVisibleSessions(caller, { archived: false });
   const project = yield* resolveProject(
@@ -944,7 +986,9 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
   const shell = yield* caller.threads.getThreadShell(newId).pipe(Effect.orElseSucceed(() => null));
   const ref = shortRef(newId);
   const context =
-    shell === null ? null : contextFor(caller, projects, yield* Clock.currentTimeMillis)(shell);
+    shell === null
+      ? null
+      : contextFor(caller, projects, yield* Clock.currentTimeMillis, origin)(shell);
   const outcomeLines =
     shell === null || input.waitFor !== "first-reply" ? [] : yield* firstOutcome(caller, shell);
   const lines = [
@@ -1067,6 +1111,7 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
 const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<typeof WaitTool>) {
   const caller = yield* loadAgentCaller("t3.read");
   const nowMs = yield* Clock.currentTimeMillis;
+  const origin = yield* linkOrigin(caller.scope);
   const until = new Set<WaitChange>(input.until ?? WAIT_CHANGES);
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS;
   let sessions: VisibleSessions | undefined;
@@ -1130,7 +1175,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     });
   }
   const projects = yield* loadProjects();
-  const context = contextFor(caller, projects, yield* Clock.currentTimeMillis)(shell);
+  const context = contextFor(caller, projects, yield* Clock.currentTimeMillis, origin)(shell);
   const attention = attentionOf(shell);
   const detail =
     attention === null || attention === "failed"
