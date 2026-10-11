@@ -128,6 +128,40 @@ single-use handoff. **Disconnect my account** removes your API key connection.
 Revoked access does not return automatically. Bifrost remains available under
 **My managed MCP integrations**.
 
+## Start here: the agent tools
+
+Eight tools cover most work an agent does on T3 Code. Each does one whole job
+in one call and returns a short Markdown answer that ends with the exact next
+call. Pass `format: "json"` for the same facts as data. A session can be named
+by its id, the first 8 characters of its id, a T3 link, a Linear key such as
+`TEC-1488`, a linked pull request URL, or its title; an agent inside a session
+omits it to mean its own.
+
+| Tool               | Use it to                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `t3_whoami`        | See who you act as, which server this is, your own session, and how much waits on a person.                   |
+| `t3_inbox`         | See everything that waits on a person: questions with options, approvals, plans, failures and unread results. |
+| `t3_answer`        | Answer a question (`choice`, `text` or `answers`), an approval (`decision`), or a plan (`plan`, `feedback`).  |
+| `t3_find_sessions` | Find sessions by text, ticket, pull request, branch, project or state, one line each.                         |
+| `t3_session_brief` | Read where one session stands: state, what it waits on, its goal and its last messages.                       |
+| `t3_start_session` | Start a session in a project with a first message, a model alias (`opus`, `sonnet`, `codex`) and a mode.      |
+| `t3_send_message`  | Send to a session. It refuses while a question or approval is open, so the question is not lost.              |
+| `t3_wait`          | Wait for the next question, approval, finish or failure, with a cursor so no change is missed.                |
+
+An agent signed in through OAuth lists only these eight tools, the `t3_ui_*`
+tools and `t3_thread_read`, so its context does not fill with tool
+descriptions. To list every tool, send the header `x-t3-mcp-tools: all` or
+connect to `/mcp?tools=all`. Agents inside a session and Settings-issued
+credentials always list every tool. The server also sends a short "start here"
+guide in the MCP `instructions` when a client connects.
+
+`t3_answer` never answers inside the caller's own session: a person answers an
+agent's questions, approvals and plans. The answer records the person the
+caller acts for. `t3_wait` returns within 50 seconds by default, because most
+MCP clients stop a call after 60 seconds; call it again with the cursor it
+returns. `t3_start_session`, `t3_send_message` and `t3_answer` take a
+`clientRequestId`, so a retry with the same id does not act twice.
+
 ## Tools
 
 | Tool                        | Purpose                                                                                                                      |
@@ -164,8 +198,10 @@ Revoked access does not return automatically. Bifrost remains available under
 | `list_thread_pull_requests` | List a session's tagged pull requests with their host state and how they chain into stacks.                                  |
 
 The MCP JSON schemas describe every field. Agents should call
-`t3_get_configuration` before changing models and `t3_get_session` before
-answering approvals or structured input.
+`t3_get_configuration` before changing models. To answer an approval or a
+question, `t3_inbox` and `t3_session_brief` show its options and the call that
+answers it. `t3_get_session` stays under about 60,000 characters and lists what
+it cut in `omitted`; read full history with `t3_thread_read`.
 
 ## Naming a session's work
 
@@ -421,14 +457,17 @@ per project rather than a durable session.
 
 ## Recommended triage loop
 
-1. Call `t3_list_sessions` with `attentionOnly: true`.
-2. Read the attention reasons and latest-turn summary before fetching a full session.
-3. Call `t3_get_session` only for sessions that need a decision.
-4. Respond to approvals or input using the exact pending request ID.
-5. Send a targeted prompt when the agent needs guidance; use `interrupt` first
-   only when replacing an active turn.
-6. Update a stale title when the objective has materially changed.
-7. Re-list sessions to confirm the attention state cleared.
+1. Call `t3_inbox`. It lists what waits on a person, most urgent first, with
+   each question's options and a ready `t3_answer` call.
+2. Answer with `t3_answer`, or read more first with `t3_session_brief`.
+3. Send guidance with `t3_send_message`; `ifBusy: "interrupt"` replaces an
+   active turn.
+4. Call `t3_wait` with the cursor from the inbox to hear about the next item,
+   instead of listing sessions again.
+
+`t3_list_sessions` with `attentionOnly: true` uses the same rule as the inbox:
+a plan or a failure counts only once its agent has stopped, and only in a
+session that is not snoozed or settled.
 
 The sidebar counters use the same practical categories: the red attention count
 includes pending approvals, structured input, actionable plans, and failures; the
