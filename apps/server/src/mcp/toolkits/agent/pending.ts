@@ -49,7 +49,17 @@ export interface PendingApproval {
 export interface PendingPlan {
   readonly markdown: string;
   readonly proposedAt: string | null;
+  /** The run that proposed it; a plan from an older run was answered or set aside. */
+  readonly runId: string | null;
 }
+
+/**
+ * Whether the plan still waits for review. The shell keeps a plan flagged
+ * after it was approved and carried out, and after the agent answered a
+ * revision in chat; in both cases a newer run followed the one that proposed it.
+ */
+export const planIsCurrent = (shell: SessionShell, plan: PendingPlan | null): boolean =>
+  plan === null || plan.runId === null || plan.runId === shell.latestRunId;
 
 export interface PendingDetail {
   readonly question: PendingQuestion | null;
@@ -170,7 +180,11 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
     )[0];
   const plan =
     planItem?.type === "proposed_plan"
-      ? { markdown: planItem.markdown, proposedAt: toIso(planItem.updatedAt) }
+      ? {
+          markdown: planItem.markdown,
+          proposedAt: toIso(planItem.updatedAt),
+          runId: planItem.runId,
+        }
       : null;
 
   return { question, asyncQuestions, approval, plan } satisfies PendingDetail;

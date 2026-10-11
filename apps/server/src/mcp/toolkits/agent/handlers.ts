@@ -47,7 +47,7 @@ import {
   type VisibleSessions,
 } from "./context.ts";
 import { modelSelectionFor, resolveModel } from "./models.ts";
-import { EMPTY_PENDING, loadPendingDetail, type PendingDetail } from "./pending.ts";
+import { EMPTY_PENDING, loadPendingDetail, planIsCurrent, type PendingDetail } from "./pending.ts";
 import {
   DECISION_NAMES,
   messageExcerpt,
@@ -105,6 +105,13 @@ const fnv64 = (text: string, seed: bigint) => {
     hash ^= BigInt(unit);
     hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
   }
+  // FNV-1a mixes the last characters weakly into the high bits; finish with
+  // MurmurHash3's fmix64 so ids of similar texts differ from the first digit.
+  hash ^= hash >> 33n;
+  hash = (hash * 0xff51afd7ed558ccdn) & 0xffffffffffffffffn;
+  hash ^= hash >> 33n;
+  hash = (hash * 0xc4ceb9fe1a85ec53n) & 0xffffffffffffffffn;
+  hash ^= hash >> 33n;
   return hash.toString(16).padStart(16, "0");
 };
 
@@ -358,13 +365,13 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
   const candidates = inboxCandidates(pool, nowMs, {
     includeSnoozed: input.includeSnoozed === true,
   });
-  const matching =
+  let matching =
     wanted === null
       ? candidates.entries
       : candidates.entries.filter((entry) => wanted.has(entry.kind));
   const limit = input.limit ?? 20;
   const context = contextFor(caller, projects, nowMs, origin);
-  const entries = yield* Effect.forEach(matching.slice(0, limit), (candidate) =>
+  const loaded = yield* Effect.forEach(matching.slice(0, limit), (candidate) =>
     Effect.gen(function* () {
       const detail: PendingDetail =
         candidate.kind === "failed" || candidate.kind === "unread"
@@ -372,6 +379,8 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
           : yield* loadPendingDetail(caller, candidate.shell, {
               includePlan: candidate.kind === "plan",
             });
+      // The shell keeps a plan flagged after a newer run answered it.
+      if (candidate.kind === "plan" && !planIsCurrent(candidate.shell, detail.plan)) return null;
       return {
         kind: candidate.kind,
         shell: candidate.shell,
@@ -389,6 +398,14 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       } satisfies InboxEntry;
     }),
   );
+  const entries = loaded.filter((entry) => entry !== null);
+  const stale = new Set(
+    matching
+      .slice(0, limit)
+      .filter((_candidate, index) => loaded[index] === null)
+      .map((candidate) => candidate.shell.id),
+  );
+  matching = matching.filter((candidate) => !stale.has(candidate.shell.id));
   const urgent = matching.filter((entry) => entry.urgent).length;
   const cursor = String(sessions.sequence);
   const lines = [
@@ -810,7 +827,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
   for (const question of detail.asyncQuestions) {
     lines.push("", "### Asked while it keeps working", ...renderQuestion(question, ref));
   }
-  if (attention === "plan" || include.has("plan")) {
+  if ((attention === "plan" && planIsCurrent(shell, detail.plan)) || include.has("plan")) {
     lines.push("", "### Plan", ...renderPlan(detail.plan, ref, 0));
     if (detail.plan !== null)
       lines.push("", cutText(detail.plan.markdown, include.has("plan") ? 8_000 : 1_500));
@@ -1211,11 +1228,12 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
   }
   const projects = yield* loadProjects();
   const context = contextFor(caller, projects, yield* Clock.currentTimeMillis, origin)(shell);
-  const attention = attentionOf(shell);
+  const flagged = attentionOf(shell);
   const detail =
-    attention === null || attention === "failed"
+    flagged === null || flagged === "failed"
       ? EMPTY_PENDING
-      : yield* loadPendingDetail(caller, shell, { includePlan: attention === "plan" });
+      : yield* loadPendingDetail(caller, shell, { includePlan: flagged === "plan" });
+  const attention = flagged === "plan" && !planIsCurrent(shell, detail.plan) ? null : flagged;
   const reply =
     match.change === "finished" && attention === null ? yield* lastReply(caller, shell) : null;
   const lines = [
