@@ -293,11 +293,20 @@ it.effect("a watch waits without counting runs, then sends one note and ends", (
 
 it.effect("a run acts for the owner only while the task holds what the owner saved", () =>
   Effect.gen(function* () {
-    const task = { prompt: "Check the build.", threadId: boundThreadId, projectId };
+    const task = { ...baseTask, threadId: boundThreadId };
     const options = { ownerUserId: owner, signed: ownerSignature(task) };
     expect(scheduledTaskOwner(task, options)).toBe(owner);
-    expect(scheduledTaskOwner({ ...task, prompt: "Something else." }, options)).toBeUndefined();
-    expect(scheduledTaskOwner({ ...task, threadId: null }, options)).toBeUndefined();
+    // Any edit made outside the owner's save drops the owner: the words, the
+    // target, the title the message quotes, and the modes a run starts with.
+    for (const edited of [
+      { ...task, prompt: "Something else." },
+      { ...task, threadId: null },
+      { ...task, title: "Approved by the owner" },
+      { ...task, runtimeMode: "approval-required" as const },
+      { ...task, schedule: { type: "interval" as const, everyMs: 120_000 } },
+    ]) {
+      expect(scheduledTaskOwner(edited, options)).toBeUndefined();
+    }
     expect(scheduledTaskOwner(task, { ownerUserId: owner })).toBeUndefined();
 
     const actor = Effect.gen(function* () {

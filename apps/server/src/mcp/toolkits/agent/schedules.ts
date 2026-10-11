@@ -41,6 +41,8 @@ import {
 import {
   ownerSignature,
   readAllScheduledTaskForkOptions,
+  readScheduledTaskForkOptions,
+  scheduledTaskOwner,
   writeScheduledTaskForkOptions,
   type ScheduledTaskForkOptions,
 } from "../../../scheduledTasks/scheduledTaskForkOptions.expbkt3.ts";
@@ -335,7 +337,14 @@ const renderSchedule = Effect.fn("agentToolkit.renderSchedule")(function* (
     task.lastRunAt === null
       ? "never ran"
       : `last ${task.lastRunStatus} ${formatInstant(task.lastRunAt, options.timeZone)}`;
-  const owner = nameOf(context, options.ownerUserId);
+  // An owner counts only while the task is as they saved it.
+  const actingOwner = scheduledTaskOwner(task, options);
+  const owner =
+    actingOwner === undefined
+      ? options.ownerUserId === undefined
+        ? null
+        : "nobody (edited outside t3_schedule; save it again to run as you)"
+      : nameOf(context, actingOwner);
   const showUrl = task.webhook !== undefined && (yield* mayRun(task, context));
   const webhookUrl = showUrl ? webhookUrlOf(task, context) : null;
   const lines = [
@@ -370,6 +379,7 @@ const renderSchedule = Effect.fn("agentToolkit.renderSchedule")(function* (
       lastRunError: task.lastRunError,
       runCount: task.runCount,
       owner,
+      ownerUserId: actingOwner ?? null,
       webhookUrl,
     },
   };
@@ -602,10 +612,11 @@ const saveOptions = Effect.fn("agentToolkit.saveScheduleOptions")(function* (
   taskId: ScheduledTask["id"],
   options: ScheduledTaskForkOptions,
   group: ThreadCustomGroup | null | undefined,
+  whenFailed = "The schedule was saved, but its options were not",
 ) {
   const sql = yield* sqlClient;
   const saveFailed = (cause: { readonly message: string }) =>
-    fail("schedule_failed", `The schedule was saved, but its options were not: ${cause.message}`);
+    fail("schedule_failed", `${whenFailed}: ${cause.message}`);
   yield* writeScheduledTaskForkOptions(sql, taskId, options).pipe(Effect.mapError(saveFailed));
   if (group !== undefined) {
     yield* writeScheduledTaskCustomGroup(sql, taskId, group).pipe(Effect.mapError(saveFailed));
@@ -624,17 +635,33 @@ const saveNewSchedule = Effect.fn("agentToolkit.saveNewSchedule")(function* (
 ) {
   const service = yield* ScheduledTaskService;
   const failed = (error: { readonly message: string }) => fail("schedule_failed", error.message);
+  // A retry with the same clientRequestId finds what the first call made and
+  // changes nothing: no clock reset, and a finished one-time run stays done.
+  if (upsert.commandId !== undefined) {
+    const id = `scheduled-task:${upsert.commandId}`;
+    const { tasks } = yield* service.list().pipe(Effect.mapError(failed));
+    const existing = tasks.find((task) => task.id === id);
+    if (existing !== undefined) {
+      const sql = yield* sqlClient;
+      const stored = yield* readScheduledTaskForkOptions(sql, existing.id).pipe(
+        Effect.orElseSucceed((): ScheduledTaskForkOptions => ({})),
+      );
+      return { task: existing, options: stored };
+    }
+  }
   const { task: draft } = yield* service
     .upsert({ ...upsert, enabled: false })
     .pipe(Effect.mapError(failed));
+  const removeDraft = service.delete({ id: draft.id }).pipe(Effect.ignore);
   const signed: ScheduledTaskForkOptions =
     options.ownerUserId === undefined ? options : { ...options, signed: ownerSignature(draft) };
-  yield* saveOptions(draft.id, signed, group).pipe(
-    Effect.tapError(() => service.delete({ id: draft.id }).pipe(Effect.ignore)),
+  yield* saveOptions(draft.id, signed, group, "The schedule was not saved").pipe(
+    Effect.tapError(() => removeDraft),
   );
-  const { task } = yield* service
-    .setEnabled({ id: draft.id, enabled: true })
-    .pipe(Effect.mapError(failed));
+  const { task } = yield* service.setEnabled({ id: draft.id, enabled: true }).pipe(
+    Effect.mapError(failed),
+    Effect.tapError(() => removeDraft),
+  );
   return { task, options: signed };
 });
 
@@ -892,11 +919,16 @@ const assertWithinModes = Effect.fn("agentToolkit.assertScheduleWithinModes")(fu
   const { caller } = context;
   yield* assertTargetWithinLimits(caller.limits, view.task);
   if (view.task.threadId === null) return;
+  // Fails closed: a session that cannot be read just now is not assumed safe.
   const bound =
     context.sessions.get(view.task.threadId) ??
     (yield* caller.threads
       .getThreadShell(view.task.threadId)
-      .pipe(Effect.orElseSucceed(() => null)));
+      .pipe(
+        Effect.mapError(() =>
+          fail("unavailable", "T3 Code could not read the schedule's session just now. Try again."),
+        ),
+      ));
   if (bound !== null && bound.deletedAt === null) {
     yield* assertTargetWithinLimits(caller.limits, bound);
   }
@@ -931,9 +963,16 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       const { task } = yield* service
         .setEnabled({ id: view.task.id, enabled: action === "resume" })
         .pipe(Effect.mapError(failed));
+      // Whoever turns a schedule back on is who its runs act for from now on.
+      const actor = context.caller.scope.actorUserId;
+      const options =
+        action === "resume" && actor !== null && scheduledTaskOwner(task, view.options) !== actor
+          ? { ...view.options, ownerUserId: actor, signed: ownerSignature(task) }
+          : view.options;
+      if (options !== view.options) yield* saveOptions(task.id, options, undefined);
       return yield* reportSchedule(
         action === "pause" ? "Paused" : "Resumed",
-        { task, options: view.options },
+        { task, options },
         context,
         [],
       );
@@ -964,7 +1003,11 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
           "Checked: no change yet",
           { task, options: view.options },
           context,
-          ["The watch keeps checking every minute."],
+          [
+            task.enabled
+              ? "The watch keeps checking every minute."
+              : `The watch is paused. Resume it with ${callHint("t3_schedule", { action: "resume", id: ref })}.`,
+          ],
         );
       }
       return yield* reportSchedule("Ran now", { task, options: view.options }, context, [

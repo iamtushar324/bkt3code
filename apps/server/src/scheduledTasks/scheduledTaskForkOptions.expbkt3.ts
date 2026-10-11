@@ -30,22 +30,15 @@ import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.e
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ScheduledTaskWatch } from "./scheduledTaskWatch.expbkt3.ts";
 
-/** What the owner saved: a run acts for them only while the task still holds it. */
-const OwnerSignature = Schema.Struct({
-  prompt: Schema.String,
-  threadId: Schema.NullOr(Schema.String),
-  projectId: Schema.String,
-});
-
 export const ScheduledTaskForkOptions = Schema.Struct({
   /** The person a run acts for: the launched session's owner and the sender of a prompt. */
   ownerUserId: Schema.optional(UserId),
   /**
-   * The prompt and target the owner saved. A task edited since (in the app,
-   * or by a tool that does not record an owner) runs as nobody, so nobody's
-   * words go out under the owner's name.
+   * The task as the owner saved it (see `ownerSignature`). A task edited
+   * since, in the app or by a tool that records no owner, runs as nobody, so
+   * nobody else's words or settings go out under the owner's name.
    */
-  signed: Schema.optional(OwnerSignature),
+  signed: Schema.optional(Schema.String),
   /** People tagged on every session a run launches. */
   memberUserIds: Schema.optional(Schema.Array(UserId)),
   priority: Schema.optional(ThreadPriority),
@@ -147,28 +140,42 @@ export const scheduledTaskForkLaunchFields = (
   ...(options.parentThreadId === undefined ? {} : { parentThreadId: options.parentThreadId }),
 });
 
-/** The signature that lets `task` run as its owner. */
-export const ownerSignature = (
-  task: Pick<ScheduledTask, "prompt" | "threadId" | "projectId">,
-): typeof OwnerSignature.Type => ({
-  prompt: task.prompt,
-  threadId: task.threadId,
-  projectId: task.projectId,
-});
+type SignedFields = Pick<
+  ScheduledTask,
+  | "title"
+  | "prompt"
+  | "schedule"
+  | "projectId"
+  | "threadId"
+  | "workspaceStrategy"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+>;
+
+/** Everything a run sends or starts with, in one string: what lets `task` run as its owner. */
+export const ownerSignature = (task: SignedFields): string =>
+  JSON.stringify([
+    task.title,
+    task.prompt,
+    task.schedule,
+    task.projectId,
+    task.threadId,
+    task.workspaceStrategy,
+    task.modelSelection,
+    task.runtimeMode,
+    task.interactionMode,
+  ]);
 
 /**
  * The person a run acts for: the owner, while the task still holds the
  * prompt and target the owner saved; otherwise nobody.
  */
 export const scheduledTaskOwner = (
-  task: Pick<ScheduledTask, "prompt" | "threadId" | "projectId">,
+  task: SignedFields,
   options: ScheduledTaskForkOptions,
 ): UserId | undefined =>
-  options.ownerUserId !== undefined &&
-  options.signed !== undefined &&
-  options.signed.prompt === task.prompt &&
-  options.signed.threadId === task.threadId &&
-  options.signed.projectId === task.projectId
+  options.ownerUserId !== undefined && options.signed === ownerSignature(task)
     ? options.ownerUserId
     : undefined;
 
