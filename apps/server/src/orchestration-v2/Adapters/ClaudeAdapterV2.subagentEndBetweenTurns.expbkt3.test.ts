@@ -581,8 +581,10 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
         // The root still wakes for it, named as before, and no run has started yet.
         assert.lengthOf(harness.continuationRequests, 1);
         assert.equal(harness.continuationRequests[0]?.detail, REVIEW_SUMMARY);
+        const childThreadId = review?.childThreadId ?? undefined;
+        assert.isString(childThreadId);
         assert.deepEqual(harness.continuationRequests[0]?.notification, {
-          source: { kind: "subagent", childThreadId: review?.childThreadId },
+          source: { kind: "subagent", childThreadId },
           outcome: "completed",
           summary: `Subagent "${REVIEW_DESCRIPTION}" finished`,
         });
