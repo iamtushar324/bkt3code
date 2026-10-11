@@ -75,6 +75,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import { hasUserWideScope, resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
+import { boundSessionDetail } from "./sessionDetail.ts";
 import { T3ControlToolkit, T3ControlToolError, type T3CreateSessionTool } from "./tools.ts";
 import type { Tool } from "effect/ai";
 
@@ -1066,17 +1067,18 @@ const handlers = {
       });
     }
     const thread = loaded.value.thread;
-    const messageLimit = boundedLimit(input.messageLimit, 30, 200);
-    const activityLimit = boundedLimit(input.activityLimit, 50, 300);
+    // T3-CUSTOM(expbkt3): every record is capped and the whole detail fits a
+    // client's output limit; `omitted` says what was cut.
+    const bounded = boundSessionDetail(thread, {
+      messageLimit: boundedLimit(input.messageLimit, 30, 200),
+      activityLimit: boundedLimit(input.activityLimit, 50, 300),
+    });
     return {
       snapshotSequence: loaded.value.snapshotSequence,
-      thread: {
-        ...thread,
-        messages: thread.messages.slice(-messageLimit),
-        activities: thread.activities.slice(-activityLimit),
-      },
+      thread: bounded.thread,
       ...sessionStatus(thread),
       humanAttentionReasons: attentionReasons(thread),
+      ...(bounded.omitted.length === 0 ? {} : { omitted: bounded.omitted }),
     };
   }),
 
