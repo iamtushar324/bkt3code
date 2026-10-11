@@ -342,7 +342,7 @@ export const T3SessionActionTool = destructiveTool(
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
 
-export const T3RespondApprovalTool = mutatingTool(
+export const T3RespondApprovalTool = destructiveTool(
   Tool.make("t3_respond_approval", {
     description:
       "Resolve a pending provider approval in a T3 session. Obtain requestId and allowed decisions from t3_get_session before responding. Prefer t3_answer, which reads the open request itself.",
