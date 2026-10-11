@@ -480,14 +480,33 @@ function attentionReasons(
   if ("hasPendingUserInput" in thread && thread.hasPendingUserInput) {
     reasons.push("user-input");
   }
+  // A plan or a failure waits on a person only once the agent has stopped, as
+  // the sidebar and the agent toolkit (`@t3tools/shared/sessionAttention`) read it.
+  const running = isRunningStatus(thread.session?.status ?? "absent");
   if (
-    ("hasActionableProposedPlan" in thread && thread.hasActionableProposedPlan) ||
-    ("proposedPlans" in thread && thread.proposedPlans.some((plan) => plan.implementedAt === null))
+    !running &&
+    (("hasActionableProposedPlan" in thread && thread.hasActionableProposedPlan) ||
+      ("proposedPlans" in thread &&
+        thread.proposedPlans.some((plan) => plan.implementedAt === null)))
   ) {
     reasons.push("proposed-plan");
   }
   if (thread.session?.status === "error") reasons.push("failure");
   return reasons;
+}
+
+/**
+ * A snoozed or settled session is parked: its plan or failure is not news. A
+ * question or approval still is, as in the sidebar and t3_inbox.
+ */
+function isParkedForAttention(thread: OrchestrationThreadShell, nowIso: string): boolean {
+  const blocking = thread.hasPendingApprovals || thread.hasPendingUserInput;
+  if (blocking) return false;
+  const snoozed =
+    thread.snoozedUntil !== undefined &&
+    thread.snoozedUntil !== null &&
+    thread.snoozedUntil > nowIso;
+  return snoozed || thread.settledAt !== null;
 }
 
 /**
@@ -766,11 +785,14 @@ const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
 /**
  * `started` is what McpToolAccess.startsThreads resolved: the modes the caller
  * asked for, or its own where it asked for none. A saved default it did not ask
- * for may not run broader than the caller either.
+ * for may not run broader than the caller either. `options.sessionId` fixes the
+ * new session's id, so the agent toolkit's t3_start_session can make a retry
+ * find the session it already started.
  */
-const createSession = Effect.fn("T3ControlToolkit.createSession")(function* (
+export const createSession = Effect.fn("T3ControlToolkit.createSession")(function* (
   input: Tool.Parameters<typeof T3CreateSessionTool>,
   started?: McpToolAccess.StartedModes,
+  options?: { readonly sessionId?: ThreadId | undefined },
 ) {
   const operation = "create-session";
   const scope = yield* requireSessionCreator(operation);
@@ -806,8 +828,9 @@ const createSession = Effect.fn("T3ControlToolkit.createSession")(function* (
     createAsChild: input.createAsChild,
     parentSessionId: input.parentSessionId,
   });
-  const uuid = yield* crypto.randomUUIDv4.pipe(mapControlError(operation));
-  const sessionId = ThreadId.make(`mcp:${uuid}`);
+  const sessionId =
+    options?.sessionId ??
+    ThreadId.make(`mcp:${yield* crypto.randomUUIDv4.pipe(mapControlError(operation))}`);
   const ownerUserId =
     scope.actorUserId ?? project.ownerUserId ?? (yield* resolveConfiguredOwnerUserId(operation));
   // T3-CUSTOM(expbkt3): the new session inherits the calling session's audience.
@@ -1036,8 +1059,13 @@ const handlers = {
       ]),
     );
     // T3-CUSTOM(expbkt3): cap first, then bulk-read only catch-up fields for returned sessions.
+    const now = yield* nowIso;
     const selected = threads
-      .filter((thread) => input.attentionOnly !== true || attentionReasons(thread).length > 0)
+      .filter(
+        (thread) =>
+          input.attentionOnly !== true ||
+          (attentionReasons(thread).length > 0 && !isParkedForAttention(thread, now)),
+      )
       // T3-CUSTOM(expbkt3): custom sidebar group facet.
       .filter((thread) => matchesCustomGroupFilter(thread, input.customGroup))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
