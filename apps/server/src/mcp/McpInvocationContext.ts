@@ -85,6 +85,10 @@ export interface McpInvocationScope {
   // a loopback address, so tool results can link to sessions the way the
   // caller reaches this server.
   readonly requestOrigin?: string | undefined;
+  // T3-CUSTOM(expbkt3): "agent" lists only the agent toolkit and the web UI
+  // bridge: an OAuth client sees that short list unless it asks for every tool
+  // (`x-t3-mcp-tools: all`, or `/mcp?tools=all`).
+  readonly toolList?: "agent" | undefined;
 }
 
 // T3-CUSTOM(expbkt3): BEGIN — MCP control-plane operator/session-creation gating.

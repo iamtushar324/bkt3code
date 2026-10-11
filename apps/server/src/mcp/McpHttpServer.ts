@@ -14,6 +14,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber"; // T3-CUSTOM(expbkt3): the caller of a tools/list request.
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { AiError, McpProtocol, McpSchema, McpServer, Tool, type Toolkit } from "effect/ai";
+import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai"; // T3-CUSTOM(expbkt3): Toolkit.make for caller tool lists.
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OrchestratorMcpFailure, PreviewAutomationError } from "@t3tools/contracts";
 
@@ -60,10 +61,15 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 // T3-CUSTOM(expbkt3): compact parity bridge for the authenticated web UI RPCs.
-import { WebUiRpcHandlers, WebUiRpcToolkit } from "./toolkits/webUi/registration.ts";
+import {
+  WEB_UI_MCP_TOOL_NAMES,
+  WebUiRpcHandlers,
+  WebUiRpcToolkit,
+} from "./toolkits/webUi/registration.ts";
 // T3-CUSTOM(expbkt3): task-shaped tools for agents that drive T3 from outside.
 import { AgentToolkitHandlers } from "./toolkits/agent/handlers.ts";
-import { AgentToolkit } from "./toolkits/agent/tools.ts";
+import { MCP_SERVER_INSTRUCTIONS } from "./toolkits/agent/instructions.ts";
+import { AGENT_TOOL_NAMES, AgentToolkit } from "./toolkits/agent/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
@@ -171,6 +177,54 @@ const publicRequestOrigin = (request: HttpServerRequest.HttpServerRequest) =>
     Option.map((url) => url.origin),
     Option.getOrUndefined,
   );
+
+/** An OAuth client asks for every tool with a header or a query parameter. */
+const requestsEveryTool = (request: HttpServerRequest.HttpServerRequest) =>
+  request.headers["x-t3-mcp-tools"]?.trim().toLowerCase() === "all" ||
+  HttpServerRequest.toURL(request).pipe(
+    Option.exists((url) => url.searchParams.get("tools")?.toLowerCase() === "all"),
+  );
+
+/**
+ * What an OAuth client lists by default: the agent toolkit, which does most
+ * jobs in one call, the web UI bridge for everything else, and the full-history
+ * read the briefs point to. The other tools cost such a client tens of
+ * thousands of tokens of descriptions, and many of them refuse it anyway.
+ */
+const AGENT_TOOL_LIST: ReadonlySet<string> = new Set([
+  ...AGENT_TOOL_NAMES,
+  ...WEB_UI_MCP_TOOL_NAMES,
+  "t3_thread_read",
+]);
+
+/**
+ * Whether the tool is listed for the caller of the current request. MCP
+ * passes `EnabledWhen` only the client's protocol details, so the caller comes
+ * from the request fiber, where the auth middleware put it. A call with no
+ * caller (a test, stdio) lists everything.
+ */
+const listedForCurrentCaller = (name: string): boolean => {
+  const fiber = Fiber.getCurrent();
+  if (fiber === undefined) return true;
+  const scope = Context.getOption(fiber.context, McpInvocationContext.McpInvocationContext);
+  return Option.isNone(scope) || scope.value.toolList !== "agent" || AGENT_TOOL_LIST.has(name);
+};
+
+const withCallerToolList = <T extends Tool.Any>(tool: T): T => {
+  const previous = Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen);
+  return tool.annotate(
+    McpSchema.EnabledWhen,
+    (client) => (previous === undefined || previous(client)) && listedForCurrentCaller(tool.name),
+  ) as T;
+};
+
+/** `toolkit` with every tool listed only for callers whose tool list includes it. */
+export const withCallerToolLists = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+): Toolkit.Toolkit<Tools> =>
+  Toolkit.make(
+    ...Object.values(toolkit.tools).map(withCallerToolList),
+  ) as unknown as Toolkit.Toolkit<Tools>;
 // T3-CUSTOM(expbkt3): END
 
 // Session tokens are `<payload>.<signature>`; registry tokens are a bare base64url secret.
@@ -186,8 +240,11 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       authorization?.startsWith("Bearer ") === true
         ? authorization.slice("Bearer ".length).trim()
         : "";
+    // T3-CUSTOM(expbkt3): a registry credential (agent session, Settings token)
+    // keeps every tool; only an OAuth client gets the short list by default.
+    const registered = yield* registry.resolve(token);
     const invocation =
-      (yield* registry.resolve(token)) ??
+      registered ??
       (Option.isSome(clients) && token.length > 0
         ? yield* clients.value.authenticate(request)
         : undefined);
@@ -204,13 +261,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    // T3-CUSTOM(expbkt3): tool results link to sessions on the origin the caller used.
+    // T3-CUSTOM(expbkt3): tool results link to sessions on the origin the caller used,
+    // and an OAuth client lists the agent tools unless it asks for every tool.
     const requestOrigin = publicRequestOrigin(request);
+    const toolList = registered === undefined && !requestsEveryTool(request) ? "agent" : undefined;
     return yield* httpEffect.pipe(
-      Effect.provideService(
-        McpInvocationContext.McpInvocationContext,
-        requestOrigin === undefined ? invocation : { ...invocation, requestOrigin },
-      ),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation,
+        ...(requestOrigin === undefined ? {} : { requestOrigin }),
+        ...(toolList === undefined ? {} : { toolList }),
+      }),
       // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
       Effect.provideService(CurrentOrchestrationActorUserId, invocation.actorUserId),
       Effect.map(normalizeMcpHttpResponse),
@@ -513,7 +573,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
         openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
       },
     }),
-    annotations: tool.annotations,
+    annotations: withCallerToolList(tool).annotations, // T3-CUSTOM(expbkt3): caller tool lists.
     handle: (payload) =>
       Effect.withFiber((fiber) => {
         const invocation = Context.getUnsafe(
@@ -702,7 +762,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
           openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
         },
       }),
-      annotations: tool.annotations,
+      annotations: withCallerToolList(tool).annotations, // T3-CUSTOM(expbkt3): caller tool lists.
       handle: (payload) =>
         Effect.withFiber((fiber) => {
           const invocation = Context.getUnsafe(
@@ -806,7 +866,11 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
-) => McpServer.toolkit(toolkit).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+) =>
+  // T3-CUSTOM(expbkt3): every tool is listed only for callers whose tool list includes it.
+  McpServer.toolkit(withCallerToolLists(toolkit)).pipe(
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
 
 /** A hand-registered tool, also only with handlers that declared their access. */
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
@@ -841,7 +905,7 @@ export const T3ControlToolkitRegistrationLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const control = yield* makeT3ControlToolkit;
-    yield* McpServer.registerToolkit(control.toolkit);
+    yield* McpServer.registerToolkit(withCallerToolLists(control.toolkit));
     yield* control.watchPolicy(server.notifications["notifications/tools/list_changed"]({}));
   }),
 ).pipe(
@@ -1037,6 +1101,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
+  // T3-CUSTOM(expbkt3): how an agent should start, sent once when it connects.
+  instructions: MCP_SERVER_INSTRUCTIONS,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
