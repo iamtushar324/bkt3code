@@ -18,9 +18,9 @@ layer("055_OrchestrationV2", (it) => {
           // T3-CUSTOM(expbkt3): append the session webhook ledger entry at 1045,
           // upstream's scheduled-task webhook migrations (57-58) at 1046-1047, the
           // review comment send-once mark at 1048 and upstream's MCP app context and
-          // snapshot indexes (59-60) at 1049-1050, and scheduled task custom
-          // groups at 1051.
-          ...Array.from({ length: 52 }, (_, index) => 1000 + index),
+          // snapshot indexes (59-60) at 1049-1050, scheduled task custom
+          // groups at 1051 and scheduled task options at 1052.
+          ...Array.from({ length: 53 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -43,6 +43,7 @@ layer("055_OrchestrationV2", (it) => {
         [1049, "McpAppModelContext"],
         [1050, "ThreadSnapshotWindowIndexes"],
         [1051, "ScheduledTaskCustomGroups"], // T3-CUSTOM(expbkt3): scheduled task custom groups.
+        [1052, "ScheduledTaskForkOptions"], // T3-CUSTOM(expbkt3): scheduled task options.
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -78,6 +79,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1049, name: "McpAppModelContext" },
         { migration_id: 1050, name: "ThreadSnapshotWindowIndexes" },
         { migration_id: 1051, name: "ScheduledTaskCustomGroups" }, // T3-CUSTOM(expbkt3)
+        { migration_id: 1052, name: "ScheduledTaskForkOptions" }, // T3-CUSTOM(expbkt3)
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.

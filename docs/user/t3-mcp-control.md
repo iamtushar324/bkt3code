@@ -130,7 +130,7 @@ Revoked access does not return automatically. Bifrost remains available under
 
 ## Start here: the agent tools
 
-Eight tools cover most work an agent does on T3 Code. Each does one whole job
+Ten tools cover most work an agent does on T3 Code. Each does one whole job
 in one call and returns a short Markdown answer that ends with the exact next
 call. Pass `format: "json"` for the same facts as data. A session can be named
 by its id, the first 8 characters of its id, a T3 link, a Linear key such as
@@ -147,8 +147,10 @@ omits it to mean its own.
 | `t3_start_session` | Start a session in a project with a first message, a model alias (`opus`, `sonnet`, `codex`) and a mode.      |
 | `t3_send_message`  | Send to a session. It refuses while a question or approval is open, so the question is not lost.              |
 | `t3_wait`          | Wait for the next question, approval, finish or failure, with a cursor so no change is missed.                |
+| `t3_schedule`      | Send a prompt later or on a clock, into a session or into a new session each run; also pause, resume, delete. |
+| `t3_schedules`     | List the schedules you can manage, with where they send, their next run and their last result.                |
 
-An agent signed in through OAuth lists only these eight tools,
+An agent signed in through OAuth lists only these ten tools,
 `t3_ui_list_tools`, `t3_ui_call` and `t3_thread_read` (about 8,000 tokens of
 descriptions), so its context does not fill with tool descriptions. To list every tool, send the header `x-t3-mcp-tools: all` or
 connect to `/mcp?tools=all`. Agents inside a session and Settings-issued
@@ -161,6 +163,26 @@ caller acts for. `t3_wait` returns within 50 seconds by default, because most
 MCP clients stop a call after 60 seconds; call it again with the cursor it
 returns. `t3_start_session`, `t3_send_message` and `t3_answer` take a
 `clientRequestId`, so a retry with the same id does not act twice.
+
+### Scheduled prompts
+
+`t3_schedule` sends its prompt into a session by default: the caller's own
+session, or the one `session` names. The prompt arrives as a queued message,
+so it never interrupts a turn, and it uses the session's current model. Pass
+`project` instead to start a new session on every run; that schedule takes the
+same options as `t3_start_session` (model, mode, workspace, group, tags,
+parent) plus `priority`, `linear` and `quiet`. A quiet session is snoozed while
+it works, so it reaches the inbox only when it finishes, fails or asks a
+person.
+
+Say when with one of `in` (`"10m"`, once), `at` (an ISO time or `"09:00"`,
+once), `every` (`"2h"`), `daily` (`"09:00"`, with `weekdays` and `timeZone`) or
+`webhook: true`. A one-time schedule pauses after its run, and a schedule whose
+session is archived or deleted pauses itself. Runs act for the person who made
+the schedule, so the sessions they start belong to that person and appear in
+their sidebar. A daily time given in another time zone is converted to server
+time when it is saved; a zone that changes its clocks shifts by an hour until
+the schedule is saved again.
 
 ## Tools
 

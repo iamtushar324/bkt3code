@@ -58,6 +58,14 @@ import {
   deleteScheduledTaskCustomGroup,
   scheduledTaskCustomGroupFields,
 } from "./scheduledTaskCustomGroup.expbkt3.ts";
+// T3-CUSTOM(expbkt3): who a run acts for, how loud its session is, and run-once.
+import {
+  afterScheduledTaskRun,
+  asScheduledTaskOwner,
+  deleteScheduledTaskForkOptions,
+  scheduledTaskForkLaunchFields,
+  scheduledTaskForkOptionsForRun,
+} from "./scheduledTaskForkOptions.expbkt3.ts";
 
 /** Path prefix of the environment route that receives webhook requests. */
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -624,8 +632,9 @@ export const layer = Layer.effect(
       sql
         .withTransaction(
           sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${id}`.pipe(
-            // T3-CUSTOM(expbkt3): the task's custom group goes with it.
+            // T3-CUSTOM(expbkt3): the task's custom group and options go with it.
             Effect.andThen(deleteScheduledTaskCustomGroup(sql, id)),
+            Effect.andThen(deleteScheduledTaskForkOptions(sql, id)),
             Effect.andThen(sql`DELETE FROM scheduled_tasks WHERE task_id = ${id}`),
           ),
         )
@@ -795,51 +804,67 @@ export const layer = Layer.effect(
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
-        // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group; never fails.
+        // T3-CUSTOM(expbkt3): a fresh thread joins the task's custom group and
+        // takes its owner, tags and links; the dispatch acts for the owner. Never fails.
+        const forkOptions = yield* scheduledTaskForkOptionsForRun(sql, active.id);
         const forkLaunchFields =
-          active.threadId === null ? yield* scheduledTaskCustomGroupFields(sql, active.id) : {};
+          active.threadId === null
+            ? {
+                ...scheduledTaskForkLaunchFields(forkOptions),
+                ...(yield* scheduledTaskCustomGroupFields(sql, active.id)),
+              }
+            : {};
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
+        // T3-CUSTOM(expbkt3): BEGIN — dispatch as the task's owner (forkOptions).
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.launch({
-                  ...forkLaunchFields, // T3-CUSTOM(expbkt3)
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
+                threadLaunch
+                  .launch({
+                    ...forkLaunchFields,
+                    commandId,
+                    projectId: active.projectId,
+                    title: active.title,
+                    modelSelection: active.modelSelection,
+                    runtimeMode: active.runtimeMode,
+                    interactionMode: active.interactionMode,
+                    workspaceStrategy: active.workspaceStrategy,
+                    initialMessage: {
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                    },
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(asScheduledTaskOwner(forkOptions)),
+              )
+            : yield* Effect.exit(
+                threadManagement
+                  .sendToThread({
+                    projectId: active.projectId,
+                    commandId,
+                    threadId: ThreadId.make(active.threadId),
                     messageId,
                     scheduledTaskId: active.id,
                     text: prompt,
                     attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              )
-            : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                    // keepThreadModel sends with the session's own model.
+                    ...(forkOptions.keepThreadModel === true
+                      ? {}
+                      : { modelSelection: active.modelSelection }),
+                    // Scheduled prompts must not interrupt tools in the bound thread.
+                    mode: "queue",
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(asScheduledTaskOwner(forkOptions)),
               );
+        // T3-CUSTOM(expbkt3): END
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";
@@ -870,7 +895,21 @@ export const layer = Layer.effect(
             error: lastRunError,
             startedAtIso,
           });
+          // T3-CUSTOM(expbkt3): snooze a quiet task's session; pause a task
+          // that runs once or whose session is gone.
+          const paused = yield* afterScheduledTaskRun({
+            sql,
+            threadManagement,
+            taskId: task.id,
+            options: forkOptions,
+            exit: result,
+            launchedThreadId:
+              result._tag === "Success" && "resumed" in result.value ? result.value.threadId : null,
+            nextRunAtIso: completed.nextRunAt,
+            now: completedAt,
+          });
           yield* notifyChanged;
+          if (paused) return (yield* findTask(task.id)) ?? completed;
         }
         return completed;
       }).pipe(

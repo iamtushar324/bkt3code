@@ -19,6 +19,7 @@ const pendingV2Migrations = [
   [1049, "McpAppModelContext"],
   [1050, "ThreadSnapshotWindowIndexes"],
   [1051, "ScheduledTaskCustomGroups"],
+  [1052, "ScheduledTaskForkOptions"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
