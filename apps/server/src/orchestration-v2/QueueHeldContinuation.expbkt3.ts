@@ -4,11 +4,16 @@
  * Stop holds a thread's queued runs until the user resumes the queue, and a
  * message queued behind a held run copies the hold, so user messages keep
  * their order. An adapter continuation is different: ProviderContinuationService
- * dispatches it when the provider CLI started a turn by itself (a background
- * command finished, a subagent reported), and the adapter buffers that output
- * until the continuation run starts. Holding it strands output the CLI already
- * produced, so it never copies the hold, and the queue starts it while the
- * held runs keep waiting for the user.
+ * dispatches it when the provider reported background work while no turn was
+ * open. Claude, ACP and OpenCode buffer the output their CLI already produced
+ * until the continuation run starts; holding it strands that output (and the
+ * adapter's one pending continuation blocks every later wake). So it never
+ * copies the hold, and the queue starts it while the held runs keep waiting
+ * for the user.
+ *
+ * Codex has no buffer: its continuation text is a real prompt. It gets the same
+ * treatment, matching a continuation that arrives with no active run, which
+ * already starts past a held queue.
  */
 import type {
   OrchestrationV2Actor,

@@ -647,4 +647,118 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
+
+  it.effect("ends a subagent resumed between turns only after the drain re-opens it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SEND_TOOL_USE_ID = "toolu-subagent-end-review-sendmessage";
+        const RESUME_PROMPT = "Check the undo path again.";
+        const RESUMED_SUMMARY = "The undo path is safe too.";
+        const harness = yield* makeHarness;
+        yield* launchBackgroundSubagents(harness);
+        // The first end is shown at once.
+        yield* endReviewWhileIdle(harness);
+        assert.equal(subagentUpdates(harness.events, REVIEW_TASK_ID).at(-1)?.status, "completed");
+
+        // Still between turns, the audit resumes the review with SendMessage.
+        // The resume's task_started waits in the wake buffer, and so does the
+        // resumed run's end that follows it.
+        for (const frame of [
+          subagentToolUseFrame({
+            parentToolUseId: AUDIT_TOOL_USE_ID,
+            toolUseId: SEND_TOOL_USE_ID,
+            name: "SendMessage",
+            toolInput: { to: REVIEW_TASK_ID, message: RESUME_PROMPT },
+            uuid: "00000000-0000-4000-8000-000000000e01",
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: REVIEW_TASK_ID,
+            tool_use_id: SEND_TOOL_USE_ID,
+            description: REVIEW_DESCRIPTION,
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: RESUME_PROMPT,
+            uuid: "00000000-0000-4000-8000-000000000e02",
+            session_id: NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: SEND_TOOL_USE_ID, content: "Sent." }],
+            },
+            parent_tool_use_id: AUDIT_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000e03",
+            session_id: NATIVE_SESSION,
+          }),
+          subagentEndedFrame({
+            taskId: REVIEW_TASK_ID,
+            toolUseId: SEND_TOOL_USE_ID,
+            summary: RESUMED_SUMMARY,
+            uuid: "00000000-0000-4000-8000-000000000e04",
+          }),
+          resultFrame({
+            uuid: "00000000-0000-4000-8000-000000000e05",
+            result: "The review finished again.",
+          }),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+
+        // One continuation run drains both ends and the resume between them.
+        yield* harness.startTurn({
+          attemptId: CONTINUATION_ATTEMPT,
+          providerTurnOrdinal: 2,
+          continuation: true,
+        });
+        yield* harness.awaitEvent(isTurnTerminal);
+        assert.equal(harness.terminalCount(), 2);
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        const reviewUpdates = subagentUpdates(harness.events, REVIEW_TASK_ID);
+        const finalReview = reviewUpdates.at(-1);
+        assert.equal(finalReview?.status, "completed");
+        assert.equal(finalReview?.result, RESUMED_SUMMARY);
+        assert.deepEqual(withoutRepeats(reviewUpdates.map((task) => task.status)), [
+          "running",
+          "completed",
+          "running",
+          "completed",
+        ]);
+        assert.deepEqual(subagentNodeStatuses(harness.events, REVIEW_TASK_ID), [
+          "running",
+          "completed",
+          "running",
+          "completed",
+        ]);
+        assert.equal(subagentCardStatuses(harness.events, REVIEW_TASK_ID).at(-1), "completed");
+
+        // The resumed run's end is applied by the drain, after the re-open.
+        const isReviewUpdate = (
+          event: ProviderAdapterV2Event,
+        ): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+          event.type === "subagent.updated" &&
+          event.subagent.nativeTaskRef?.nativeId === REVIEW_TASK_ID;
+        const continuationStart = harness.events.findIndex(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === CONTINUATION_ATTEMPT,
+        );
+        const reopened = harness.events.findIndex(
+          (event, index) =>
+            index > continuationStart &&
+            isReviewUpdate(event) &&
+            event.subagent.status === "running",
+        );
+        const resumedEnd = harness.events.findIndex(
+          (event) => isReviewUpdate(event) && event.subagent.result === RESUMED_SUMMARY,
+        );
+        assert.isAtLeast(continuationStart, 0);
+        assert.isAbove(reopened, continuationStart);
+        assert.isAbove(resumedEnd, reopened);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
 });
