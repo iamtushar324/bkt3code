@@ -56,6 +56,7 @@ import {
   type PendingApproval,
   type PendingDetail,
   type PendingQuestion,
+  type PendingSecret,
 } from "./pending.ts";
 import {
   DECISION_NAMES,
@@ -213,6 +214,12 @@ const boundQuestion = (pending: PendingQuestion) => ({
     })),
   })),
 });
+
+/** A secret request as `format: "json"` returns it; its reason is the agent's own text. */
+const boundSecret = (secret: PendingSecret | null) =>
+  secret === null
+    ? null
+    : { label: cutText(secret.label, 200), reason: cutText(secret.reason, 1_000) };
 
 /** An approval as `format: "json"` returns it; a heredoc command can be very long. */
 const boundApproval = (approval: PendingApproval): PendingApproval => ({
@@ -436,7 +443,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       waitingSince: isoFromMillis(entry.waitingSinceMs),
       question: entry.question === null ? null : boundQuestion(entry.question),
       approval: entry.approval === null ? null : boundApproval(entry.approval),
-      secret: entry.secret,
+      secret: boundSecret(entry.secret),
       moreQuestions: entry.moreQuestions,
       plan:
         entry.plan === null
@@ -526,7 +533,7 @@ const DECISIONS: Record<string, ProviderApprovalDecision> = {
 const describeWaiting = (shell: SessionShell, detail: PendingDetail) => {
   const ref = shortRef(shell.id);
   if (detail.approval !== null)
-    return `It waits on an approval: pass decision (${callHint("t3_answer", { session: ref, decision: "approve" })}).`;
+    return `It waits on an approval: pass decision (${callHint("t3_answer", { session: ref, requestId: requestRef(detail.approval.requestId), decision: "approve" })}).`;
   if (detail.secret !== null)
     return `It waits on a secret ("${oneLine(detail.secret.label, 80)}"), which a person must enter in the app; no tool can answer it.`;
   if (detail.question !== null || detail.asyncQuestions.length > 0)
@@ -674,6 +681,13 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     answered = `${input.plan === "approve" ? "Approved" : input.plan === "revise" ? "Asked for changes to" : "Discarded"} the plan "${open.title}"${submitted.turnStarted ? "; the agent is working on it" : ""}.`;
   } else if (input.decision !== undefined) {
     const approval = detail.approval;
+    // A retry keyed to whatever is open could approve a newer, unseen request.
+    if (approval !== null && input.requestId === undefined && input.clientRequestId !== undefined) {
+      return yield* fail(
+        "request_id_required",
+        `Pass requestId with clientRequestId, so a retry decides the same request: ${callHint("t3_answer", { session: ref, requestId: requestRef(approval.requestId), decision: input.decision })}.`,
+      );
+    }
     if (
       approval === null ||
       (input.requestId !== undefined && !matchesRequest(approval.requestId, input.requestId))
@@ -714,12 +728,14 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     const dismiss = input.dismiss === true;
     const wanted = input.requestId;
     const fitting = dismiss ? open.filter((candidate) => candidate.async) : open;
-    // Without a request id a retry could land on the next open question.
-    if (wanted === undefined && fitting.length > 1) {
-      return yield* fail(
-        "request_id_required",
-        `${ref} has ${fitting.length} open ${dismiss ? "non-blocking " : ""}questions. Pass requestId to pick one: ${describeOpenQuestions(fitting)}.`,
-      );
+    // Without a request id, a retry could land on a question asked since.
+    if (wanted === undefined && (fitting.length > 1 || input.clientRequestId !== undefined)) {
+      if (fitting.length > 0) {
+        return yield* fail(
+          "request_id_required",
+          `${fitting.length > 1 ? `${ref} has ${fitting.length} open ${dismiss ? "non-blocking " : ""}questions. Pass requestId to pick one` : "Pass requestId with clientRequestId, so a retry answers the same question"}: ${describeOpenQuestions(fitting)}.`,
+        );
+      }
     }
     const target =
       wanted === undefined
@@ -1060,7 +1076,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     tagged: members,
     waitsOn: {
       approval: detail.approval === null ? null : boundApproval(detail.approval),
-      secret: detail.secret,
+      secret: boundSecret(detail.secret),
       question: detail.question === null ? null : boundQuestion(detail.question),
       asyncQuestions: detail.asyncQuestions.map(boundQuestion),
       plan:
@@ -1307,9 +1323,16 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
   const attention = attentionOf(shell);
   // A non-blocking question did not stop the agent, so a message does not drop it.
   if (input.force !== true && (attention === "question" || attention === "approval")) {
+    // The shell reports a secret request as a question; no tool answers it.
+    const secret =
+      attention === "question"
+        ? (yield* loadPendingDetail(caller, shell, { includePlan: false })).secret
+        : null;
     return yield* fail(
       "question_open",
-      `${ref} waits on ${attention === "approval" ? "an approval" : "a blocking question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
+      secret !== null
+        ? `${ref} waits on a secret ("${oneLine(secret.label, 80)}"), which a person must enter in the app; no tool can answer it. Pass force: true to send anyway.`
+        : `${ref} waits on ${attention === "approval" ? "an approval" : "a blocking question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
     );
   }
   yield* assertTargetWithinLimits(caller.limits, shell);
@@ -1479,7 +1502,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     session: sessionData(shell, context),
     waitsOn: {
       approval: detail.approval === null ? null : boundApproval(detail.approval),
-      secret: detail.secret,
+      secret: boundSecret(detail.secret),
       question: detail.question === null ? null : boundQuestion(detail.question),
       asyncQuestions: detail.asyncQuestions.map(boundQuestion),
       plan:

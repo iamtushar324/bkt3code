@@ -188,8 +188,10 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         (candidate.type === "user_input_request" || candidate.type === "approval_request") &&
         candidate.requestId === request.id,
     );
+    // The stand-in's id is the secret item's turn item id.
+    const standInId: string = request.id;
     const secretItem = turnItems.find(
-      (candidate) => candidate.type === "secret_request" && candidate.id === request.id,
+      (candidate) => candidate.type === "secret_request" && candidate.id === standInId,
     );
     if (secretItem?.type === "secret_request") {
       secret = { label: secretItem.label, reason: secretItem.reason };
