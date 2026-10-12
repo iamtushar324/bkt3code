@@ -8,12 +8,20 @@
 import type { ProviderApprovalDecision } from "@t3tools/contracts";
 
 import type { QuestionView } from "./answers.ts";
-import type { PendingApproval, PendingPlan, PendingQuestion } from "./pending.ts";
 import {
+  requestRef,
+  type PendingApproval,
+  type PendingPlan,
+  type PendingQuestion,
+  type PendingSecret,
+} from "./pending.ts";
+import {
+  attentionOf,
   callHint,
   cutText,
   duration,
   INBOX_KIND_LABEL,
+  isAgentActive,
   isUrgent,
   linearKeysOf,
   oneLine,
@@ -66,10 +74,15 @@ export const sessionActivity = (shell: SessionShell, nowMs: number): string => {
   const state = sessionStateOf(shell, nowMs);
   const started = toMillis(shell.activityRunStartedAt ?? shell.latestRunStartedAt ?? null);
   const updated = toMillis(shell.updatedAt) ?? nowMs;
+  const running = started === null ? "running" : `running for ${duration(started, nowMs)}`;
   switch (state) {
     case "running":
-      return started === null ? "running" : `running for ${duration(started, nowMs)}`;
+      return running;
     case "waiting": {
+      // A non-blocking question waits on a person, but the agent did not stop for it.
+      if (attentionOf(shell) === "async-question") {
+        return `${isAgentActive(shell) ? running : "idle"} · asked a non-blocking question`;
+      }
       const since = toMillis(shell.pendingRuntimeRequest?.createdAt ?? null) ?? updated;
       return `waits on a person for ${duration(since, nowMs)}`;
     }
@@ -93,31 +106,41 @@ export const renderSessionLine = (
 };
 
 const renderOptions = (question: QuestionView, indent: string): ReadonlyArray<string> => [
-  ...question.options.map(
-    (option, index) =>
-      `${indent}${index + 1}. ${option.label} — ${oneLine(option.description, 140)}`,
-  ),
+  ...question.options.map((option, index) => {
+    // Codex sends options without descriptions; T3 copies the label into them.
+    const description = option.description.trim();
+    return description.length === 0 || description === option.label.trim()
+      ? `${indent}${index + 1}. ${option.label}`
+      : `${indent}${index + 1}. ${option.label} — ${oneLine(description, 140)}`;
+  }),
   ...(question.allowCustomAnswer === false ? [] : [`${indent}(or your own answer as text)`]),
 ];
 
-/** A question request: each question with its numbered options, and the call that answers it. */
+/** What answering does, for a blocking and a non-blocking question. */
+export const QUESTION_KIND_TEXT = {
+  blocking: "Blocking: the agent is paused until you answer.",
+  nonBlocking:
+    "Non-blocking: the agent asked and did not stop. Your answer reaches it as a new message (into its running turn, or as a new turn). The options are suggestions; text works too. Dismiss it if no answer is needed.",
+} as const;
+
+/** A question request: whether it blocks, each question with its numbered options, and the calls that answer it. */
 export const renderQuestion = (
   pending: PendingQuestion,
   sessionRef: string,
 ): ReadonlyArray<string> => {
   const several = pending.questions.length > 1;
-  const lines: Array<string> = [];
+  const lines: Array<string> = [
+    `   ${pending.async ? QUESTION_KIND_TEXT.nonBlocking : QUESTION_KIND_TEXT.blocking}`,
+  ];
   pending.questions.forEach((question, index) => {
     lines.push(
       `   ${several ? `Q${index + 1}. ` : ""}**${question.header}**: ${oneLine(question.question, 400)}${question.multiSelect === true ? " (pick one or more)" : ""}`,
     );
     lines.push(...renderOptions(question, several ? "      " : "     "));
   });
-  // t3_answer picks the blocking question first, so only a question asked while
-  // the agent works needs its (long) request id.
-  const base = pending.async
-    ? { session: sessionRef, requestId: pending.requestId }
-    : { session: sessionRef };
+  // The request id, in the short form, keeps a retried answer on this question
+  // when the session has others open.
+  const base = { session: sessionRef, requestId: requestRef(pending.requestId) };
   const first = pending.questions[0];
   const example = several
     ? callHint("t3_answer", {
@@ -127,9 +150,19 @@ export const renderQuestion = (
     : first !== undefined && first.options.length > 0
       ? callHint("t3_answer", { ...base, choice: 1 })
       : callHint("t3_answer", { ...base, text: "…" });
-  lines.push(`   → ${example}`);
+  lines.push(
+    pending.async
+      ? `   → ${example} · or ${callHint("t3_answer", { ...base, dismiss: true })}`
+      : `   → ${example}`,
+  );
   return lines;
 };
+
+/** A secret request: no tool answers it; a person enters it in the app. */
+export const renderSecret = (secret: PendingSecret): ReadonlyArray<string> => [
+  `   Asks for a secret: **${oneLine(secret.label, 120)}**${secret.reason.trim().length === 0 ? "" : ` — ${oneLine(secret.reason, 300)}`}`,
+  "   A person must enter it in the app (open the session's link); no tool can answer it.",
+];
 
 export const renderApproval = (
   approval: PendingApproval,
@@ -154,7 +187,9 @@ export const renderApproval = (
     if (option.warning !== undefined)
       lines.push(`   Warning on ${DECISION_NAMES[option.decision]}: ${option.warning}`);
   }
-  lines.push(`   → ${callHint("t3_answer", { session: sessionRef, decision: "approve" })}`);
+  lines.push(
+    `   → ${callHint("t3_answer", { session: sessionRef, requestId: requestRef(approval.requestId), decision: "approve" })}`,
+  );
   return lines;
 };
 
@@ -191,6 +226,9 @@ export interface InboxEntry {
   readonly waitingSinceMs: number;
   readonly question: PendingQuestion | null;
   readonly approval: PendingApproval | null;
+  readonly secret: PendingSecret | null;
+  /** Open non-blocking questions this entry does not show. */
+  readonly moreQuestions: number;
   readonly plan: PendingPlan | null;
   /** The agent's newest reply, read for unread results only. */
   readonly lastReply: string | null;
@@ -205,10 +243,12 @@ export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
   switch (entry.kind) {
     case "question":
     case "async-question":
-      if (entry.question === null) {
-        lines.push(`   → read it with ${callHint("t3_session_brief", { session: ref })}`);
-      } else {
+      if (entry.question !== null) {
         lines.push(...renderQuestion(entry.question, ref));
+      } else if (entry.secret !== null) {
+        lines.push(...renderSecret(entry.secret));
+      } else {
+        lines.push(`   → read it with ${callHint("t3_session_brief", { session: ref })}`);
       }
       break;
     case "approval":
@@ -230,6 +270,11 @@ export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
       lines.push(`   → read more with ${callHint("t3_session_brief", { session: ref })}`);
       break;
     }
+  }
+  if (entry.moreQuestions > 0) {
+    lines.push(
+      `   +${entry.moreQuestions} more non-blocking ${entry.moreQuestions === 1 ? "question" : "questions"}: see ${callHint("t3_session_brief", { session: ref })}`,
+    );
   }
   if (context.link !== null) lines.push(`   Link: ${context.link}`);
   return lines.join("\n");

@@ -145,7 +145,7 @@ omits it to mean its own.
 | `t3_find_sessions` | Find sessions by text, ticket, pull request, branch, project or state, one line each.                         |
 | `t3_session_brief` | Read where one session stands: state, what it waits on, its goal and its last messages.                       |
 | `t3_start_session` | Start a session in a project with a first message, a model alias (`opus`, `sonnet`, `codex`) and a mode.      |
-| `t3_send_message`  | Send to a session. It refuses while a question or approval is open, so the question is not lost.              |
+| `t3_send_message`  | Send to a session. It refuses while a blocking question or an approval is open, so it is not lost.            |
 | `t3_wait`          | Wait for the next question, approval, finish or failure, with a cursor so no change is missed.                |
 | `t3_schedule`      | Send a prompt later or on a clock, into a session or into a new session each run; also pause, resume, delete. |
 | `t3_schedules`     | List the schedules you can manage, with where they send, their next run and their last result.                |
@@ -160,7 +160,17 @@ guide in the MCP `instructions` when a client connects.
 
 `t3_answer` never answers inside the caller's own session: a person answers an
 agent's questions, approvals and plans. The answer records the person the
-caller acts for. `t3_wait` returns within 50 seconds by default, because most
+caller acts for.
+
+A question is blocking or non-blocking, and the tools say which. A blocking
+question pauses the agent until someone answers it. A non-blocking question,
+such as a Codex async question, did not stop the agent: the answer reaches it
+as a new message, in its running turn or as a new turn, and
+`t3_answer` with `dismiss: true` closes the question without an answer.
+`t3_send_message` refuses only while a blocking question or an approval is open.
+Pass the `requestId` that `t3_inbox` shows when a session has more than one
+open question, and with every `clientRequestId`, so a retry cannot answer a
+different request. `t3_wait` returns within 50 seconds by default, because most
 MCP clients stop a call after 60 seconds; call it again with the cursor it
 returns. `t3_start_session`, `t3_send_message` and `t3_answer` take a
 `clientRequestId`, so a retry with the same id does not act twice.

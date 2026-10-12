@@ -5,6 +5,13 @@
  * session's own records filtered to the few turn items that matter: the open
  * question and its options, the open approval and its decisions, the
  * questions the agent asked while it kept working, and the newest plan.
+ *
+ * A question blocks the agent when its provider holds the turn open for the
+ * answer. A non-blocking one (a Codex `delivery: "async"` question, or an
+ * older fork activity question) did not stop the agent: the answer reaches it
+ * as a new message, and a person may dismiss the question instead. The shell
+ * leaves non-blocking requests out of `pendingRuntimeRequest`, so they are
+ * read from the session's runtime requests whenever it flags one.
  */
 import {
   type OrchestrationV2TurnItem,
@@ -19,17 +26,26 @@ import * as Schema from "effect/Schema";
 import { findForkAsyncRequest } from "../../../orchestration-v2/forkAsyncResponse.expbkt3.ts";
 import type { Caller } from "../../threadAccess.ts";
 import type { QuestionView } from "./answers.ts";
-import { toIso, type SessionShell } from "./view.ts";
+import { shortRef, toIso, type SessionShell } from "./view.ts";
 
 export interface PendingQuestion {
   readonly requestId: string;
   readonly questions: ReadonlyArray<QuestionView>;
   /** The request resumes the agent with a message, so each answer must be text. */
   readonly textOnly: boolean;
-  /** Asked while the agent kept working. */
+  /** Non-blocking: asked while the agent kept working; the answer arrives as a new message. */
   readonly async: boolean;
   readonly askedAt: string | null;
 }
+
+/** The short form of a request id that t3_answer accepts: the first 8 characters of its last UUID. */
+export const requestRef = (requestId: string): string => shortRef(requestId);
+
+/** Whether `ref` names this request, by its full id or its short form. */
+export const matchesRequest = (requestId: string, ref: string): boolean => {
+  const wanted = ref.trim();
+  return requestId === wanted || requestRef(requestId) === wanted.toLowerCase();
+};
 
 export interface ApprovalOptionView {
   readonly decision: ProviderApprovalDecision;
@@ -65,10 +81,17 @@ export interface PendingPlan {
 export const planIsCurrent = (shell: SessionShell, plan: PendingPlan | null): boolean =>
   plan === null || plan.runId === null || plan.runId === shell.latestRunId;
 
+/** A secret the agent asked for; only a person can enter it, in the app. */
+export interface PendingSecret {
+  readonly label: string;
+  readonly reason: string;
+}
+
 export interface PendingDetail {
   readonly question: PendingQuestion | null;
   readonly asyncQuestions: ReadonlyArray<PendingQuestion>;
   readonly approval: PendingApproval | null;
+  readonly secret: PendingSecret | null;
   readonly plan: PendingPlan | null;
 }
 
@@ -76,6 +99,7 @@ export const EMPTY_PENDING: PendingDetail = {
   question: null,
   asyncQuestions: [],
   approval: null,
+  secret: null,
   plan: null,
 };
 
@@ -134,9 +158,14 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
 ) {
   const request = shell.pendingRuntimeRequest;
   const asyncIds = shell.pendingAsyncUserInputIds ?? [];
+  const nonBlocking = shell.hasPendingAsyncUserInput === true;
   const types = new Set<TurnItemType>();
-  if (request?.kind === "user_input") types.add("user_input_request");
-  else if (request !== null && request.kind !== "auth_refresh") types.add("approval_request");
+  if (request?.kind === "user_input" || nonBlocking) types.add("user_input_request");
+  // The shell stands a secret request in as a pending question.
+  if (request?.kind === "user_input") types.add("secret_request");
+  if (request !== null && request.kind !== "user_input" && request.kind !== "auth_refresh") {
+    types.add("approval_request");
+  }
   if (asyncIds.length > 0) types.add("dynamic_tool");
   if (options.includePlan && shell.hasActionableProposedPlan) types.add("proposed_plan");
   if (types.size === 0) return EMPTY_PENDING;
@@ -151,6 +180,7 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
 
   let question: PendingQuestion | null = null;
   let approval: PendingApproval | null = null;
+  let secret: PendingSecret | null = null;
   if (request !== null) {
     const runtime = runtimeRequests.find((candidate) => candidate.id === request.id);
     const item = turnItems.find(
@@ -158,7 +188,14 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         (candidate.type === "user_input_request" || candidate.type === "approval_request") &&
         candidate.requestId === request.id,
     );
-    if (item?.type === "user_input_request") {
+    // The stand-in's id is the secret item's turn item id.
+    const standInId: string = request.id;
+    const secretItem = turnItems.find(
+      (candidate) => candidate.type === "secret_request" && candidate.id === standInId,
+    );
+    if (secretItem?.type === "secret_request") {
+      secret = { label: secretItem.label, reason: secretItem.reason };
+    } else if (item?.type === "user_input_request") {
       question = {
         requestId: request.id,
         questions: item.questions,
@@ -198,7 +235,34 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
     }
   }
 
-  const asyncQuestions = asyncIds.flatMap((requestId): ReadonlyArray<PendingQuestion> => {
+  // Requests that resume the agent with a message: a Codex async question.
+  const messageQuestions = runtimeRequests
+    .filter(
+      (runtime) =>
+        runtime.status === "pending" &&
+        runtime.kind === "user_input" &&
+        runtime.responseCapability.type === "message",
+    )
+    .toSorted((left, right) => left.createdAt.epochMilliseconds - right.createdAt.epochMilliseconds)
+    .flatMap((runtime): ReadonlyArray<PendingQuestion> => {
+      const item = turnItems.find(
+        (candidate) =>
+          candidate.type === "user_input_request" && candidate.requestId === runtime.id,
+      );
+      if (item?.type !== "user_input_request") return [];
+      return [
+        {
+          requestId: runtime.id,
+          questions: item.questions,
+          textOnly: true,
+          async: true,
+          askedAt: toIso(runtime.createdAt),
+        },
+      ];
+    });
+
+  // Older fork activity questions, listed on the session itself.
+  const activityQuestions = asyncIds.flatMap((requestId): ReadonlyArray<PendingQuestion> => {
     const activity = findForkAsyncRequest(turnItems, requestId);
     if (activity?.kind !== "user-input.requested") return [];
     const payload = decodeAsyncPayload(activity.payload);
@@ -213,6 +277,13 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
       },
     ];
   });
+
+  const asyncQuestions = [
+    ...messageQuestions,
+    ...activityQuestions.filter(
+      (candidate) => !messageQuestions.some((other) => other.requestId === candidate.requestId),
+    ),
+  ];
 
   // Ordinals restart in every run, so the newest plan is the newest update.
   const planItem = turnItems
@@ -229,5 +300,5 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         }
       : null;
 
-  return { question, asyncQuestions, approval, plan } satisfies PendingDetail;
+  return { question, asyncQuestions, approval, secret, plan } satisfies PendingDetail;
 });

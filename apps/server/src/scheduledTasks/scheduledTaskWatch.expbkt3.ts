@@ -78,8 +78,10 @@ export const watchedChange = (
   const completedMs = millis(shell.latestRunCompletedAt);
   const newRun = completedMs !== null && completedMs > sinceMs;
   if (until.has("needs-human")) {
-    if (attention === "question" || attention === "async-question") {
-      return { change: "needs-human", what: "asks a question" };
+    if (attention === "question")
+      return { change: "needs-human", what: "asks a blocking question" };
+    if (attention === "async-question") {
+      return { change: "needs-human", what: "asks a non-blocking question" };
     }
     if (attention === "approval") return { change: "needs-human", what: "waits for an approval" };
     if (attention === "plan" && newRun) {
