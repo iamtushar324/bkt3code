@@ -141,13 +141,13 @@ const ChoiceValue = Schema.Union([Schema.Int, Schema.String]);
 export const AnswerTool = destructive(
   Tool.make("t3_answer", {
     description:
-      "Answer what a session waits for, as the person you act for. Pass one of: choice (an option number or label, or a list for a multi-select question), text (your own answer), answers (one entry per question when a request asks several), decision (for an approval), or plan (approve, revise with feedback, or discard). A question is blocking (the agent is paused until you answer) or non-blocking (the agent asked and did not stop, as a Codex async question does; your answer reaches it as a new message, and dismiss: true closes the question without an answer). Omit requestId to answer the blocking question first, then the oldest non-blocking one. The tool refuses when nothing of that kind waits, when the request was already answered, and when an agent tries to answer in its own session. Get the options from t3_inbox or t3_session_brief.",
+      "Answer what a session waits for, as the person you act for. Pass one of: choice (an option number or label, or a list for a multi-select question), text (your own answer), answers (one entry per question when a request asks several), decision (for an approval), or plan (approve, revise with feedback, or discard). A question is blocking (the agent is paused until you answer) or non-blocking (the agent asked and did not stop, as a Codex async question does; your answer reaches it as a new message, and dismiss: true closes the question without an answer). Pass the requestId t3_inbox shows; you may omit it only when one question is open. The tool refuses when nothing of that kind waits, when the request was already answered, and when an agent tries to answer in its own session. Get the options from t3_inbox or t3_session_brief.",
     parameters: Schema.Struct({
       session: sessionRef(SESSION_REF_HELP),
       requestId: Schema.optional(
         described(
           Schema.String,
-          "The open request to answer: its id, or the short form t3_inbox shows. Omit to answer the oldest open item of the kind your answer fits.",
+          "The open request to answer: its id, or the short form t3_inbox shows. Required when a session has more than one open question, so a retry cannot answer another one.",
         ),
       ),
       choice: Schema.optional(

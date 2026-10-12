@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import type { PendingQuestion } from "./pending.ts";
-import { QUESTION_KIND_TEXT, renderQuestion, sessionActivity } from "./render.ts";
+import { QUESTION_KIND_TEXT, renderInboxEntry, renderQuestion, sessionActivity } from "./render.ts";
 import type { SessionShell } from "./view.ts";
 
 const NOW = Date.UTC(2026, 9, 12, 7, 0, 0);
@@ -43,6 +43,9 @@ const shell = (fields: Partial<Record<string, unknown>>): SessionShell =>
     archivedAt: null,
     deletedAt: null,
     snoozedUntil: null,
+    priority: null,
+    linearLinks: [],
+    pullRequests: [],
     ...fields,
   }) as unknown as SessionShell;
 
@@ -57,10 +60,12 @@ describe("renderQuestion", () => {
     );
   });
 
-  it("says a blocking question pauses the agent, and needs no request id", () => {
+  it("says a blocking question pauses the agent, and offers no dismiss", () => {
     const lines = renderQuestion(question({ async: false, textOnly: false }), "86157111");
     expect(lines[0]?.trim()).toBe(QUESTION_KIND_TEXT.blocking);
-    expect(lines.at(-1)).toBe('   → `t3_answer {"session":"86157111","choice":1}`');
+    expect(lines.at(-1)).toBe(
+      '   → `t3_answer {"session":"86157111","requestId":"9e9c4c3e","choice":1}`',
+    );
   });
 });
 
@@ -84,5 +89,43 @@ describe("sessionActivity", () => {
         NOW,
       ),
     ).toBe("waits on a person for 10m");
+  });
+});
+
+describe("renderInboxEntry", () => {
+  it("counts the non-blocking questions it does not show", () => {
+    const text = renderInboxEntry(1, {
+      kind: "async-question",
+      shell: shell({ hasPendingAsyncUserInput: true, title: "Child work" }),
+      context: { projectTitle: null, link: null, nowMs: NOW },
+      waitingSinceMs: NOW - 60_000,
+      question: question({}),
+      approval: null,
+      secret: null,
+      moreQuestions: 2,
+      plan: null,
+      lastReply: null,
+    });
+    expect(text).toContain("**Question (non-blocking)**");
+    expect(text).toContain(
+      '   +2 more non-blocking questions: see `t3_session_brief {"session":"86157111"}`',
+    );
+  });
+
+  it("says no tool answers a secret request", () => {
+    const text = renderInboxEntry(1, {
+      kind: "question",
+      shell: shell({ title: "Child work" }),
+      context: { projectTitle: null, link: null, nowMs: NOW },
+      waitingSinceMs: NOW - 60_000,
+      question: null,
+      approval: null,
+      secret: { label: "GitHub token", reason: "To open the pull request." },
+      moreQuestions: 0,
+      plan: null,
+      lastReply: null,
+    });
+    expect(text).toContain("Asks for a secret: **GitHub token** — To open the pull request.");
+    expect(text).toContain("no tool can answer it");
   });
 });

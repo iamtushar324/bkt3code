@@ -13,6 +13,7 @@ import {
   type PendingApproval,
   type PendingPlan,
   type PendingQuestion,
+  type PendingSecret,
 } from "./pending.ts";
 import {
   attentionOf,
@@ -137,11 +138,9 @@ export const renderQuestion = (
     );
     lines.push(...renderOptions(question, several ? "      " : "     "));
   });
-  // t3_answer picks the blocking question first, so only a non-blocking one
-  // needs its request id, in the short form.
-  const base = pending.async
-    ? { session: sessionRef, requestId: requestRef(pending.requestId) }
-    : { session: sessionRef };
+  // The request id, in the short form, keeps a retried answer on this question
+  // when the session has others open.
+  const base = { session: sessionRef, requestId: requestRef(pending.requestId) };
   const first = pending.questions[0];
   const example = several
     ? callHint("t3_answer", {
@@ -158,6 +157,12 @@ export const renderQuestion = (
   );
   return lines;
 };
+
+/** A secret request: no tool answers it; a person enters it in the app. */
+export const renderSecret = (secret: PendingSecret): ReadonlyArray<string> => [
+  `   Asks for a secret: **${oneLine(secret.label, 120)}**${secret.reason.trim().length === 0 ? "" : ` — ${oneLine(secret.reason, 300)}`}`,
+  "   A person must enter it in the app (open the session's link); no tool can answer it.",
+];
 
 export const renderApproval = (
   approval: PendingApproval,
@@ -219,6 +224,9 @@ export interface InboxEntry {
   readonly waitingSinceMs: number;
   readonly question: PendingQuestion | null;
   readonly approval: PendingApproval | null;
+  readonly secret: PendingSecret | null;
+  /** Open non-blocking questions this entry does not show. */
+  readonly moreQuestions: number;
   readonly plan: PendingPlan | null;
   /** The agent's newest reply, read for unread results only. */
   readonly lastReply: string | null;
@@ -233,10 +241,12 @@ export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
   switch (entry.kind) {
     case "question":
     case "async-question":
-      if (entry.question === null) {
-        lines.push(`   → read it with ${callHint("t3_session_brief", { session: ref })}`);
-      } else {
+      if (entry.question !== null) {
         lines.push(...renderQuestion(entry.question, ref));
+      } else if (entry.secret !== null) {
+        lines.push(...renderSecret(entry.secret));
+      } else {
+        lines.push(`   → read it with ${callHint("t3_session_brief", { session: ref })}`);
       }
       break;
     case "approval":
@@ -258,6 +268,11 @@ export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
       lines.push(`   → read more with ${callHint("t3_session_brief", { session: ref })}`);
       break;
     }
+  }
+  if (entry.moreQuestions > 0) {
+    lines.push(
+      `   +${entry.moreQuestions} more non-blocking ${entry.moreQuestions === 1 ? "question" : "questions"}: see ${callHint("t3_session_brief", { session: ref })}`,
+    );
   }
   if (context.link !== null) lines.push(`   Link: ${context.link}`);
   return lines.join("\n");
