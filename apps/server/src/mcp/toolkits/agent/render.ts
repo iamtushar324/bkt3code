@@ -187,7 +187,9 @@ export const renderApproval = (
     if (option.warning !== undefined)
       lines.push(`   Warning on ${DECISION_NAMES[option.decision]}: ${option.warning}`);
   }
-  lines.push(`   → ${callHint("t3_answer", { session: sessionRef, decision: "approve" })}`);
+  lines.push(
+    `   → ${callHint("t3_answer", { session: sessionRef, requestId: requestRef(approval.requestId), decision: "approve" })}`,
+  );
   return lines;
 };
 
