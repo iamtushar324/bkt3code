@@ -58,7 +58,11 @@ export function changeOf(stored: OrchestrationV2StoredEvent): Omit<WaitMatch, "s
         threadId: event.threadId,
         change: "needs-human",
         what:
-          request.kind === "user_input" ? "asked a question" : `asks to approve a ${request.kind}`,
+          request.kind !== "user_input"
+            ? `asks to approve a ${request.kind}`
+            : request.responseCapability.type === "message"
+              ? "asked a non-blocking question and keeps working"
+              : "asked a blocking question",
       };
     }
     case "run.updated": {
@@ -106,7 +110,7 @@ export function changeOf(stored: OrchestrationV2StoredEvent): Omit<WaitMatch, "s
       return {
         threadId: event.threadId,
         change: "needs-human",
-        what: "asked a question and keeps working",
+        what: "asked a non-blocking question and keeps working",
       };
     }
     default:

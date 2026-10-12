@@ -44,8 +44,13 @@ describe("watchedChange", () => {
 
   it("fires on an open question or approval at once", () => {
     expect(
-      watchedChange(shell({ pendingRuntimeRequest: { kind: "user_input" } }), all, SINCE)?.change,
-    ).toBe("needs-human");
+      watchedChange(shell({ pendingRuntimeRequest: { kind: "user_input" } }), all, SINCE),
+    ).toEqual({ change: "needs-human", what: "asks a blocking question" });
+    // A Codex async question: the agent may still work, and it still needs a person.
+    expect(watchedChange(shell({ hasPendingAsyncUserInput: true }), all, SINCE)).toEqual({
+      change: "needs-human",
+      what: "asks a non-blocking question",
+    });
     expect(
       watchedChange(shell({ pendingRuntimeRequest: { kind: "command" } }), all, SINCE)?.what,
     ).toBe("waits for an approval");
