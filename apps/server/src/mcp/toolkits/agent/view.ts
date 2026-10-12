@@ -34,8 +34,8 @@ export const INBOX_KIND_ORDER: ReadonlyArray<InboxKind> = [
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
   approval: "Approval",
-  question: "Question",
-  "async-question": "Question (agent keeps working)",
+  question: "Question (blocking)",
+  "async-question": "Question (non-blocking)",
   plan: "Plan to review",
   failed: "Failed",
   unread: "Finished, not read",

@@ -114,7 +114,7 @@ export const InboxTool = readOnly(
       kinds: Schema.optional(
         described(
           Schema.Array(Schema.Literals(["approval", "question", "plan", "failed", "unread"])),
-          "Only these kinds. 'question' includes questions the agent asked while it keeps working.",
+          "Only these kinds. 'question' includes non-blocking questions, which the agent asked without stopping.",
         ),
       ),
       includeSnoozed: Schema.optional(
@@ -141,13 +141,13 @@ const ChoiceValue = Schema.Union([Schema.Int, Schema.String]);
 export const AnswerTool = destructive(
   Tool.make("t3_answer", {
     description:
-      "Answer what a session waits for, as the person you act for. Pass one of: choice (an option number or label, or a list for a multi-select question), text (your own answer), answers (one entry per question when a request asks several), decision (for an approval), or plan (approve, revise with feedback, or discard). Omit requestId to answer the oldest open item. The tool refuses when nothing of that kind waits, when the request was already answered, and when an agent tries to answer in its own session. Get the options from t3_inbox or t3_session_brief.",
+      "Answer what a session waits for, as the person you act for. Pass one of: choice (an option number or label, or a list for a multi-select question), text (your own answer), answers (one entry per question when a request asks several), decision (for an approval), or plan (approve, revise with feedback, or discard). A question is blocking (the agent is paused until you answer) or non-blocking (the agent asked and did not stop, as a Codex async question does; your answer reaches it as a new message, and dismiss: true closes the question without an answer). Pass the requestId t3_inbox shows; omit it only when one item is open and you pass no clientRequestId. The tool refuses when nothing of that kind waits, when the request was already answered, and when an agent tries to answer in its own session. Get the options from t3_inbox or t3_session_brief.",
     parameters: Schema.Struct({
       session: sessionRef(SESSION_REF_HELP),
       requestId: Schema.optional(
         described(
           Schema.String,
-          "The open request to answer. Omit to answer the oldest open item of the kind your answer fits.",
+          "The open request to answer: its id, or the short form t3_inbox shows. Required with clientRequestId, and when a session has more than one open question, so a retry cannot answer another request.",
         ),
       ),
       choice: Schema.optional(
@@ -172,6 +172,12 @@ export const AnswerTool = destructive(
             }),
           ),
           "For a request that asks several questions: one entry per question.",
+        ),
+      ),
+      dismiss: Schema.optional(
+        described(
+          Schema.Boolean,
+          "true closes a non-blocking question without an answer, as Dismiss does in the app; the agent is not told. A blocking question cannot be dismissed.",
         ),
       ),
       decision: Schema.optional(
@@ -361,7 +367,7 @@ export const StartSessionTool = changing(
 export const SendMessageTool = changing(
   Tool.make("t3_send_message", {
     description:
-      "Send a message to a session. When it is busy, ifBusy decides: queue (the default) runs it after the current turn, steer adds it to the current turn, interrupt stops the turn and starts this one. When the session waits on a question or approval, the tool refuses and points to t3_answer, so an open question is never lost; pass force: true to send anyway.",
+      "Send a message to a session. When it is busy, ifBusy decides: queue (the default) runs it after the current turn, steer adds it to the current turn, interrupt stops the turn and starts this one. When the session waits on a blocking question or an approval, the tool refuses and points to t3_answer, so an open question is never lost; pass force: true to send anyway. A non-blocking question does not stop a message, and it stays open.",
     parameters: Schema.Struct({
       session: sessionRef(SESSION_REF_HELP),
       message: described(Schema.String, "The message to send."),
@@ -374,7 +380,7 @@ export const SendMessageTool = changing(
       force: Schema.optional(
         described(
           Schema.Boolean,
-          "Send even when a question or approval is open. Defaults to false.",
+          "Send even when a blocking question or an approval is open. Defaults to false.",
         ),
       ),
       clientRequestId: Schema.optional(
