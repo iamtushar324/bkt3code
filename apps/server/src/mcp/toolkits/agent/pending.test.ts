@@ -149,6 +149,89 @@ describe("loadPendingDetail", () => {
     }),
   );
 
+  it.effect("keeps an approval's details while a non-blocking question is open", () =>
+    Effect.gen(function* () {
+      const approvalId =
+        "runtime-request:codex:native-request:9:aaaaaaaa-1111-2222-3333-444444444444";
+      const { caller, reads } = callerWith({
+        runtimeRequests: [
+          runtimeRequest({
+            id: approvalId,
+            kind: "command",
+            responseCapability: { type: "live", providerSessionId: "provider-session-1" },
+          }),
+          runtimeRequest({ id: ASYNC_ID, responseCapability: { type: "message" } }),
+        ],
+        turnItems: [
+          {
+            id: `turn-item:${approvalId}`,
+            type: "approval_request",
+            status: "waiting",
+            requestId: approvalId,
+            requestKind: "command",
+            title: "Run the migration",
+            prompt: "It changes the schema.",
+            runId: "run-1",
+            updatedAt: DateTime.makeUnsafe(ASKED),
+            options: [{ decision: "accept", label: "Yes" }],
+          },
+          questionItem(ASYNC_ID, "Later?", "message"),
+        ],
+      });
+      const detail = yield* loadPendingDetail(
+        caller,
+        shell({
+          hasPendingAsyncUserInput: true,
+          pendingRuntimeRequest: {
+            id: approvalId,
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(ASKED),
+          },
+        }),
+        { includePlan: false },
+      );
+      expect(reads[0]).toEqual({ turnItemTypes: ["user_input_request", "approval_request"] });
+      expect(detail.approval).toMatchObject({
+        title: "Run the migration",
+        options: [{ decision: "accept", label: "Yes" }],
+      });
+      expect(detail.asyncQuestions.map((question) => question.requestId)).toEqual([ASYNC_ID]);
+    }),
+  );
+
+  it.effect("names a secret request, which the shell stands in as a question", () =>
+    Effect.gen(function* () {
+      const secretId = "turn-item:provider:claudeAgent:native-item:secret-1";
+      const { caller } = callerWith({
+        runtimeRequests: [],
+        turnItems: [
+          {
+            id: secretId,
+            type: "secret_request",
+            status: "waiting",
+            label: "GitHub token",
+            reason: "To open the pull request.",
+            secretStatus: "pending",
+            updatedAt: DateTime.makeUnsafe(ASKED),
+          },
+        ],
+      });
+      const detail = yield* loadPendingDetail(
+        caller,
+        shell({
+          pendingRuntimeRequest: {
+            id: secretId,
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(ASKED),
+          },
+        }),
+        { includePlan: false },
+      );
+      expect(detail.question).toBeNull();
+      expect(detail.secret).toEqual({ label: "GitHub token", reason: "To open the pull request." });
+    }),
+  );
+
   it.effect("reads nothing when nothing waits", () =>
     Effect.gen(function* () {
       const { caller, reads } = callerWith({ runtimeRequests: [], turnItems: [] });

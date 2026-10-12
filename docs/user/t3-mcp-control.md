@@ -167,7 +167,9 @@ question pauses the agent until someone answers it. A non-blocking question,
 such as a Codex async question, did not stop the agent: the answer reaches it
 as a new message, in its running turn or as a new turn, and
 `t3_answer` with `dismiss: true` closes the question without an answer.
-`t3_send_message` refuses only while a blocking question or an approval is open. `t3_wait` returns within 50 seconds by default, because most
+`t3_send_message` refuses only while a blocking question or an approval is open.
+When a session has more than one open question, pass the `requestId` that
+`t3_inbox` shows, so a retry cannot answer a different question. `t3_wait` returns within 50 seconds by default, because most
 MCP clients stop a call after 60 seconds; call it again with the cursor it
 returns. `t3_start_session`, `t3_send_message` and `t3_answer` take a
 `clientRequestId`, so a retry with the same id does not act twice.

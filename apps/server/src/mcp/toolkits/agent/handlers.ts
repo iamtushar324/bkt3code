@@ -65,6 +65,7 @@ import {
   renderInboxEntry,
   renderPlan,
   renderQuestion,
+  renderSecret,
   renderSessionLine,
   sessionActivity,
   sessionHeading,
@@ -389,6 +390,8 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
         context: context(candidate.shell),
         waitingSinceMs: askedMs ?? candidate.waitingSinceMs,
         question,
+        secret: detail.secret,
+        moreQuestions: detail.asyncQuestions.filter((other) => other !== question).length,
         approval: candidate.kind === "approval" ? detail.approval : null,
         plan: candidate.kind === "plan" ? detail.plan : null,
         lastReply: readReply ? yield* lastReply(caller, candidate.shell) : null,
@@ -433,6 +436,8 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       waitingSince: isoFromMillis(entry.waitingSinceMs),
       question: entry.question === null ? null : boundQuestion(entry.question),
       approval: entry.approval === null ? null : boundApproval(entry.approval),
+      secret: entry.secret,
+      moreQuestions: entry.moreQuestions,
       plan:
         entry.plan === null
           ? null
@@ -482,17 +487,16 @@ const answerDelivery = (
 ): Effect.Effect<AnswerDelivery | null> =>
   Effect.gen(function* () {
     const messageId = MessageId.make(`async-answer:${requestId}`);
-    const { messages, runs } = yield* caller.threads.getThreadRecords(
-      threadId,
-      ["messages", "runs"],
-      { messageIds: [messageId] },
-    );
+    const { messages } = yield* caller.threads.getThreadRecords(threadId, ["messages"], {
+      messageIds: [messageId],
+    });
     const runId = messages.find((message) => message.id === messageId)?.runId ?? null;
     if (runId === null) return null;
-    const { turnItems } = yield* caller.threads.getThreadRecords(threadId, ["turnItems"], {
-      turnItemTypes: ["user_message"],
-      turnItemRunIds: [runId],
-    });
+    const { runs, turnItems } = yield* caller.threads.getThreadRecords(
+      threadId,
+      ["runs", "turnItems"],
+      { runIds: [runId], turnItemTypes: ["user_message"], turnItemRunIds: [runId] },
+    );
     const item = turnItems.find(
       (candidate) => candidate.type === "user_message" && candidate.messageId === messageId,
     );
@@ -523,6 +527,8 @@ const describeWaiting = (shell: SessionShell, detail: PendingDetail) => {
   const ref = shortRef(shell.id);
   if (detail.approval !== null)
     return `It waits on an approval: pass decision (${callHint("t3_answer", { session: ref, decision: "approve" })}).`;
+  if (detail.secret !== null)
+    return `It waits on a secret ("${oneLine(detail.secret.label, 80)}"), which a person must enter in the app; no tool can answer it.`;
   if (detail.question !== null || detail.asyncQuestions.length > 0)
     return `It waits on a question: pass choice, text or answers (see ${callHint("t3_session_brief", { session: ref })}).`;
   const attention = attentionOf(shell);
@@ -707,9 +713,17 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     const open = [...(detail.question === null ? [] : [detail.question]), ...detail.asyncQuestions];
     const dismiss = input.dismiss === true;
     const wanted = input.requestId;
+    const fitting = dismiss ? open.filter((candidate) => candidate.async) : open;
+    // Without a request id a retry could land on the next open question.
+    if (wanted === undefined && fitting.length > 1) {
+      return yield* fail(
+        "request_id_required",
+        `${ref} has ${fitting.length} open ${dismiss ? "non-blocking " : ""}questions. Pass requestId to pick one: ${describeOpenQuestions(fitting)}.`,
+      );
+    }
     const target =
       wanted === undefined
-        ? (dismiss ? open.filter((candidate) => candidate.async) : open)[0]
+        ? fitting[0]
         : open.find((candidate) => matchesRequest(candidate.requestId, wanted));
     if (target === undefined) {
       return yield* fail(
@@ -996,6 +1010,8 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
   ];
   if (detail.approval !== null)
     lines.push("", "### Waits on an approval", ...renderApproval(detail.approval, ref));
+  if (detail.secret !== null)
+    lines.push("", "### Waits on a secret", ...renderSecret(detail.secret));
   if (detail.question !== null)
     lines.push("", "### Blocking question", ...renderQuestion(detail.question, ref));
   for (const question of detail.asyncQuestions) {
@@ -1044,6 +1060,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     tagged: members,
     waitsOn: {
       approval: detail.approval === null ? null : boundApproval(detail.approval),
+      secret: detail.secret,
       question: detail.question === null ? null : boundQuestion(detail.question),
       asyncQuestions: detail.asyncQuestions.map(boundQuestion),
       plan:
@@ -1087,6 +1104,7 @@ const firstOutcome = Effect.fn("agentToolkit.firstOutcome")(function* (
     return [
       "### It waits on you",
       ...(detail.approval !== null ? renderApproval(detail.approval, ref) : []),
+      ...(detail.secret !== null ? renderSecret(detail.secret) : []),
       ...(question !== null ? renderQuestion(question, ref) : []),
     ];
   }
@@ -1437,6 +1455,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     `## \`${ref}\` ${match.what}`,
     `${sessionHeading(shell, context)} — ${sessionActivity(shell, context.nowMs)}`,
     ...(detail.approval === null ? [] : renderApproval(detail.approval, ref)),
+    ...(detail.secret === null ? [] : renderSecret(detail.secret)),
     ...(detail.question === null ? [] : renderQuestion(detail.question, ref)),
     ...detail.asyncQuestions.flatMap((question) => renderQuestion(question, ref)),
     ...(attention === "plan" ? renderPlan(detail.plan, ref, 600) : []),
@@ -1460,6 +1479,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     session: sessionData(shell, context),
     waitsOn: {
       approval: detail.approval === null ? null : boundApproval(detail.approval),
+      secret: detail.secret,
       question: detail.question === null ? null : boundQuestion(detail.question),
       asyncQuestions: detail.asyncQuestions.map(boundQuestion),
       plan:

@@ -81,10 +81,17 @@ export interface PendingPlan {
 export const planIsCurrent = (shell: SessionShell, plan: PendingPlan | null): boolean =>
   plan === null || plan.runId === null || plan.runId === shell.latestRunId;
 
+/** A secret the agent asked for; only a person can enter it, in the app. */
+export interface PendingSecret {
+  readonly label: string;
+  readonly reason: string;
+}
+
 export interface PendingDetail {
   readonly question: PendingQuestion | null;
   readonly asyncQuestions: ReadonlyArray<PendingQuestion>;
   readonly approval: PendingApproval | null;
+  readonly secret: PendingSecret | null;
   readonly plan: PendingPlan | null;
 }
 
@@ -92,6 +99,7 @@ export const EMPTY_PENDING: PendingDetail = {
   question: null,
   asyncQuestions: [],
   approval: null,
+  secret: null,
   plan: null,
 };
 
@@ -153,7 +161,11 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
   const nonBlocking = shell.hasPendingAsyncUserInput === true;
   const types = new Set<TurnItemType>();
   if (request?.kind === "user_input" || nonBlocking) types.add("user_input_request");
-  else if (request !== null && request.kind !== "auth_refresh") types.add("approval_request");
+  // The shell stands a secret request in as a pending question.
+  if (request?.kind === "user_input") types.add("secret_request");
+  if (request !== null && request.kind !== "user_input" && request.kind !== "auth_refresh") {
+    types.add("approval_request");
+  }
   if (asyncIds.length > 0) types.add("dynamic_tool");
   if (options.includePlan && shell.hasActionableProposedPlan) types.add("proposed_plan");
   if (types.size === 0) return EMPTY_PENDING;
@@ -168,6 +180,7 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
 
   let question: PendingQuestion | null = null;
   let approval: PendingApproval | null = null;
+  let secret: PendingSecret | null = null;
   if (request !== null) {
     const runtime = runtimeRequests.find((candidate) => candidate.id === request.id);
     const item = turnItems.find(
@@ -175,7 +188,12 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         (candidate.type === "user_input_request" || candidate.type === "approval_request") &&
         candidate.requestId === request.id,
     );
-    if (item?.type === "user_input_request") {
+    const secretItem = turnItems.find(
+      (candidate) => candidate.type === "secret_request" && candidate.id === request.id,
+    );
+    if (secretItem?.type === "secret_request") {
+      secret = { label: secretItem.label, reason: secretItem.reason };
+    } else if (item?.type === "user_input_request") {
       question = {
         requestId: request.id,
         questions: item.questions,
@@ -280,5 +298,5 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
         }
       : null;
 
-  return { question, asyncQuestions, approval, plan } satisfies PendingDetail;
+  return { question, asyncQuestions, approval, secret, plan } satisfies PendingDetail;
 });
