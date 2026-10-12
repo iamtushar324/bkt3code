@@ -6,7 +6,7 @@
 export const MCP_SERVER_INSTRUCTIONS = [
   "T3 Code runs coding-agent sessions for people. Start with t3_whoami.",
   "- t3_inbox: everything that waits on a person (questions with options, approvals, plans, failures), each with a ready t3_answer call.",
-  "- t3_answer: answer a question (choice, text, answers), an approval (decision) or a plan (approve, revise with feedback, discard).",
+  "- t3_answer: answer a question (choice, text, answers), an approval (decision) or a plan (approve, revise with feedback, discard). A blocking question pauses the agent; a non-blocking one (a Codex async question) does not, so its answer arrives as a new message, or dismiss it.",
   "- t3_find_sessions, then t3_session_brief: find a session and read where it stands.",
   "- t3_start_session and t3_send_message: start work, or send to a session.",
   "- t3_wait: wait for the next question, approval, finish or failure with a cursor. Do not poll t3_inbox.",

@@ -50,7 +50,9 @@ import { modelSelectionFor, resolveModel } from "./models.ts";
 import {
   EMPTY_PENDING,
   loadPendingDetail,
+  matchesRequest,
   planIsCurrent,
+  requestRef,
   type PendingApproval,
   type PendingDetail,
   type PendingQuestion,
@@ -196,9 +198,11 @@ const sessionCursor = (caller: Caller, threadId: ThreadId) =>
 const waitHint = (ref: string, cursor: string | undefined) =>
   callHint("t3_wait", { sessions: [ref], ...(cursor === undefined ? {} : { cursor }) });
 
-/** A question as `format: "json"` returns it: long texts cut like the Markdown. */
-const boundQuestion = (pending: PendingQuestion): PendingQuestion => ({
+/** A question as `format: "json"` returns it: long texts cut like the Markdown, and whether it blocks the agent. */
+const boundQuestion = (pending: PendingQuestion) => ({
   ...pending,
+  requestRef: requestRef(pending.requestId),
+  blocksAgent: !pending.async,
   questions: pending.questions.map((question) => ({
     ...question,
     question: cutText(question.question, 1_000),
@@ -371,17 +375,20 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       // Each last-reply read scans that session's timeline index; a few are enough.
       const readReply = candidate.kind === "unread" && unreadReads < 8;
       if (readReply) unreadReads += 1;
+      const question =
+        candidate.kind === "question"
+          ? detail.question
+          : candidate.kind === "async-question"
+            ? (detail.asyncQuestions[0] ?? null)
+            : null;
+      // The shell has no time for a non-blocking question; the question has.
+      const askedMs = question?.async === true ? toMillisOrNull(question.askedAt) : null;
       return {
         kind: candidate.kind,
         shell: candidate.shell,
         context: context(candidate.shell),
-        waitingSinceMs: candidate.waitingSinceMs,
-        question:
-          candidate.kind === "question"
-            ? detail.question
-            : candidate.kind === "async-question"
-              ? (detail.asyncQuestions[0] ?? null)
-              : null,
+        waitingSinceMs: askedMs ?? candidate.waitingSinceMs,
+        question,
         approval: candidate.kind === "approval" ? detail.approval : null,
         plan: candidate.kind === "plan" ? detail.plan : null,
         lastReply: readReply ? yield* lastReply(caller, candidate.shell) : null,
@@ -438,6 +445,71 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
 
 // -- t3_answer -----------------------------------------------------------------
 
+/** An ISO time as epoch milliseconds, or null. */
+const toMillisOrNull = (iso: string | null) => {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+/** The open questions, one line each, for a refusal that names the right requestId. */
+const describeOpenQuestions = (open: ReadonlyArray<PendingQuestion>) =>
+  open
+    .map(
+      (question, index) =>
+        `${index + 1}. requestId "${requestRef(question.requestId)}" (${question.async ? "non-blocking" : "blocking"}): ${oneLine(question.questions[0]?.question ?? "a question", 100)}`,
+    )
+    .join("; ");
+
+const DELIVERY_TEXT = {
+  steered: "It reached the agent as a message in its running turn.",
+  started: "It reached the agent as a message and started a new turn.",
+  queued: "It waits as a message and runs after the current turn.",
+} as const;
+
+type AnswerDelivery = keyof typeof DELIVERY_TEXT;
+
+/**
+ * How an answer to a non-blocking question reached the agent. The answer is
+ * sent as a message with a fixed id, and its user turn item records whether
+ * it joined the running turn, started one or waits behind it (as
+ * ThreadManagementService.sendToThread reads it). Null when that cannot be read.
+ */
+const answerDelivery = (
+  caller: Caller,
+  threadId: ThreadId,
+  requestId: string,
+): Effect.Effect<AnswerDelivery | null> =>
+  Effect.gen(function* () {
+    const messageId = MessageId.make(`async-answer:${requestId}`);
+    const { messages, runs } = yield* caller.threads.getThreadRecords(
+      threadId,
+      ["messages", "runs"],
+      { messageIds: [messageId] },
+    );
+    const runId = messages.find((message) => message.id === messageId)?.runId ?? null;
+    if (runId === null) return null;
+    const { turnItems } = yield* caller.threads.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["user_message"],
+      turnItemRunIds: [runId],
+    });
+    const item = turnItems.find(
+      (candidate) => candidate.type === "user_message" && candidate.messageId === messageId,
+    );
+    // A queued message gets its turn item only when its turn starts.
+    const delivery: AnswerDelivery | null =
+      item?.type !== "user_message"
+        ? runs.find((run) => run.id === runId)?.status === "queued"
+          ? "queued"
+          : null
+        : item.inputIntent === "queued_turn"
+          ? "queued"
+          : item.inputIntent === "turn_start"
+            ? "started"
+            : "steered";
+    return delivery;
+  }).pipe(Effect.orElseSucceed(() => null));
+
 const DECISIONS: Record<string, ProviderApprovalDecision> = {
   approve: "accept",
   approve_for_session: "acceptForSession",
@@ -453,10 +525,41 @@ const describeWaiting = (shell: SessionShell, detail: PendingDetail) => {
     return `It waits on an approval: pass decision (${callHint("t3_answer", { session: ref, decision: "approve" })}).`;
   if (detail.question !== null || detail.asyncQuestions.length > 0)
     return `It waits on a question: pass choice, text or answers (see ${callHint("t3_session_brief", { session: ref })}).`;
-  if (shell.hasActionableProposedPlan && attentionOf(shell) === "plan")
+  const attention = attentionOf(shell);
+  if (shell.hasActionableProposedPlan && attention === "plan")
     return `It waits on a plan review: pass plan (${callHint("t3_answer", { session: ref, plan: "approve" })}).`;
+  if (attention === "question" || attention === "async-question" || attention === "approval")
+    return `It reports an open ${attention === "approval" ? "approval" : "question"}, but T3 Code could not read it just now. Read it with ${callHint("t3_session_brief", { session: ref })}, then try again.`;
   return `Nothing waits in it. To tell the agent something, use ${callHint("t3_send_message", { session: ref, message: "…" })}. If you sent this answer before, it was delivered.`;
 };
+
+/** The reply to t3_answer: what it did, how a message answer reached the agent, and where the session stands now. */
+const answerResult = Effect.fn("agentToolkit.answerResult")(function* (input: {
+  readonly caller: Caller;
+  readonly shell: SessionShell;
+  readonly cursor: string | undefined;
+  readonly nowMs: number;
+  readonly origin: string | undefined;
+  readonly answered: string;
+  readonly delivery: AnswerDelivery | null;
+}) {
+  const { caller, shell, cursor, nowMs, answered, delivery } = input;
+  const after = yield* caller.threads
+    .getThreadShell(shell.id)
+    .pipe(Effect.orElseSucceed(() => null));
+  const now = after ?? shell;
+  const projects = yield* loadProjects();
+  const context = contextFor(caller, projects, nowMs, input.origin)(now);
+  return result(
+    [
+      `## ${answered}`,
+      ...(delivery === null ? [] : [DELIVERY_TEXT[delivery]]),
+      `${sessionHeading(now, context)} — ${sessionActivity(now, nowMs)}`,
+      `Next: ${waitHint(shortRef(shell.id), cursor)} to hear when it needs you again.`,
+    ].join("\n"),
+    { answered, delivery, session: sessionData(now, context), cursor: cursor ?? null },
+  );
+});
 
 const answer = Effect.fn("agentToolkit.answer")(function* (
   input: Tool.Parameters<typeof AnswerTool>,
@@ -481,12 +584,13 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     input.choice !== undefined || input.text !== undefined || input.answers !== undefined
       ? "question"
       : null,
+    input.dismiss === true ? "dismiss" : null,
   ].filter((part) => part !== null);
   if (asked.length !== 1) {
     return yield* fail(
       "answer_required",
       asked.length === 0
-        ? "Pass one answer: choice, text or answers for a question; decision for an approval; or plan for a plan review."
+        ? "Pass one answer: choice, text or answers for a question (or dismiss: true for a non-blocking one); decision for an approval; or plan for a plan review."
         : `Pass one kind of answer per call; you passed ${asked.join(" and ")}.`,
     );
   }
@@ -566,7 +670,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
     const approval = detail.approval;
     if (
       approval === null ||
-      (input.requestId !== undefined && input.requestId !== approval.requestId)
+      (input.requestId !== undefined && !matchesRequest(approval.requestId, input.requestId))
     ) {
       return yield* fail(
         "nothing_waiting",
@@ -599,16 +703,55 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
       .pipe(Effect.mapError(dispatchError), withModeLimit(caller));
     answered = `Sent ${input.decision} for the ${approval.requestKind} request${approval.prompt === null ? "" : ` \`${oneLine(approval.prompt, 120)}\``}.`;
   } else {
+    // The blocking question first, then the non-blocking ones, oldest first.
     const open = [...(detail.question === null ? [] : [detail.question]), ...detail.asyncQuestions];
+    const dismiss = input.dismiss === true;
+    const wanted = input.requestId;
     const target =
-      input.requestId === undefined
-        ? open[0]
-        : open.find((candidate) => candidate.requestId === input.requestId);
+      wanted === undefined
+        ? (dismiss ? open.filter((candidate) => candidate.async) : open)[0]
+        : open.find((candidate) => matchesRequest(candidate.requestId, wanted));
     if (target === undefined) {
       return yield* fail(
         "nothing_waiting",
-        `No such question waits in ${ref}. ${describeWaiting(shell, detail)}`,
+        open.length === 0
+          ? `No question waits in ${ref}. ${describeWaiting(shell, detail)}`
+          : wanted !== undefined
+            ? `No open question in ${ref} has requestId "${wanted}"; it was answered or dismissed already, or the id is wrong. Open questions: ${describeOpenQuestions(open)}.`
+            : `${ref} has no non-blocking question to dismiss. Open questions: ${describeOpenQuestions(open)}.`,
       );
+    }
+    // Codex heads every question "Question", so name it by its text.
+    const header = oneLine(target.questions[0]?.question ?? "the question", 80);
+    if (dismiss) {
+      if (!target.async) {
+        return yield* fail(
+          "not_dismissible",
+          `This question blocks the agent, so it cannot be dismissed. Answer it, or stop the turn with ${callHint("t3_send_message", { session: ref, message: "…", ifBusy: "interrupt", force: true })}.`,
+        );
+      }
+      yield* caller.threads
+        .dispatch({
+          type: "thread.user-input.dismiss",
+          commandId: yield* commandIdFor(
+            scope,
+            "dismiss",
+            `${shell.id}\u0000${target.requestId}`,
+            input.clientRequestId,
+          ),
+          threadId: shell.id,
+          requestId: RuntimeRequestId.make(target.requestId),
+        })
+        .pipe(Effect.mapError(dispatchError), withModeLimit(caller));
+      return yield* answerResult({
+        caller,
+        shell,
+        cursor,
+        nowMs,
+        origin,
+        answered: `Dismissed the non-blocking question "${header}". The agent is not told.`,
+        delivery: null,
+      });
     }
     const answers = buildAnswers(target.questions, input, target.textOnly);
     if (Result.isFailure(answers)) return yield* fail("invalid_answer", answers.failure);
@@ -626,27 +769,17 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
         answers: answers.success,
       })
       .pipe(Effect.mapError(dispatchError), withModeLimit(caller));
-    answered = `Answered ${target.questions.length === 1 ? `"${oneLine(target.questions[0]?.header ?? "the question", 80)}"` : `${target.questions.length} questions`}: ${Object.values(
+    answered = `Answered ${target.questions.length === 1 ? `"${header}"` : `${target.questions.length} questions`}: ${Object.values(
       answers.success,
     )
       .map((value) => (typeof value === "string" ? oneLine(value, 80) : value.join(", ")))
       .join(" · ")}.`;
+    if (target.async) {
+      const delivery = yield* answerDelivery(caller, shell.id, target.requestId);
+      return yield* answerResult({ caller, shell, cursor, nowMs, origin, answered, delivery });
+    }
   }
-
-  const after = yield* caller.threads
-    .getThreadShell(shell.id)
-    .pipe(Effect.orElseSucceed(() => null));
-  const now = after ?? shell;
-  const projects = yield* loadProjects();
-  const context = contextFor(caller, projects, nowMs, origin)(now);
-  return result(
-    [
-      `## ${answered}`,
-      `${sessionHeading(now, context)} — ${sessionActivity(now, nowMs)}`,
-      `Next: ${waitHint(ref, cursor)} to hear when it needs you again.`,
-    ].join("\n"),
-    { answered, session: sessionData(now, context), cursor: cursor ?? null },
-  );
+  return yield* answerResult({ caller, shell, cursor, nowMs, origin, answered, delivery: null });
 });
 
 // -- t3_find_sessions ------------------------------------------------------------
@@ -864,9 +997,9 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
   if (detail.approval !== null)
     lines.push("", "### Waits on an approval", ...renderApproval(detail.approval, ref));
   if (detail.question !== null)
-    lines.push("", "### Waits on a question", ...renderQuestion(detail.question, ref));
+    lines.push("", "### Blocking question", ...renderQuestion(detail.question, ref));
   for (const question of detail.asyncQuestions) {
-    lines.push("", "### Asked while it keeps working", ...renderQuestion(question, ref));
+    lines.push("", "### Non-blocking question", ...renderQuestion(question, ref));
   }
   if ((attention === "plan" && planIsCurrent(shell, detail.plan)) || include.has("plan")) {
     lines.push("", "### Plan", ...renderPlan(detail.plan, ref, 0));
@@ -1154,13 +1287,11 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
   const text = input.message.trim();
   if (text.length === 0) return yield* fail("message_required", "Pass message: the text to send.");
   const attention = attentionOf(shell);
-  if (
-    input.force !== true &&
-    (attention === "question" || attention === "approval" || attention === "async-question")
-  ) {
+  // A non-blocking question did not stop the agent, so a message does not drop it.
+  if (input.force !== true && (attention === "question" || attention === "approval")) {
     return yield* fail(
       "question_open",
-      `${ref} waits on ${attention === "approval" ? "an approval" : "a question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
+      `${ref} waits on ${attention === "approval" ? "an approval" : "a blocking question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
     );
   }
   yield* assertTargetWithinLimits(caller.limits, shell);
@@ -1201,6 +1332,11 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
     [
       `## Message ${delivery}`,
       `\`${ref}\` ${shell.title} · run ${sent.run.id} (${sent.run.status})`,
+      ...(attention === "async-question"
+        ? [
+            `A non-blocking question stays open in ${ref}. Answer or dismiss it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}).`,
+          ]
+        : []),
       `Next: ${waitHint(ref, cursor)} to hear when it answers, asks or fails.`,
     ].join("\n"),
     {

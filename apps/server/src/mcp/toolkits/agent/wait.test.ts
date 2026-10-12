@@ -18,10 +18,14 @@ describe("changeOf", () => {
       changeOf(
         stored({
           type: "runtime-request.updated",
-          payload: { status: "pending", kind: "user_input" },
+          payload: {
+            status: "pending",
+            kind: "user_input",
+            responseCapability: { type: "live", providerSessionId: "session-1" },
+          },
         }),
-      )?.change,
-    ).toBe("needs-human");
+      ),
+    ).toMatchObject({ change: "needs-human", what: "asked a blocking question" });
     expect(
       changeOf(
         stored({
@@ -67,6 +71,37 @@ describe("changeOf", () => {
       });
     expect(changeOf(stopped(1_000))?.what).toBe("run interrupted");
     expect(changeOf(stopped(9_000))).toBeNull();
+  });
+
+  it("says a Codex async question does not block the agent", () => {
+    expect(
+      changeOf(
+        stored({
+          type: "runtime-request.updated",
+          payload: {
+            status: "pending",
+            kind: "user_input",
+            responseCapability: { type: "message" },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      change: "needs-human",
+      what: "asked a non-blocking question and keeps working",
+    });
+    // Answering it resolves the request; that is not a new question.
+    expect(
+      changeOf(
+        stored({
+          type: "runtime-request.updated",
+          payload: {
+            status: "resolved",
+            kind: "user_input",
+            responseCapability: { type: "message" },
+          },
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("reports a question asked while the agent keeps working, in either input form", () => {
