@@ -20,6 +20,7 @@ import {
   setPhaseSidebarGroupBy,
   setPhaseSidebarGroupOrder,
   setPhaseSidebarRunningShelf,
+  setPhaseSidebarSectionsCollapsed,
   togglePhaseSidebarSectionCollapsed,
   type PhaseSidebarGroupBy,
   type PhaseSidebarGroupOrder,
@@ -49,6 +50,11 @@ interface PhaseSidebarGroupingStoreState {
   /** `orderedIds` is the custom section order currently on screen. */
   moveGroup: (orderedIds: ReadonlyArray<string>, id: string, direction: "up" | "down") => void;
   toggleSectionCollapsed: (sectionKey: string) => void;
+  /** The collapse-all button: every given section closed, or every one open. */
+  setSectionsCollapsed: (
+    sections: ReadonlyArray<{ readonly key: string; readonly collapsedByDefault: boolean }>,
+    collapsed: boolean,
+  ) => void;
   prune: (liveThreadKeys: ReadonlySet<string>) => void;
 }
 
@@ -84,6 +90,11 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
         set((state) => ({
           grouping: togglePhaseSidebarSectionCollapsed(state.grouping, sectionKey),
         })),
+      setSectionsCollapsed: (sections, collapsed) =>
+        set((state) => {
+          const next = setPhaseSidebarSectionsCollapsed(state.grouping, sections, collapsed);
+          return next === state.grouping ? state : { grouping: next };
+        }),
       prune: (liveThreadKeys) =>
         set((state) => {
           const next = prunePhaseSidebarGrouping(state.grouping, liveThreadKeys);
