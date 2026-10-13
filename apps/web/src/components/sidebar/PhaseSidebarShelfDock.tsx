@@ -11,8 +11,11 @@
 //
 // Collapse state is the persisted section state the grouping store keeps (see
 // PHASE_SIDEBAR_SHELF_SECTIONS); this component only renders it.
+//
+// The Running shelf sits on top when custom grouping has it switched on: live
+// sessions with nothing waiting on a human, as a flat list. It starts open.
 import type { PhaseSidebarShelfId } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
-import { AlarmClockIcon, CheckIcon, ChevronDownIcon } from "lucide-react";
+import { AlarmClockIcon, CheckIcon, ChevronDownIcon, LoaderCircleIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
@@ -25,7 +28,19 @@ export interface PhaseSidebarShelfDockShelf {
   readonly rows: PhaseSidebarShelfRows<PhaseSidebarRow>;
 }
 
+/** The Running shelf: rendered by the caller, since its rows are live session trees. */
+export interface PhaseSidebarShelfDockRunningShelf {
+  readonly count: number;
+  readonly collapsed: boolean;
+  readonly containsRoutedThread: boolean;
+  /** The rows, or null while collapsed. */
+  readonly items: ReactNode;
+  readonly onToggle: () => void;
+}
+
 export interface PhaseSidebarShelfDockProps {
+  /** Absent unless custom grouping has the Running shelf switched on. */
+  readonly running?: PhaseSidebarShelfDockRunningShelf;
   readonly snoozed: PhaseSidebarShelfDockShelf;
   readonly settled: PhaseSidebarShelfDockShelf;
   readonly onToggle: (shelf: PhaseSidebarShelfId) => void;
@@ -36,8 +51,9 @@ export interface PhaseSidebarShelfDockProps {
 }
 
 export function PhaseSidebarShelfDock(props: PhaseSidebarShelfDockProps) {
-  const { snoozed, settled } = props;
-  if (snoozed.count === 0 && settled.count === 0) return null;
+  const { running, snoozed, settled } = props;
+  const runningCount = running?.count ?? 0;
+  if (runningCount === 0 && snoozed.count === 0 && settled.count === 0) return null;
   return (
     <div
       data-testid="phase-sidebar-shelf-dock"
@@ -45,22 +61,29 @@ export function PhaseSidebarShelfDock(props: PhaseSidebarShelfDockProps) {
       // grows, and an open shelf can never push the footer off screen.
       className="flex max-h-[min(45dvh,24rem)] shrink-0 flex-col gap-1 border-t border-sidebar-border px-2 pt-1.5 pb-1"
     >
+      {running !== undefined && running.count > 0 ? (
+        <PhaseSidebarShelf
+          id="running"
+          label="Running"
+          count={running.count}
+          collapsed={running.collapsed}
+          holdsOpenThread={running.collapsed && running.containsRoutedThread}
+          onToggle={running.onToggle}
+          items={running.collapsed ? null : running.items}
+        />
+      ) : null}
       {snoozed.count > 0 ? (
         <PhaseSidebarShelf
           id="snoozed"
           label="Snoozed"
-          shelf={snoozed}
-          onToggle={props.onToggle}
-          renderRow={props.renderRow}
+          {...parkedShelfProps("snoozed", snoozed, props)}
         />
       ) : null}
       {settled.count > 0 ? (
         <PhaseSidebarShelf
           id="settled"
           label="Settled"
-          shelf={settled}
-          onToggle={props.onToggle}
-          renderRow={props.renderRow}
+          {...parkedShelfProps("settled", settled, props)}
           showMore={
             !settled.collapsed && settled.rows.hiddenCount > 0 ? (
               <button
@@ -82,55 +105,71 @@ export function PhaseSidebarShelfDock(props: PhaseSidebarShelfDockProps) {
   );
 }
 
+function parkedShelfProps(
+  id: PhaseSidebarShelfId,
+  shelf: PhaseSidebarShelfDockShelf,
+  props: PhaseSidebarShelfDockProps,
+) {
+  return {
+    count: shelf.count,
+    collapsed: shelf.collapsed,
+    // A collapsed shelf never draws the open thread's row; the header says it
+    // is in here instead, one click away.
+    holdsOpenThread: shelf.collapsed && shelf.rows.containsRoutedThread,
+    onToggle: () => props.onToggle(id),
+    items:
+      shelf.rows.rendered.length > 0
+        ? shelf.rows.rendered.map((row) => props.renderRow(row, id))
+        : null,
+  };
+}
+
+const SHELF_TONE = {
+  running: {
+    icon: LoaderCircleIcon,
+    text: "text-sky-600 dark:text-sky-400",
+    rule: "bg-sky-500/20 dark:bg-sky-400/15",
+  },
+  snoozed: {
+    icon: AlarmClockIcon,
+    text: "text-blue-600 dark:text-blue-400",
+    rule: "bg-blue-500/20 dark:bg-blue-400/15",
+  },
+  settled: { icon: CheckIcon, text: "text-muted-foreground/50", rule: "bg-sidebar-border/60" },
+} as const;
+
 function PhaseSidebarShelf(props: {
-  readonly id: PhaseSidebarShelfId;
+  readonly id: keyof typeof SHELF_TONE;
   readonly label: string;
-  readonly shelf: PhaseSidebarShelfDockShelf;
-  readonly onToggle: (shelf: PhaseSidebarShelfId) => void;
-  readonly renderRow: (row: PhaseSidebarRow, shelf: PhaseSidebarShelfId) => ReactNode;
+  readonly count: number;
+  readonly collapsed: boolean;
+  readonly holdsOpenThread: boolean;
+  readonly onToggle: () => void;
+  readonly items: ReactNode;
   readonly showMore?: ReactNode;
 }) {
-  const { id, label, shelf } = props;
-  const snoozed = id === "snoozed";
-  // A collapsed shelf never draws the open thread's row; the header says it is
-  // in here instead, one click away.
-  const holdsOpenThread = shelf.collapsed && shelf.rows.containsRoutedThread;
-  const hasBody = shelf.rows.rendered.length > 0 || props.showMore != null;
+  const { id, label, count, collapsed, holdsOpenThread } = props;
+  const tone = SHELF_TONE[id];
+  const Icon = tone.icon;
+  const hasBody = props.items != null || props.showMore != null;
   return (
     <section className="flex min-h-0 flex-col" data-testid={`phase-sidebar-${id}-shelf`}>
       <button
         type="button"
-        onClick={() => props.onToggle(id)}
-        aria-expanded={!shelf.collapsed}
-        aria-label={`${label}, ${shelf.count} session${shelf.count === 1 ? "" : "s"}${
-          shelf.collapsed ? ", collapsed" : ""
+        onClick={props.onToggle}
+        aria-expanded={!collapsed}
+        aria-label={`${label}, ${count} session${count === 1 ? "" : "s"}${
+          collapsed ? ", collapsed" : ""
         }${holdsOpenThread ? ", holds the open thread" : ""}`}
         data-testid={`phase-sidebar-${id}-shelf-toggle`}
         data-holds-open-thread={holdsOpenThread ? "" : undefined}
         className="flex w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
-        {snoozed ? (
-          <AlarmClockIcon
-            aria-hidden
-            className="size-2.5 shrink-0 text-blue-600 dark:text-blue-400"
-          />
-        ) : (
-          <CheckIcon aria-hidden className="size-2.5 shrink-0 text-muted-foreground/50" />
-        )}
-        <span
-          className={cn(
-            "text-[10px] font-semibold uppercase tracking-wider",
-            snoozed ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50",
-          )}
-        >
+        <Icon aria-hidden className={cn("size-2.5 shrink-0", tone.text)} />
+        <span className={cn("text-[10px] font-semibold uppercase tracking-wider", tone.text)}>
           {label}
         </span>
-        <span
-          className={cn(
-            "h-px flex-1",
-            snoozed ? "bg-blue-500/20 dark:bg-blue-400/15" : "bg-sidebar-border/60",
-          )}
-        />
+        <span className={cn("h-px flex-1", tone.rule)} />
         {holdsOpenThread ? (
           <span
             aria-hidden
@@ -138,13 +177,13 @@ function PhaseSidebarShelf(props: {
             className="size-1.5 shrink-0 rounded-full bg-primary"
           />
         ) : null}
-        <span className="text-[9px] tabular-nums text-muted-foreground/55">{shelf.count}</span>
+        <span className="text-[9px] tabular-nums text-muted-foreground/55">{count}</span>
         <ChevronDownIcon
           aria-hidden
           className={cn(
             "size-3 shrink-0 transition-transform",
-            snoozed ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50",
-            !shelf.collapsed && "rotate-180",
+            tone.text,
+            !collapsed && "rotate-180",
           )}
         />
       </button>
@@ -157,11 +196,7 @@ function PhaseSidebarShelf(props: {
           data-testid={`phase-sidebar-${id}-shelf-rows`}
           className="mt-1 min-h-0 overflow-y-auto overscroll-contain"
         >
-          {shelf.rows.rendered.length > 0 ? (
-            <ul className="space-y-0.5">
-              {shelf.rows.rendered.map((row) => props.renderRow(row, id))}
-            </ul>
-          ) : null}
+          {props.items != null ? <ul className="space-y-0.5">{props.items}</ul> : null}
           {props.showMore}
         </div>
       ) : null}

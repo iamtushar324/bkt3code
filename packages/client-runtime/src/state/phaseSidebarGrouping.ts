@@ -99,6 +99,11 @@ export interface PhaseSidebarGroupingPreferences {
   readonly customGroupOrder: ReadonlyArray<string>;
   /** Section keys (see `PhaseSidebarSection.key`) the user closed. */
   readonly collapsedSectionKeys: ReadonlyArray<string>;
+  /**
+   * Custom mode only: sessions that run with nothing waiting on a human leave
+   * their group for the Running shelf. Absent means off.
+   */
+  readonly runningShelf?: boolean;
 }
 
 export const DEFAULT_PHASE_SIDEBAR_GROUPING: PhaseSidebarGroupingPreferences = {
@@ -172,6 +177,7 @@ export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupi
     readonly customGroups?: unknown;
     readonly customGroupOrder?: unknown;
     readonly collapsedSectionKeys?: unknown;
+    readonly runningShelf?: unknown;
   };
   const groupBy = PHASE_SIDEBAR_GROUP_BY_MODES.find((mode) => mode === candidate.groupBy);
   const groupOrder = PHASE_SIDEBAR_GROUP_ORDERS.find((order) => order === candidate.groupOrder);
@@ -183,6 +189,7 @@ export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupi
       (id) => id !== PHASE_SIDEBAR_UNGROUPED_ID,
     ),
     collapsedSectionKeys: sanitizeStringList(candidate.collapsedSectionKeys),
+    ...(candidate.runningShelf === true ? { runningShelf: true } : {}),
   };
 }
 
@@ -204,6 +211,15 @@ export function setPhaseSidebarGroupOrder(
   groupOrder: PhaseSidebarGroupOrder,
 ): PhaseSidebarGroupingPreferences {
   return preferences.groupOrder === groupOrder ? preferences : { ...preferences, groupOrder };
+}
+
+export function setPhaseSidebarRunningShelf(
+  preferences: PhaseSidebarGroupingPreferences,
+  enabled: boolean,
+): PhaseSidebarGroupingPreferences {
+  if ((preferences.runningShelf === true) === enabled) return preferences;
+  const { runningShelf: _previous, ...rest } = preferences;
+  return enabled ? { ...rest, runningShelf: true } : rest;
 }
 
 /** The section id a legacy local group renders under. */
@@ -364,6 +380,28 @@ export function phaseSidebarLocalCustomGroupForThread(
   return null;
 }
 
+/**
+ * Collapses or opens every given section at once (the sidebar's collapse-all
+ * button), honouring each one's default: a key is listed exactly when the
+ * section's state differs from its default.
+ */
+export function setPhaseSidebarSectionsCollapsed(
+  preferences: PhaseSidebarGroupingPreferences,
+  sections: ReadonlyArray<Pick<PhaseSidebarSection, "key" | "collapsedByDefault">>,
+  collapsed: boolean,
+): PhaseSidebarGroupingPreferences {
+  const keys = new Set(preferences.collapsedSectionKeys);
+  for (const section of sections) {
+    if (collapsed === section.collapsedByDefault) keys.delete(section.key);
+    else keys.add(section.key);
+  }
+  const next = [...keys];
+  return next.length === preferences.collapsedSectionKeys.length &&
+    next.every((key, index) => key === preferences.collapsedSectionKeys[index])
+    ? preferences
+    : { ...preferences, collapsedSectionKeys: next };
+}
+
 export function togglePhaseSidebarSectionCollapsed(
   preferences: PhaseSidebarGroupingPreferences,
   sectionKey: string,
@@ -514,6 +552,24 @@ export interface PhaseSidebarSection {
 export interface PhaseSidebarSectionsResult {
   readonly sections: ReadonlyArray<PhaseSidebarSection>;
   readonly forcedExpansionKeys: ReadonlySet<string>;
+  /**
+   * Top-level sessions on the Running shelf, newest activity first: custom
+   * mode with `runningShelf` on, otherwise always empty. Their groups' headers
+   * still count them as running.
+   */
+  readonly runningNodes: ReadonlyArray<PhaseSidebarTreeNode>;
+}
+
+const NO_RUNNING_NODES: ReadonlyArray<PhaseSidebarTreeNode> = [];
+
+/**
+ * A session the Running shelf takes: its subtree is live agent work and
+ * nothing in it waits on a human. A question, approval or plan anywhere in the
+ * subtree keeps it in its group, where the highlight is.
+ */
+export function isPhaseSidebarRunningShelfNode(node: PhaseSidebarTreeNode): boolean {
+  const phaseId = resolvePhaseSidebarTreePhase(node);
+  return isRunningSessionPhase(phaseId) && !nodeWaitsOnHuman(node, phaseId);
 }
 
 export interface BuildPhaseSidebarSectionsInput {
@@ -636,7 +692,7 @@ export function buildPhaseSidebarSections(
         isUngrouped: false,
         collapsedByDefault: false,
       }));
-      return { sections, forcedExpansionKeys };
+      return { sections, forcedExpansionKeys, runningNodes: NO_RUNNING_NODES };
     }
 
     case "project": {
@@ -674,6 +730,7 @@ export function buildPhaseSidebarSections(
           () => 0,
         ),
         forcedExpansionKeys,
+        runningNodes: NO_RUNNING_NODES,
       };
     }
 
@@ -694,8 +751,28 @@ export function buildPhaseSidebarSections(
         const id = phaseSidebarCustomGroupIdForRow(node.row) ?? PHASE_SIDEBAR_UNGROUPED_ID;
         nodesById.set(id, [...(nodesById.get(id) ?? []), node]);
       }
+      // A header counts what it shows, plus the sessions of its own that the
+      // Running shelf took, so it still says how many of them run.
+      const runningShelf = grouping.runningShelf === true;
+      const runningNodes: PhaseSidebarTreeNode[] = [];
+      const placedNodes = (all: ReadonlyArray<PhaseSidebarTreeNode>) => {
+        if (!runningShelf) return all;
+        const kept: PhaseSidebarTreeNode[] = [];
+        for (const node of all) {
+          (isPhaseSidebarRunningShelfNode(node) ? runningNodes : kept).push(node);
+        }
+        return kept;
+      };
+      const placedSummary = (
+        all: ReadonlyArray<PhaseSidebarTreeNode>,
+        placed: ReadonlyArray<PhaseSidebarTreeNode>,
+      ): PhaseSidebarSectionSummary =>
+        placed === all
+          ? summarizeNodes(all)
+          : { ...summarizeNodes(placed), running: summarizeNodes(all).running };
       const sections: PhaseSidebarSection[] = registry.map((group) => {
-        const nodes = nodesById.get(group.id) ?? [];
+        const allNodes = nodesById.get(group.id) ?? [];
+        const nodes = placedNodes(allNodes);
         return {
           key: phaseSidebarSectionKey("custom", group.id),
           kind: "custom",
@@ -704,7 +781,7 @@ export function buildPhaseSidebarSections(
           helperText: nodes.length === 0 ? "Empty" : pluralSessions(nodes.length),
           phaseId: null,
           nodes,
-          summary: summarizeNodes(nodes),
+          summary: placedSummary(allNodes, nodes),
           isUngrouped: false,
           collapsedByDefault: false,
           ...(group.colorId !== undefined && group.color !== undefined
@@ -712,7 +789,8 @@ export function buildPhaseSidebarSections(
             : {}),
         };
       });
-      const ungrouped = nodesById.get(PHASE_SIDEBAR_UNGROUPED_ID) ?? [];
+      const allUngrouped = nodesById.get(PHASE_SIDEBAR_UNGROUPED_ID) ?? [];
+      const ungrouped = placedNodes(allUngrouped);
       if (ungrouped.length > 0) {
         sections.push({
           key: phaseSidebarSectionKey("custom", PHASE_SIDEBAR_UNGROUPED_ID),
@@ -722,7 +800,7 @@ export function buildPhaseSidebarSections(
           helperText: "Not placed in a group yet",
           phaseId: null,
           nodes: ungrouped,
-          summary: summarizeNodes(ungrouped),
+          summary: placedSummary(allUngrouped, ungrouped),
           isUngrouped: true,
           collapsedByDefault: false,
         });
@@ -735,6 +813,11 @@ export function buildPhaseSidebarSections(
           (section) => manualIndex.get(section.id) ?? Number.MAX_SAFE_INTEGER,
         ),
         forcedExpansionKeys,
+        runningNodes: runningShelf
+          ? runningNodes.sort(
+              (left, right) => latestActivity([right]) - latestActivity([left]) || 0,
+            )
+          : NO_RUNNING_NODES,
       };
     }
   }
@@ -763,6 +846,15 @@ export const PHASE_SIDEBAR_SHELF_SECTIONS: Readonly<
   snoozed: { key: phaseSidebarSectionKey("lifecycle", "snoozed"), collapsedByDefault: true },
   settled: { key: phaseSidebarSectionKey("lifecycle", "settled"), collapsedByDefault: true },
 };
+
+/**
+ * The Running shelf's collapse identity. It starts open: it holds live work,
+ * not parked history.
+ */
+export const PHASE_SIDEBAR_RUNNING_SHELF_SECTION: Pick<
+  PhaseSidebarSection,
+  "key" | "collapsedByDefault"
+> = { key: "shelf:running", collapsedByDefault: false };
 
 /**
  * The parked shelves under the grouped sections: snoozed and settled sessions,
