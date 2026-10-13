@@ -436,10 +436,7 @@ describe("Running shelf", () => {
       { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "custom" },
       runningShelf,
     );
-  const build = (
-    rows: ReadonlyArray<PhaseSidebarRow>,
-    grouping: PhaseSidebarGroupingPreferences,
-  ) =>
+  const build = (rows: ReadonlyArray<PhaseSidebarRow>, grouping: PhaseSidebarGroupingPreferences) =>
     buildPhaseSidebarSections({
       rows,
       filters: EMPTY_PHASE_SIDEBAR_FILTERS,
