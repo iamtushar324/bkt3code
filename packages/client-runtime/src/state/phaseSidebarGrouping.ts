@@ -380,6 +380,28 @@ export function phaseSidebarLocalCustomGroupForThread(
   return null;
 }
 
+/**
+ * Collapses or opens every given section at once (the sidebar's collapse-all
+ * button), honouring each one's default: a key is listed exactly when the
+ * section's state differs from its default.
+ */
+export function setPhaseSidebarSectionsCollapsed(
+  preferences: PhaseSidebarGroupingPreferences,
+  sections: ReadonlyArray<Pick<PhaseSidebarSection, "key" | "collapsedByDefault">>,
+  collapsed: boolean,
+): PhaseSidebarGroupingPreferences {
+  const keys = new Set(preferences.collapsedSectionKeys);
+  for (const section of sections) {
+    if (collapsed === section.collapsedByDefault) keys.delete(section.key);
+    else keys.add(section.key);
+  }
+  const next = [...keys];
+  return next.length === preferences.collapsedSectionKeys.length &&
+    next.every((key, index) => key === preferences.collapsedSectionKeys[index])
+    ? preferences
+    : { ...preferences, collapsedSectionKeys: next };
+}
+
 export function togglePhaseSidebarSectionCollapsed(
   preferences: PhaseSidebarGroupingPreferences,
   sectionKey: string,

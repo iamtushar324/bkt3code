@@ -31,6 +31,7 @@ import {
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
   setPhaseSidebarRunningShelf,
+  setPhaseSidebarSectionsCollapsed,
   togglePhaseSidebarSectionCollapsed,
   type PhaseSidebarGroupingPreferences,
 } from "./phaseSidebarGrouping.ts";
@@ -494,6 +495,28 @@ describe("Running shelf", () => {
     expect(sanitizePhaseSidebarGrouping({ runningShelf: "yes" })).not.toHaveProperty(
       "runningShelf",
     );
+  });
+});
+
+describe("setPhaseSidebarSectionsCollapsed", () => {
+  const group = { key: phaseSidebarSectionKey("custom", "week"), collapsedByDefault: false };
+  const shelves = [PHASE_SIDEBAR_SHELF_SECTIONS.snoozed, PHASE_SIDEBAR_SHELF_SECTIONS.settled];
+
+  it("closes and opens groups and shelves together, each against its own default", () => {
+    const all = [group, ...shelves];
+    const closed = setPhaseSidebarSectionsCollapsed(DEFAULT_PHASE_SIDEBAR_GROUPING, all, true);
+    const isClosed = (preferences: PhaseSidebarGroupingPreferences) =>
+      all.map((section) =>
+        isPhaseSidebarSectionCollapsed(section, new Set(preferences.collapsedSectionKeys)),
+      );
+    expect(isClosed(closed)).toEqual([true, true, true]);
+    const opened = setPhaseSidebarSectionsCollapsed(closed, all, false);
+    expect(isClosed(opened)).toEqual([false, false, false]);
+  });
+
+  it("keeps the same object when nothing changes", () => {
+    const closed = setPhaseSidebarSectionsCollapsed(DEFAULT_PHASE_SIDEBAR_GROUPING, [group], true);
+    expect(setPhaseSidebarSectionsCollapsed(closed, [group], true)).toBe(closed);
   });
 });
 

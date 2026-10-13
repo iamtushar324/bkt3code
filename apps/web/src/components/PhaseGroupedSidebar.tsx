@@ -258,6 +258,7 @@ import {
 import { usePhaseSidebarGroupingStore } from "../phaseSidebarGroupingStore";
 import { PhaseSidebarGroupByPopover } from "./sidebar/PhaseSidebarGroupByPopover";
 import { PhaseSidebarRunningShelfSwitch } from "./sidebar/PhaseSidebarRunningShelfSwitch";
+import { PhaseSidebarCollapseAllButton } from "./sidebar/PhaseSidebarCollapseAllButton";
 import { PhaseSidebarGroupNameDialog } from "./sidebar/PhaseSidebarGroupNameDialog";
 import {
   PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
@@ -3143,6 +3144,27 @@ export function PhaseGroupedSidebar() {
       ),
     [routeThreadKey, runningNodes],
   );
+  // Custom mode's collapse-all button acts on every group and every shelf on
+  // screen. Any one open means the press closes them all.
+  const setSectionsCollapsed = usePhaseSidebarGroupingStore((state) => state.setSectionsCollapsed);
+  const collapseAllTargets = useMemo(
+    () => [
+      ...sections,
+      ...(runningNodes.length > 0 ? [PHASE_SIDEBAR_RUNNING_SHELF_SECTION] : []),
+      ...(snoozedRows.length > 0 ? [PHASE_SIDEBAR_SHELF_SECTIONS.snoozed] : []),
+      ...(settledRows.length > 0 ? [PHASE_SIDEBAR_SHELF_SECTIONS.settled] : []),
+    ],
+    [runningNodes.length, sections, settledRows.length, snoozedRows.length],
+  );
+  const allSectionsCollapsed =
+    collapseAllTargets.length > 0 &&
+    collapseAllTargets.every((section) =>
+      isPhaseSidebarSectionCollapsed(section, collapsedSectionKeys),
+    );
+  const toggleCollapseAll = useCallback(
+    () => setSectionsCollapsed(collapseAllTargets, !allSectionsCollapsed),
+    [allSectionsCollapsed, collapseAllTargets, setSectionsCollapsed],
+  );
   // T3-CUSTOM(expbkt3): END
   // Traversal, jump labels and shift-range selection operate on what is
   // actually on screen, in screen order: the list, then the docked shelves.
@@ -4211,7 +4233,15 @@ export function PhaseGroupedSidebar() {
                 onMoveGroup={moveCustomGroup}
                 {...(canRecolorCustomGroups ? { onRecolorGroup: recolorCustomGroup } : {})}
               />
-              {grouping.groupBy === "custom" ? <PhaseSidebarRunningShelfSwitch /> : null}
+              {grouping.groupBy === "custom" ? (
+                <>
+                  <PhaseSidebarRunningShelfSwitch />
+                  <PhaseSidebarCollapseAllButton
+                    allCollapsed={allSectionsCollapsed}
+                    onToggle={toggleCollapseAll}
+                  />
+                </>
+              ) : null}
             </div>
             <PhaseFilterPopover
               repositories={repositoryOptions}
