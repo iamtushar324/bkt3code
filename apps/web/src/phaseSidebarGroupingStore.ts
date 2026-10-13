@@ -19,6 +19,8 @@ import {
   sanitizePhaseSidebarGrouping,
   setPhaseSidebarGroupBy,
   setPhaseSidebarGroupOrder,
+  setPhaseSidebarRunningShelf,
+  setPhaseSidebarSectionsCollapsed,
   togglePhaseSidebarSectionCollapsed,
   type PhaseSidebarGroupBy,
   type PhaseSidebarGroupOrder,
@@ -35,6 +37,8 @@ interface PhaseSidebarGroupingStoreState {
   readonly grouping: PhaseSidebarGroupingPreferences;
   setGroupBy: (groupBy: PhaseSidebarGroupBy) => void;
   setGroupOrder: (order: PhaseSidebarGroupOrder) => void;
+  /** Custom mode's Running shelf switch. */
+  setRunningShelf: (enabled: boolean) => void;
   /** Registers an empty placeholder; returns its section id, or null when blank. */
   createGroup: (label: string) => string | null;
   /** Gives a group made in the shared registry this device's next manual-order slot. */
@@ -46,6 +50,11 @@ interface PhaseSidebarGroupingStoreState {
   /** `orderedIds` is the custom section order currently on screen. */
   moveGroup: (orderedIds: ReadonlyArray<string>, id: string, direction: "up" | "down") => void;
   toggleSectionCollapsed: (sectionKey: string) => void;
+  /** The collapse-all button: every given section closed, or every one open. */
+  setSectionsCollapsed: (
+    sections: ReadonlyArray<{ readonly key: string; readonly collapsedByDefault: boolean }>,
+    collapsed: boolean,
+  ) => void;
   prune: (liveThreadKeys: ReadonlySet<string>) => void;
 }
 
@@ -57,6 +66,8 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
         set((state) => ({ grouping: setPhaseSidebarGroupBy(state.grouping, groupBy) })),
       setGroupOrder: (order) =>
         set((state) => ({ grouping: setPhaseSidebarGroupOrder(state.grouping, order) })),
+      setRunningShelf: (enabled) =>
+        set((state) => ({ grouping: setPhaseSidebarRunningShelf(state.grouping, enabled) })),
       createGroup: (label) => {
         const result = createPhaseSidebarCustomGroup(get().grouping, { label });
         if (result.preferences !== get().grouping) set({ grouping: result.preferences });
@@ -79,6 +90,11 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
         set((state) => ({
           grouping: togglePhaseSidebarSectionCollapsed(state.grouping, sectionKey),
         })),
+      setSectionsCollapsed: (sections, collapsed) =>
+        set((state) => {
+          const next = setPhaseSidebarSectionsCollapsed(state.grouping, sections, collapsed);
+          return next === state.grouping ? state : { grouping: next };
+        }),
       prune: (liveThreadKeys) =>
         set((state) => {
           const next = prunePhaseSidebarGrouping(state.grouping, liveThreadKeys);
