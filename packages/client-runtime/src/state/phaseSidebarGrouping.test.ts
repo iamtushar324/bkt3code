@@ -30,6 +30,7 @@ import {
   rememberPhaseSidebarCustomGroupOrder,
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
+  setPhaseSidebarRunningShelf,
   togglePhaseSidebarSectionCollapsed,
   type PhaseSidebarGroupingPreferences,
 } from "./phaseSidebarGrouping.ts";
@@ -426,6 +427,76 @@ describe("custom group operations", () => {
     const pruned = prunePhaseSidebarGrouping(prefs, new Set([key("live")]));
     expect(pruned.customGroups[0]?.threadKeys).toEqual([key("live")]);
     expect(prunePhaseSidebarGrouping(pruned, new Set([key("live")]))).toBe(pruned);
+  });
+});
+
+describe("Running shelf", () => {
+  const custom = (runningShelf: boolean): PhaseSidebarGroupingPreferences =>
+    setPhaseSidebarRunningShelf(
+      { ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "custom" },
+      runningShelf,
+    );
+  const build = (
+    rows: ReadonlyArray<PhaseSidebarRow>,
+    grouping: PhaseSidebarGroupingPreferences,
+  ) =>
+    buildPhaseSidebarSections({
+      rows,
+      filters: EMPTY_PHASE_SIDEBAR_FILTERS,
+      compareSiblings: byId,
+      grouping,
+    });
+  const ids = (nodes: ReadonlyArray<{ readonly row: PhaseSidebarRow }>) =>
+    nodes.map((node) => String(node.row.thread.id)).sort();
+
+  it("is off by default and takes nothing", () => {
+    const result = build(
+      [makeRow("a", { phaseId: "implementing", customGroup: "Week" })],
+      custom(false),
+    );
+    expect(result.runningNodes).toEqual([]);
+    expect(ids(result.sections[0]!.nodes)).toEqual(["a"]);
+  });
+
+  it("takes running sessions out of their groups, but never one that waits on a human", () => {
+    const result = build(
+      [
+        makeRow("run", { phaseId: "implementing", customGroup: "Week" }),
+        makeRow("plan", { phaseId: "planning" }),
+        makeRow("ask", { phaseId: "ask", customGroup: "Week" }),
+        makeRow("input", { phaseId: "needs_input", customGroup: "Week" }),
+        makeRow("idle", { phaseId: "ready", customGroup: "Week", unread: true }),
+        // A running parent whose child is blocked stays where the highlight is.
+        makeRow("parent", { phaseId: "implementing", customGroup: "Week" }),
+        makeRow("child", { parent: "parent", phaseId: "needs_input" }),
+      ],
+      custom(true),
+    );
+    expect(ids(result.runningNodes)).toEqual(["plan", "run"]);
+    const week = result.sections.find((section) => section.label === "Week")!;
+    expect(ids(week.nodes)).toEqual(["ask", "idle", "input", "parent"]);
+    // The header still counts the session the shelf took as running.
+    expect(week.summary).toEqual({ running: 1, attention: 3, unread: 1 });
+    // Ungrouped held only a running session, so it has nothing left to show.
+    expect(result.sections.some((section) => section.isUngrouped)).toBe(false);
+  });
+
+  it("only applies to custom groups", () => {
+    const result = build([makeRow("a", { phaseId: "implementing" })], {
+      ...custom(true),
+      groupBy: "lifecycle",
+    });
+    expect(result.runningNodes).toEqual([]);
+  });
+
+  it("round-trips through the setter and sanitizing", () => {
+    expect(custom(false)).not.toHaveProperty("runningShelf");
+    expect(custom(true).runningShelf).toBe(true);
+    expect(setPhaseSidebarRunningShelf(custom(true), false)).not.toHaveProperty("runningShelf");
+    expect(sanitizePhaseSidebarGrouping(custom(true)).runningShelf).toBe(true);
+    expect(sanitizePhaseSidebarGrouping({ runningShelf: "yes" })).not.toHaveProperty(
+      "runningShelf",
+    );
   });
 });
 

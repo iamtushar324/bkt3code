@@ -244,6 +244,7 @@ import {
   buildPhaseSidebarSections,
   isPhaseSidebarSectionCollapsed,
   listPhaseSidebarCustomGroups,
+  PHASE_SIDEBAR_RUNNING_SHELF_SECTION,
   PHASE_SIDEBAR_SHELF_SECTIONS,
   PHASE_SIDEBAR_UNGROUPED_ID,
   phaseSidebarCustomGroupIdForRow,
@@ -256,6 +257,7 @@ import {
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { usePhaseSidebarGroupingStore } from "../phaseSidebarGroupingStore";
 import { PhaseSidebarGroupByPopover } from "./sidebar/PhaseSidebarGroupByPopover";
+import { PhaseSidebarRunningShelfSwitch } from "./sidebar/PhaseSidebarRunningShelfSwitch";
 import { PhaseSidebarGroupNameDialog } from "./sidebar/PhaseSidebarGroupNameDialog";
 import {
   PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
@@ -2888,7 +2890,7 @@ export function PhaseGroupedSidebar() {
       null,
     [environments],
   );
-  const { sections, forcedExpansionKeys } = useMemo(
+  const { sections, forcedExpansionKeys, runningNodes } = useMemo(
     () =>
       buildPhaseSidebarSections({
         rows: activeRows,
@@ -3114,12 +3116,42 @@ export function PhaseGroupedSidebar() {
       }),
     [routeThreadKey, settledRows, settledShelfCollapsed, settledVisibleCount],
   );
+  // The Running shelf (custom mode, switched on) holds live session trees, so
+  // an open shelf flattens them like any section for traversal.
+  const runningShelfCollapsed = isPhaseSidebarSectionCollapsed(
+    PHASE_SIDEBAR_RUNNING_SHELF_SECTION,
+    collapsedSectionKeys,
+  );
+  const toggleRunningShelf = useCallback(
+    () => toggleSectionCollapsed(PHASE_SIDEBAR_RUNNING_SHELF_SECTION.key),
+    [toggleSectionCollapsed],
+  );
+  const runningShelfRows = useMemo(
+    () =>
+      runningShelfCollapsed
+        ? []
+        : flattenPhaseSidebarTree(runningNodes, isTreeKeyExpanded).map((node) => node.row),
+    [isTreeKeyExpanded, runningNodes, runningShelfCollapsed],
+  );
+  const runningShelfHoldsRoutedThread = useMemo(
+    () =>
+      routeThreadKey !== null &&
+      flattenPhaseSidebarTree(runningNodes, () => true).some(
+        (node) => phaseSidebarRowKey(node.row) === routeThreadKey,
+      ),
+    [routeThreadKey, runningNodes],
+  );
   // T3-CUSTOM(expbkt3): END
   // Traversal, jump labels and shift-range selection operate on what is
   // actually on screen, in screen order: the list, then the docked shelves.
   const visibleRows = useMemo(
-    () => [...activeVisibleRows, ...snoozedShelf.rendered, ...settledShelf.rendered],
-    [activeVisibleRows, snoozedShelf.rendered, settledShelf.rendered],
+    () => [
+      ...activeVisibleRows,
+      ...runningShelfRows,
+      ...snoozedShelf.rendered,
+      ...settledShelf.rendered,
+    ],
+    [activeVisibleRows, runningShelfRows, snoozedShelf.rendered, settledShelf.rendered],
   );
   // T3-CUSTOM(expbkt3): BEGIN — environment markers are conditional on what is
   // actually rendered, not on how many environments are configured. With one
@@ -4024,6 +4056,8 @@ export function PhaseGroupedSidebar() {
     // clean while silently leaving every treeXxx prop undefined, which reads as
     // "the feature is off" rather than as a build error.
     tree?: PhaseThreadRowTreeProps,
+    // T3-CUSTOM(expbkt3): Running shelf rows left their group, so they name it.
+    showGroup = false,
   ) => {
     const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
     const project =
@@ -4078,7 +4112,9 @@ export function PhaseGroupedSidebar() {
         // T3-CUSTOM(expbkt3): custom groups.
         {...(groupActions ? { groupActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
-        customGroupLabel={grouping.groupBy === "custom" ? null : (row.customGroup ?? null)}
+        customGroupLabel={
+          grouping.groupBy === "custom" && !showGroup ? null : (row.customGroup ?? null)
+        }
         customGroupColor={customGroupColors.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ?? null}
         linearIssueStatuses={linearStatusesForRow(row)}
         {...(tree ?? {})}
@@ -4088,22 +4124,27 @@ export function PhaseGroupedSidebar() {
 
   // T3-CUSTOM(expbkt3): BEGIN — a session tree renders as nested <ul>s so the
   // list stays a list for assistive tech, and each level animates on its own.
-  const renderTreeNode = (node: PhaseSidebarTreeNode): ReactNode => {
+  const renderTreeNode = (node: PhaseSidebarTreeNode, showGroup = false): ReactNode => {
     const expanded = expandedKeys.has(node.key);
     return (
       <Fragment key={node.key}>
-        {renderThreadRow(node.row, "active", {
-          treeActions,
-          treeDepth: node.depth,
-          treeDescendantCount: node.descendantCount,
-          treeHasBusyDescendant: node.hasBusyDescendant,
-          treeDescendantUnreadCount: node.descendantUnreadCount,
-          treeDescendantRunningCount: node.descendantRunningCount,
-          treeDescendantAttention: node.descendantAttention,
-          treeExpanded: expanded,
-          treeParentKey: node.orphanedFrom?.key ?? null,
-          treeParentTitle: node.orphanedFrom?.title ?? null,
-        })}
+        {renderThreadRow(
+          node.row,
+          "active",
+          {
+            treeActions,
+            treeDepth: node.depth,
+            treeDescendantCount: node.descendantCount,
+            treeHasBusyDescendant: node.hasBusyDescendant,
+            treeDescendantUnreadCount: node.descendantUnreadCount,
+            treeDescendantRunningCount: node.descendantRunningCount,
+            treeDescendantAttention: node.descendantAttention,
+            treeExpanded: expanded,
+            treeParentKey: node.orphanedFrom?.key ?? null,
+            treeParentTitle: node.orphanedFrom?.title ?? null,
+          },
+          showGroup,
+        )}
         {expanded && node.children.length > 0 ? (
           <li>
             <ul
@@ -4158,14 +4199,17 @@ export function PhaseGroupedSidebar() {
         <SidebarGroup className="px-2 pt-1 pb-2">
           <div className="flex items-center justify-between px-1">
             {/* T3-CUSTOM(expbkt3): the caption is the group-by control. */}
-            <PhaseSidebarGroupByPopover
-              groups={customGroupOptions}
-              onCreateGroup={createCustomGroup}
-              onRenameGroup={renameCustomGroup}
-              onDeleteGroup={deleteCustomGroup}
-              onMoveGroup={moveCustomGroup}
-              {...(canRecolorCustomGroups ? { onRecolorGroup: recolorCustomGroup } : {})}
-            />
+            <div className="flex min-w-0 items-center gap-3">
+              <PhaseSidebarGroupByPopover
+                groups={customGroupOptions}
+                onCreateGroup={createCustomGroup}
+                onRenameGroup={renameCustomGroup}
+                onDeleteGroup={deleteCustomGroup}
+                onMoveGroup={moveCustomGroup}
+                {...(canRecolorCustomGroups ? { onRecolorGroup: recolorCustomGroup } : {})}
+              />
+              {grouping.groupBy === "custom" ? <PhaseSidebarRunningShelfSwitch /> : null}
+            </div>
             <PhaseFilterPopover
               repositories={repositoryOptions}
               providers={providerOptions}
@@ -4227,7 +4271,7 @@ export function PhaseGroupedSidebar() {
           {/* T3-CUSTOM(expbkt3): drafts alone are a populated sidebar, even when collapsed. */}
           {sections.every((section) => section.nodes.length === 0) &&
           visibleDraftCount === 0 &&
-          snoozedRows.length + settledRows.length === 0 ? (
+          runningNodes.length + snoozedRows.length + settledRows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
               <FilterIcon className="size-5 text-muted-foreground/40" />
               <p className="text-xs text-muted-foreground">No threads match these filters</p>
@@ -4244,6 +4288,19 @@ export function PhaseGroupedSidebar() {
           just above the footer, so their headers stay on screen and only the
           list above gives up height when anything else in the sidebar grows. */}
       <PhaseSidebarShelfDock
+        {...(runningNodes.length > 0
+          ? {
+              running: {
+                count: runningNodes.length,
+                collapsed: runningShelfCollapsed,
+                containsRoutedThread: runningShelfHoldsRoutedThread,
+                items: runningShelfCollapsed
+                  ? null
+                  : runningNodes.map((node) => renderTreeNode(node, true)),
+                onToggle: toggleRunningShelf,
+              },
+            }
+          : {})}
         snoozed={{
           count: snoozedRows.length,
           collapsed: snoozedShelfCollapsed,
@@ -4376,11 +4433,37 @@ function PhaseSidebarSectionBlock({
   const manageable =
     onRenameGroup !== undefined || onDeleteGroup !== undefined || onRecolorGroup !== undefined;
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  // A custom group says in words what needs you, open or closed, in place of
+  // its session count and the closed-header pills.
+  const summaryWords =
+    section.kind === "custom"
+      ? [
+          {
+            key: "attention",
+            count: summary.attention,
+            label: "asking",
+            className: "text-red-700 dark:text-red-300",
+          },
+          {
+            key: "unread",
+            count: summary.unread,
+            label: "unread",
+            className: "text-emerald-700 dark:text-emerald-300",
+          },
+          {
+            key: "running",
+            count: summary.running,
+            label: "running",
+            className: "text-sky-700 dark:text-sky-300",
+          },
+        ].filter((word) => word.count > 0)
+      : [];
+  const showPills = summaryWords.length === 0;
   const toggle = (
     <button
       type="button"
       aria-expanded={!collapsed}
-      aria-label={`${section.label}, ${section.nodes.length} session${section.nodes.length === 1 ? "" : "s"}${collapsed ? ", collapsed" : ""}`}
+      aria-label={`${section.label}, ${section.nodes.length} session${section.nodes.length === 1 ? "" : "s"}${summaryWords.map((word) => `, ${word.count} ${word.label}`).join("")}${collapsed ? ", collapsed" : ""}`}
       onClick={() => onToggleCollapsed(section.key)}
       className={cn(
         phaseSidebarSectionHeaderClassName(headerPhaseId),
@@ -4405,10 +4488,26 @@ function PhaseSidebarSectionBlock({
       <span className="truncate text-[11px] font-bold uppercase tracking-[0.1em]">
         {section.label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-[9px] text-current/55">
-        {section.helperText}
-      </span>
-      {collapsed && summary.attention > 0 ? (
+      {summaryWords.length > 0 ? (
+        <span
+          className="min-w-0 flex-1 truncate text-[9px] font-semibold"
+          data-testid="phase-sidebar-section-summary-words"
+        >
+          {summaryWords.map((word, index) => (
+            <Fragment key={word.key}>
+              {index > 0 ? <span className="text-current/40"> · </span> : null}
+              <span className={word.className}>
+                {word.count} {word.label}
+              </span>
+            </Fragment>
+          ))}
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-[9px] text-current/55">
+          {section.helperText}
+        </span>
+      )}
+      {showPills && collapsed && summary.attention > 0 ? (
         <span
           className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-red-700 dark:text-red-300"
           aria-label={`${summary.attention} waiting on you`}
@@ -4416,7 +4515,7 @@ function PhaseSidebarSectionBlock({
           {summary.attention}
         </span>
       ) : null}
-      {collapsed && summary.running > 0 ? (
+      {showPills && collapsed && summary.running > 0 ? (
         <span
           className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
           aria-label={`${summary.running} running`}
@@ -4424,7 +4523,7 @@ function PhaseSidebarSectionBlock({
           {summary.running}
         </span>
       ) : null}
-      {collapsed && summary.unread > 0 ? (
+      {showPills && collapsed && summary.unread > 0 ? (
         <span
           className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300"
           aria-label={`${summary.unread} unread`}

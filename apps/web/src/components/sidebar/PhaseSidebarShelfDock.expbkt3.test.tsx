@@ -34,7 +34,7 @@ const onToggle = vi.fn();
 const onShowMoreSettled = vi.fn();
 let renderer: ReactTestRenderer | null = null;
 
-function mount(props: Pick<PhaseSidebarShelfDockProps, "snoozed" | "settled">) {
+function mount(props: Pick<PhaseSidebarShelfDockProps, "running" | "snoozed" | "settled">) {
   act(() => {
     renderer = create(
       <PhaseSidebarShelfDock
@@ -108,5 +108,42 @@ describe("PhaseSidebarShelfDock", () => {
     const showMore = byTestId("phase-sidebar-settled-shelf-show-more")[0]!;
     act(() => showMore.props.onClick());
     expect(onShowMoreSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the Running shelf on top, open with its rows, and toggles it on its own", () => {
+    const onToggleRunning = vi.fn();
+    mount({
+      running: {
+        count: 1,
+        collapsed: false,
+        containsRoutedThread: false,
+        items: <li data-testid="row-running">r1</li>,
+        onToggle: onToggleRunning,
+      },
+      snoozed: shelf([], { collapsed: true }),
+      settled: shelf([], { collapsed: true }),
+    });
+
+    expect(byTestId("row-running")).toHaveLength(1);
+    act(() => byTestId("phase-sidebar-running-shelf-toggle")[0]!.props.onClick());
+    expect(onToggleRunning).toHaveBeenCalledTimes(1);
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("keeps a collapsed Running shelf to its header and marks the open thread", () => {
+    mount({
+      running: {
+        count: 2,
+        collapsed: true,
+        containsRoutedThread: true,
+        items: <li data-testid="row-running">r1</li>,
+        onToggle: vi.fn(),
+      },
+      snoozed: shelf([], { collapsed: true }),
+      settled: shelf([], { collapsed: true }),
+    });
+
+    expect(byTestId("row-running")).toHaveLength(0);
+    expect(byTestId("phase-sidebar-running-shelf-open-thread")).toHaveLength(1);
   });
 });
