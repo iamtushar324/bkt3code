@@ -3042,8 +3042,10 @@ export function PhaseGroupedSidebar() {
       for (const child of node.children) visit(child);
     };
     for (const group of groups) for (const node of group.nodes) visit(node);
+    // T3-CUSTOM(expbkt3): the Running shelf's trees are no longer in a group.
+    for (const node of runningNodes) visit(node);
     return keys;
-  }, [groups]);
+  }, [groups, runningNodes]);
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): Separate idle lifecycle groups from live agent work.
   // Only meaningful when the sections ARE lifecycle phases.
@@ -3289,6 +3291,7 @@ export function PhaseGroupedSidebar() {
     !visibleRowByKey.has(routeThreadKey) &&
     // T3-CUSTOM(expbkt3): a thread folded into a collapsed section or shelf is
     // not hidden by the filters; it is one header click away.
+    !runningShelfHoldsRoutedThread &&
     !snoozedShelf.containsRoutedThread &&
     !settledShelf.containsRoutedThread &&
     !sections.some(
