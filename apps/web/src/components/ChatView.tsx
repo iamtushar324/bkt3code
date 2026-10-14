@@ -10254,9 +10254,9 @@ export default function ChatView(props: ChatViewProps) {
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
         return;
+      // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
       const pendingApproval = pendingApprovals.find((approval) => approval.requestId === requestId);
       if (pendingApproval?.responseCapability !== "live") return;
-      // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
       trackProductEvent("approval.answered_in_ui", {
         threadId: activeThreadId,
         kind: pendingApproval.requestKind,
