@@ -155,27 +155,75 @@ function isTailnetIpv4(hostname: string): boolean {
 }
 
 /**
- * Properties PostHog adds to every event on its own. They carry the visited
- * URL (thread ids, draft ids) or the window title (thread titles), so they are
- * removed in `before_send`.
+ * Properties PostHog adds on its own that carry the visited URL (thread ids,
+ * `?repository=owner/repo`), the host, the referrer or the window title
+ * (thread titles). They are removed in `before_send`, from event properties
+ * and from `$set` / `$set_once`. Checked against posthog-js 1.438.
  */
 export const STRIPPED_POSTHOG_PROPERTIES = [
   "$current_url",
   "$pathname",
+  "$host",
   "$title",
   "$referrer",
   "$referring_domain",
-  "$initial_current_url",
-  "$initial_pathname",
-  "$initial_referrer",
-  "$initial_referring_domain",
-  "$initial_title",
-  "$prev_pageview_pathname",
+  "$external_click_url",
+  "$el_text",
+  "$elements",
+  "$elements_chain",
+  // Campaign and click ids are read from the URL query string.
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+  "gad_source",
+  "mc_cid",
+  "gclid",
+  "gclsrc",
+  "dclid",
+  "gbraid",
+  "wbraid",
+  "fbclid",
+  "msclkid",
+  "twclid",
+  "li_fat_id",
+  "igshid",
+  "ttclid",
+  "rdt_cid",
+  "epik",
+  "qclid",
+  "sccid",
+  "oppref",
+  "irclid",
+  "_kx",
 ] as const;
 
+/**
+ * Prefixes of PostHog property families built from the URL or referrer:
+ * `$initial_*` (first-touch person info), `$session_entry_*` (the session's
+ * entry URL, path, host and referrer), `$prev_pageview_*` (the previous path).
+ */
+export const STRIPPED_POSTHOG_PROPERTY_PREFIXES = [
+  "$initial_",
+  "$session_entry_",
+  "$prev_pageview_",
+] as const;
+
+const STRIPPED_PROPERTY_SET: ReadonlySet<string> = new Set(STRIPPED_POSTHOG_PROPERTIES);
+
+function isStrippedProperty(key: string): boolean {
+  return (
+    STRIPPED_PROPERTY_SET.has(key) ||
+    STRIPPED_POSTHOG_PROPERTY_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
 export function stripUrlProperties<T extends Record<string, unknown>>(properties: T): T {
-  const next: Record<string, unknown> = { ...properties };
-  for (const key of STRIPPED_POSTHOG_PROPERTIES) delete next[key];
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (!isStrippedProperty(key)) next[key] = value;
+  }
   return next as T;
 }
 

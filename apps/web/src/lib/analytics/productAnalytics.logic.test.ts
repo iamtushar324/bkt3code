@@ -128,6 +128,26 @@ describe("stripUrlProperties", () => {
       }),
     ).toEqual({ $browser: "Chrome", view: "/chat" });
   });
+
+  it("removes every session-entry, initial and previous-pageview property by prefix", () => {
+    expect(
+      stripUrlProperties({
+        $session_entry_url: "https://bkt3/pull-requests?repository=owner/repo",
+        $session_entry_pathname: "/pull-requests",
+        $session_entry_referrer: "https://github.com/owner/repo",
+        $session_entry_host: "bkt3",
+        $session_entry_some_future_key: "x",
+        $initial_person_info: { u: "https://bkt3/chat/env/thread", r: "$direct" },
+        $initial_referrer_info: { $referrer: "https://github.com" },
+        $prev_pageview_pathname: "/chat/env/thread",
+        $host: "dev-server-1.tailab6257.ts.net",
+        utm_source: "newsletter",
+        gclid: "abc",
+        $session_id: "s1",
+        instance: "bkt3",
+      }),
+    ).toEqual({ $session_id: "s1", instance: "bkt3" });
+  });
 });
 
 describe("createVisibilityReporter", () => {

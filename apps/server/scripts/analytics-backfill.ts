@@ -16,8 +16,11 @@
  *   --out <file.jsonl>   JSONL output path (default analytics-backfill.jsonl)
  *   --send               POST to ${T3CODE_POSTHOG_HOST}/batch/; the key comes
  *                        only from env T3CODE_POSTHOG_KEY
- *   --until <iso>        ignore events after this time. Set it to the moment
- *                        the live reactor started, so the two never overlap.
+ *   --until <iso>        ignore events after this time; required with --send.
+ *                        Set it to the moment the live reactor started, so
+ *                        the two never overlap.
+ *
+ * Events with no user whose email is known are skipped (see toBatchItem).
  *   --report-days <n>    print per-state hours for the last n days (default 7)
  *
  * Events are processed one thread at a time, sorted by `occurredAt`: imported
@@ -239,7 +242,9 @@ function loadUserEmails(db: NodeSqlite.DatabaseSync): Map<string, string> {
   for (const row of db
     .prepare("SELECT user_id, primary_email FROM environment_users")
     .all() as Array<{ user_id: string; primary_email: string | null }>) {
-    if (row.primary_email) emails.set(row.user_id, row.primary_email);
+    // Same normalisation as analyticsIdentity.ts, so live and backfill name one person.
+    const email = row.primary_email?.trim().toLowerCase() ?? "";
+    if (email !== "") emails.set(row.user_id, email);
   }
   return emails;
 }
@@ -252,22 +257,34 @@ interface BatchItem {
   readonly properties: Rec;
 }
 
+/**
+ * The PostHog item for an emission, or undefined when no person is known.
+ *
+ * Live sends an unattributed event under the server install's anonymous id,
+ * which comes from that machine's T3 home, not from the database, so a copy
+ * cannot reproduce it. Inventing another id would create a fake person, so
+ * the backfill skips these events instead. Nearly every session has an owner,
+ * so very little is lost. `--until` keeps the backfill and live from covering
+ * the same time, so this cannot break live/backfill de-duplication; re-runs of
+ * the backfill stay de-duplicated by the stable uuid.
+ */
 function toBatchItem(
   emission: SessionActivityEmission,
   emails: ReadonlyMap<string, string>,
   instance: string,
-): BatchItem {
+): BatchItem | undefined {
   const email = emission.userId === undefined ? undefined : emails.get(emission.userId);
+  if (email === undefined) return undefined;
   return {
     uuid: uuidFromInsertId(emission.insertId),
     event: emission.event,
-    distinct_id: email ?? `bkt3-instance:${instance}`,
+    distinct_id: email,
     timestamp: emission.timestamp,
     properties: {
       ...emission.properties,
       backfill: true,
       $insert_id: emission.insertId,
-      $process_person_profile: email !== undefined,
+      $process_person_profile: true,
       $groups: { instance },
       instance,
     },
@@ -302,6 +319,12 @@ async function main() {
   const apiKey = process.env.T3CODE_POSTHOG_KEY ?? "";
   const instance = process.env.T3CODE_ANALYTICS_INSTANCE ?? "unknown";
   if (options.send && apiKey.trim() === "") fail("--send needs env T3CODE_POSTHOG_KEY");
+  if (options.send && options.untilMs === undefined) {
+    fail(
+      "--send needs --until <iso>: the time the live reactor started. Without it the backfill " +
+        "and the live server can both report the same time.",
+    );
+  }
 
   const db = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
   const emails = loadUserEmails(db);
@@ -318,6 +341,7 @@ async function main() {
   let latestMs = 0;
   let pending: Array<BatchItem> = [];
   let sent = 0;
+  let unattributed = 0;
 
   const flush = async () => {
     if (pending.length === 0) return;
@@ -342,7 +366,12 @@ async function main() {
           stateHours.set(state, (stateHours.get(state) ?? 0) + hours);
         }
       }
-      pending.push(toBatchItem(emission, emails, instance));
+      const item = toBatchItem(emission, emails, instance);
+      if (item === undefined) {
+        unattributed += 1;
+        continue;
+      }
+      pending.push(item);
       if (pending.length >= BATCH_SIZE) await flush();
     }
   };
@@ -390,6 +419,7 @@ async function main() {
   console.log(`threads replayed: ${threads}`);
   console.log(`latest event: ${latestMs > 0 ? new Date(latestMs).toISOString() : "none"}`);
   console.log(options.send ? `sent: ${sent} events` : `wrote: ${options.outPath}`);
+  console.log(`skipped, no known user email: ${unattributed}`);
   console.log("events by type:");
   for (const [event, count] of [...counts].sort((a, b) => b[1] - a[1])) {
     console.log(`  ${event}: ${count}`);

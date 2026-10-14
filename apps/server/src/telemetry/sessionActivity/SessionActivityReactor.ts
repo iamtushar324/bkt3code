@@ -5,8 +5,9 @@
  * (`SessionActivityReducer.ts`) and records what it emits through
  * `AnalyticsService`. On boot it seeds open sessions from one shell snapshot
  * read, so their first span carries `resumedAfterRestart: true`. On shutdown it
- * closes every open span with `endReason: "server_stopped"`. Every five
- * minutes it records a `session.state.snapshot` for concurrency and peak load.
+ * closes the spans of active sessions (not idle or archived ones) with
+ * `endReason: "server_stopped"`. Every five minutes it records a
+ * `session.state.snapshot` for concurrency and peak load.
  *
  * It does nothing, not even subscribe, when telemetry is off or no PostHog key
  * is set.
@@ -90,7 +91,7 @@ export const layer = Layer.effectDiscard(
     // Runs before AnalyticsService's own finalizer, which flushes the buffer.
     yield* Effect.addFinalizer(() =>
       Clock.currentTimeMillis.pipe(
-        Effect.flatMap((nowMs) => record(tracker.closeAll(nowMs, "server_stopped"))),
+        Effect.flatMap((nowMs) => record(tracker.closeActive(nowMs, "server_stopped"))),
       ),
     );
   }),

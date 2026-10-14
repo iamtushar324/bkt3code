@@ -68,15 +68,17 @@ export function ProductAnalyticsCoordinator() {
   );
 }
 
-/** Identifies by work email; falls back to the server user id when it is unknown. */
+/**
+ * Identifies by work email only, as the server does. Without an email the
+ * events stay anonymous, and posthog-js merges them once the email arrives.
+ */
 function ProductAnalyticsIdentity() {
   const userId = useCurrentUserId();
   const { resolveUser } = useOrgMembers();
   const email = userId === null ? null : resolveUser(userId).email;
-  const distinctId = email ?? userId;
   useEffect(() => {
-    productAnalytics.identify(distinctId);
-  }, [distinctId]);
+    productAnalytics.identify(email);
+  }, [email]);
   return null;
 }
 

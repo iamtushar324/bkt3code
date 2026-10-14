@@ -39,9 +39,11 @@
  * (Claude Agent tool transcripts) are not sessions; their time is the parent's
  * `agent_running` or `waiting_workers` time.
  *
- * Spans are split at UTC midnight, so per-day sums are exact. A span that
- * started before a server restart is closed with `endReason: "server_stopped"`;
- * the next server opens a new one with `resumedAfterRestart: true`.
+ * Spans are split at UTC midnight, so per-day sums are exact. A state that
+ * lasts no time (several events share one millisecond) emits no span. At
+ * shutdown, spans of active states close with `endReason: "server_stopped"`;
+ * idle and archived spans are dropped. The next server seeds every open
+ * session and opens new spans with `resumedAfterRestart: true`.
  *
  * Properties hold only ids, enums, counts, durations and timestamps. Never add
  * prompt, message, title, question or answer text, paths, branches or
@@ -418,6 +420,8 @@ interface ThreadTrack {
   readonly decidedPlans: Set<string>;
   readonly subagents: Map<string, SubagentInfo>;
   readonly finishedSubagents: Set<string>;
+  /** Runs already reported; later metadata-only updates of them are ignored. */
+  readonly finishedRuns: Set<string>;
   readonly backgroundTools: Set<string>;
   readonly rosterTasks: Map<string, number>;
   /** Workers a restart seed counted without ids; cleared by the next worker event. */
@@ -444,6 +448,7 @@ function newThread(threadId: string): ThreadTrack {
     decidedPlans: new Set(),
     subagents: new Map(),
     finishedSubagents: new Set(),
+    finishedRuns: new Set(),
     backgroundTools: new Set(),
     rosterTasks: new Map(),
     seededWorkers: 0,
@@ -490,8 +495,16 @@ export interface SessionActivityTracker {
    * span it opens at `nowMs` carries `resumedAfterRestart: true`.
    */
   readonly seed: (shell: unknown, nowMs: number) => void;
-  /** Close every open span, for example with `server_stopped` on shutdown. */
-  readonly closeAll: (nowMs: number, endReason: string) => ReadonlyArray<SessionActivityEmission>;
+  /**
+   * Close the open spans of active states (everything but `idle` and
+   * `archived`), for example with `server_stopped` on shutdown. Idle and
+   * archived time is cheap to lose and is resumed by the next boot's seed, so
+   * shutdown records only the few spans that matter within its time budget.
+   */
+  readonly closeActive: (
+    nowMs: number,
+    endReason: string,
+  ) => ReadonlyArray<SessionActivityEmission>;
   /** Point-in-time counts: one event per (owner, state), plus one totals event. */
   readonly snapshot: (nowMs: number) => ReadonlyArray<SessionActivityEmission>;
 }
@@ -635,7 +648,10 @@ export function makeSessionActivityTracker(
     endMs: number,
     endReason: string,
   ): ReadonlyArray<SessionActivityEmission> => {
-    const end = Math.max(endMs, span.startMs);
+    // Several events can share one millisecond. A state that lasted no time is
+    // not a span, and emitting it would also reuse the next span's insert id.
+    if (endMs <= span.startMs) return [];
+    const end = endMs;
     const run = span.run;
     const common = {
       ...baseProps(t),
@@ -672,7 +688,14 @@ export function makeSessionActivityTracker(
           t,
           "session.state.span",
           segmentEnd,
-          `session.state.span|${t.threadId}|${segmentStart}`,
+          [
+            "session.state.span",
+            t.threadId,
+            span.state,
+            span.waitKind ?? "",
+            run?.id ?? "",
+            segmentStart,
+          ].join("|"),
           {
             ...common,
             durationMs: segmentEnd - segmentStart,
@@ -703,7 +726,10 @@ export function makeSessionActivityTracker(
       t.span.maxWorkers = Math.max(t.span.maxWorkers, workers);
       return;
     }
-    if (t.span !== undefined) out.push(...spanEmissions(t, t.span, atMs, next.state));
+    const previous = t.span;
+    if (previous !== undefined) out.push(...spanEmissions(t, previous, atMs, next.state));
+    // A replaced zero-length span hands on its restart flag.
+    const carriesResume = previous !== undefined && previous.startMs >= atMs && previous.resumed;
     t.span = {
       key,
       state: next.state,
@@ -711,7 +737,7 @@ export function makeSessionActivityTracker(
       snoozed,
       ...(next.run === undefined ? {} : { run: next.run }),
       startMs: atMs,
-      resumed: t.resumeNextSpan,
+      resumed: t.resumeNextSpan || carriesResume,
       maxWorkers: workers,
     };
     t.resumeNextSpan = false;
@@ -786,6 +812,7 @@ export function makeSessionActivityTracker(
     out: Array<SessionActivityEmission>,
   ) => {
     run.finished = true;
+    rememberBounded(t.finishedRuns, run.id);
     t.runs.delete(run.id);
     t.lastRun = run;
     const completedAtMs = run.completedAtMs ?? atMs;
@@ -834,7 +861,9 @@ export function makeSessionActivityTracker(
   ) => {
     const id = str(payload, "id");
     if (id === undefined) return;
-    if (t.lastRun?.id === id && t.lastRun.finished) return;
+    // A finished run keeps receiving updates (delivery acknowledgements and
+    // the like). Re-reading one would report it twice, and as an imported run.
+    if (t.finishedRuns.has(id)) return;
     let run = t.runs.get(id);
     const firstSeen = run === undefined;
     if (run === undefined) {
@@ -1263,10 +1292,12 @@ export function makeSessionActivityTracker(
     reconcile(t, nowMs, []);
   };
 
-  const closeAll: SessionActivityTracker["closeAll"] = (nowMs, endReason) => {
+  const closeActive: SessionActivityTracker["closeActive"] = (nowMs, endReason) => {
     const out: Array<SessionActivityEmission> = [];
     for (const t of threads.values()) {
-      if (t.span === undefined) continue;
+      if (t.span === undefined || t.span.state === "idle" || t.span.state === "archived") {
+        continue;
+      }
       out.push(...spanEmissions(t, t.span, nowMs, endReason));
       delete t.span;
     }
@@ -1332,5 +1363,5 @@ export function makeSessionActivityTracker(
     return out;
   };
 
-  return { apply, seed, closeAll, snapshot };
+  return { apply, seed, closeActive, snapshot };
 }

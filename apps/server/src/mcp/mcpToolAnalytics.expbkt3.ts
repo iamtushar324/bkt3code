@@ -30,7 +30,8 @@ export function withMcpToolCallAnalytics<Handlers>(handlers: Handlers): Handlers
         ? (...args: ReadonlyArray<unknown>) => {
             const result = (handler as (...params: ReadonlyArray<unknown>) => unknown)(...args);
             return Effect.isEffect(result)
-              ? withMcpToolAnalytics(toolName, currentCaller, result)
+              ? // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- handlers are heterogeneous; types pass through unchanged.
+                withMcpToolAnalytics(toolName, currentCaller, result)
               : result;
           }
         : handler;

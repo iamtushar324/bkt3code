@@ -361,6 +361,76 @@ describe("SessionActivityReducer", () => {
     assert.strictEqual(decided?.properties.waitMs, 600_000);
   });
 
+  it("keeps both spans when one run ends and the next starts in the same millisecond", () => {
+    const runB = (status: string, fields: Record<string, unknown> = {}) =>
+      runPayload(status, { id: "run-B", ordinal: 74, requestedAt: at("09:03:00.000"), ...fields });
+    const { out } = feed([
+      created,
+      event("run.created", at("09:01:00.000"), startedRun("09:01:00.000")),
+      event("run.created", at("09:03:00.000"), runB("queued")),
+      event(
+        "run.updated",
+        at("09:05:00.000"),
+        runPayload("completed", { startedAt: at("09:01:00.000"), completedAt: at("09:05:00.000") }),
+      ),
+      event("run.updated", at("09:05:00.000"), runB("running", { startedAt: at("09:05:00.000") })),
+      event(
+        "run.updated",
+        at("09:07:00.000"),
+        runB("completed", { startedAt: at("09:05:00.000"), completedAt: at("09:07:00.000") }),
+      ),
+    ]);
+    const emitted = spans(out);
+    assert.deepStrictEqual(
+      emitted.map((span) => [
+        span.properties.state,
+        span.properties.runId,
+        span.properties.durationMs,
+      ]),
+      [
+        ["idle", undefined, 60_000],
+        ["agent_running", RUN, 240_000],
+        ["agent_running", "run-B", 120_000],
+      ],
+    );
+    assert.ok(emitted.every((span) => Number(span.properties.durationMs) > 0));
+    assert.strictEqual(new Set(emitted.map((span) => span.insertId)).size, emitted.length);
+  });
+
+  it("ignores later updates of a run it already reported", () => {
+    const doneA = runPayload("completed", {
+      startedAt: at("09:01:00.000"),
+      completedAt: at("09:05:00.000"),
+    });
+    const { out } = feed([
+      created,
+      event("run.created", at("09:01:00.000"), startedRun("09:01:00.000")),
+      event("run.updated", at("09:05:00.000"), doneA),
+      event(
+        "run.created",
+        at("09:10:00.000"),
+        runPayload("completed", {
+          id: "run-B",
+          ordinal: 74,
+          startedAt: at("09:10:00.000"),
+          completedAt: at("09:10:00.000"),
+        }),
+      ),
+      // A delivery acknowledgement re-writes run A long after it finished.
+      event("run.updated", at("09:30:00.000"), doneA),
+      event("thread.visited", at("09:40:00.000"), threadPayload()),
+    ]);
+    const finishedA = out.filter(
+      (emission) => emission.event === "run.finished" && emission.properties.runId === RUN,
+    );
+    assert.strictEqual(finishedA.length, 1);
+    const runningSpans = spans(out).filter((span) => span.properties.state === "agent_running");
+    assert.deepStrictEqual(
+      runningSpans.map((span) => span.properties.runId),
+      [RUN],
+    );
+  });
+
   it("splits a span at UTC midnight", () => {
     const tracker = makeSessionActivityTracker({ backfill: false });
     tracker.apply(event("thread.created", "2026-10-09T22:00:00.000Z", threadPayload()));
@@ -446,7 +516,7 @@ describe("SessionActivityReducer", () => {
     assert.strictEqual(perUser?.userId, OWNER);
     assert.strictEqual(perUser?.properties.count, 1);
 
-    const closed = tracker.closeAll(bootMs + 60_000, "server_stopped");
+    const closed = tracker.closeActive(bootMs + 60_000, "server_stopped");
     assert.strictEqual(closed.length, 1);
     assert.strictEqual(closed[0]?.properties.state, "agent_running");
     assert.strictEqual(closed[0]?.properties.resumedAfterRestart, true);
@@ -496,7 +566,7 @@ describe("SessionActivityReducer", () => {
     const all = [
       ...out,
       ...tracker.snapshot(epoch(at("11:00:00.000"))),
-      ...tracker.closeAll(epoch(at("12:00:00.000")), "server_stopped"),
+      ...tracker.closeActive(epoch(at("12:00:00.000")), "server_stopped"),
     ];
     const allowed = new Set<string>(SESSION_ACTIVITY_PROPERTY_KEYS);
     for (const emission of all) {

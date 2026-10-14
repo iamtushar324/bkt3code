@@ -34,7 +34,7 @@ export interface ProductAnalyticsContext {
 /** The part of the PostHog client this module calls. */
 export type ProductAnalyticsClient = Pick<
   PostHog,
-  "capture" | "identify" | "register" | "opt_out_capturing"
+  "capture" | "identify" | "register" | "opt_in_capturing"
 >;
 
 export type ProductAnalyticsLoader = (
@@ -49,7 +49,6 @@ const MAX_PENDING_EVENTS = 50;
 interface ActiveSession {
   readonly key: string;
   client: ProductAnalyticsClient | null;
-  closed: boolean;
   readonly pending: Array<{ event: string; properties: Record<string, unknown> }>;
 }
 
@@ -86,28 +85,45 @@ function postHogOptions(host: string): Partial<PostHogConfig> {
   };
 }
 
+/** Matches the server's distinct id (`analyticsIdentity.ts`): trimmed, lower case. */
+export function normalizeAnalyticsEmail(email: string | null | undefined): string | null {
+  const normalized = email?.trim().toLowerCase() ?? "";
+  return normalized.includes("@") ? normalized : null;
+}
+
 export function createProductAnalytics(load: ProductAnalyticsLoader = loadPostHog) {
+  // One PostHog instance per key for the page's life. Turning analytics off only
+  // stops forwarding: `opt_out_capturing` would persist for a year per token,
+  // so a brief config flap must never reach it.
+  const clients = new Map<string, Promise<ProductAnalyticsClient>>();
+  const identifiedAs = new WeakMap<ProductAnalyticsClient, string>();
   let session: ActiveSession | null = null;
   let superProperties: Record<string, string> = {};
-  let distinctId: string | null = null;
-  let identifiedAs: string | null = null;
-  let sessionCount = 0;
+  let email: string | null = null;
   let lastInputWasKeyboard = false;
 
   const applyIdentity = (client: ProductAnalyticsClient) => {
     client.register(superProperties);
-    if (distinctId !== null && identifiedAs !== distinctId) {
-      client.identify(distinctId);
-      identifiedAs = distinctId;
+    // Until the email is known, events stay anonymous; identify(email) later
+    // merges them into the person. Identifying by a user id first would split it.
+    if (email !== null && identifiedAs.get(client) !== email) {
+      client.identify(email);
+      identifiedAs.set(client, email);
     }
   };
 
-  const close = () => {
-    if (session === null) return;
-    session.closed = true;
-    session.client?.opt_out_capturing();
-    session = null;
-    identifiedAs = null;
+  const clientFor = (key: string, host: string): Promise<ProductAnalyticsClient> => {
+    const existing = clients.get(key);
+    if (existing !== undefined) return existing;
+    const created = load(key, postHogOptions(host), `bkt3_${clients.size + 1}`).then((client) => {
+      // Clears an opt-out a build that still called opt_out_capturing persisted.
+      client.opt_in_capturing({ captureEventName: null });
+      return client;
+    });
+    clients.set(key, created);
+    // A failed load may be retried by the next configure.
+    created.catch(() => clients.delete(key));
+    return created;
   };
 
   return {
@@ -121,28 +137,18 @@ export function createProductAnalytics(load: ProductAnalyticsLoader = loadPostHo
         ...(context.connectionMode === null ? {} : { connectionMode: context.connectionMode }),
       };
       if (config === null) {
-        close();
+        session = null;
         return;
       }
       if (session !== null && session.key === config.posthogKey) {
         if (session.client !== null) applyIdentity(session.client);
         return;
       }
-      close();
-      const next: ActiveSession = {
-        key: config.posthogKey,
-        client: null,
-        closed: false,
-        pending: [],
-      };
+      const next: ActiveSession = { key: config.posthogKey, client: null, pending: [] };
       session = next;
-      sessionCount += 1;
-      void load(config.posthogKey, postHogOptions(config.posthogHost), `bkt3_${sessionCount}`)
+      clientFor(config.posthogKey, config.posthogHost)
         .then((client) => {
-          if (next.closed) {
-            client.opt_out_capturing();
-            return;
-          }
+          if (session !== next) return;
           next.client = client;
           applyIdentity(client);
           for (const { event, properties } of next.pending.splice(0)) {
@@ -155,9 +161,11 @@ export function createProductAnalytics(load: ProductAnalyticsLoader = loadPostHo
         });
     },
 
-    /** The user's work email, or the server user id when the email is unknown. */
-    identify(id: string | null): void {
-      distinctId = id;
+    /** The user's work email. Anything that is not an email is ignored. */
+    identify(rawEmail: string | null): void {
+      const normalized = normalizeAnalyticsEmail(rawEmail);
+      if (normalized === null) return;
+      email = normalized;
       if (session?.client) applyIdentity(session.client);
     },
 
