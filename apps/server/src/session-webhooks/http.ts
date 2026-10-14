@@ -12,6 +12,7 @@ import {
 import { SessionWebhookError } from "@t3tools/contracts";
 import { SessionWebhookService } from "./SessionWebhookService.ts";
 import { MAX_CALLBACK_BYTES } from "./protocol.ts";
+import { recordWebhookDelivered, webhookStatusFromHttp } from "../telemetry/serverEvents.ts";
 const isSessionWebhookError = Schema.is(SessionWebhookError);
 export const sessionWebhookRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -52,6 +53,10 @@ export const sessionWebhookRouteLayer = Layer.unwrap(
                 { status: 503 },
               ),
             ),
+      ),
+      // Product analytics: the answer's status class only (TEC-1631).
+      Effect.tap((response) =>
+        recordWebhookDelivered("session_callback", webhookStatusFromHttp(response.status)),
       ),
     );
     return HttpRouter.add("POST", "/api/session-webhooks/:webhookId", receive);

@@ -40,6 +40,8 @@ import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcome
 import { PlanAgentSelectionHeal } from "../fork/PlanAgentSelectionHeal";
 // T3-CUSTOM(expbkt3): delivery runs independently of the selected thread or draft.
 import { DurableOutboxCoordinator } from "../fork/DurableOutboxCoordinator";
+// T3-CUSTOM(expbkt3): product analytics, off unless the primary environment enables it.
+import { ProductAnalyticsCoordinator } from "../lib/analytics/ProductAnalyticsCoordinator";
 import { ProviderAuthCallbackCoordinator } from "../components/settings/ProviderAuthCallbackCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -228,6 +230,7 @@ function RootRouteView() {
         <ChatGptWelcomeCoordinator />
         {/* T3-CUSTOM(expbkt3): heal saved plan-agent options after authenticated settings load. */}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+        {primaryEnvironmentAuthenticated ? <ProductAnalyticsCoordinator /> : null}
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
           hostedStatic={authGateState.status === "hosted-static"}

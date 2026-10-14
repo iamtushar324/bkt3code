@@ -23,7 +23,7 @@ interface RecordedBatchRequest {
     readonly batch?: ReadonlyArray<{
       readonly event?: string;
       readonly properties?: {
-        readonly index?: number;
+        readonly count?: number;
         readonly clientType?: string;
         readonly serverOs?: string;
         readonly serverArch?: string;
@@ -39,7 +39,7 @@ interface RecordedBatchBody {
   readonly batch: ReadonlyArray<{
     readonly event?: string;
     readonly properties?: {
-      readonly index?: number;
+      readonly count?: number;
       readonly clientType?: string;
       readonly serverOs?: string;
       readonly serverArch?: string;
@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       yield* Effect.gen(function* () {
         const analytics = yield* AnalyticsService.AnalyticsService;
         for (let index = 0; index < 20; index += 1) {
-          yield* analytics.record("test.retry", { index });
+          yield* analytics.record("test.retry", { count: index });
         }
         // Before the fix this loop sent the batch about once a second.
         for (let second = 0; second < 600; second += 1) {
@@ -181,7 +181,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         const analytics = yield* AnalyticsService.AnalyticsService;
 
         for (let index = 0; index < 45; index += 1) {
-          yield* analytics.record("test.flush.drain", { index });
+          yield* analytics.record("test.flush.drain", { count: index });
         }
 
         yield* analytics.flush;
@@ -201,7 +201,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const deliveredIndexes = batchRequests.flatMap((request) =>
         request.body.batch
           .filter((event) => event.event === "test.flush.drain")
-          .map((event) => event.properties?.index)
+          .map((event) => event.properties?.count)
           .filter((index): index is number => typeof index === "number"),
       );
 
@@ -267,7 +267,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       yield* Effect.gen(function* () {
         yield* Layer.launch(layerBatchServer).pipe(Effect.forkScoped);
         const analytics = yield* AnalyticsService.AnalyticsService;
-        yield* analytics.record("test.disabled", { index: 1 });
+        yield* analytics.record("test.disabled", { count: 1 });
         yield* analytics.flush;
       }).pipe(Effect.provide(layerRuntime));
 

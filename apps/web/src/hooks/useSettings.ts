@@ -53,6 +53,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+// T3-CUSTOM(expbkt3): product analytics (TEC-1631).
+import { trackSettingsChanged } from "~/lib/analytics/productAnalytics";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -477,6 +479,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
+      trackSettingsChanged(Object.keys(patch));
       const { serverPatch, clientPatch } = splitPatch(patch);
 
       const canWriteServerPatch =
@@ -577,6 +580,7 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
+    trackSettingsChanged(Object.keys(patch));
     return persistClientSettingsPatch(patch);
   }, []);
 }
