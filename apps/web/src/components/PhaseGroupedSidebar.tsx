@@ -2564,19 +2564,16 @@ export function PhaseGroupedSidebar() {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const sortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmArchive = useClientSettings((settings) => settings.confirmThreadArchive);
-  // Auto-settle thresholds are server preferences (the server settles threads
-  // with no client attached), so read the primary server's values.
+  // A row's new thread falls back to the primary server's saved defaults.
   const serverSettings = useAtomValue(primaryServerSettingsAtom);
   // A row's new thread starts with the saved defaults of the row's own
   // environment and project, not the primary environment's.
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
-  const autoSettleAfterDays = serverSettings.sidebarAutoSettleAfterDays;
-  const autoSettleOnMerge = serverSettings.sidebarAutoSettleOnMerge;
   const currentUserId = useCurrentUserId();
   // T3-CUSTOM(expbkt3): BEGIN — settle/snooze clocks. `now` is quantized to
   // the minute so the settled partition does not churn on every render
-  // (auto-settle thresholds are day-granular anyway); snooze wake times are
+  // (it only ages the queued-turn blocker); snooze wake times are
   // second-precise, so a separate tick fires exactly at the next wake
   // boundary and the partition reads a fresh clock when it recomputes.
   const nowMinute = useNowMinute();
@@ -2793,14 +2790,11 @@ export function PhaseGroupedSidebar() {
     // matching child stays reachable. Each section applies the filter below.
     return partitionPhaseSidebarRows(
       allRows.filter((row) => row.thread.archivedAt === null),
-      {
-        now: nowMinute,
-        preciseNow: new Date().toISOString(),
-        autoSettleAfterDays,
-        autoSettleOnMerge,
-      },
+      // TEC-1306: settled comes from the server, which applies each project's
+      // auto-settle override; the primary server's global window does not.
+      { now: nowMinute, preciseNow: new Date().toISOString() },
     );
-  }, [allRows, autoSettleAfterDays, autoSettleOnMerge, nowMinute, snoozeWakeTick]);
+  }, [allRows, nowMinute, snoozeWakeTick]);
   // T3-CUSTOM(expbkt3): the shelves are flat history lists, so they filter
   // row-by-row as before. Only the lifecycle groups nest.
   const activeRows = unfilteredActiveRows;
