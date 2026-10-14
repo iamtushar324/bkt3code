@@ -30,8 +30,8 @@
  * `$insert_id` and uuid, so a re-run does not duplicate events.
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
@@ -107,8 +107,8 @@ function parseArgs(argv: ReadonlyArray<string>): Options {
 
 /** Refuses any state file under a T3 home `userdata` directory: those are live. */
 function assertNotLiveState(dbPath: string): string {
-  const resolved = NodeFs.realpathSync(dbPath);
-  const t3Home = NodePath.join(NodeOs.homedir(), ".t3");
+  const resolved = NodeFS.realpathSync(dbPath);
+  const t3Home = NodePath.join(NodeOS.homedir(), ".t3");
   const relative = NodePath.relative(t3Home, resolved);
   const insideT3Home = !relative.startsWith("..") && !NodePath.isAbsolute(relative);
   if (insideT3Home && relative.split(NodePath.sep).includes("userdata")) {
@@ -330,7 +330,7 @@ async function main() {
   const emails = loadUserEmails(db);
   const tracker = makeSessionActivityTracker({ backfill: true });
 
-  const out = options.send ? undefined : NodeFs.openSync(options.outPath, "w");
+  const out = options.send ? undefined : NodeFS.openSync(options.outPath, "w");
   const counts = new Map<string, number>();
   const stateHours = new Map<string, number>();
   const newest = db
@@ -351,7 +351,7 @@ async function main() {
       await sendBatch(host, apiKey, batch);
       sent += batch.length;
     } else if (out !== undefined) {
-      NodeFs.writeSync(out, batch.map((item) => JSON.stringify(item)).join("\n") + "\n");
+      NodeFS.writeSync(out, batch.map((item) => JSON.stringify(item)).join("\n") + "\n");
     }
   };
 
@@ -413,7 +413,7 @@ async function main() {
   }
   if (threadId !== undefined) await replayThread();
   await flush();
-  if (out !== undefined) NodeFs.closeSync(out);
+  if (out !== undefined) NodeFS.closeSync(out);
   db.close();
 
   console.log(`threads replayed: ${threads}`);

@@ -48,7 +48,7 @@ const MAX_PENDING_EVENTS = 50;
 
 interface ActiveSession {
   readonly key: string;
-  client: ProductAnalyticsClient | null;
+  posthog: ProductAnalyticsClient | null;
   readonly pending: Array<{ event: string; properties: Record<string, unknown> }>;
 }
 
@@ -141,15 +141,15 @@ export function createProductAnalytics(load: ProductAnalyticsLoader = loadPostHo
         return;
       }
       if (session !== null && session.key === config.posthogKey) {
-        if (session.client !== null) applyIdentity(session.client);
+        if (session.posthog !== null) applyIdentity(session.posthog);
         return;
       }
-      const next: ActiveSession = { key: config.posthogKey, client: null, pending: [] };
+      const next: ActiveSession = { key: config.posthogKey, posthog: null, pending: [] };
       session = next;
       clientFor(config.posthogKey, config.posthogHost)
         .then((client) => {
           if (session !== next) return;
-          next.client = client;
+          next.posthog = client;
           applyIdentity(client);
           for (const { event, properties } of next.pending.splice(0)) {
             client.capture(event, properties);
@@ -166,14 +166,14 @@ export function createProductAnalytics(load: ProductAnalyticsLoader = loadPostHo
       const normalized = normalizeAnalyticsEmail(rawEmail);
       if (normalized === null) return;
       email = normalized;
-      if (session?.client) applyIdentity(session.client);
+      if (session?.posthog) applyIdentity(session.posthog);
     },
 
     track(event: ProductAnalyticsEvent, properties?: Readonly<Record<string, unknown>>): void {
       if (session === null) return;
       const clean = sanitizeAnalyticsProperties(event, properties);
-      if (session.client !== null) {
-        session.client.capture(event, clean);
+      if (session.posthog !== null) {
+        session.posthog.capture(event, clean);
         return;
       }
       if (session.pending.length >= MAX_PENDING_EVENTS) session.pending.shift();
