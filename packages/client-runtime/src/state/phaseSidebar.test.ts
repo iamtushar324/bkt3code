@@ -153,7 +153,6 @@ describe("Hermes compatibility", () => {
       const partition = partitionPhaseSidebarRows(threads.map(makeRow), {
         now,
         preciseNow: now,
-        autoSettleAfterDays: null,
       });
       return {
         partition,

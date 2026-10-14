@@ -159,6 +159,10 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
+The settled shelf shows a thread only once its environment has settled it, so a project's own
+auto-settle rules and a thread's **Disabled** option hold in every sidebar. A thread that qualifies
+moves within about a minute.
+
 Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.

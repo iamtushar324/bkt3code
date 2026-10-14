@@ -1604,7 +1604,7 @@ describe("phase sidebar metadata and filters", () => {
 describe("partitionPhaseSidebarRows", () => {
   const future = "2026-07-16T14:00:00.000Z";
   const past = "2026-07-16T09:00:00.000Z";
-  const partitionOptions = { now, preciseNow: now, autoSettleAfterDays: null };
+  const partitionOptions = { now, preciseNow: now };
   const keysOf = (rows: ReadonlyArray<PhaseSidebarRow>) => rows.map((row) => row.thread.id);
 
   it("moves an explicitly settled thread off the lifecycle groups", () => {
@@ -1726,6 +1726,46 @@ describe("partitionPhaseSidebarRows", () => {
 
     expect(partition.settledRows).toHaveLength(1);
     expect(partition.snoozedRows).toHaveLength(0);
+  });
+
+  // TEC-1306: the sidebar used the primary server's global window, so a group
+  // whose override turned auto-settle off still saw its threads parked.
+  it("keeps a long-idle thread active until its server settles it", () => {
+    const idleSince = "2026-06-01T09:00:00.000Z";
+    const row = makeRow({
+      thread: makeThread({
+        createdAt: idleSince,
+        updatedAt: idleSince,
+        latestUserMessageAt: idleSince,
+        latestRun: {
+          runId: RunId.make("turn-idle"),
+          status: "completed",
+          requestedAt: idleSince,
+          startedAt: idleSince,
+          completedAt: idleSince,
+          assistantMessageId: null,
+        },
+      }),
+    });
+
+    const { activeRows, settledRows } = partitionPhaseSidebarRows([row], partitionOptions);
+
+    expect(activeRows).toHaveLength(1);
+    expect(settledRows).toHaveLength(0);
+  });
+
+  it("keeps a merged or closed change request active until its server settles it", () => {
+    const merged = makeRow({ changeRequestState: "merged", changeRequestUpdatedAt: now });
+    const closedOptedOut = makeRow({
+      thread: makeThread({ id: ThreadId.make("thread-2"), autoSettleDisabledAt: past }),
+      changeRequestState: "closed",
+      changeRequestUpdatedAt: now,
+    });
+
+    const partition = partitionPhaseSidebarRows([merged, closedOptedOut], partitionOptions);
+
+    expect(partition.activeRows).toHaveLength(2);
+    expect(partition.settledRows).toHaveLength(0);
   });
 
   it("excludes archived rows from every section", () => {
