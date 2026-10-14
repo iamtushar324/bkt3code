@@ -479,6 +479,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
+      // T3-CUSTOM(expbkt3): TEC-1631 product analytics
       trackSettingsChanged(Object.keys(patch));
       const { serverPatch, clientPatch } = splitPatch(patch);
 
@@ -580,6 +581,7 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
+    // T3-CUSTOM(expbkt3): TEC-1631 product analytics
     trackSettingsChanged(Object.keys(patch));
     return persistClientSettingsPatch(patch);
   }, []);
