@@ -250,6 +250,23 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — product analytics config for the client (TEC-1631).
+/**
+ * Where a client sends its product analytics for this environment. Present
+ * only when the server has an explicit PostHog project key and telemetry is
+ * on, so the client bundle never carries a key of its own. `posthogKey` is a
+ * public write-only `phc_` key.
+ */
+export const ExecutionEnvironmentAnalytics = Schema.Struct({
+  enabled: Schema.Boolean,
+  posthogKey: TrimmedNonEmptyString,
+  posthogHost: TrimmedNonEmptyString,
+  /** Which deployment the events come from, such as `bkt3` or `expbkt3`. */
+  instance: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ExecutionEnvironmentAnalytics = typeof ExecutionEnvironmentAnalytics.Type;
+// T3-CUSTOM(expbkt3): END
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
@@ -258,6 +275,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   /** Absent on hosts from before explicit orchestration protocol negotiation. */
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
+  // T3-CUSTOM(expbkt3): absent on servers without product analytics (TEC-1631).
+  analytics: Schema.optionalKey(ExecutionEnvironmentAnalytics),
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 

@@ -37,6 +37,8 @@
       "entry": [
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
+        // T3-CUSTOM(expbkt3): TEC-1631 product analytics
+        "scripts/analytics-backfill.ts",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
         "scripts/measure-pr-preview.ts",

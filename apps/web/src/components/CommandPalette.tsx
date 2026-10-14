@@ -224,6 +224,9 @@ import {
 import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
+// T3-CUSTOM(expbkt3): product analytics (TEC-1631).
+import { trackProductEvent } from "~/lib/analytics/productAnalytics";
+import { commandIdForPaletteItem } from "~/lib/analytics/productAnalytics.logic";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -3200,6 +3203,11 @@ function OpenCommandPaletteDialog(props: {
       setOpen(false);
     }
 
+    // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+    trackProductEvent("command_palette.used", {
+      commandId: commandIdForPaletteItem(item),
+    });
+    // T3-CUSTOM(expbkt3): END
     void item.run().catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({

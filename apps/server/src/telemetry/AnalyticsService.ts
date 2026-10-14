@@ -17,6 +17,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Hex from "effect/encoding/Hex"; // T3-CUSTOM(expbkt3): insert-id hashing.
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -30,12 +31,22 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
+// T3-CUSTOM(expbkt3): BEGIN — property allowlist and per-user identity (TEC-1631).
+import { filterAnalyticsProperties } from "./analyticsProperties.ts";
+import {
+  type AnalyticsPerson,
+  makeAnalyticsUserDirectory,
+  uuidFromSha256Hex,
+} from "./analyticsIdentity.ts";
+// T3-CUSTOM(expbkt3): END
 
 interface BufferedAnalyticsEvent {
   readonly uuid: string;
   readonly event: string;
   readonly properties?: Readonly<Record<string, unknown>>;
   readonly capturedAt: string;
+  /** T3-CUSTOM(expbkt3): an identified person's email; unset events use the install id. */
+  readonly distinctId?: string;
 }
 
 interface DeliveryState {
@@ -67,9 +78,11 @@ export function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
+  // T3-CUSTOM(expbkt3): no default key. The fork must never send to the upstream
+  // maintainers' PostHog project, so telemetry stays off until a key is set.
+  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.withDefault("")),
+  // T3-CUSTOM(expbkt3): the PostHog `instance` group every event belongs to.
+  instance: Config.String("T3CODE_ANALYTICS_INSTANCE").pipe(Config.withDefault("unknown")),
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),
   ),
@@ -81,13 +94,25 @@ const TelemetryEnvConfig = Config.all({
   wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
 });
 
+// T3-CUSTOM(expbkt3): BEGIN — record options (TEC-1631).
+export interface AnalyticsRecordOptions {
+  /** Environment user who acted; sent as that person's email when known. */
+  readonly userId?: string;
+  /** ISO time the event happened, for events recorded after the fact. */
+  readonly timestamp?: string;
+  /** Stable id for de-duplication; the same id always maps to the same event uuid. */
+  readonly insertId?: string;
+}
+// T3-CUSTOM(expbkt3): END
+
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** Record an anonymous event for best-effort buffered delivery. */
+    /** Record an event for best-effort buffered delivery. T3-CUSTOM(expbkt3): may identify a user. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
+      options?: AnalyticsRecordOptions, // T3-CUSTOM(expbkt3): identity and backfill options.
     ) => Effect.Effect<void>;
 
     /** Flush all currently queued telemetry events. */
@@ -138,21 +163,24 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  // T3-CUSTOM(expbkt3): BEGIN — key-gated telemetry, identity and instance group.
+  const telemetryEnabled = telemetryConfig.enabled && telemetryConfig.posthogKey.trim() !== "";
+  const userDirectory = yield* makeAnalyticsUserDirectory;
+  const identifiedUsers = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const droppedKeysLogged = yield* Ref.make<ReadonlySet<string>>(new Set());
+  // T3-CUSTOM(expbkt3): END
 
   const enqueueBufferedEvent = (
-    uuid: string,
-    event: string,
-    properties?: Readonly<Record<string, unknown>>,
+    entry: Omit<BufferedAnalyticsEvent, "capturedAt">,
+    timestamp?: string, // T3-CUSTOM(expbkt3): caller-supplied event time.
   ) =>
     Effect.flatMap(DateTime.now, (now) =>
       Ref.modify(bufferRef, (current) => {
         const appended = [
           ...current,
           {
-            uuid,
-            event,
-            ...(properties ? { properties } : {}),
-            capturedAt: DateTime.formatIso(now),
+            ...entry, // T3-CUSTOM(expbkt3): one entry object.
+            capturedAt: timestamp ?? DateTime.formatIso(now), // T3-CUSTOM(expbkt3)
           } satisfies BufferedAnalyticsEvent,
         ];
 
@@ -174,17 +202,20 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!telemetryEnabled || !identifier) return; // T3-CUSTOM(expbkt3): key-gated.
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
-        distinct_id: identifier,
+        distinct_id: event.distinctId ?? identifier, // T3-CUSTOM(expbkt3): identified person.
         properties: {
           ...event.properties,
-          $process_person_profile: false,
+          // T3-CUSTOM(expbkt3): only identified events build a person profile.
+          $process_person_profile: event.distinctId !== undefined,
+          $groups: { instance: telemetryConfig.instance },
+          instance: telemetryConfig.instance,
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
@@ -257,16 +288,92 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — allowlist, identity, insert ids (TEC-1631).
+  const logDroppedKeys = (event: string, dropped: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      if (dropped.length === 0) return;
+      const fresh = yield* Ref.modify(
+        droppedKeysLogged,
+        (logged): readonly [ReadonlyArray<string>, ReadonlySet<string>] => {
+          const unseen = dropped.filter((key) => !logged.has(key));
+          return [unseen, unseen.length === 0 ? logged : new Set([...logged, ...unseen])];
+        },
+      );
+      for (const key of fresh) {
+        yield* Effect.logDebug("analytics property key not allowlisted; dropping it", {
+          event,
+          key,
+        });
+      }
+    });
+
+  const eventUuid = (insertId: string | undefined) =>
+    Effect.gen(function* () {
+      if (insertId !== undefined) {
+        const digest = yield* Effect.exit(
+          crypto.digest("SHA-256", new TextEncoder().encode(insertId)),
+        );
+        if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
+      }
+      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
+      return Exit.isSuccess(uuid) ? uuid.value : undefined;
+    });
+
+  /** Sends the person's profile once per user per process start. */
+  const identifyOnce = (userId: string, person: AnalyticsPerson) =>
+    Effect.gen(function* () {
+      const first = yield* Ref.modify(
+        identifiedUsers,
+        (seen): readonly [boolean, ReadonlySet<string>] =>
+          seen.has(userId) ? [false, seen] : [true, new Set([...seen, userId])],
+      );
+      if (!first) return;
+      const uuid = yield* eventUuid(undefined);
+      if (uuid === undefined) return;
+      yield* enqueueBufferedEvent({
+        uuid,
+        event: "$identify",
+        distinctId: person.email,
+        properties: {
+          $set: {
+            email: person.email,
+            role: person.role,
+            ...(person.name === undefined ? {} : { name: person.name }),
+          },
+        },
+      });
+    });
+
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+    function* (event, properties, options) {
+      if (!telemetryEnabled || !identifier) return;
+
+      const { kept, dropped } = filterAnalyticsProperties(properties);
+      yield* logDroppedKeys(event, dropped);
+
+      const person =
+        options?.userId === undefined ? undefined : yield* userDirectory.resolve(options.userId);
+      if (person !== undefined && options?.userId !== undefined) {
+        yield* identifyOnce(options.userId, person);
+      }
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
-      if (Exit.isFailure(uuid)) return;
+      const uuid = yield* eventUuid(options?.insertId);
+      if (uuid === undefined) return;
 
-      const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);
+      const enqueueResult = yield* enqueueBufferedEvent(
+        {
+          uuid,
+          event,
+          properties: {
+            ...kept,
+            ...(options?.insertId === undefined ? {} : { $insert_id: options.insertId }),
+          },
+          ...(person === undefined ? {} : { distinctId: person.email }),
+        },
+        options?.timestamp,
+      );
       if (enqueueResult.dropped) {
         yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
           size: enqueueResult.size,
@@ -275,6 +382,24 @@ export const make = Effect.gen(function* () {
       }
     },
   );
+
+  // One group profile per boot, named after the instance. An unnamed instance
+  // has nothing worth a profile.
+  if (telemetryEnabled && identifier && telemetryConfig.instance !== "unknown") {
+    const uuid = yield* eventUuid(undefined);
+    if (uuid !== undefined) {
+      yield* enqueueBufferedEvent({
+        uuid,
+        event: "$groupidentify",
+        properties: {
+          $group_type: "instance",
+          $group_key: telemetryConfig.instance,
+          $group_set: { name: telemetryConfig.instance, t3CodeVersion: packageJson.version },
+        },
+      });
+    }
+  }
+  // T3-CUSTOM(expbkt3): END
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
     disableYield: true,

@@ -22,6 +22,8 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+// T3-CUSTOM(expbkt3): product analytics config for clients (TEC-1631).
+import { loadClientAnalyticsConfig } from "./clientAnalyticsConfig.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
@@ -204,6 +206,8 @@ export const make = Effect.gen(function* () {
   // the fd and correctly do not advertise.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+  // T3-CUSTOM(expbkt3): read once at startup, like the rest of the descriptor.
+  const analytics = yield* loadClientAnalyticsConfig;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -282,6 +286,8 @@ export const make = Effect.gen(function* () {
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
       serverBrowser: true,
     },
+    // T3-CUSTOM(expbkt3): absent unless an explicit company PostHog key is set.
+    ...(analytics === null ? {} : { analytics }),
   };
 
   return ServerEnvironment.of({
