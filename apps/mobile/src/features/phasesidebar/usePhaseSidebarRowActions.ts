@@ -56,11 +56,6 @@ export interface PhaseSidebarRowAction {
 export function buildPhaseSidebarRowActions(input: {
   readonly row: PhaseSidebarRow;
   readonly now: string;
-  /**
-   * Mobile has no auto-settle setting of its own, so null: a row is settled
-   * only when the server says so, never because a timer elapsed locally.
-   */
-  readonly autoSettleAfterDays?: number | null;
   /** Snooze presets to offer as a submenu; a bare Snooze item when absent. */
   readonly snoozePresets?: ReadonlyArray<SnoozePreset>;
   /**
@@ -113,7 +108,8 @@ export function buildPhaseSidebarRowActions(input: {
   if (row.settlementSupported) {
     const settled = effectiveSettled(thread, {
       now: input.now,
-      autoSettleAfterDays: input.autoSettleAfterDays ?? null,
+      // Settled only when the server says so, like the list's partition (TEC-1306).
+      autoSettleAfterDays: null,
     });
     actions.push(
       settled
