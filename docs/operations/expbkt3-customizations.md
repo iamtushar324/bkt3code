@@ -347,6 +347,12 @@ setting (default on). The fork's own "a merge never settles" rewrite was retired
 for it; the fork helpers left in `client-runtime/state/threadSettled.ts` exist
 for the BK sidebar.
 
+The BK phase sidebar (web and mobile) shows a row as settled only when its
+server stamped `settledOverride`, like upstream's sidebar. It used to guess from
+the primary server's global window and the row's pull request, which ignored
+project overrides and the per-thread opt-out and parked threads the server kept
+(TEC-1306). `ThreadSettlementService` is the one place that decides.
+
 ## Session titles
 
 Titles are upstream's: the first user turn names the thread from its prompt, and

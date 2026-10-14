@@ -294,14 +294,13 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
     [props.rows],
   );
 
-  // Mobile has no auto-settle setting of its own, so a row is settled only when
-  // the server says so, never because a timer elapsed locally.
+  // A row is settled only when the server says so, never because a timer
+  // elapsed or a pull request closed locally (TEC-1306).
   const partition = useMemo(
     () =>
       partitionPhaseSidebarRows(props.rows, {
         now: nowIso,
         preciseNow: nowIso,
-        autoSettleAfterDays: null,
       }),
     [nowIso, props.rows],
   );

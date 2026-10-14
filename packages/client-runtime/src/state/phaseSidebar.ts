@@ -847,16 +847,21 @@ export function sortSettledPhaseSidebarRows(
  * Both classifications are capability-gated per row — auto-settling a
  * thread on a server that cannot un-settle it would strand the row.
  *
+ * A row is settled only when its server settled it (TEC-1306). The server
+ * alone resolves auto-settle per project (a group's override), honours the
+ * per-thread opt-out and pins, and stamps `settledOverride` within a minute.
+ * A local guess from the primary server's global window parked threads the
+ * server had been told to keep, so there is none: no inactivity window, no
+ * merged or closed change request.
+ *
  * `preciseNow` classifies snooze (wake times are second-precise) while
- * `now` may be quantized for the day-granular auto-settle window.
+ * `now` may be quantized; it only ages the queued-turn blocker.
  */
 export function partitionPhaseSidebarRows(
   rows: ReadonlyArray<PhaseSidebarRow>,
   options: {
     readonly now: string;
     readonly preciseNow: string;
-    readonly autoSettleAfterDays: number | null;
-    readonly autoSettleOnMerge?: boolean;
   },
 ): PhaseSidebarPartition {
   const activeRows: PhaseSidebarRow[] = [];
@@ -872,19 +877,9 @@ export function partitionPhaseSidebarRows(
       row.settlementSupported &&
       effectiveSettled(row.thread, {
         now: options.now,
-        autoSettleAfterDays: options.autoSettleAfterDays,
-        ...(options.autoSettleOnMerge !== undefined
-          ? { autoSettleOnMerge: options.autoSettleOnMerge }
-          : {}),
-        changeRequest:
-          row.changeRequestState === null
-            ? null
-            : {
-                state: row.changeRequestState,
-                ...(row.changeRequestUpdatedAt !== undefined
-                  ? { updatedAt: row.changeRequestUpdatedAt }
-                  : {}),
-              },
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: false,
+        changeRequest: null,
       })
     ) {
       settledRows.push(row);
