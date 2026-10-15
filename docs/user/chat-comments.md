@@ -16,8 +16,8 @@ open still reach the agent until they are resolved.
 
 ## Starting a comment
 
-Select text within one assistant message. Beside **Cite**, the selection toolbar
-offers four actions:
+Select text within one assistant message or one plan card. Beside **Cite**, the
+selection toolbar offers four actions:
 
 - **Comment** opens a small box quoting the selection — `⌘/Ctrl+Enter` adds,
   `Esc` cancels.

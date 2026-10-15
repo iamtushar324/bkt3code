@@ -1387,7 +1387,11 @@ export const layer: Layer.Layer<
             : // T3-CUSTOM(expbkt3): command history stays unchanged; the agent gets the plan policy.
               {
                 ...input.message,
-                text: appendAgentPlanInstructions(comments.text, agentPlanSubmissionEnabled),
+                text: appendAgentPlanInstructions(
+                  comments.text,
+                  agentPlanSubmissionEnabled,
+                  input.runtimePolicy.interactionMode,
+                ),
               };
           // A context read that fails costs the agent the apps' notes for
           // this turn, not the turn itself.
