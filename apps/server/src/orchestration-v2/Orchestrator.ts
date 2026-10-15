@@ -148,6 +148,7 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 // T3-CUSTOM(expbkt3): durable fork command decisions and projection metadata.
 import { forkAsyncInputChange, updatePendingAsyncUserInputIds } from "./forkAsyncInput.expbkt3.ts";
 import { findForkAsyncRequest, forkAsyncAnswer } from "./forkAsyncResponse.expbkt3.ts";
+import { messageAnswerText, respondableRuntimeRequest } from "./orphanedRuntimeRequest.expbkt3.ts";
 import * as Result from "effect/Result";
 import { legacyActivityItem } from "./ForkLegacyHistory.expbkt3.ts";
 import { isForkThreadCommand, planForkThreadCommand } from "./forkCommands.expbkt3.ts";
@@ -7364,7 +7365,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
         );
-      const runtimeRequest = context.request;
+      // T3-CUSTOM(expbkt3): a request its provider outlived is answered in message mode.
+      const runtimeRequest = yield* respondableRuntimeRequest({
+        projectionStore,
+        threadId: command.threadId,
+        context,
+      }).pipe(
+        Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
+      );
       if (runtimeRequest === undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -7487,6 +7495,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (runtimeRequest.responseCapability.type === "message") {
         if (resolvedNodeStatus === "cancelled") return;
+        // T3-CUSTOM(expbkt3): an approval its provider outlived closes without a reply.
+        if (runtimeRequest.kind !== "user_input") return;
         if (approvalTurnItem?.type !== "user_input_request") {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -7496,7 +7506,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         const replies: string[] = [];
         for (const question of approvalTurnItem.questions) {
-          const answer = command.answers?.[question.id];
+          // T3-CUSTOM(expbkt3): a multi-select answer lists its choices.
+          const answer = messageAnswerText(command.answers?.[question.id]);
           if (typeof answer !== "string" || answer.trim().length === 0) {
             if (question.required === false) continue;
             return yield* new OrchestratorDispatchError({
@@ -7590,9 +7601,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       // T3-CUSTOM(expbkt3): dismissing a fork question does not interrupt its provider.
       if (yield* dispatchForkAsyncResponse(command, events, effects)) return;
+      // T3-CUSTOM(expbkt3): a question its provider outlived can be dismissed.
       const request = yield* projectionStore
-        .getRuntimeRequest(command.threadId, command.requestId)
+        .getRuntimeResponseContext(command.threadId, command.requestId)
         .pipe(
+          Effect.flatMap((context) =>
+            respondableRuntimeRequest({ projectionStore, threadId: command.threadId, context }),
+          ),
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
         );
       if (request === undefined || request.status !== "pending") {
