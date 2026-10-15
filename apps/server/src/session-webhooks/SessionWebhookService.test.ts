@@ -67,6 +67,7 @@ const harness = (mode: "push" | "pull" = "push") =>
     const historyEntered = yield* Deferred.make<void>();
     const twoHistoriesEntered = yield* Deferred.make<void>();
     const fourHistoriesEntered = yield* Deferred.make<void>();
+    const sql = yield* SqlClient.SqlClient;
     const secrets = new Map<string, Uint8Array>();
     const receipts = new Map<string, CommandReceiptV2>();
     const state = {
@@ -119,7 +120,15 @@ const harness = (mode: "push" | "pull" = "push") =>
       dispatches: 0,
       registrations: 0,
       notifications: [] as string[],
+      // Production checks the owner with `Effect.runPromise(users.get(...))`:
+      // a fresh fiber that reads the same SQLite client outside any transaction.
+      ownerCheckReadsDatabase: false,
     };
+    const ownerCheckRead = Effect.suspend(() =>
+      state.ownerCheckReadsDatabase
+        ? Effect.promise(() => Effect.runPromise(sql`SELECT 1`)).pipe(Effect.asVoid)
+        : Effect.void,
+    );
     const shell = (id = threadId) =>
       ({
         id,
@@ -198,7 +207,7 @@ const harness = (mode: "push" | "pull" = "push") =>
           : null,
       ),
       callbackBinding: () =>
-        Effect.sync(() =>
+        Effect.map(ownerCheckRead, () =>
           state.integrationEnabled
             ? {
                 instanceId: state.instanceId,
@@ -215,7 +224,7 @@ const harness = (mode: "push" | "pull" = "push") =>
         ),
       assertConnectionOwner: () =>
         state.userEnabled
-          ? Effect.void
+          ? ownerCheckRead
           : Effect.fail(
               new PersonalMcpSettingsError({ operation: "test", message: "owner-disabled" }),
             ),
@@ -1355,6 +1364,27 @@ describe("durable session webhooks", () => {
           assert.strictEqual(h.state.dispatches, 0);
         }),
       ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ),
+  );
+  it.live("acknowledges a push callback when the owner check reads the database", () =>
+    scenario((h) =>
+      Effect.gen(function* () {
+        h.state.ownerCheckReadsDatabase = true;
+        // Before the fix the admission transaction called the owner check, which
+        // waited for the connection that transaction held, until the sender gave up.
+        const first = yield* h.receive(h.event()).pipe(Effect.timeoutOption("2 seconds"));
+        assert.isTrue(Option.isSome(first));
+        assert.strictEqual(Option.getOrThrow(first).duplicate, false);
+        const repeat = yield* h.receive(h.event()).pipe(Effect.timeoutOption("2 seconds"));
+        assert.strictEqual(Option.getOrThrow(repeat).duplicate, true);
+        assert.strictEqual(h.state.dispatches, 0);
+        assert.strictEqual(
+          (yield* h.service.inspect(owner, h.webhook.id)).deliveries[0]?.state,
+          "queued",
+        );
+        yield* h.service.drain();
+        assert.strictEqual(h.state.dispatches, 1);
+      }),
     ),
   );
   it.effect("returns an existing destination without revealing secrets", () =>

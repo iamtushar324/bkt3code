@@ -108,6 +108,14 @@ verifies the provider assignment and tool allowlist, loads the credential from
 upstream response. An absent credential fails closed; T3 never falls back to
 another user's key.
 
+A script that runs outside any session (for example a timer on your own host)
+can reach toolyard the same way with your personal API token:
+`/mcp/upstream/toolyard` with `Authorization: Bearer <personal-api-token>`. The
+call acts as the user who owns the token, with that user's toolyard connection,
+and only while external MCP access is on for the server and for that user. A
+personal token reaches toolyard only, not other integrations, and the call names
+no T3 session to toolyard. The integration's tool allowlist still applies.
+
 Bifrost integrations normally use `x-bf-vk`. Bearer, `x-api-key`, and validated
 custom-header authentication are also supported.
 
