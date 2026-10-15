@@ -35,9 +35,10 @@ describe("releaseEndedRunUserInputs", () => {
     });
   });
 
-  it("leaves a question alone while its run is still going", () => {
+  it("leaves a question alone while its run is still going or has completed", () => {
     const requests = pending("request");
     expect(releaseEndedRunUserInputs(requests, projection("running"))).toBe(requests);
+    expect(releaseEndedRunUserInputs(requests, projection("completed"))).toBe(requests);
   });
 
   it("leaves a question from another run alone", () => {
