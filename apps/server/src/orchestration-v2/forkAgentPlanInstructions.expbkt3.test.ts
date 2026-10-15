@@ -19,18 +19,20 @@ describe("server agent plan instructions", () => {
     expect(result).toContain("Do not call t3_submit_plan");
   });
 
-  it("tells a plan-mode turn how to put live HTML in the plan card", () => {
-    const result = appendAgentPlanInstructions("Plan the change.", true, "plan");
-    expect(result).toBe(`Plan the change.\n\n${PLAN_FORMAT_INSTRUCTIONS}`);
-    expect(result).toContain("`html-render`");
-  });
-
-  it("adds the plan format only in plan mode, after the submission policy", () => {
-    expect(appendAgentPlanInstructions("Build it.", true, "default")).toBe("Build it.");
+  it("tells a plan-mode turn how to put live HTML in the plan card, after the policy", () => {
     const result = appendAgentPlanInstructions("Plan it.", false, "plan");
+    expect(result).toContain("`html-render`");
+    expect(result.endsWith(PLAN_FORMAT_INSTRUCTIONS)).toBe(true);
     expect(result.indexOf("<t3_plan_instructions>")).toBeLessThan(
       result.indexOf("<t3_plan_format>"),
     );
+  });
+
+  it("adds the plan format only in plan mode and never with submission enabled", () => {
+    expect(appendAgentPlanInstructions("Build it.", false, "default")).not.toContain(
+      "<t3_plan_format>",
+    );
+    expect(appendAgentPlanInstructions("Plan it.", true, "plan")).toBe("Plan it.");
   });
 
   it.each(["/compact", "  /review current changes", "/model"])(

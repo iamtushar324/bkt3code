@@ -12,14 +12,12 @@ export function appendAgentPlanInstructions(
   submissionEnabled: boolean,
   interactionMode?: string,
 ): string {
-  // Native slash commands must stay intact for the provider CLI.
-  if (text.trimStart().startsWith("/")) return text;
-  const blocks: string[] = [];
-  if (!submissionEnabled) {
-    blocks.push(
-      "<t3_plan_instructions>\nThe T3 plan submission tool is disabled for this server. Write the complete plan directly in your main chat response. Do not call t3_submit_plan or use another T3 tool to create a plan panel.\n</t3_plan_instructions>",
-    );
-  }
+  // Native slash commands must stay intact for the provider CLI. With plan
+  // submission on, the provider input stays exactly as the user wrote it.
+  if (submissionEnabled || text.trimStart().startsWith("/")) return text;
+  const blocks = [
+    "<t3_plan_instructions>\nThe T3 plan submission tool is disabled for this server. Write the complete plan directly in your main chat response. Do not call t3_submit_plan or use another T3 tool to create a plan panel.\n</t3_plan_instructions>",
+  ];
   if (interactionMode === "plan") blocks.push(PLAN_FORMAT_INSTRUCTIONS);
-  return blocks.length === 0 ? text : `${text}\n\n${blocks.join("\n\n")}`;
+  return `${text}\n\n${blocks.join("\n\n")}`;
 }

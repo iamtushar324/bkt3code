@@ -24,8 +24,9 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
 /** Opens a folded plan card when a citation or comment asks to show a quote in it. */
 export function useExpandPlanForCitation(setExpanded: (expanded: boolean) => void) {
   const card = use(PlanCardContext);
-  const targeted =
-    card !== null && card.timeline.citationRequest?.citation.messageId === card.plan.id;
+  // A citation names a plan by its id, in the field that usually holds a message id.
+  const planId: string | null = card?.plan.id ?? null;
+  const targeted = card !== null && card.timeline.citationRequest?.citation.messageId === planId;
   useEffect(() => {
     if (targeted) setExpanded(true);
   }, [setExpanded, targeted]);
