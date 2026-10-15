@@ -3496,6 +3496,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
   }, [activeLatestRun?.runId, latestRunSettled, serverProjection]);
+  // T3-CUSTOM(expbkt3): the plan review takeover reads the thread's open review document.
   const planReviewDocumentId = useOpenPlanReviewDocumentId(
     activeThreadRef?.environmentId ?? null,
     activeThreadRef?.threadId ?? null,
