@@ -1738,6 +1738,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
+      // A queued continuation ends the thread's open plan when it starts, not
+      // when it was queued, so cancelling it leaves the plan open. Wakes and
+      // maintenance commands are not continuations.
+      const supersededPlans =
+        queuedRun.delegatedCompletion === undefined &&
+        queuedRun.workStartedAt === undefined &&
+        !isNativeMaintenanceCommand(queuedMessage)
+          ? (yield* projectionStore.getActiveProposedPlans(threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId,
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            )).filter((plan) => plan.id !== queuedRun.sourcePlanRef?.planId)
+          : [];
       yield* writeSystemEvents(
         [
           ...(selectionChanged
@@ -1858,6 +1876,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: notificationTurnItem(userTurnItem, queuedMessage, projection.subagents),
           },
+          ...supersededPlans.map((plan) => ({
+            type: "plan.updated" as const,
+            threadId: plan.threadId,
+            ...(plan.runId === null ? {} : { runId: plan.runId }),
+            nodeId: plan.nodeId,
+            providerInstanceId: queuedRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...plan, status: "superseded" as const },
+          })),
           {
             type: "run.updated",
             threadId,
