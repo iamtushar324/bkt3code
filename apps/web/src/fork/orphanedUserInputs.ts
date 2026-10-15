@@ -10,12 +10,8 @@
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
-const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "failed",
-  "interrupted",
-  "cancelled",
-]);
+// The server's rule (`runEndedWithoutAnswer`): a completed run's session stays live.
+const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set(["failed", "interrupted", "cancelled"]);
 
 export function releaseEndedRunUserInputs(
   pending: PendingThreadRequests,

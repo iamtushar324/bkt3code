@@ -65,6 +65,10 @@ describe("isOrphanedRuntimeRequest", () => {
     assert.isTrue(isOrphanedRuntimeRequest({ request, sessionBound: true, runStatus: "failed" }));
     assert.isFalse(isOrphanedRuntimeRequest({ request, sessionBound: true, runStatus: "running" }));
     assert.isFalse(isOrphanedRuntimeRequest({ request, sessionBound: true, runStatus: undefined }));
+    // A completed run's session stays live for its background subagents.
+    assert.isFalse(
+      isOrphanedRuntimeRequest({ request, sessionBound: true, runStatus: "completed" }),
+    );
   });
 
   it("leaves answered and message-mode requests alone", () => {

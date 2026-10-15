@@ -24,13 +24,21 @@ import type {
   ProjectionStoreV2Shape,
 } from "./ProjectionStore.ts";
 
-/** Run states after which no turn of the run waits for an answer. */
+/**
+ * Run states after which no turn of the run waits for an answer. A completed
+ * run is left out: its session stays live, and a background subagent of it
+ * can still be waiting on an approval.
+ */
 const ENDED_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
-  "completed",
   "failed",
   "interrupted",
   "cancelled",
 ]);
+
+/** Whether a run ended without its provider waiting for answers any longer. */
+export function runEndedWithoutAnswer(status: OrchestrationV2Run["status"] | undefined): boolean {
+  return status !== undefined && ENDED_RUN_STATUSES.has(status);
+}
 
 /** Whether a pending live request can no longer reach the provider that asked it. */
 export function isOrphanedRuntimeRequest(input: {
@@ -41,15 +49,14 @@ export function isOrphanedRuntimeRequest(input: {
   return (
     input.request.status === "pending" &&
     input.request.responseCapability.type === "live" &&
-    (!input.sessionBound ||
-      (input.runStatus !== undefined && ENDED_RUN_STATUSES.has(input.runStatus)))
+    (!input.sessionBound || runEndedWithoutAnswer(input.runStatus))
   );
 }
 
 /**
  * The request as a response should treat it: unchanged while its provider can
- * still answer, else in message mode. The run is read only when the session is
- * still bound, which is the uncommon case.
+ * still answer, else in message mode. Only the request's own run is read, and
+ * only while its session is still bound.
  */
 export const respondableRuntimeRequest = (input: {
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">;
@@ -57,13 +64,16 @@ export const respondableRuntimeRequest = (input: {
   readonly context: ProjectionRuntimeResponseContext;
 }) =>
   Effect.gen(function* () {
-    const { request, node, session } = input.context;
+    const { request, node, item, session } = input.context;
     if (request === undefined || request.status !== "pending") return request;
     if (request.responseCapability.type !== "live") return request;
     let runStatus: OrchestrationV2Run["status"] | undefined;
-    const runId = node?.runId ?? null;
+    // The node names the run; older requests carry it only on their timeline item.
+    const runId = node?.runId ?? item?.runId ?? null;
     if (session !== undefined && runId !== null) {
-      const { runs } = yield* input.projectionStore.getThreadRecords(input.threadId, ["runs"]);
+      const { runs } = yield* input.projectionStore.getThreadRecords(input.threadId, ["runs"], {
+        runIds: [runId],
+      });
       runStatus = runs.find((run) => run.id === runId)?.status;
     }
     return isOrphanedRuntimeRequest({ request, sessionBound: session !== undefined, runStatus })

@@ -167,9 +167,9 @@ question pauses the agent until someone answers it. A non-blocking question,
 such as a Codex async question, did not stop the agent: the answer reaches it
 as a new message, in its running turn or as a new turn, and
 `t3_answer` with `dismiss: true` closes the question without an answer.
-A blocking question whose run already ended, for example after a provider
-error, works the same way: the answer starts a new turn, `dismiss: true` closes
-it, and an approval left open by such a run closes when answered.
+A blocking question whose run failed or was stopped, for example after a
+provider error, works the same way: the answer starts a new turn, `dismiss:
+true` closes it, and an approval left open by such a run closes when answered.
 `t3_send_message` refuses only while a blocking question or an approval is open.
 Pass the `requestId` that `t3_inbox` shows when a session has more than one
 open question, and with every `clientRequestId`, so a retry cannot answer a

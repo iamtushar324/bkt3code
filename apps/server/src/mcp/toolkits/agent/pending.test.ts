@@ -57,13 +57,14 @@ const shell = (fields: Partial<Record<string, unknown>>): SessionShell =>
 const callerWith = (records: {
   readonly runtimeRequests: ReadonlyArray<unknown>;
   readonly turnItems: ReadonlyArray<unknown>;
+  readonly runs?: ReadonlyArray<unknown>;
 }) => {
   const reads: Array<unknown> = [];
   const caller = {
     threads: {
       getThreadRecords: (_threadId: unknown, _fields: unknown, filter: unknown) => {
         reads.push(filter);
-        return Effect.succeed(records);
+        return Effect.succeed({ runs: [], ...records });
       },
     },
   } as unknown as Caller;
@@ -146,6 +147,38 @@ describe("loadPendingDetail", () => {
         textOnly: false,
       });
       expect(detail.asyncQuestions.map((question) => question.requestId)).toEqual([ASYNC_ID]);
+    }),
+  );
+
+  it.effect("lets a question whose run failed be dismissed and answered by message", () =>
+    Effect.gen(function* () {
+      const { caller, reads } = callerWith({
+        runtimeRequests: [
+          runtimeRequest({
+            id: BLOCKING_ID,
+            responseCapability: { type: "live", providerSessionId: "provider-session-1" },
+          }),
+        ],
+        turnItems: [questionItem(BLOCKING_ID, "Blocking?")],
+        runs: [{ id: "run-1", status: "failed" }],
+      });
+      const detail = yield* loadPendingDetail(
+        caller,
+        shell({
+          pendingRuntimeRequest: {
+            id: BLOCKING_ID,
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(ASKED),
+          },
+        }),
+        { includePlan: false },
+      );
+      expect(reads).toContainEqual({ runIds: ["run-1"] });
+      expect(detail.question).toMatchObject({
+        requestId: BLOCKING_ID,
+        async: true,
+        textOnly: true,
+      });
     }),
   );
 
