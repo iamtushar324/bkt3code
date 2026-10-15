@@ -311,10 +311,13 @@ export function findLatestProposedPlan(
   projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
-  if (projection === null) return null;
-  const plans = projection.plans.filter((plan) => plan.kind === "proposed_plan");
-  const candidates = latestRunId ? plans.filter((plan) => plan.runId === latestRunId) : plans;
-  const plan = [...(candidates.length > 0 ? candidates : plans)]
+  // T3-CUSTOM(expbkt3): only the latest run's plan is current. Falling back to an
+  // earlier run resurfaced a superseded plan in the banner and implement prompt.
+  if (projection === null || !latestRunId) return null;
+  const candidates = projection.plans.filter(
+    (plan) => plan.kind === "proposed_plan" && plan.runId === latestRunId,
+  );
+  const plan = candidates
     .toSorted(
       (left, right) =>
         planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||

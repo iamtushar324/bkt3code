@@ -49,6 +49,11 @@ export interface PlanReviewApprovalInput {
   readonly fullPlanMarkdown: string | null;
   readonly fullPlanReason: string | null;
   readonly wasEdited: boolean;
+  /** The approved document revision, named in the prompt so the agent and the
+   * transcript both record exactly which version was approved. */
+  readonly revision: number;
+  /** The proposed plan the approved revision came from, when one exists. */
+  readonly planId: string | null;
 }
 
 /**
@@ -226,12 +231,14 @@ export function buildPlanReviewApprovalPrompt(input: PlanReviewApprovalInput): s
    * a list of changes contradicts itself, so the instruction changes instead.
    */
   const hasRefinements = input.comments.length > 0 || notes.length > 0;
+  const planLabel = input.planId === null ? "" : `, plan ${input.planId}`;
+  const version = `revision ${input.revision}${planLabel}`;
 
   if (input.fullPlanMarkdown !== null) {
     sections.push(
       input.wasEdited
-        ? "Plan approved with reviewer edits. Implement this complete revised plan:"
-        : "PLEASE IMPLEMENT THIS APPROVED PLAN:",
+        ? `Plan approved with reviewer edits (${version}). Implement this complete revised plan:`
+        : `PLEASE IMPLEMENT THIS APPROVED PLAN (${version}):`,
     );
     sections.push(planReviewFence("markdown", input.fullPlanMarkdown));
     if (input.fullPlanReason !== null) {
@@ -240,8 +247,8 @@ export function buildPlanReviewApprovalPrompt(input: PlanReviewApprovalInput): s
   } else {
     sections.push(
       hasRefinements
-        ? "Plan approved — start implementing it now."
-        : "Plan approved. Implement the plan you proposed above, exactly as written.",
+        ? `Plan approved (${version}) — start implementing it now.`
+        : `Plan approved (${version}). Implement the plan you proposed above, exactly as written.`,
     );
   }
 

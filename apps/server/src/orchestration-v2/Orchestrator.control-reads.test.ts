@@ -334,6 +334,137 @@ it.effect("implements a proposed plan that the command projection leaves out", (
   }).pipe(Effect.provide(layerTest)),
 );
 
+const createPlanThread = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:${name}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create-${name}`),
+      threadId,
+      projectId: ProjectId.make(`project:${name}`),
+      title: "Plan",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return threadId;
+  });
+
+const applyProposedPlan = (
+  threadId: ThreadId,
+  name: string,
+  status: "active" | "completed" | "superseded" = "active",
+) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const planId = PlanId.make(`plan:${name}`);
+    yield* projections.apply({
+      id: EventId.make(`plan:${name}:${status}`),
+      type: "plan.updated",
+      threadId,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        id: planId,
+        threadId,
+        runId: null,
+        nodeId: NodeId.make(`node:${name}`),
+        kind: "proposed_plan",
+        status,
+        markdown: `# Plan ${name}`,
+      },
+    });
+    return planId;
+  });
+
+const continueThread = (
+  threadId: ThreadId,
+  name: string,
+  sourcePlanRef?: { readonly threadId: ThreadId; readonly planId: PlanId },
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`continue-${name}`),
+      threadId,
+      messageId: MessageId.make(`continue-${name}-input`),
+      text: "What about the rollout?",
+      attachments: [],
+      ...(sourcePlanRef === undefined ? {} : { sourcePlanRef }),
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+it.effect("supersedes an open plan when the thread continues without it", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createPlanThread("continue-plan");
+    const planId = yield* applyProposedPlan(threadId, "continue-plan");
+
+    yield* continueThread(threadId, "continue-plan");
+
+    assert.equal((yield* projections.getPlan(threadId, planId))?.status, "superseded");
+    assert.deepEqual(yield* projections.getActiveProposedPlans(threadId), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("completes the implemented plan and supersedes every other open plan", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createPlanThread("implement-newest");
+    const older = yield* applyProposedPlan(threadId, "implement-newest-r2");
+    const newest = yield* applyProposedPlan(threadId, "implement-newest-r3");
+
+    yield* continueThread(threadId, "implement-newest", { threadId, planId: newest });
+
+    assert.equal((yield* projections.getPlan(threadId, newest))?.status, "completed");
+    assert.equal((yield* projections.getPlan(threadId, older))?.status, "superseded");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("implements a superseded plan that the turn names", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createPlanThread("implement-superseded");
+    const planId = yield* applyProposedPlan(threadId, "implement-superseded", "superseded");
+
+    yield* continueThread(threadId, "implement-superseded", { threadId, planId });
+
+    assert.equal((yield* projections.getPlan(threadId, planId))?.status, "completed");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("retires an open plan whose review was decided", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createPlanThread("retire-plan");
+    const open = yield* applyProposedPlan(threadId, "retire-plan-open");
+    const done = yield* applyProposedPlan(threadId, "retire-plan-done", "completed");
+
+    for (const planId of [open, done]) {
+      yield* orchestrator.dispatch({
+        type: "thread.proposed-plan.retire",
+        commandId: CommandId.make(`retire-${planId}`),
+        threadId,
+        planId,
+        status: "superseded",
+      });
+    }
+
+    assert.equal((yield* projections.getPlan(threadId, open))?.status, "superseded");
+    // A finished plan keeps its outcome.
+    assert.equal((yield* projections.getPlan(threadId, done))?.status, "completed");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 // Stop's settle follow-up runs after the provider interrupt returns, possibly
 // long after the Stop (retries) or again (an effect replayed after a crash).
 // A later run's background work is not that Stop's to end.

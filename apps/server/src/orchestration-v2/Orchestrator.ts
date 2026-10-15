@@ -464,6 +464,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.activity.append":
+    // T3-CUSTOM(expbkt3): a decided plan review retires its plan.
+    case "thread.proposed-plan.retire":
     case "thread.metadata.update":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
@@ -4890,27 +4892,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
         });
       }
-      if (sourcePlan !== null && sourcePlan.status !== "active") {
+      // A superseded plan may still be implemented when the turn names it: a
+      // reviewer can approve the exact version after a plan-mode question.
+      if (
+        sourcePlan !== null &&
+        sourcePlan.status !== "active" &&
+        sourcePlan.status !== "superseded"
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Proposed plan ${sourcePlan.id} is not active.`,
         });
       }
+      // Continuing a thread ends its open plan in every interaction mode: the
+      // plan this turn implements is completed, any other is superseded, so an
+      // earlier plan can never become actionable again. A background-task wake
+      // is not a continuation and leaves a plan that waits for review alone.
       const completeSourcePlan = (occurredAt: DateTime.Utc) =>
-        sourcePlan === null
-          ? Effect.void
-          : emit(
-              events,
-              command,
-            )({
-              type: "plan.updated",
-              threadId: sourcePlan.threadId,
-              ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
-              nodeId: sourcePlan.nodeId,
-              occurredAt,
-              payload: { ...sourcePlan, status: "completed" },
-            });
+        Effect.gen(function* () {
+          const openPlans =
+            delegatedCompletion === undefined
+              ? yield* projectionStore
+                  .getActiveProposedPlans(command.threadId)
+                  .pipe(mapDispatchError(command))
+              : [];
+          const retired = [
+            ...openPlans
+              .filter((plan) => plan.id !== sourcePlan?.id)
+              .map((plan) => ({ ...plan, status: "superseded" as const })),
+            ...(sourcePlan === null ? [] : [{ ...sourcePlan, status: "completed" as const }]),
+          ];
+          yield* Effect.forEach(
+            retired,
+            (plan) =>
+              emit(
+                events,
+                command,
+              )({
+                type: "plan.updated",
+                threadId: plan.threadId,
+                ...(plan.runId === null ? {} : { runId: plan.runId }),
+                nodeId: plan.nodeId,
+                occurredAt,
+                payload: plan,
+              }),
+            { discard: true },
+          );
+        });
 
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
@@ -10379,6 +10408,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly reason: string;
         }
       | undefined;
+    // T3-CUSTOM(expbkt3): a plan review decided outside a turn start ends its plan.
+    if (command.type === "thread.proposed-plan.retire") {
+      const plan = yield* projectionStore
+        .getPlan(command.threadId, command.planId)
+        .pipe(mapDispatchError(command));
+      if (plan?.kind === "proposed_plan" && plan.status === "active") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "plan.updated",
+          threadId: plan.threadId,
+          ...(plan.runId === null ? {} : { runId: plan.runId }),
+          nodeId: plan.nodeId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...plan, status: command.status },
+        });
+      }
+      return { events: yield* Ref.get(events), effects: [] };
+    }
     // T3-CUSTOM(expbkt3): fork tool/activity payloads share the V2 event and receipt transaction.
     if (command.type === "thread.activity.append") {
       const projection = yield* projectionStore

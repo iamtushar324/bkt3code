@@ -239,6 +239,28 @@ describe("V2 session presentation", () => {
     expect(plan?.planMarkdown).toBe("Plan");
   });
 
+  it("does not resurface an earlier run's plan when the latest run has none", () => {
+    const baseProjection = makeThreadProjectionFixture();
+    const plan = findLatestProposedPlan(
+      {
+        ...baseProjection,
+        plans: [
+          {
+            id: PlanId.make("plan-old"),
+            threadId: baseProjection.thread.id,
+            nodeId: NodeId.make("node-plan-old"),
+            kind: "proposed_plan" as const,
+            markdown: "Old plan",
+            status: "active" as const,
+            runId: RunId.make("run-1"),
+          },
+        ],
+      },
+      RunId.make("run-2"),
+    );
+    expect(plan).toBeNull();
+  });
+
   it("assigns run rollback to the turn-start message instead of a later steer", () => {
     const runId = RunId.make("run-steered");
     const turnStartMessageId = MessageId.make("message-turn-start");

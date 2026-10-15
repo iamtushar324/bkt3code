@@ -418,6 +418,13 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     planId: PlanId,
   ) => Effect.Effect<OrchestrationV2PlanArtifact | undefined, ProjectionStoreV2Error>;
+  /** Proposed plans on the thread that still wait for a decision. */
+  readonly getActiveProposedPlans: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    ReadonlyArray<Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>>,
+    ProjectionStoreV2Error
+  >;
   readonly hasUnpairedRunInterruptRequest: (
     threadId: ThreadId,
     requestId: TurnItemId,
@@ -1052,6 +1059,10 @@ const decodeMessagePayload = Schema.decodeUnknownEffect(
 );
 const decodePlanArtifact = Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema);
 const decodePlanPayload = (json: string) => decodePlanArtifact(parseEncodedPayload(json));
+const isProposedPlanArtifact = (
+  plan: OrchestrationV2PlanArtifact,
+): plan is Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }> =>
+  plan.kind === "proposed_plan";
 const decodeTurnItemPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
@@ -4297,6 +4308,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getActiveProposedPlans: ProjectionStoreV2Shape["getActiveProposedPlans"] = (threadId) =>
+      Effect.gen(function* () {
+        const rows = yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_plans
+          WHERE thread_id = ${threadId} AND kind = 'proposed_plan' AND status = 'active'`;
+        const plans = yield* decodeRows(decodePlanPayload, threadId)(rows);
+        return plans.filter(isProposedPlanArtifact);
+      }).pipe(Effect.mapError(controlReadError(threadId)));
+
     const hasUnpairedRunInterruptRequest: ProjectionStoreV2Shape["hasUnpairedRunInterruptRequest"] =
       (threadId, requestId, resultId) =>
         Effect.gen(function* () {
@@ -5782,6 +5801,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadRecords,
       getRuntimeRequest,
       getPlan,
+      getActiveProposedPlans,
       getProviderControlContext,
       getLimitRecoveryCandidates,
       getRecoveryThreadIds,
@@ -6012,6 +6032,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           if (projection === undefined)
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           return projection.plans.find((plan) => plan.id === planId);
+        }),
+      getActiveProposedPlans: (threadId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) return [];
+          return projection.plans
+            .filter(isProposedPlanArtifact)
+            .filter((plan) => plan.status === "active");
         }),
       hasUnpairedRunInterruptRequest: (threadId, requestId, resultId) =>
         Effect.gen(function* () {
