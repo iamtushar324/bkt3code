@@ -8,7 +8,6 @@ import {
   TOOLYARD_MCP_INTEGRATION_ID,
   type PersonalMcpAuthMode,
   type ThreadId,
-  type UserId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -22,7 +21,6 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
-import type { McpInvocationScope, McpThreadCaller } from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { makeUpstreamRejectionTracker, rejectionKey } from "./UpstreamRejectionTracker.ts";
 import * as UserMcpProfileStore from "./UserMcpProfileStore.ts";
@@ -80,77 +78,9 @@ interface ForwardedRequestOptions {
   readonly authMode: PersonalMcpAuthMode;
   readonly customHeaderName: string;
   readonly credential: string;
-  /** The calling T3 thread, or `null` for a personal-token call that has none. */
-  readonly threadId: ThreadId | null;
+  readonly threadId: ThreadId;
   readonly integrationId?: string;
 }
-
-/** Prefix of the personal T3 tokens minted in `UserMcpProfileStore.rotateExternalToken`. */
-const PERSONAL_TOKEN_PREFIX = "t3usr_";
-
-/**
- * Who a proxied call acts for. A provider session acts for the user bound to
- * its credential and names its thread to toolyard. A personal token (Settings →
- * external MCP access) acts for the user who owns that token, has no thread,
- * and reaches toolyard only.
- */
-export type UpstreamCaller =
-  | {
-      readonly kind: "provider-session";
-      readonly actorUserId: UserId;
-      readonly threadId: ThreadId;
-      readonly providerInstanceId: McpThreadCaller["providerInstanceId"];
-      readonly providerSessionId: McpThreadCaller["providerSessionId"];
-    }
-  | {
-      readonly kind: "personal-token";
-      readonly actorUserId: UserId;
-    };
-
-/**
- * Decides whether a resolved T3 credential may use `/mcp/upstream/<integrationId>`.
- *
- * A personal token resolves to an `external-user` scope only when it is the
- * current token of a user whose external access switch is on and the server's
- * `experimental.externalMcp.enabled` is on (`McpSessionRegistry.resolve`, the
- * same check the `/mcp` route uses). Its user comes from the token's own row,
- * never from the request, so it cannot act as another user. The shared
- * external operator key and OAuth clients are not personal tokens and stay
- * refused, as is every integration other than toolyard.
- */
-export const upstreamCallerFor = (
-  invocation: McpInvocationScope | undefined,
-  integrationId: string,
-  rawToken: string,
-): UpstreamCaller | null => {
-  if (!invocation) return null;
-  if (invocation.principal === "provider-session") {
-    const actorUserId = managedToolyardActor(invocation.actorUserId);
-    if (
-      invocation.thread === undefined ||
-      actorUserId === null ||
-      (invocation.actorUserId === null && integrationId !== TOOLYARD_MCP_INTEGRATION_ID)
-    )
-      return null;
-    return {
-      kind: "provider-session",
-      actorUserId,
-      threadId: invocation.thread.threadId,
-      providerInstanceId: invocation.thread.providerInstanceId,
-      providerSessionId: invocation.thread.providerSessionId,
-    };
-  }
-  if (
-    invocation.principal === "external-user" &&
-    rawToken.startsWith(PERSONAL_TOKEN_PREFIX) &&
-    integrationId === TOOLYARD_MCP_INTEGRATION_ID &&
-    invocation.thread === undefined &&
-    invocation.actorUserId !== null &&
-    invocation.requestNamespace === `external-user:${invocation.actorUserId}`
-  )
-    return { kind: "personal-token", actorUserId: invocation.actorUserId };
-  return null;
-};
 
 const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(function* (
   incoming: Request,
@@ -191,10 +121,7 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
       );
       break;
   }
-  if (
-    options.threadId !== null &&
-    (options.integrationId === TOOLYARD_MCP_INTEGRATION_ID || isToolyardGatewayUrl(options.url))
-  ) {
+  if (options.integrationId === TOOLYARD_MCP_INTEGRATION_ID || isToolyardGatewayUrl(options.url)) {
     outgoing = outgoing.pipe(HttpClientRequest.setHeader(T3_SESSION_ID_HEADER, options.threadId));
   }
   return outgoing;
@@ -237,21 +164,18 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       ? request.headers.authorization.slice("Bearer ".length).trim()
       : "";
     const invocation = yield* McpSessionRegistry.resolveActiveMcpCredential(rawToken);
-    const caller = upstreamCallerFor(invocation, integrationId, rawToken);
-    if (!caller) {
-      return unauthorized(
-        "A user-bound T3 provider credential, or a personal T3 token for toolyard, is required.",
-      );
+    if (
+      !invocation ||
+      invocation.principal !== "provider-session" ||
+      invocation.thread === undefined ||
+      managedToolyardActor(invocation.actorUserId) === null ||
+      (invocation.actorUserId === null && integrationId !== TOOLYARD_MCP_INTEGRATION_ID)
+    ) {
+      return unauthorized("A user-bound T3 provider credential is required.");
     }
-    const actorUserId = caller.actorUserId;
-    const threadId = caller.kind === "provider-session" ? caller.threadId : null;
-    const logFields = {
-      actorUserId,
-      caller: caller.kind,
-      providerSessionId: caller.kind === "provider-session" ? caller.providerSessionId : null,
-      providerInstanceId: caller.kind === "provider-session" ? caller.providerInstanceId : null,
-      integrationId,
-    };
+    // Bound once: the guard's narrowing does not reach the callbacks below.
+    const thread = invocation.thread;
+    const actorUserId = managedToolyardActor(invocation.actorUserId)!;
 
     const profile = yield* UserMcpProfileStore.getActivePersonalMcpProfile(actorUserId).pipe(
       Effect.catch(() => Effect.succeed(undefined)),
@@ -261,11 +185,8 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
         candidate.id === integrationId &&
         candidate.enabled &&
         candidate.credentialConfigured &&
-        // The provider filter limits which agent runtimes get the integration;
-        // a personal-token call is the user's own and runs in no provider.
-        (caller.kind === "personal-token" ||
-          candidate.providerInstanceIds.length === 0 ||
-          candidate.providerInstanceIds.includes(caller.providerInstanceId)),
+        (candidate.providerInstanceIds.length === 0 ||
+          candidate.providerInstanceIds.includes(thread.providerInstanceId)),
     );
     if (!integration) {
       return HttpServerResponse.jsonUnsafe(
@@ -327,7 +248,7 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
       authMode: integration.authMode,
       customHeaderName: integration.customHeaderName,
       credential,
-      threadId,
+      threadId: thread.threadId,
       integrationId,
     });
 
@@ -389,9 +310,21 @@ export const mcpUpstreamProxyRouteLayer = HttpRouter.add(
           headers: responseHeaders(response.headers),
         }),
       ),
-      Effect.tap(() => Effect.logInfo("personal MCP request proxied", logFields)),
+      Effect.tap(() =>
+        Effect.logInfo("personal MCP request proxied", {
+          actorUserId: invocation.actorUserId,
+          providerSessionId: thread.providerSessionId,
+          providerInstanceId: thread.providerInstanceId,
+          integrationId,
+        }),
+      ),
       Effect.catch((cause) =>
-        Effect.logWarning("personal MCP upstream request failed", { cause, ...logFields }).pipe(
+        Effect.logWarning("personal MCP upstream request failed", {
+          cause,
+          actorUserId: invocation.actorUserId,
+          providerSessionId: thread.providerSessionId,
+          integrationId,
+        }).pipe(
           Effect.as(
             HttpServerResponse.jsonUnsafe(
               { error: "personal_mcp_upstream_failed", integrationId },
