@@ -809,7 +809,11 @@ describe("phase sidebar lifecycle", () => {
     ).toBe("implementing");
     expect(
       resolvePhaseSidebarPhase(
-        makeThread({ hasActionableProposedPlan: true, backgroundLiveness: null }),
+        makeThread({
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          backgroundLiveness: null,
+        }),
       ),
     ).toBe("plan_ready");
   });
@@ -853,15 +857,29 @@ describe("phase sidebar lifecycle", () => {
     ]);
   });
 
-  // T3-CUSTOM(expbkt3): BEGIN — Plan Ready means a plan is waiting, in any mode.
-  it("files a plan submitted from a default-mode turn under Plan Ready", () => {
-    // `t3_submit_plan` never changes interactionMode, so gating the group on
-    // plan mode hid every plan an agent submitted mid-turn.
+  // T3-CUSTOM(expbkt3): BEGIN — Plan Ready means a plan is waiting, and a plan
+  // waits only while its thread is in plan mode.
+  it("files a held plan under Plan Ready only while the thread is in plan mode", () => {
+    expect(
+      resolvePhaseSidebarPhase(
+        makeThread({ interactionMode: "plan", hasActionableProposedPlan: true }),
+      ),
+    ).toBe("plan_ready");
+    // Turning plan mode off clears a stale plan out of the group.
     expect(
       resolvePhaseSidebarPhase(
         makeThread({ interactionMode: "default", hasActionableProposedPlan: true }),
       ),
-    ).toBe("plan_ready");
+    ).toBe("ready");
+    expect(
+      resolvePhaseSidebarPhase(
+        makeThread({
+          interactionMode: "default",
+          hasActionableProposedPlan: true,
+          runtime: makeSession("error"),
+        }),
+      ),
+    ).toBe("ready");
   });
 
   it("keeps a waiting plan out of Plan Ready while the agent is still running", () => {
@@ -979,6 +997,7 @@ describe("phase sidebar lifecycle", () => {
     expect(
       resolvePhaseSidebarPhase(
         makeThread({
+          interactionMode: "plan",
           hasPendingAsyncUserInput: true,
           hasActionableProposedPlan: true,
         }),
@@ -991,7 +1010,11 @@ describe("phase sidebar lifecycle", () => {
     // this deliberately stays "plan": both badges have to survive together.
     expect(
       resolvePhaseSidebarAttentionKind(
-        makeThread({ hasActionableProposedPlan: true, hasPendingAsyncUserInput: true }),
+        makeThread({
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          hasPendingAsyncUserInput: true,
+        }),
       ),
     ).toBe("plan");
     expect(resolvePhaseSidebarAttentionKind(makeThread({ hasPendingAsyncUserInput: true }))).toBe(
@@ -1074,35 +1097,47 @@ describe("phase sidebar attention badges", () => {
 
   // T3-CUSTOM(expbkt3): BEGIN — a plan waiting on a human is attention too.
   it("reports a waiting plan as attention, ranked below every blocking kind", () => {
-    expect(resolvePhaseSidebarAttentionKind(makeThread({ hasActionableProposedPlan: true }))).toBe(
-      "plan",
-    );
+    const plan = { interactionMode: "plan", hasActionableProposedPlan: true } as const;
+    expect(resolvePhaseSidebarAttentionKind(makeThread(plan))).toBe("plan");
     // A question, an approval and a failure each outrank it.
     expect(
-      resolvePhaseSidebarAttentionKind(
-        makeThread({ hasActionableProposedPlan: true, hasPendingUserInput: true }),
-      ),
+      resolvePhaseSidebarAttentionKind(makeThread({ ...plan, hasPendingUserInput: true })),
     ).toBe("input");
     expect(
-      resolvePhaseSidebarAttentionKind(
-        makeThread({ hasActionableProposedPlan: true, hasPendingApprovals: true }),
-      ),
+      resolvePhaseSidebarAttentionKind(makeThread({ ...plan, hasPendingApprovals: true })),
     ).toBe("approval");
     expect(
-      resolvePhaseSidebarAttentionKind(
-        makeThread({
-          hasActionableProposedPlan: true,
-          runtime: makeSession("error"),
-        }),
-      ),
+      resolvePhaseSidebarAttentionKind(makeThread({ ...plan, runtime: makeSession("error") })),
     ).toBe("error");
   });
 
-  it("badges a plan that arrives while the agent is still working", () => {
-    // The row stays in Implementing, but it still has to say a plan is there.
+  it("drops the plan badge once plan mode is off", () => {
     expect(
       resolvePhaseSidebarAttentionKind(
-        makeThread({ hasActionableProposedPlan: true, runtime: makeSession("running") }),
+        makeThread({ interactionMode: "default", hasActionableProposedPlan: true }),
+      ),
+    ).toBeNull();
+    // An async question on the same thread still flies its own badge.
+    expect(
+      resolvePhaseSidebarAttentionKind(
+        makeThread({
+          interactionMode: "default",
+          hasActionableProposedPlan: true,
+          hasPendingAsyncUserInput: true,
+        }),
+      ),
+    ).toBe("ask");
+  });
+
+  it("badges a plan that arrives while the agent is still working", () => {
+    // The row stays in Planning, but it still has to say a plan is there.
+    expect(
+      resolvePhaseSidebarAttentionKind(
+        makeThread({
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          runtime: makeSession("running"),
+        }),
       ),
     ).toBe("plan");
   });
