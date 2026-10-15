@@ -464,6 +464,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.activity.append":
+    // T3-CUSTOM(expbkt3): a decided plan review retires its plan.
+    case "thread.proposed-plan.retire":
     case "thread.metadata.update":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
@@ -1736,6 +1738,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
+      // T3-CUSTOM(expbkt3): a queued continuation ends the thread's open plan when it starts, not
+      // when it was queued, so cancelling it leaves the plan open. Wakes and
+      // maintenance commands are not continuations.
+      const supersededPlans =
+        queuedMessage.delegatedCompletion === undefined &&
+        queuedMessage.notification === undefined &&
+        !isNativeMaintenanceCommand(queuedMessage)
+          ? (yield* projectionStore.getActiveProposedPlans(threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId,
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            )).filter((plan) => plan.id !== queuedRun.sourcePlanRef?.planId)
+          : [];
       yield* writeSystemEvents(
         [
           ...(selectionChanged
@@ -1856,6 +1876,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: notificationTurnItem(userTurnItem, queuedMessage, projection.subagents),
           },
+          // T3-CUSTOM(expbkt3): retire the plans this queued continuation ends.
+          ...supersededPlans.map((plan) => ({
+            type: "plan.updated" as const,
+            threadId: plan.threadId,
+            ...(plan.runId === null ? {} : { runId: plan.runId }),
+            nodeId: plan.nodeId,
+            providerInstanceId: queuedRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...plan, status: "superseded" as const },
+          })),
           {
             type: "run.updated",
             threadId,
@@ -4890,27 +4920,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
         });
       }
-      if (sourcePlan !== null && sourcePlan.status !== "active") {
+      // A superseded plan may still be implemented when the turn names it: a
+      // reviewer can approve the exact version after a plan-mode question.
+      if (
+        sourcePlan !== null &&
+        sourcePlan.status !== "active" &&
+        sourcePlan.status !== "superseded"
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Proposed plan ${sourcePlan.id} is not active.`,
         });
       }
-      const completeSourcePlan = (occurredAt: DateTime.Utc) =>
-        sourcePlan === null
-          ? Effect.void
-          : emit(
-              events,
-              command,
-            )({
-              type: "plan.updated",
-              threadId: sourcePlan.threadId,
-              ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
-              nodeId: sourcePlan.nodeId,
-              occurredAt,
-              payload: { ...sourcePlan, status: "completed" },
-            });
+      // Continuing a thread ends its open plan in every interaction mode: the
+      // plan this turn implements is completed, any other is superseded, so an
+      // earlier plan can never become actionable again. A background-task wake
+      // or a maintenance command (`/compact`) is not a continuation, and a
+      // queued message waits for its run, so those leave an open plan alone.
+      const continuesThread =
+        delegatedCompletion === undefined &&
+        command.notification === undefined &&
+        !isNativeMaintenanceCommand(command);
+      const completeSourcePlan = (
+        occurredAt: DateTime.Utc,
+        options: { readonly supersedeOpenPlans: boolean } = { supersedeOpenPlans: true },
+      ) =>
+        Effect.gen(function* () {
+          const openPlans =
+            continuesThread && options.supersedeOpenPlans
+              ? yield* projectionStore
+                  .getActiveProposedPlans(command.threadId)
+                  .pipe(mapDispatchError(command))
+              : [];
+          const retired = [
+            ...openPlans
+              .filter((plan) => plan.id !== sourcePlan?.id)
+              .map((plan) => ({ ...plan, status: "superseded" as const })),
+            ...(sourcePlan === null ? [] : [{ ...sourcePlan, status: "completed" as const }]),
+          ];
+          yield* Effect.forEach(
+            retired,
+            (plan) =>
+              emit(
+                events,
+                command,
+              )({
+                type: "plan.updated",
+                threadId: plan.threadId,
+                ...(plan.runId === null ? {} : { runId: plan.runId }),
+                nodeId: plan.nodeId,
+                occurredAt,
+                payload: plan,
+              }),
+            { discard: true },
+          );
+        });
 
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
@@ -5156,7 +5221,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
-        yield* completeSourcePlan(now);
+        yield* completeSourcePlan(now, { supersedeOpenPlans: false });
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,
@@ -10379,6 +10444,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly reason: string;
         }
       | undefined;
+    // T3-CUSTOM(expbkt3): a plan review decided outside a turn start ends its plan.
+    if (command.type === "thread.proposed-plan.retire") {
+      const plan = yield* projectionStore
+        .getPlan(command.threadId, command.planId)
+        .pipe(mapDispatchError(command));
+      if (plan?.kind === "proposed_plan" && plan.status === "active") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "plan.updated",
+          threadId: plan.threadId,
+          ...(plan.runId === null ? {} : { runId: plan.runId }),
+          nodeId: plan.nodeId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...plan, status: command.status },
+        });
+      }
+      return { events: yield* Ref.get(events), effects: [] };
+    }
     // T3-CUSTOM(expbkt3): fork tool/activity payloads share the V2 event and receipt transaction.
     if (command.type === "thread.activity.append") {
       const projection = yield* projectionStore
@@ -10884,10 +10969,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
         // stop that finds nothing running, has nothing to record. That is
-        // its expected outcome, not a failure.
+        // its expected outcome, not a failure. So is retiring a plan that a
+        // turn already completed or superseded.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
-        command.type === "thread.stop"
+        command.type === "thread.stop" ||
+        command.type === "thread.proposed-plan.retire"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

@@ -135,6 +135,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
   switch (command.type) {
     // T3-CUSTOM(expbkt3): native team commands participate in receipt waits.
     case "thread.activity.append":
+    case "thread.proposed-plan.retire":
     case "thread.member.add":
     case "thread.member.remove":
     case "thread.owner.transfer":

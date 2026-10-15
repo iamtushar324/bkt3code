@@ -311,10 +311,18 @@ export function findLatestProposedPlan(
   projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  // T3-CUSTOM(expbkt3): an earlier run's plan is current only while it is still
+  // active. Falling back to any earlier plan resurfaced a superseded one in the
+  // banner and implement prompt; the server keeps at most one plan active.
   if (projection === null) return null;
-  const plans = projection.plans.filter((plan) => plan.kind === "proposed_plan");
-  const candidates = latestRunId ? plans.filter((plan) => plan.runId === latestRunId) : plans;
-  const plan = [...(candidates.length > 0 ? candidates : plans)]
+  const plans = projection.plans.filter(
+    (plan): plan is Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }> =>
+      plan.kind === "proposed_plan",
+  );
+  const latestRunPlans = latestRunId ? plans.filter((plan) => plan.runId === latestRunId) : [];
+  const candidates =
+    latestRunPlans.length > 0 ? latestRunPlans : plans.filter((plan) => plan.status === "active");
+  const plan = candidates
     .toSorted(
       (left, right) =>
         planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||

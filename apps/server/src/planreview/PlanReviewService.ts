@@ -315,7 +315,8 @@ export const make = Effect.gen(function* () {
               },
               createdAt: implementedAt,
             });
-          }),
+            // One plan that cannot be closed must not keep the rest open.
+          }).pipe(Effect.ignore),
         { discard: true },
       );
     }).pipe(Effect.ignore);
@@ -833,12 +834,14 @@ export const make = Effect.gen(function* () {
             .sort()
             .at(-1) ?? null;
 
+        const agentRevisions = snapshot.versions.filter(({ authorKind }) => authorKind === "agent");
         const resend = decidePlanResend({
           latestCompactionAt,
           planCreatedAt: agentBaseline.createdAt,
           planThreadId: document.threadId,
           targetThreadId: document.threadId,
           providerSessionStatus: thread.session?.status ?? null,
+          agentRevisionCount: agentRevisions.length,
         });
         resentPlan = resend.shouldResend;
 
@@ -851,6 +854,8 @@ export const make = Effect.gen(function* () {
             hasReviewerEdits || resend.shouldResend ? approvedVersion.contentMarkdown : null,
           fullPlanReason: hasReviewerEdits ? null : resend.reason,
           wasEdited: hasReviewerEdits,
+          revision: approvedVersion.revision,
+          planId: approvedVersion.sourcePlanId ?? agentBaseline.sourcePlanId,
         });
       } else {
         prompt = buildPlanReviewFeedbackPrompt({
