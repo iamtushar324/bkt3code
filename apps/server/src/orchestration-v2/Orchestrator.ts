@@ -1738,7 +1738,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
-      // A queued continuation ends the thread's open plan when it starts, not
+      // T3-CUSTOM(expbkt3): a queued continuation ends the thread's open plan when it starts, not
       // when it was queued, so cancelling it leaves the plan open. Wakes and
       // maintenance commands are not continuations.
       const supersededPlans =
@@ -1876,6 +1876,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: notificationTurnItem(userTurnItem, queuedMessage, projection.subagents),
           },
+          // T3-CUSTOM(expbkt3): retire the plans this queued continuation ends.
           ...supersededPlans.map((plan) => ({
             type: "plan.updated" as const,
             threadId: plan.threadId,
