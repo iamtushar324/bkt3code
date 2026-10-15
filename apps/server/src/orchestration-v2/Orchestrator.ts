@@ -4908,11 +4908,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Continuing a thread ends its open plan in every interaction mode: the
       // plan this turn implements is completed, any other is superseded, so an
       // earlier plan can never become actionable again. A background-task wake
-      // is not a continuation and leaves a plan that waits for review alone.
-      const completeSourcePlan = (occurredAt: DateTime.Utc) =>
+      // or a maintenance command (`/compact`) is not a continuation, and a
+      // queued message waits for its run, so those leave an open plan alone.
+      const continuesThread =
+        delegatedCompletion === undefined && !isNativeMaintenanceCommand(command);
+      const completeSourcePlan = (
+        occurredAt: DateTime.Utc,
+        options: { readonly supersedeOpenPlans: boolean } = { supersedeOpenPlans: true },
+      ) =>
         Effect.gen(function* () {
           const openPlans =
-            delegatedCompletion === undefined
+            continuesThread && options.supersedeOpenPlans
               ? yield* projectionStore
                   .getActiveProposedPlans(command.threadId)
                   .pipe(mapDispatchError(command))
@@ -5185,7 +5191,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
-        yield* completeSourcePlan(now);
+        yield* completeSourcePlan(now, { supersedeOpenPlans: false });
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,
@@ -10933,10 +10939,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
         // stop that finds nothing running, has nothing to record. That is
-        // its expected outcome, not a failure.
+        // its expected outcome, not a failure. So is retiring a plan that a
+        // turn already completed or superseded.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
-        command.type === "thread.stop"
+        command.type === "thread.stop" ||
+        command.type === "thread.proposed-plan.retire"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

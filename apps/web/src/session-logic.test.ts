@@ -239,26 +239,23 @@ describe("V2 session presentation", () => {
     expect(plan?.planMarkdown).toBe("Plan");
   });
 
-  it("does not resurface an earlier run's plan when the latest run has none", () => {
+  it("never resurfaces a closed plan from an earlier run", () => {
     const baseProjection = makeThreadProjectionFixture();
-    const plan = findLatestProposedPlan(
-      {
-        ...baseProjection,
-        plans: [
-          {
-            id: PlanId.make("plan-old"),
-            threadId: baseProjection.thread.id,
-            nodeId: NodeId.make("node-plan-old"),
-            kind: "proposed_plan" as const,
-            markdown: "Old plan",
-            status: "active" as const,
-            runId: RunId.make("run-1"),
-          },
-        ],
-      },
-      RunId.make("run-2"),
-    );
-    expect(plan).toBeNull();
+    const earlierPlan = (name: string, status: "active" | "completed" | "superseded") => ({
+      id: PlanId.make(`plan-${name}`),
+      threadId: baseProjection.thread.id,
+      nodeId: NodeId.make(`node-plan-${name}`),
+      kind: "proposed_plan" as const,
+      markdown: `Plan ${name}`,
+      status,
+      runId: RunId.make("run-1"),
+    });
+    const latest = (plans: ReadonlyArray<ReturnType<typeof earlierPlan>>) =>
+      findLatestProposedPlan({ ...baseProjection, plans: [...plans] }, RunId.make("run-2"));
+
+    expect(latest([earlierPlan("old", "superseded"), earlierPlan("done", "completed")])).toBeNull();
+    // A background wake starts a run without ending the plan that waits for review.
+    expect(latest([earlierPlan("waiting", "active")])?.planMarkdown).toBe("Plan waiting");
   });
 
   it("assigns run rollback to the turn-start message instead of a later steer", () => {
