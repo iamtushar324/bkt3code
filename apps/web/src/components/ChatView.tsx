@@ -2,7 +2,6 @@
 import { PlanReviewPanel, useOpenPlanReviewDocumentId } from "../fork/planReviewSurface";
 import { PlanReviewTakeover } from "../fork/planReviewTakeover";
 import { PlanReviewComposerDock } from "../fork/planReviewComposerDock";
-import { usePlanReviewTakeoverStore } from "../planReviewTakeoverStore";
 import {
   THREAD_COMMENTS_EMPTY_SEND_TEXT,
   ThreadCommentsPanel,
@@ -3494,10 +3493,6 @@ export default function ChatView(props: ChatViewProps) {
     }
     return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
   }, [activeLatestRun?.runId, latestRunSettled, serverProjection]);
-  // T3-CUSTOM(expbkt3): a native plan opens the review takeover.
-  const openPlanReviewSurface = useCallback((documentId: string) => {
-    usePlanReviewTakeoverStore.getState().undismiss(documentId);
-  }, []);
   const planReviewDocumentId = useOpenPlanReviewDocumentId(
     activeThreadRef?.environmentId ?? null,
     activeThreadRef?.threadId ?? null,
@@ -11555,9 +11550,6 @@ export default function ChatView(props: ChatViewProps) {
               <AgentUiExpandedSurface threadRef={activeThreadRef} />
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
-                // T3-CUSTOM(expbkt3): native plan cards open the shared review.
-                onOpenPlanReview={openPlanReviewSurface}
-                planReviewDocumentId={planReviewDocumentId}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline

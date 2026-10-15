@@ -12,15 +12,27 @@ Turn it on or off in **Settings → BK Add-ons → Native plan review**. It is o
 by default. While it is off, a plan stays an ordinary plan card in the
 conversation.
 
+## The plan card
+
+Every plan also appears as a card in the conversation. The header shows the
+plan's state (Ready, Done, Superseded), how many steps it has, and an estimated
+reading time. **Expand plan** shows a long plan in full.
+
+- **Widen plan** (the arrows beside the plan's menu) lets plan cards use the free
+  width beside the chat. Your choice applies to every plan until you change it.
+- Select text in a plan to **Cite** it or leave a comment, the same as in an
+  agent message. See [Comments on agent messages](chat-comments.md).
+- A plan can carry visuals: ask the agent to include a chart, diagram or mockup
+  and it appears inside the plan as a live page in your theme, like a
+  [visual reply](html-renders.md). A plan written entirely as one HTML page shows
+  as that page.
+
 ## Opening a plan
 
 By default a plan opens for review as soon as it is ready. Turn that off with
 **Settings → BK Add-ons → Open a ready plan automatically**; the plan then waits
-behind the entry points below, which appear once an agent has proposed a plan
-that has not been implemented yet:
-
-- **Preview** on the plan card in the conversation.
-- A floating **Open the plan in preview** button above the composer.
+behind the floating **Open the plan in preview** button above the composer,
+which appears once an agent has proposed a plan that has not been implemented yet.
 
 The panel opens beside the chat as a tab, so the conversation stays visible. Use
 the maximise control in the panel header for a full-width read.

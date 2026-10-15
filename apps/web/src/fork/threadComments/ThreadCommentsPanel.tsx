@@ -144,7 +144,9 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
       turnItems.flatMap(({ item }) =>
         item.type === "user_message" || item.type === "assistant_message"
           ? [{ id: item.messageId, role: item.type === "user_message" ? "user" : "assistant" }]
-          : [],
+          : item.type === "proposed_plan"
+            ? [{ id: item.planId, role: "plan" }]
+            : [],
       ),
     [turnItems],
   );
