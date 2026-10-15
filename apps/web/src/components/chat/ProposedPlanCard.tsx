@@ -9,20 +9,25 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
-  buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
   normalizePlanMarkdownForExport,
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
-import ChatMarkdown from "../ChatMarkdown";
-import { ArrowRightIcon, EllipsisIcon, LoaderCircleIcon } from "lucide-react"; // T3-CUSTOM(expbkt3): icons for the native plan review entry point.
+// T3-CUSTOM(expbkt3): BEGIN — plans render like chat (HTML parts, citations, comments) and stay mounted when folded.
+import ChatMarkdown from "../../fork/planCard/PlanMarkdown";
+import {
+  buildCollapsedProposedPlanPreviewMarkdown,
+  useExpandPlanForCitation,
+} from "../../fork/planCard/planCardSeams";
+import { PlanCardHeading } from "../../fork/planCard/PlanCardHeading";
+// T3-CUSTOM(expbkt3): END
+import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
-import { Badge } from "../ui/badge";
 import {
   Dialog,
   DialogDescription,
@@ -44,24 +49,15 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
-  // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
-  onOpenPlanReview,
-  planReviewDocumentId,
-  reviewable = false,
-  // T3-CUSTOM(expbkt3): END
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  // T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point.
-  onOpenPlanReview?: ((documentId: string) => void) | undefined;
-  planReviewDocumentId?: string | null | undefined;
-  reviewable?: boolean | undefined;
-  // T3-CUSTOM(expbkt3): END
 }) {
   const [expanded, setExpanded] = useState(false);
+  useExpandPlanForCitation(setExpanded); // T3-CUSTOM(expbkt3): a quote inside a folded plan opens it.
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -165,12 +161,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   return (
     <div className="rounded-3xl border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">Plan</Badge>
-          {/* Same heading level as the message author headings in the timeline,
-              so a plan's own headings nest beneath it in the outline. */}
-          <h3 className="truncate text-sm font-medium text-foreground">{title}</h3>
-        </div>
+        {/* T3-CUSTOM(expbkt3): icon, title, state, size and the width control. */}
+        <PlanCardHeading planMarkdown={planMarkdown} title={title} />
         <Menu>
           <MenuTrigger
             render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
@@ -216,47 +208,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {canCollapse || (reviewable && onOpenPlanReview) ? ( // T3-CUSTOM(expbkt3): native timeline plan review entry point.
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            {/* T3-CUSTOM(expbkt3): BEGIN — layout host for the plan review button alongside the collapse button. */}
-            {canCollapse ? (
-              <Button
-                size="sm"
-                variant="outline"
-                data-scroll-anchor-ignore
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "Collapse plan" : "Expand plan"}
-              </Button>
-            ) : null}
-            {/* T3-CUSTOM(expbkt3): END */}
-            {/* T3-CUSTOM(expbkt3): BEGIN — native timeline plan review entry point. */}
-            {reviewable && onOpenPlanReview ? (
-              planReviewDocumentId ? (
-                <Button
-                  size="sm"
-                  data-scroll-anchor-ignore
-                  data-plan-review-trigger
-                  aria-label="Open the plan review"
-                  onClick={() => onOpenPlanReview(planReviewDocumentId)}
-                >
-                  Preview
-                  <ArrowRightIcon className="size-4" />
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  disabled
-                  data-scroll-anchor-ignore
-                  data-plan-review-pending
-                  aria-label="Preparing plan preview"
-                >
-                  Preview
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                </Button>
-              )
-            ) : null}
-            {/* T3-CUSTOM(expbkt3): END */}
+        {canCollapse ? (
+          <div className="mt-4 flex justify-center">
+            <Button
+              size="sm"
+              variant="outline"
+              data-scroll-anchor-ignore
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Collapse plan" : "Expand plan"}
+            </Button>
           </div>
         ) : null}
       </div>

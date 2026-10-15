@@ -151,21 +151,21 @@ export interface ThreadCommentMessageGroup {
 }
 
 /**
- * Cards group under the assistant message they quote, in thread order. A
- * message counts turns by the user messages before it, which is the number the
- * user sees in the transcript; a message the client has not loaded (an older
- * page) is labelled by its id fragment and sorted to the end.
+ * Cards group under the assistant message or plan they quote, in thread order.
+ * A message counts turns by the user messages before it, which is the number
+ * the user sees in the transcript; a message the client has not loaded (an
+ * older page) is labelled by its id fragment and sorted to the end.
  */
 export function groupCommentsByMessage(
   comments: ReadonlyArray<ThreadComment>,
   messages: ReadonlyArray<{ readonly id: string; readonly role: string }>,
   providerLabel: string | null = null,
 ): ThreadCommentMessageGroup[] {
-  const orderById = new Map<string, { order: number; turn: number }>();
+  const orderById = new Map<string, { order: number; turn: number; role: string }>();
   let turn = 0;
   messages.forEach((message, index) => {
     if (message.role === "user") turn += 1;
-    orderById.set(message.id, { order: index, turn });
+    orderById.set(message.id, { order: index, turn, role: message.role });
   });
   const groups = new Map<string, ThreadCommentMessageGroup & { comments: ThreadComment[] }>();
   for (const comment of comments) {
@@ -176,7 +176,7 @@ export function groupCommentsByMessage(
       const turnLabel =
         position === undefined
           ? `Message ${messageId.slice(0, 8)}`
-          : `Turn ${Math.max(1, position.turn)}`;
+          : `Turn ${Math.max(1, position.turn)}${position.role === "plan" ? " · Plan" : ""}`;
       group = {
         messageId,
         label: providerLabel ? `${turnLabel} · ${providerLabel}` : turnLabel,

@@ -102,8 +102,20 @@ describe("sidebar session counters", () => {
   it("classifies approvals, input, plans, and failures as human attention", () => {
     expect(threadNeedsHumanAttention(makeThread({ hasPendingApprovals: true }))).toBe(true);
     expect(threadNeedsHumanAttention(makeThread({ hasPendingUserInput: true }))).toBe(true);
-    expect(threadNeedsHumanAttention(makeThread({ hasActionableProposedPlan: true }))).toBe(true);
+    expect(
+      threadNeedsHumanAttention(
+        makeThread({ interactionMode: "plan", hasActionableProposedPlan: true }),
+      ),
+    ).toBe(true);
     expect(threadNeedsHumanAttention(makeThread({ runtime: makeSession("error") }))).toBe(true);
+  });
+
+  it("stops counting a held plan once plan mode is off", () => {
+    expect(
+      threadNeedsHumanAttention(
+        makeThread({ interactionMode: "default", hasActionableProposedPlan: true }),
+      ),
+    ).toBe(false);
   });
 
   it("counts starting and running sessions as running", () => {

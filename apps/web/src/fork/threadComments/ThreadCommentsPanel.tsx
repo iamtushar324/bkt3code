@@ -141,10 +141,12 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
   const counts = useMemo(() => countComments(comments), [comments]);
   const messages = useMemo(
     () =>
-      turnItems.flatMap(({ item }) =>
+      turnItems.flatMap(({ item }): Array<{ id: string; role: string }> =>
         item.type === "user_message" || item.type === "assistant_message"
           ? [{ id: item.messageId, role: item.type === "user_message" ? "user" : "assistant" }]
-          : [],
+          : item.type === "proposed_plan"
+            ? [{ id: item.planId, role: "plan" }]
+            : [],
       ),
     [turnItems],
   );

@@ -492,12 +492,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // T3-CUSTOM(expbkt3): native plan review. On by default; turning it off hides
-  // the Preview entry points.
+  // T3-CUSTOM(expbkt3): native plan review. On by default; turning it off leaves
+  // plans as cards in the conversation.
   nativePlanReviewEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // T3-CUSTOM(expbkt3): a reviewable plan takes over the transcript as soon as
-  // it lands, so a plan gate cannot be missed. Off leaves the Preview button as
-  // the only way in. Requires nativePlanReviewEnabled.
+  // it lands, so a plan gate cannot be missed. Off leaves a ready plan as its
+  // conversation card. Requires nativePlanReviewEnabled.
   planReviewAutoOpenEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in the chat transcript. While
   // off, a `t3_show_ui` call stays an ordinary collapsed tool row.
