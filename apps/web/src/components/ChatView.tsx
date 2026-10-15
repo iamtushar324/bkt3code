@@ -15,6 +15,7 @@ import { useRightPanelMaximizedPreference } from "../rightPanelLayoutPreference"
 import { useCurrentUserId } from "../state/identity";
 import { useDurableThreadOutbox } from "../fork/useDurableThreadOutbox";
 import { DurableOutboxRecovery } from "../fork/DurableOutboxRecovery";
+import { releaseEndedRunUserInputs } from "../fork/orphanedUserInputs";
 import {
   resolveThreadCreationProfile,
   threadCreationForkFields,
@@ -3338,7 +3339,11 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       serverProjection === null
         ? { approvals: [], userInputs: [] }
-        : derivePendingThreadRequests(serverProjection),
+        : // T3-CUSTOM(expbkt3): a question whose run ended can be dismissed.
+          releaseEndedRunUserInputs(
+            derivePendingThreadRequests(serverProjection),
+            serverProjection,
+          ),
     [serverProjection],
   );
   const pendingApprovals = useMemo(
