@@ -124,9 +124,11 @@ const harness = (mode: "push" | "pull" = "push") =>
       // a fresh fiber that reads the same SQLite client outside any transaction.
       ownerCheckReadsDatabase: false,
     };
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Replicates the production owner check's own root fiber; a forked fiber would inherit the transaction connection and hide the deadlock.
+    const readOnFreshFiber = () => Effect.runPromise(sql`SELECT 1`);
     const ownerCheckRead = Effect.suspend(() =>
       state.ownerCheckReadsDatabase
-        ? Effect.promise(() => Effect.runPromise(sql`SELECT 1`)).pipe(Effect.asVoid)
+        ? Effect.promise(readOnFreshFiber).pipe(Effect.asVoid)
         : Effect.void,
     );
     const shell = (id = threadId) =>
@@ -1372,10 +1374,13 @@ describe("durable session webhooks", () => {
         h.state.ownerCheckReadsDatabase = true;
         // Before the fix the admission transaction called the owner check, which
         // waited for the connection that transaction held, until the sender gave up.
-        const first = yield* h.receive(h.event()).pipe(Effect.timeoutOption("2 seconds"));
+        // One payload for both deliveries: the live clock would give a second
+        // `h.event()` a new timestamp, which is a content conflict, not a retry.
+        const payload = h.event();
+        const first = yield* h.receive(payload).pipe(Effect.timeoutOption("2 seconds"));
         assert.isTrue(Option.isSome(first));
         assert.strictEqual(Option.getOrThrow(first).duplicate, false);
-        const repeat = yield* h.receive(h.event()).pipe(Effect.timeoutOption("2 seconds"));
+        const repeat = yield* h.receive(payload).pipe(Effect.timeoutOption("2 seconds"));
         assert.strictEqual(Option.getOrThrow(repeat).duplicate, true);
         assert.strictEqual(h.state.dispatches, 0);
         assert.strictEqual(
