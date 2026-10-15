@@ -5,6 +5,7 @@ import {
   CommandId,
   EnvironmentId,
   IsoDateTime,
+  PlanId,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -120,6 +121,15 @@ export const ForkThreadCommands = [
     commandId: CommandId,
     threadId: ThreadId,
     activity: OrchestrationThreadActivity,
+  }),
+  // Ends a proposed plan whose review was decided outside a turn start, such as
+  // a discard. Only an active plan changes.
+  Schema.Struct({
+    type: Schema.Literal("thread.proposed-plan.retire"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    planId: PlanId,
+    status: Schema.Literals(["completed", "superseded"]),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.member.add"),

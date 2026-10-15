@@ -434,6 +434,56 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("keeps only the newest proposed plan actionable, for every provider", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const proposePlan = (revision: number) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: {
+            type: "plan.updated",
+            driver: CODEX_DRIVER,
+            plan: {
+              id: PlanId.make(`plan:supersede-r${revision}`),
+              threadId: threadEvent.threadId,
+              runId: null,
+              nodeId: NodeId.make(`node:supersede-r${revision}`),
+              kind: "proposed_plan",
+              status: "active",
+              markdown: `# Plan revision ${revision}`,
+            },
+          },
+        });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      yield* proposePlan(2);
+      const stored = yield* proposePlan(3);
+      // A streamed update of the newest plan retires nothing more.
+      const restreamed = yield* proposePlan(3);
+
+      const statuses = (yield* projectionStore.getThreadProjection(threadEvent.threadId)).plans
+        .map((plan) => [plan.id, plan.status])
+        .toSorted(([left], [right]) => String(left).localeCompare(String(right)));
+      assert.deepEqual(statuses, [
+        ["plan:supersede-r2", "superseded"],
+        ["plan:supersede-r3", "active"],
+      ]);
+      assert.equal(stored.length, 2);
+      assert.equal(restreamed.length, 1);
+    }),
+  );
+
   it.effect(
     "treats successful provider terminal markers as non-persisted orchestration control signals",
     () =>

@@ -274,6 +274,23 @@ const make = Effect.gen(function* () {
         }
         case "thread.activity.append":
           return yield* dispatchNative(command, actorUserId);
+        // T3-CUSTOM(expbkt3): plan review records a decided plan through the legacy
+        // upsert; V2 keeps the decision as the plan artifact's status.
+        case "thread.proposed-plan.upsert":
+          if (command.proposedPlan.implementedAt === null) {
+            return yield* dispatchNative(command, actorUserId);
+          }
+          return yield* dispatchNative(
+            {
+              type: "thread.proposed-plan.retire",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              planId: command.proposedPlan.id,
+              status:
+                command.proposedPlan.implementationThreadId === null ? "superseded" : "completed",
+            },
+            actorUserId,
+          );
         default:
           return yield* dispatchNative(command, actorUserId);
       }

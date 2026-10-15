@@ -222,6 +222,7 @@ it.effect(
           getTurnStartHistory: () => Effect.die("unused"),
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),
+          getActiveProposedPlans: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
           getTimelinePage: () => Effect.die("Unused timeline read"),

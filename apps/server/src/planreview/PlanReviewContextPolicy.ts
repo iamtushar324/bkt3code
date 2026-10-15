@@ -20,6 +20,8 @@ export interface PlanResendSignals {
   readonly targetThreadId: string;
   /** Provider session status bound to the target thread, null when unbound. */
   readonly providerSessionStatus: string | null;
+  /** How many versions of the plan the agent wrote. */
+  readonly agentRevisionCount: number;
 }
 
 export interface PlanResendDecision {
@@ -34,13 +36,22 @@ export interface PlanResendDecision {
 /**
  * Returns whether the approval prompt must carry the whole plan.
  *
- * Three signals force a resend; anything else keeps the prompt to one line.
+ * Four signals force a resend; anything else keeps the prompt to one line.
  */
 export function decidePlanResend(signals: PlanResendSignals): PlanResendDecision {
   if (signals.targetThreadId !== signals.planThreadId) {
     return {
       shouldResend: true,
       reason: "it is being implemented in a different session from the one that planned it",
+    };
+  }
+
+  // Earlier revisions are still in context, and "the plan above" has been read
+  // as one of them. Naming the approved text removes the ambiguity.
+  if (signals.agentRevisionCount > 1) {
+    return {
+      shouldResend: true,
+      reason: "the plan was revised, and only this revision is approved",
     };
   }
 
