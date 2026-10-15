@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveWidePlanBox } from "./planCardLayout";
 import { isHtmlPlan, planHtmlTitle, splitPlanSegments } from "./planContent";
-import { planHtmlDocument, planHtmlFrameHeight } from "./planHtml";
+import {
+  planHtmlDocument,
+  planHtmlFrameHeight,
+  planHtmlKey,
+  readPlanHtmlHeight,
+  rememberPlanHtmlHeight,
+} from "./planHtml";
 import { planCardTitle, summarizePlan } from "./planSummary";
 
 const PAGE =
@@ -81,6 +87,27 @@ describe("planHtmlDocument", () => {
     expect(own).toBeGreaterThan(transparent);
   });
 
+  it("writes the reader's theme into the theme style, which the bootstrap later rewrites", () => {
+    const document = planHtmlDocument("<p>x</p>", {
+      appearance: "light",
+      variables: { "--foreground": "#111", "--bad name": "x", "--card": "red;}</style>" },
+    });
+    const open = document.indexOf('<style id="t3-theme">');
+    const rule = document.indexOf(":root{color-scheme:light;--foreground:#111;--card:red/style;}");
+    expect(rule).toBeGreaterThan(open);
+    expect(rule).toBeLessThan(document.indexOf("</style>", open));
+    expect(document).not.toContain("--bad name");
+  });
+
+  it("keys pages by their markup and remembers their last height", () => {
+    expect(planHtmlKey("<p>a</p>")).toBe(planHtmlKey("<p>a</p>"));
+    expect(planHtmlKey("<p>a</p>")).not.toBe(planHtmlKey("<p>b</p>"));
+    const key = planHtmlKey("<p>remembered</p>");
+    expect(readPlanHtmlHeight(key)).toBeUndefined();
+    rememberPlanHtmlHeight(key, 640);
+    expect(readPlanHtmlHeight(key)).toBe(640);
+  });
+
   it("fits the frame to the page within sane bounds", () => {
     expect(planHtmlFrameHeight(undefined)).toBe(320);
     expect(planHtmlFrameHeight(10)).toBe(80);
@@ -124,6 +151,25 @@ describe("resolveWidePlanBox", () => {
     expect(
       resolveWidePlanBox({ lane: { left: 300, right: 1036 }, area, padding: 20, obstacles: [500] }),
     ).toEqual({ offset: -272, width: 1280 });
+  });
+
+  it("starts after the minimap on the left so it keeps taking its own clicks", () => {
+    expect(
+      resolveWidePlanBox({
+        lane: { left: 432, right: 1168 },
+        area,
+        padding: 20,
+        leftObstacles: [64],
+      }),
+    ).toEqual({ offset: -272, width: 1280 });
+    expect(
+      resolveWidePlanBox({
+        lane: { left: 232, right: 968 },
+        area: { left: 0, right: 1200 },
+        padding: 20,
+        leftObstacles: [64],
+      }),
+    ).toEqual({ offset: -148, width: 1096 });
   });
 
   it("has nothing to offer when the column already fills the area", () => {

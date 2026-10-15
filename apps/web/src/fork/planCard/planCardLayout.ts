@@ -22,13 +22,23 @@ export function resolveWidePlanBox(input: {
   readonly area: { readonly left: number; readonly right: number };
   /** The conversation's side padding. */
   readonly padding: number;
-  /** Left edges of floating things the card must not slide under. */
+  /** Left edges of floating things on the right the card must not slide under. */
   readonly obstacles?: ReadonlyArray<number>;
+  /** Right edges of floating things on the left, such as the timeline minimap. */
+  readonly leftObstacles?: ReadonlyArray<number>;
   readonly maxWidth?: number;
 }): WidePlanBox | null {
   const { lane, area, padding } = input;
   const laneWidth = lane.right - lane.left;
-  const bandLeft = Math.min(lane.left, area.left + padding);
+  const bandLeft = Math.min(
+    lane.left,
+    Math.max(
+      area.left + padding,
+      ...(input.leftObstacles ?? [])
+        .filter((right) => right <= lane.left)
+        .map((right) => right + padding),
+    ),
+  );
   // Floating things keep the same gap from the card as the area's edge does.
   const blockers = (input.obstacles ?? [])
     .filter((left) => left >= lane.right)

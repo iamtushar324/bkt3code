@@ -29,10 +29,10 @@ reading time. **Expand plan** shows a long plan in full.
 
 ## Opening a plan
 
-By default a plan opens for review as soon as it is ready. Turn that off with
-**Settings → BK Add-ons → Open a ready plan automatically**; the plan then waits
-behind the floating **Open the plan in preview** button above the composer,
-which appears once an agent has proposed a plan that has not been implemented yet.
+By default a plan opens for review as soon as it is ready. Closing the review
+keeps that plan closed; it stays readable as its card in the conversation. Turn
+automatic opening off with **Settings → BK Add-ons → Open a ready plan
+automatically**; ready plans then stay as cards.
 
 The panel opens beside the chat as a tab, so the conversation stays visible. Use
 the maximise control in the panel header for a full-width read.
