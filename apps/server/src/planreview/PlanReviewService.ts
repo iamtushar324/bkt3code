@@ -315,7 +315,8 @@ export const make = Effect.gen(function* () {
               },
               createdAt: implementedAt,
             });
-          }),
+            // One plan that cannot be closed must not keep the rest open.
+          }).pipe(Effect.ignore),
         { discard: true },
       );
     }).pipe(Effect.ignore);

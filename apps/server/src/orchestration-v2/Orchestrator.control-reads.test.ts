@@ -385,6 +385,7 @@ const continueThread = (
   threadId: ThreadId,
   name: string,
   sourcePlanRef?: { readonly threadId: ThreadId; readonly planId: PlanId },
+  text = "What about the rollout?",
 ) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -393,7 +394,7 @@ const continueThread = (
       commandId: CommandId.make(`continue-${name}`),
       threadId,
       messageId: MessageId.make(`continue-${name}-input`),
-      text: "What about the rollout?",
+      text,
       attachments: [],
       ...(sourcePlanRef === undefined ? {} : { sourcePlanRef }),
       dispatchMode: { type: "defer_start" },
@@ -412,6 +413,18 @@ it.effect("supersedes an open plan when the thread continues without it", () =>
 
     assert.equal((yield* projections.getPlan(threadId, planId))?.status, "superseded");
     assert.deepEqual(yield* projections.getActiveProposedPlans(threadId), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("leaves an open plan alone for a maintenance command", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createPlanThread("compact-plan");
+    const planId = yield* applyProposedPlan(threadId, "compact-plan");
+
+    yield* continueThread(threadId, "compact-plan", undefined, "/compact");
+
+    assert.equal((yield* projections.getPlan(threadId, planId))?.status, "active");
   }).pipe(Effect.provide(layerTest)),
 );
 

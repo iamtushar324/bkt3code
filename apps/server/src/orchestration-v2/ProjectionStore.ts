@@ -418,7 +418,7 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     planId: PlanId,
   ) => Effect.Effect<OrchestrationV2PlanArtifact | undefined, ProjectionStoreV2Error>;
-  /** Proposed plans on the thread that still wait for a decision. */
+  // T3-CUSTOM(expbkt3): proposed plans on the thread that still wait for a decision.
   readonly getActiveProposedPlans: (
     threadId: ThreadId,
   ) => Effect.Effect<
@@ -1059,6 +1059,7 @@ const decodeMessagePayload = Schema.decodeUnknownEffect(
 );
 const decodePlanArtifact = Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema);
 const decodePlanPayload = (json: string) => decodePlanArtifact(parseEncodedPayload(json));
+// T3-CUSTOM(expbkt3): narrows a plan artifact to a proposed plan.
 const isProposedPlanArtifact = (
   plan: OrchestrationV2PlanArtifact,
 ): plan is Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }> =>
@@ -4308,10 +4309,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    // T3-CUSTOM(expbkt3): one indexed read, so plan supersession never loads the thread.
     const getActiveProposedPlans: ProjectionStoreV2Shape["getActiveProposedPlans"] = (threadId) =>
       Effect.gen(function* () {
-        const rows = yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_plans
-          WHERE thread_id = ${threadId} AND kind = 'proposed_plan' AND status = 'active'`;
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_plans
+          WHERE thread_id = ${threadId} AND kind = 'proposed_plan' AND status = 'active'
+        `;
         const plans = yield* decodeRows(decodePlanPayload, threadId)(rows);
         return plans.filter(isProposedPlanArtifact);
       }).pipe(Effect.mapError(controlReadError(threadId)));
@@ -5801,6 +5805,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadRecords,
       getRuntimeRequest,
       getPlan,
+      // T3-CUSTOM(expbkt3): plan supersession read.
       getActiveProposedPlans,
       getProviderControlContext,
       getLimitRecoveryCandidates,
@@ -6033,6 +6038,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           return projection.plans.find((plan) => plan.id === planId);
         }),
+      // T3-CUSTOM(expbkt3): plan supersession read.
       getActiveProposedPlans: (threadId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
