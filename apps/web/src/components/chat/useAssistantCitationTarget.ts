@@ -113,8 +113,8 @@ export function useAssistantCitationTarget({
       );
       return;
     }
+    // T3-CUSTOM(expbkt3): an assistant response or a plan.
     if (!isCitableSource(source)) {
-      // T3-CUSTOM(expbkt3): an assistant response or a plan.
       fail(
         "The citation does not refer to an assistant response",
         "The selected text is still saved in your citation.",
