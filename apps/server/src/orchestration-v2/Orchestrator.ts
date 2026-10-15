@@ -1742,8 +1742,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // when it was queued, so cancelling it leaves the plan open. Wakes and
       // maintenance commands are not continuations.
       const supersededPlans =
-        queuedRun.delegatedCompletion === undefined &&
-        queuedRun.workStartedAt === undefined &&
+        queuedMessage.delegatedCompletion === undefined &&
+        queuedMessage.notification === undefined &&
         !isNativeMaintenanceCommand(queuedMessage)
           ? (yield* projectionStore.getActiveProposedPlans(threadId).pipe(
               Effect.mapError(
@@ -4938,7 +4938,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // or a maintenance command (`/compact`) is not a continuation, and a
       // queued message waits for its run, so those leave an open plan alone.
       const continuesThread =
-        delegatedCompletion === undefined && !isNativeMaintenanceCommand(command);
+        delegatedCompletion === undefined &&
+        command.notification === undefined &&
+        !isNativeMaintenanceCommand(command);
       const completeSourcePlan = (
         occurredAt: DateTime.Utc,
         options: { readonly supersedeOpenPlans: boolean } = { supersedeOpenPlans: true },
