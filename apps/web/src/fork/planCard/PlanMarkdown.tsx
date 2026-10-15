@@ -47,8 +47,9 @@ export default function PlanMarkdown(props: ComponentProps<typeof ChatMarkdown>)
 
   return (
     // Comment marks position against this box, and a collapsed card clips them
-    // together with the text they mark.
-    <div className="relative" data-plan-card-body>
+    // together with the text they mark. The start padding is the gutter that
+    // their bars sit in, taken from the card's own padding.
+    <div className="relative -ms-2 ps-2" data-plan-card-body>
       <AssistantCitationSource
         messageId={MessageId.make(card.plan.id)}
         {...(timeline.threadRef ? { threadRef: timeline.threadRef } : {})}

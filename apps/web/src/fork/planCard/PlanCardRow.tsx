@@ -19,6 +19,8 @@ import { usePlanCardWidthStore } from "./planCardWidthStore";
 
 // Floating things a wide card must stop before, inside the chat canvas.
 const OBSTACLE_SELECTOR = '[data-thread-details-panel="inline"], [data-preview-mini-player]';
+// The timeline minimap's clickable strip on the left; it takes clicks over the card.
+const MINIMAP_STRIP_SELECTOR = '[data-testid="timeline-minimap"] > div > div';
 
 function sameBox(left: WidePlanBox | null, right: WidePlanBox | null) {
   return left?.offset === right?.offset && left?.width === right?.width;
@@ -52,10 +54,13 @@ export function PlanCardRow({
       const columnStyle = getComputedStyle(column);
       const areaRect = area.getBoundingClientRect();
       const areaLeft = areaRect.left + area.clientLeft;
+      const canvasElement = element.closest("[data-chat-canvas]");
       const obstacles = Array.from(
-        element.closest("[data-chat-canvas]")?.querySelectorAll(OBSTACLE_SELECTOR) ?? [],
+        canvasElement?.querySelectorAll(OBSTACLE_SELECTOR) ?? [],
         (obstacle) => obstacle.getBoundingClientRect().left,
       );
+      const minimap = canvasElement?.querySelector(MINIMAP_STRIP_SELECTOR)?.getBoundingClientRect();
+      const leftObstacles = minimap && minimap.width > 0 ? [minimap.right] : [];
       const next = resolveWidePlanBox({
         lane: {
           left: columnRect.left + Number.parseFloat(columnStyle.paddingLeft),
@@ -64,6 +69,7 @@ export function PlanCardRow({
         area: { left: areaLeft, right: areaLeft + area.clientWidth },
         padding: canvas?.lane.padding ?? 12,
         obstacles,
+        leftObstacles,
       });
       setBox((current) => (sameBox(current, next) ? current : next));
     };
@@ -75,9 +81,39 @@ export function PlanCardRow({
   }, [canvas]);
 
   const wide = width === "wide" && box !== null;
+  // Only the fields a plan reads, so other timeline changes do not re-render the card.
+  const {
+    threadRef,
+    citationRequest,
+    listRef,
+    skills,
+    onRunShellCommand,
+    onImageExpand,
+    onUseArtifactTemplate,
+  } = timeline;
+  const planTimeline = useMemo<PlanCardTimeline>(
+    () => ({
+      threadRef,
+      citationRequest,
+      listRef,
+      skills,
+      onRunShellCommand,
+      onImageExpand,
+      onUseArtifactTemplate,
+    }),
+    [
+      threadRef,
+      citationRequest,
+      listRef,
+      skills,
+      onRunShellCommand,
+      onImageExpand,
+      onUseArtifactTemplate,
+    ],
+  );
   const value = useMemo(
-    () => ({ plan, itemKey, timeline, canWiden: box !== null }),
-    [plan, itemKey, timeline, box],
+    () => ({ plan, itemKey, timeline: planTimeline, canWiden: box !== null }),
+    [plan, itemKey, planTimeline, box],
   );
   return (
     <PlanCardContext value={value}>

@@ -75,7 +75,7 @@ export function ExperimentsSettingsPanel() {
         {/* T3-CUSTOM(expbkt3): BEGIN — plan review takeover. */}
         <SettingsRow
           {...searchableSetting("plan-review-takeover")}
-          description="Open a plan for review the moment it is ready, over the conversation. The chat header, the composer and the sidebar stay usable, and closing a plan keeps it closed. While off, a ready plan waits behind the Preview button on its card. Needs native plan review."
+          description="Open a plan for review the moment it is ready, over the conversation. The chat header, the composer and the sidebar stay usable, and closing a plan keeps it closed. While off, a ready plan stays a card in the conversation. Needs native plan review."
           control={
             <Switch
               checked={planReviewAutoOpenEnabled}
