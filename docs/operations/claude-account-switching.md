@@ -223,15 +223,18 @@ How it works when the flag is on:
   that was mid-turn gets the continue turn; an idle one only gets its account. The
   composer shows the thread's place and when the first account it may use should have
   room (from the switcher's `recoveries`). A message to the thread, a mode change or
-  `claudeAccounts.leaveQueue` takes it out; picking an account while it waited mid-turn
+  `claudeAccounts.leaveQueue` takes it out, and so does archiving it; picking an account while it waited mid-turn
   continues it there at once. A message still fails at start when nothing has room, with
   the account expected to free up first.
 - **Rebalance.** When an idle Auto thread's turn ends on an account that carries two or
   more sessions above its `fair_share`, or that the switcher reports as not placeable,
   the server asks `--place` where the thread would go now (avoiding its account). On a
   `placed` answer it moves the thread and restarts its idle session, at most once an hour
-  per thread (the thread loses its prompt cache once). Pinned threads never move. An
-  older switcher without `fair_share` disables this.
+  per thread (the thread loses its prompt cache once). It asks only when the projection
+  saw the turn run and settle, when the last status shows another account with room
+  under its `fair_share` that the owner may use, and not again for five minutes after a
+  probe found nothing better. An account gives up at most one thread per status read.
+  Pinned threads never move. An older switcher without `fair_share` disables this.
 - **Hard limit, pinned thread.** Nothing moves. The thread gets the notice "<x> is at its
   usage limit until HH:MM UTC — switch to Auto or another account." (account-wide) or
   "<x> has no <scope> allowance left until HH:MM UTC — switch the model or account."
