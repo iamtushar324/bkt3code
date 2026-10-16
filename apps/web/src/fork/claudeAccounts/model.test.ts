@@ -12,6 +12,7 @@ import {
   autoRowDetail,
   nextPick,
   orderAccounts,
+  queueLabel,
   recoversIn,
   resetsIn,
   ringTone,
@@ -371,5 +372,33 @@ describe("ringTone", () => {
     expect(ringTone(89)).toBe("warn");
     expect(ringTone(90)).toBe("bad");
     expect(ringTone(100)).toBe("bad");
+  });
+});
+
+describe("queueLabel", () => {
+  it("names the thread's place in the revive queue, and nothing when it is not waiting", () => {
+    expect(queueLabel(null)).toBeNull();
+    expect(queueLabel(thread({ resolvedProfile: "sam" }))).toBeNull();
+    expect(
+      queueLabel(
+        thread({
+          resolvedProfile: "sam",
+          wait: {
+            position: 2,
+            queuedAt: "2026-10-02T07:55:00.000Z",
+            expectedAt: "2026-10-02T08:31:00.000Z",
+            expectedProfile: "agent",
+            wasActive: true,
+          },
+        }),
+      ),
+    ).toBe("Waiting for an account · number 2 in the queue");
+    expect(
+      queueLabel(
+        thread({
+          wait: { position: 1, queuedAt: "2026-10-02T07:55:00.000Z", wasActive: false },
+        }),
+      ),
+    ).toBe("No account free · number 1 in the queue");
   });
 });

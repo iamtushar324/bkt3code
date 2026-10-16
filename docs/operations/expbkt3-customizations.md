@@ -39,7 +39,8 @@ the async question indicator; a read-only environment badge; the BK desktop and
 mobile builds; the deploy, CI and marker tooling; Claude account profiles per thread
 (`experimental.claudeAccountProfiles`: Auto placement through `claude-autoswitch --place`,
 per-thread pinning, sticky `CLAUDE_CONFIG_DIR` per spawn, hard-limit move with a
-continue turn; [claude-account-switching.md](./claude-account-switching.md#per-thread-account-placement)).
+continue turn, a durable revive queue when no account has room, turn-boundary
+rebalancing; [claude-account-switching.md](./claude-account-switching.md#per-thread-account-placement)).
 
 **Dropped in favour of upstream's own behaviour:**
 

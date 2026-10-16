@@ -298,6 +298,14 @@ export const makeForkWsHandlers = ({
         ),
         { "rpc.aggregate": "claude-accounts" },
       ),
+    [WS_FORK_METHODS.claudeAccountsLeaveQueue]: (input) =>
+      observeRpcEffect(
+        WS_FORK_METHODS.claudeAccountsLeaveQueue,
+        guardClaudeAccountsThread("leaveQueue", input.threadId).pipe(
+          Effect.andThen(claudeAccounts.leaveQueue(input.threadId)),
+        ),
+        { "rpc.aggregate": "claude-accounts" },
+      ),
     [WS_FORK_METHODS.subscribeClaudeAccounts]: () =>
       observeRpcStream(
         WS_FORK_METHODS.subscribeClaudeAccounts,
@@ -333,6 +341,7 @@ export const makeForkWsHandlers = ({
     ForkWsHandlers,
     | typeof WS_FORK_METHODS.claudeAccountsGetThread
     | typeof WS_FORK_METHODS.claudeAccountsSetThreadMode
+    | typeof WS_FORK_METHODS.claudeAccountsLeaveQueue
     | typeof WS_FORK_METHODS.subscribeClaudeAccounts
     | typeof WS_FORK_METHODS.subscribeThreadClaudeAccount
     | typeof WS_FORK_METHODS.claudeAccountsAccessList

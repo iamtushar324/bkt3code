@@ -213,6 +213,28 @@ How it works when the flag is on:
   rejection arriving before the first turn starts on the new account is a stale copy from
   the stopped session; a rejection from the new account, even with the same reset
   instant, moves the thread again.
+- **Revive queue.** When no account can take the Auto thread, its session stops and the
+  thread waits in `thread_claude_account` (migration `1053_ThreadClaudeAccountWait`), so a
+  restart keeps it. A limit that resets within five minutes is the same kind of entry,
+  pinned to the account it hit and due one minute after the reset. After every status
+  poll the server places the waiting threads again, in order: due reset waits, then
+  threads that were mid-turn, then the oldest. Only a real `placed` answer counts, and
+  each placement counts as pending for the next, so a wave of resets spreads. A thread
+  that was mid-turn gets the continue turn; an idle one only gets its account. The
+  composer shows the thread's place and when the first account it may use should have
+  room (from the switcher's `recoveries`). A message to the thread, a mode change or
+  `claudeAccounts.leaveQueue` takes it out, and so does archiving it; picking an account while it waited mid-turn
+  continues it there at once. A message still fails at start when nothing has room, with
+  the account expected to free up first.
+- **Rebalance.** When an idle Auto thread's turn ends on an account that carries two or
+  more sessions above its `fair_share`, or that the switcher reports as not placeable,
+  the server asks `--place` where the thread would go now (avoiding its account). On a
+  `placed` answer it moves the thread and restarts its idle session, at most once an hour
+  per thread (the thread loses its prompt cache once). It asks only when the projection
+  saw the turn run and settle, when the last status shows another account with room
+  under its `fair_share` that the owner may use, and not again for five minutes after a
+  probe found nothing better. An account gives up at most one thread per status read.
+  Pinned threads never move. An older switcher without `fair_share` disables this.
 - **Hard limit, pinned thread.** Nothing moves. The thread gets the notice "<x> is at its
   usage limit until HH:MM UTC — switch to Auto or another account." (account-wide) or
   "<x> has no <scope> allowance left until HH:MM UTC — switch the model or account."
@@ -236,8 +258,10 @@ account `~/.claude-active` resolves to (realpath; `default` for `~/.claude`), st
 per thread. A switcher crash or 10 s timeout logs a warning and leaves the spawn
 environment unchanged, except for an owner restricted by account access (below), who is
 never left on `~/.claude-active` blindly. When no account has headroom the start fails
-with "All Claude accounts are at their limit — first resets at HH:MM UTC." (without the
-time when the switcher gives none). The binary path is the setting, else `~/.local/bin/claude-autoswitch`
+with "All Claude accounts are at their limit — <account> is expected to have room at
+HH:MM UTC." (an older switcher without `recoveries`: "— first resets at HH:MM UTC.";
+without a time when the switcher gives none). Each such answer logs
+`claude.account.place-none`. The binary path is the setting, else `~/.local/bin/claude-autoswitch`
 (a leading `~` expands to the server user's home, so macOS hosts work too);
 `T3_CLAUDE_AUTOSWITCH_BIN` overrides it for tests. The hard-limit rotation runs the same
 resolved binary. Calls use an argv array, never a shell
