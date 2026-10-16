@@ -2268,6 +2268,34 @@ describe("ClaudeAccountsService revive queue", () => {
   {
     const gate = gatedPlace();
     scenario(
+      "revives without a continue when the shell already shows the next turn",
+      { place: gate.place },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-raced");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          yield* markTurnRunning(harness, service, threadId);
+          yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          assert.equal((yield* service.getThread(threadId)).wait?.wasActive, true);
+
+          // The person's message was accepted before the revive pass ran.
+          yield* Ref.set(harness.shellSession, orchestrationSession(threadId, "running", "turn-2"));
+          gate.state.open = ["agent"];
+          yield* service.refreshStatus();
+          const view = yield* service.getThread(threadId);
+          assert.equal(view.wait, undefined);
+          assert.equal(view.resolvedProfile, "agent");
+          assert.equal(harness.dispatched.length, 0);
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
       "spreads a wave of waiting threads over the accounts that free up",
       {
         place: gate.place,

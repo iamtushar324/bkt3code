@@ -1589,6 +1589,21 @@ export const make = Effect.gen(function* () {
    */
   const CONTINUE_TEXT = "Continue where you left off.";
 
+  /** Whether the thread's shell shows a turn accepted or running. */
+  const shellTurnInFlight = (threadId: ThreadId) =>
+    query.getThreadShellById(threadId).pipe(
+      Effect.map((shell) => {
+        const session = Option.isSome(shell) ? shell.value.session : null;
+        return (
+          session !== null &&
+          (session.activeTurnId !== null ||
+            session.status === "running" ||
+            session.status === "starting")
+        );
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+
   const dispatchContinueTurn = (threadId: ThreadId, text: string) =>
     Effect.gen(function* () {
       const shell = yield* query.getThreadShellById(threadId);
@@ -1902,8 +1917,9 @@ export const make = Effect.gen(function* () {
         );
         if (outcome === undefined) continue;
         // A message accepted while this pass waited on a lock is already the
-        // next turn; a continue on top of it would be a second one.
-        if (outcome.continueTurn && (yield* threadIsIdle(threadId))) {
+        // next turn; a continue on top of it would be a second one. The shell
+        // marks a turn active as soon as its command is accepted.
+        if (outcome.continueTurn && !(yield* shellTurnInFlight(threadId))) {
           yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
         }
         yield* announce(threadId);
