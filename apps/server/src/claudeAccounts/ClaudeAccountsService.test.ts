@@ -18,7 +18,9 @@ import {
   ThreadId,
   UserId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -155,6 +157,8 @@ interface HarnessOptions {
   readonly placeFailed?: boolean;
   /** `--place` dies with a defect, as a bug in the client would. */
   readonly placeDefect?: boolean;
+  /** Runs inside every `--place` call before it answers, e.g. to hold it in flight. */
+  readonly beforePlace?: () => Effect.Effect<void>;
   /** Replaces the thread-account repository, e.g. with one whose reads fail. */
   readonly threadRepository?: Layer.Layer<ThreadClaudeAccountRepo.ThreadClaudeAccountRepository>;
 }
@@ -228,15 +232,21 @@ const makeHarness = (options: HarnessOptions = {}) =>
       place: (input) =>
         Effect.sync(() => {
           placeCalls.push({ pending: { ...input.pending }, avoid: input.avoid });
-          if (options.placeUnavailable) {
-            return { kind: "unavailable", detail: "old switcher" } as const;
-          }
-          if (options.placeFailed) {
-            return { kind: "failed", detail: "timed out after 10s" } as const;
-          }
-          if (options.placeDefect) throw new Error("place exploded");
-          return { kind: "ok", value: place(input) } as const;
-        }),
+        }).pipe(
+          Effect.andThen(options.beforePlace?.() ?? Effect.void),
+          Effect.andThen(
+            Effect.sync(() => {
+              if (options.placeUnavailable) {
+                return { kind: "unavailable", detail: "old switcher" } as const;
+              }
+              if (options.placeFailed) {
+                return { kind: "failed", detail: "timed out after 10s" } as const;
+              }
+              if (options.placeDefect) throw new Error("place exploded");
+              return { kind: "ok", value: place(input) } as const;
+            }),
+          ),
+        ),
       hardLimit: (input) =>
         Effect.sync(() => {
           hardLimitCalls.push(input);
@@ -2059,9 +2069,19 @@ describe("ClaudeAccountsService access per user: owners, probing, hard limits, r
  * A switcher whose `--place` the test opens and closes: no room until
  * `state.open` names accounts, then the open account with the fewest pending
  * placements. With no room it lists when agent, then barsha, recover.
+ * `state.hold` keeps every `--place` in flight until it is released.
  */
 function gatedPlace() {
-  const state: { open: ReadonlyArray<string> } = { open: [] };
+  const state: {
+    open: ReadonlyArray<string>;
+    hold?: { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> };
+  } = { open: [] };
+  const beforePlace = (): Effect.Effect<void> => {
+    const hold = state.hold;
+    return hold === undefined
+      ? Effect.void
+      : Effect.andThen(Deferred.succeed(hold.entered, undefined), Deferred.await(hold.release));
+  };
   const place = (input: PlaceInput): SwitcherPlaceResult => {
     let chosen: string | undefined;
     for (const name of state.open) {
@@ -2085,7 +2105,7 @@ function gatedPlace() {
     }
     return { status: "placed", chosen, dir: null, reason: "fewest sessions" };
   };
-  return { state, place };
+  return { state, place, beforePlace };
 }
 
 /** Domain events are handled in order on one fiber: a deleted, watched thread marks them done. */
@@ -2119,6 +2139,13 @@ const markTurnRunning = (
   Effect.gen(function* () {
     yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "running", "turn-1"));
     yield* drainDomainEvents(harness, service);
+  });
+
+/** A turn runs and settles on the thread, as the projection reports a turn boundary. */
+const endTurn = (harness: Harness, threadId: ThreadId) =>
+  Effect.gen(function* () {
+    yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "running", "turn-1"));
+    yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
   });
 
 const fiveHourAt = (threadId: ThreadId, resetAt: number) => ({
@@ -2334,6 +2361,115 @@ describe("ClaudeAccountsService revive queue", () => {
     );
   }
 
+  {
+    const gate = gatedPlace();
+    scenario(
+      "does not revive a thread that left the queue while its placement was in flight",
+      { place: gate.place, beforePlace: gate.beforePlace },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-race");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          yield* markTurnRunning(harness, service, threadId);
+          yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          assert.isDefined((yield* service.getThread(threadId)).wait);
+
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          gate.state.open = ["agent"];
+          gate.state.hold = { entered, release };
+          const pass = yield* service.refreshStatus().pipe(Effect.forkScoped);
+          // The switcher is answering for the thread; the person leaves the queue now.
+          yield* Deferred.await(entered);
+          const left = yield* service.leaveQueue(threadId);
+          assert.equal(left.wait, undefined);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(pass);
+
+          assert.equal(harness.dispatched.length, 0);
+          const view = yield* service.getThread(threadId);
+          assert.equal(view.wait, undefined);
+          assert.equal(view.resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "takes an archived thread out of the queue so it is not continued",
+      { place: gate.place },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-archived");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          yield* markTurnRunning(harness, service, threadId);
+          yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          const { seen } = yield* watchThreadInto(service, threadId);
+
+          yield* PubSub.publish(harness.domainEvents, {
+            type: "thread.archived",
+            payload: {
+              threadId,
+              archivedAt: "1970-01-01T00:00:00.000Z",
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            },
+          } as unknown as OrchestrationEvent);
+          yield* takeUntil(seen, (view) => view.wait === undefined);
+          gate.state.open = ["agent"];
+          yield* service.refreshStatus();
+          assert.equal(harness.dispatched.length, 0);
+          // The account row stays for an unarchive.
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  scenario(
+    "handles a model-scoped rejection again once the thread is back on that account",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-scoped-return");
+        assert.equal((yield* service.resolveForSession(threadId))?.profile, "tushar");
+        const opus = { threadId, rateLimitType: "seven_day_opus", resetAt: farReset };
+
+        yield* service.handleHardLimit(opus);
+        assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+        // A burst of copies of that one rejection moves the thread once.
+        yield* service.handleHardLimit(opus);
+        yield* service.handleHardLimit(opus);
+        assert.equal(harness.hardLimitCalls.length, 1);
+        assert.equal(harness.dispatched.length, 1);
+
+        // The first turn on agent; later the thread is placed back on tushar,
+        // which a model-scoped limit left in rotation.
+        const { seen } = yield* watchThreadInto(service, threadId);
+        yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+        yield* Queue.take(seen);
+        assert.equal(
+          (yield* service.reassign(threadId, { avoid: ["agent", "barsha"] }))?.profile,
+          "tushar",
+        );
+
+        // Claude refuses Opus on tushar again, same reset: a real rejection, handled.
+        assert.isTrue(yield* service.handleHardLimit(opus));
+        assert.deepEqual(harness.hardLimitCalls, [
+          { type: "seven_day_opus", profile: "tushar" },
+          { type: "seven_day_opus", profile: "tushar" },
+        ]);
+        assert.notEqual((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+        assert.equal(harness.dispatched.length, 2);
+      }),
+  );
+
   it.effect("keeps the queue across a restart and continues the thread there", () =>
     Effect.gen(function* () {
       const repository = yield* Layer.build(
@@ -2429,7 +2565,7 @@ describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
           yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
           const { seen } = yield* watchThreadInto(service, threadId);
 
-          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* endTurn(harness, threadId);
           yield* takeUntil(seen, (view) => view.resolvedProfile === "agent");
           yield* drainDomainEvents(harness, service);
           assert.deepEqual(harness.stoppedThreads, [threadId]);
@@ -2448,13 +2584,13 @@ describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
           yield* service.refreshStatus();
           gate.state.open = ["barsha"];
           const placements = harness.placeCalls.length;
-          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* endTurn(harness, threadId);
           yield* drainDomainEvents(harness, service);
           assert.equal(harness.placeCalls.length, placements);
           assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
 
           yield* TestClock.adjust("61 minutes");
-          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* endTurn(harness, threadId);
           yield* takeUntil(seen, (view) => view.resolvedProfile === "barsha");
           yield* drainDomainEvents(harness, service);
           assert.deepEqual(harness.stoppedThreads, [threadId, threadId]);
@@ -2486,13 +2622,81 @@ describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
           ]);
           const placements = harness.placeCalls.length;
 
-          yield* PubSub.publish(harness.domainEvents, sessionSet(pinned, "ready", null));
-          yield* PubSub.publish(harness.domainEvents, sessionSet(busy, "ready", null));
+          yield* endTurn(harness, pinned);
+          yield* endTurn(harness, busy);
           yield* drainDomainEvents(harness, service);
           assert.equal(harness.placeCalls.length, placements);
           assert.deepEqual(harness.stoppedThreads, []);
           assert.equal((yield* service.getThread(pinned)).resolvedProfile, "tushar");
           assert.equal((yield* service.getThread(busy)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "does not ask the switcher again within five minutes after a probe found nowhere better",
+      { place: gate.place, status: sharedStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-rebalance-backoff");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+          const before = harness.placeCalls.length;
+
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, before + 1);
+          assert.deepEqual(harness.stoppedThreads, []);
+
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, before + 1);
+
+          yield* TestClock.adjust("6 minutes");
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, before + 2);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "moves one thread per status read off an over-loaded account, whose count is stale until then",
+      { place: gate.place, status: sharedStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const first = ThreadId.make("thread-rebalance-first");
+          const second = ThreadId.make("thread-rebalance-second");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(first);
+          yield* service.resolveForSession(second);
+          gate.state.open = ["agent", "barsha"];
+          yield* Ref.set(harness.sessions, [
+            liveSession(first, "ready"),
+            liveSession(second, "ready"),
+          ]);
+
+          yield* endTurn(harness, first);
+          yield* endTurn(harness, second);
+          yield* drainDomainEvents(harness, service);
+          assert.deepEqual(harness.stoppedThreads, [first]);
+          assert.notEqual((yield* service.getThread(first)).resolvedProfile, "tushar");
+          assert.equal((yield* service.getThread(second)).resolvedProfile, "tushar");
+
+          // The next status read counts the move; tushar is still over its share.
+          yield* service.refreshStatus();
+          yield* endTurn(harness, second);
+          yield* drainDomainEvents(harness, service);
+          assert.deepEqual(harness.stoppedThreads, [first, second]);
         }),
     );
   }

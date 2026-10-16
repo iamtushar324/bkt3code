@@ -19,8 +19,9 @@ layer("055_OrchestrationV2", (it) => {
           // upstream's scheduled-task webhook migrations (57-58) at 1046-1047, the
           // review comment send-once mark at 1048 and upstream's MCP app context and
           // snapshot indexes (59-60) at 1049-1050, scheduled task custom
-          // groups at 1051 and scheduled task options at 1052.
-          ...Array.from({ length: 53 }, (_, index) => 1000 + index),
+          // groups at 1051, scheduled task options at 1052 and the Claude account
+          // revive queue at 1053.
+          ...Array.from({ length: 54 }, (_, index) => 1000 + index),
         ],
       );
     }),

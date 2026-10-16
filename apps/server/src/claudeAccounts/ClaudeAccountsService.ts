@@ -108,6 +108,8 @@ const MAX_HANDLED_CONDITIONS = 256;
 export const REBALANCE_COOLDOWN_MS = 60 * 60 * 1000;
 /** Sessions above the account's fair share before a finished turn moves its thread. */
 const REBALANCE_EXCESS = 2;
+/** After a rebalance probe finds nowhere better, the thread is not probed again for this long. */
+export const REBALANCE_PROBE_BACKOFF_MS = 5 * 60 * 1000;
 /** A limit that resets within this long is waited out on the same account instead of moving. */
 export const RESET_WAIT_THRESHOLD_MS = 5 * 60 * 1000;
 /** Margin after the reset so the status poll sees the account free before the thread continues. */
@@ -193,7 +195,9 @@ export interface ClaudeAccountsServiceShape {
   readonly refreshStatus: () => Effect.Effect<void>;
   readonly markExhausted: (profile: string, resetsAt: string | undefined) => Effect.Effect<void>;
   /** Takes the thread out of the revive queue without moving it. */
-  readonly leaveQueue: (threadId: ThreadId) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
+  readonly leaveQueue: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
   /** Places the thread again, avoiding the given accounts, and persists the result. */
   readonly reassign: (
     threadId: ThreadId,
@@ -371,6 +375,16 @@ export const make = Effect.gen(function* () {
   const waits = new Map<ThreadId, WaitEntry>();
   /** When each thread was last moved by a rebalance. */
   const lastRebalancedAt = new Map<ThreadId, number>();
+  /** When a rebalance probe last found nowhere better for each thread. */
+  const lastFailedProbeAt = new Map<ThreadId, number>();
+  /**
+   * Accounts a rebalance moved a thread off since the last status read. Their
+   * session counts are stale until the next read, so each gives up at most
+   * one thread per read.
+   */
+  const rebalancedFrom = new Set<string>();
+  /** Threads whose settled projection last showed a running turn. */
+  const projectedRunning = new Set<ThreadId>();
   /**
    * Live Claude session id -> the account it runs on, from each account's
    * `sessions/<pid>.json` (the CLI writes one at start and never removes it).
@@ -385,16 +399,17 @@ export const make = Effect.gen(function* () {
   const placementLock = yield* Semaphore.make(1);
   /** One revive pass at a time; a pass started meanwhile runs after it. */
   const reviveLock = yield* Semaphore.make(1);
-  const layerScope = yield* Effect.scope;
 
-  const storedWaits = yield* repository.listWaiting().pipe(
-    Effect.catchCause((cause) =>
-      Effect.as(
-        Effect.logWarning("claude.account.queue-load-failed", { cause }),
-        [] as ReadonlyArray<ThreadClaudeAccountRow>,
+  const storedWaits = yield* repository
+    .listWaiting()
+    .pipe(
+      Effect.catchCause((cause) =>
+        Effect.as(
+          Effect.logWarning("claude.account.queue-load-failed", { cause }),
+          [] as ReadonlyArray<ThreadClaudeAccountRow>,
+        ),
       ),
-    ),
-  );
+    );
   for (const row of storedWaits) {
     if (row.wait !== null) waits.set(row.threadId, { ...row.wait, restricted: false });
   }
@@ -768,6 +783,8 @@ export const make = Effect.gen(function* () {
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
+      // Fresh session counts include every rebalance made before this read.
+      rebalancedFrom.clear();
       const generatedMs =
         typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
       for (const profile of status.profiles) {
@@ -900,8 +917,10 @@ export const make = Effect.gen(function* () {
         )} — this thread continues on it at ${formatResetClock(entry.notBefore)}.`,
       };
     }
-    const expectedAt = entry.expectedAt ?? entry.notBefore ?? undefined;
-    const expectedProfile = entry.expectedProfile ?? entry.preferProfile ?? undefined;
+    // A reset wait whose time has passed says nothing about when room comes:
+    // only the last placement's answer does.
+    const expectedAt = entry.expectedAt;
+    const expectedProfile = entry.expectedProfile;
     const limitLine = entry.restricted
       ? "All Claude accounts you can use are at their limit."
       : "All Claude accounts are at their limit.";
@@ -1257,8 +1276,10 @@ export const make = Effect.gen(function* () {
 
       // Sticky: an account the thread already ran on is kept until a hard
       // limit, a sign-out, an exhausted mark or its removal takes it out.
-      // Nearing a limit never moves an existing thread; only new placements
-      // avoid it. Losing access to the account re-places it too.
+      // Nearing a limit never moves a running thread here; only new
+      // placements avoid it, and the turn-boundary rebalance may move an idle
+      // thread off an over-loaded account (it writes the row this reads).
+      // Losing access to the account re-places it too.
       if (
         row.resolvedProfile !== null &&
         !disallowed.has(row.resolvedProfile) &&
@@ -1447,7 +1468,10 @@ export const make = Effect.gen(function* () {
       return true;
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.as(Effect.logWarning("claude.account.queue-write-failed", { threadId, cause }), false),
+        Effect.as(
+          Effect.logWarning("claude.account.queue-write-failed", { threadId, cause }),
+          false,
+        ),
       ),
     );
 
@@ -1466,7 +1490,10 @@ export const make = Effect.gen(function* () {
   const dequeueQuietly = (threadId: ThreadId, why: string) =>
     dequeue(threadId, why).pipe(
       Effect.catchCause((cause) =>
-        Effect.as(Effect.logWarning("claude.account.queue-clear-failed", { threadId, cause }), true),
+        Effect.as(
+          Effect.logWarning("claude.account.queue-clear-failed", { threadId, cause }),
+          true,
+        ),
       ),
     );
 
@@ -1714,6 +1741,10 @@ export const make = Effect.gen(function* () {
 
       const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
       if (moved._tag === "Success" && moved.success !== undefined) {
+        // Copies of this rejection are caught as stale until the first turn
+        // starts on the new account; past that, the key would only swallow a
+        // real rejection if the thread came back to this account.
+        handledConditions.delete(conditionKey);
         notices.delete(threadId);
         movedAwaitingTurn.add(threadId);
         yield* stopSessionQuietly(threadId, "hard-limit");
@@ -1723,8 +1754,8 @@ export const make = Effect.gen(function* () {
       }
 
       // No account can take the thread now. It stops and waits in the queue;
-      // the revive pass continues it once an account has room.
-      handledConditions.delete(conditionKey);
+      // the revive pass after the next status poll continues it once an
+      // account has room.
       const failure = moved._tag === "Failure" ? moved.failure : undefined;
       const restriction = yield* disallowedFor(threadId).pipe(
         Effect.orElseSucceed(() => UNRESTRICTED),
@@ -1749,8 +1780,9 @@ export const make = Effect.gen(function* () {
         yield* announce(threadId);
         return true;
       }
+      // While it waits, copies are caught by the queue check above.
+      handledConditions.delete(conditionKey);
       yield* stopSessionQuietly(threadId, "hard-limit-queued");
-      yield* revivePass.pipe(Effect.forkIn(layerScope));
       return true;
     });
 
@@ -1779,13 +1811,14 @@ export const make = Effect.gen(function* () {
           !restriction.disallowed.has(prefer) &&
           (yield* usableAndPresent(prefer))
         ) {
-          pendingPlacements.push({ profile: prefer, atMs: nowMs });
           profile = prefer;
         } else {
           if (!anyRoom) return undefined;
+          // Counted as pending only once the thread is known to take it, below.
           const placed = yield* placeWith(threadId, entry.avoid ? [entry.avoid] : [], {
             purpose: "revive",
             requirePlaced: true,
+            commit: false,
           }).pipe(Effect.result);
           if (placed._tag === "Failure") {
             const { expectedAt, expectedProfile } = placed.failure;
@@ -1812,8 +1845,16 @@ export const make = Effect.gen(function* () {
           profile = placed.success?.profile;
         }
         if (profile === undefined) return undefined;
-        yield* persistResolved(threadId, profile);
-        yield* dequeue(threadId, "revived");
+        // The reads and the switcher call above yield: a message, a mode
+        // change or "Leave queue" may have taken the thread out meanwhile.
+        // `dequeue` removes it before its first yield, so only one side wins.
+        if (!(yield* dequeueQuietly(threadId, "revived"))) return undefined;
+        pendingPlacements.push({ profile, atMs: yield* Clock.currentTimeMillis });
+        yield* persistResolved(threadId, profile).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
+          ),
+        );
         // Like a move: a rejection before the next turn starts is a stale copy.
         movedAwaitingTurn.add(threadId);
         yield* Effect.logInfo("claude.account.revived", {
@@ -1870,25 +1911,32 @@ export const make = Effect.gen(function* () {
    * `REBALANCE_EXCESS` or more sessions above its fair share, or that can no
    * longer take new sessions, to where the switcher would place it now. The
    * thread loses its prompt cache once, so this runs at most once an hour per
-   * thread. Never fails: on any trouble the thread stays where it is.
+   * thread, and an account gives up at most one thread per status read (its
+   * session count is stale until the next one). The switcher is asked only
+   * when the last status shows another account with room the owner may use,
+   * and not again for five minutes after it found nothing better. Never
+   * fails: on any trouble the thread stays where it is.
    */
   const maybeRebalance = (threadId: ThreadId, settled?: OrchestrationSession) =>
     Effect.gen(function* () {
       if (waits.has(threadId) || pendingRestart.has(threadId)) return;
       if (movedAwaitingTurn.has(threadId)) return;
       const current = threadProfiles.get(threadId);
-      if (current === undefined) return;
-      const known = knownProfile(current);
+      if (current === undefined || rebalancedFrom.has(current)) return;
+      const status = lastStatus;
+      const known = status?.profiles.find((profile) => profile.name === current);
       // Only a switcher that reports fair shares spreads load; with an older one this never runs.
-      if (known === undefined || known.fair_share === undefined) return;
+      if (status === undefined || known === undefined || known.fair_share === undefined) return;
       const sessions = typeof known.sessions === "number" ? known.sessions : 0;
       const overShare =
         typeof known.fair_share === "number" && sessions - known.fair_share >= REBALANCE_EXCESS;
       const notPlaceable = known.fair_share === null || known.guard_ok === false;
       if (!overShare && !notPlaceable) return;
       const nowMs = yield* Clock.currentTimeMillis;
-      const last = lastRebalancedAt.get(threadId);
-      if (last !== undefined && nowMs - last < REBALANCE_COOLDOWN_MS) return;
+      const lastMove = lastRebalancedAt.get(threadId);
+      if (lastMove !== undefined && nowMs - lastMove < REBALANCE_COOLDOWN_MS) return;
+      const lastProbe = lastFailedProbeAt.get(threadId);
+      if (lastProbe !== undefined && nowMs - lastProbe < REBALANCE_PROBE_BACKOFF_MS) return;
       if (!(yield* readSettings).enabled) return;
       const row = yield* repository.get(threadId);
       if (row.mode.kind !== "auto" || row.resolvedProfile !== current) return;
@@ -1896,21 +1944,47 @@ export const make = Effect.gen(function* () {
         (session) => session.threadId === threadId && session.status !== "closed",
       );
       if (!live || !(yield* threadIsIdle(threadId, settled))) return;
+      // Without a subprocess: is there anywhere better at all?
+      yield* pruneExhausted;
+      const { disallowed } = yield* disallowedFor(threadId);
+      const pending = yield* pendingCounts;
+      const roomElsewhere = status.profiles.some(
+        (profile) =>
+          profile.name !== current &&
+          !disallowed.has(profile.name) &&
+          !exhausted.has(profile.name) &&
+          profile.auth?.state !== "logged_out" &&
+          typeof profile.fair_share === "number" &&
+          profile.fair_share >
+            (typeof profile.sessions === "number" ? profile.sessions : 0) +
+              (pending[profile.name] ?? 0),
+      );
+      if (!roomElsewhere) return;
 
       const target = yield* Semaphore.withPermit(placementLock)(
         Effect.gen(function* () {
-          // A probe: nothing is persisted or counted unless the thread moves.
+          if (rebalancedFrom.has(current)) return undefined;
+          // A probe: nothing is written or counted unless the thread moves.
           const probe = yield* placeWith(threadId, [current], {
             purpose: "rebalance",
             requirePlaced: true,
             commit: false,
           }).pipe(Effect.option);
-          if (Option.isNone(probe) || probe.value === undefined) return undefined;
-          const to = probe.value.profile;
-          if (to === current) return undefined;
+          const to =
+            Option.isSome(probe) && probe.value !== undefined ? probe.value.profile : undefined;
+          if (to === undefined || to === current) {
+            lastFailedProbeAt.set(threadId, nowMs);
+            return undefined;
+          }
+          // The probe took time: a turn may have started since.
+          if (!(yield* threadIsIdle(threadId, settled))) return undefined;
           pendingPlacements.push({ profile: to, atMs: yield* Clock.currentTimeMillis });
           lastRebalancedAt.set(threadId, nowMs);
-          yield* persistResolved(threadId, to);
+          lastFailedProbeAt.delete(threadId);
+          rebalancedFrom.add(current);
+          // Only the row: the thread still runs on `current` until its session
+          // stops, and the sticky branch adopts the row at the next spawn.
+          yield* repository.setResolved({ threadId, profile: to, resolvedAt: yield* nowIso });
           return to;
         }),
       );
@@ -1922,6 +1996,7 @@ export const make = Effect.gen(function* () {
         reason: overShare ? "over-fair-share" : "not-placeable",
       });
       yield* restartForNewAccount(threadId, "rebalance");
+      yield* announce(threadId);
       yield* announceSnapshot;
     }).pipe(
       Effect.catchCause((cause) =>
@@ -1968,7 +2043,10 @@ export const make = Effect.gen(function* () {
             yield* announce(event.threadId);
           }
           // The first turn on the new account: from here a rejection is real.
-          if (movedAwaitingTurn.delete(event.threadId)) yield* announce(event.threadId);
+          if (movedAwaitingTurn.delete(event.threadId)) {
+            forgetConditions(event.threadId);
+            yield* announce(event.threadId);
+          }
           return;
         }
         case "turn.completed":
@@ -2002,11 +2080,15 @@ export const make = Effect.gen(function* () {
       }
       if (event.type === "thread.session-set") {
         const session = event.payload.session;
+        const running = session.status === "running" && session.activeTurnId !== null;
         // T3-CUSTOM(expbkt3): native run/session projections drive account lifecycle.
-        if (session.status === "running" && session.activeTurnId !== null) {
+        if (running) {
           activeTurns.add(event.payload.threadId);
-          if (movedAwaitingTurn.delete(event.payload.threadId))
+          projectedRunning.add(event.payload.threadId);
+          if (movedAwaitingTurn.delete(event.payload.threadId)) {
+            forgetConditions(event.payload.threadId);
             yield* announce(event.payload.threadId);
+          }
         } else if (session.status !== "starting") {
           activeTurns.delete(event.payload.threadId);
         }
@@ -2014,10 +2096,20 @@ export const make = Effect.gen(function* () {
           session.activeTurnId === null &&
           session.status !== "running" &&
           session.status !== "starting";
+        // Only the settle that ends a turn this projection saw running is a
+        // turn boundary; the many other session updates are not.
+        const turnEnded = settled && projectedRunning.delete(event.payload.threadId);
         if (settled && pendingRestart.has(event.payload.threadId)) {
           yield* completePendingRestart(event.payload.threadId, session);
-        } else if (settled) {
+        } else if (turnEnded) {
           yield* maybeRebalance(event.payload.threadId, session);
+        }
+        return;
+      }
+      if (event.type === "thread.archived") {
+        // An archived thread is not continued; its account row stays for an unarchive.
+        if (yield* dequeueQuietly(event.payload.threadId, "thread-archived")) {
+          yield* announce(event.payload.threadId);
         }
         return;
       }
@@ -2025,6 +2117,8 @@ export const make = Effect.gen(function* () {
       const threadId = event.payload.threadId;
       yield* dequeueQuietly(threadId, "thread-deleted");
       lastRebalancedAt.delete(threadId);
+      lastFailedProbeAt.delete(threadId);
+      projectedRunning.delete(threadId);
       threadProfiles.delete(threadId);
       notices.delete(threadId);
       pendingRestart.delete(threadId);
