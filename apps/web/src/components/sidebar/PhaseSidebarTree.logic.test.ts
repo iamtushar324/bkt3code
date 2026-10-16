@@ -71,7 +71,7 @@ function makeRow(
     readonly archived?: boolean;
     readonly pendingApproval?: boolean;
     readonly unread?: boolean;
-    // T3-CUSTOM(expbkt3): the row holds an actionable plan.
+    // T3-CUSTOM(expbkt3): the row holds an actionable plan, in plan mode.
     readonly plan?: boolean;
   } = {},
 ): PhaseSidebarRow {
@@ -87,7 +87,7 @@ function makeRow(
       : {}),
     ...(options.archived ? { archivedAt: now } : {}),
     ...(options.pendingApproval ? { hasPendingApprovals: true } : {}),
-    ...(options.plan ? { hasActionableProposedPlan: true } : {}),
+    ...(options.plan ? { interactionMode: "plan" as const, hasActionableProposedPlan: true } : {}),
   });
   return {
     thread,
@@ -453,6 +453,22 @@ describe("resolvePhaseSidebarTreePhase", () => {
 
     expect(tree[0]?.descendantAttention).toBeNull();
     expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("implementing");
+  });
+
+  it("does not hoist a stale plan once the child left plan mode", () => {
+    // Turning plan mode off files the child under Ready, so the collapsed
+    // parent must not keep reporting a plan underneath it.
+    const child = makeRow("child", { parent: "parent", phaseId: "ready", plan: true });
+    const tree = buildPhaseSidebarTree(
+      [
+        makeRow("parent", { phaseId: "ready" }),
+        { ...child, thread: { ...child.thread, interactionMode: "default" } },
+      ],
+      { compareSiblings: byId },
+    );
+
+    expect(tree[0]?.descendantAttention).toBeNull();
+    expect(resolvePhaseSidebarTreePhase(tree[0] as never)).toBe("ready");
   });
 
   it("still goes red when the subtree holds both a plan and a question", () => {

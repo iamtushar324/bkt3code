@@ -971,6 +971,17 @@ export function phaseSidebarHasAsyncQuestion(
 }
 
 /**
+ * T3-CUSTOM(expbkt3): a plan waits on a human only while its thread is in plan
+ * mode. Turning plan mode off clears the PLAN pill, the Plan Ready group and
+ * the needs-human count, the same rule as upstream's Plan Ready pill.
+ */
+export function phaseSidebarHasWaitingPlan(
+  thread: Pick<ThreadShell, "hasActionableProposedPlan" | "interactionMode">,
+): boolean {
+  return thread.hasActionableProposedPlan && thread.interactionMode === "plan";
+}
+
+/**
  * T3-CUSTOM(expbkt3): is an agent actually working on this thread right now?
  *
  * Extracted from `resolvePhaseSidebarPhase` because the badge layer needs the
@@ -1011,6 +1022,8 @@ export function resolvePhaseSidebarAttentionKind(
     | "hasPendingApprovals"
     | "hasPendingUserInput"
     | "hasActionableProposedPlan"
+    // T3-CUSTOM(expbkt3): a plan waits only in plan mode (`phaseSidebarHasWaitingPlan`).
+    | "interactionMode"
     // T3-CUSTOM(expbkt3): an async question is attention that leaves the agent running.
     | "hasPendingAsyncUserInput"
     // T3-CUSTOM(expbkt3): a session error is a failure the badge has to show.
@@ -1035,7 +1048,7 @@ export function resolvePhaseSidebarAttentionKind(
   // It deliberately loses to `plan` in the row badges rather than replacing it:
   // callers render ASK from `phaseSidebarHasAsyncQuestion` alongside whatever
   // this returns, so a thread holding both flies both badges.
-  if (thread.hasActionableProposedPlan) return "plan";
+  if (phaseSidebarHasWaitingPlan(thread)) return "plan";
   if (phaseSidebarHasAsyncQuestion(thread)) return "ask";
   return null;
 }
@@ -1070,8 +1083,8 @@ export function resolvePhaseSidebarPhase(
   // Sidebar V2's reliability ordering: a failure must not be hidden by
   // liveness that can linger while background work winds down.
   if (hasFailure) {
-    // T3-CUSTOM(expbkt3): a failure still files a held plan under Plan Ready.
-    return thread.hasActionableProposedPlan ? "plan_ready" : "ready";
+    // T3-CUSTOM(expbkt3): a failure still files a waiting plan under Plan Ready.
+    return phaseSidebarHasWaitingPlan(thread) ? "plan_ready" : "ready";
   }
 
   // A settled foreground turn can still own native subagents, workflows, or
@@ -1085,12 +1098,12 @@ export function resolvePhaseSidebarPhase(
     return thread.interactionMode === "plan" ? "planning" : "implementing";
   }
 
-  // T3-CUSTOM(expbkt3): Plan Ready means a plan is waiting for a human, in any
-  // interaction mode. `t3_submit_plan` never changes interactionMode, so gating
-  // this on plan mode hid every plan submitted from a default-mode turn. A
-  // settled turn holding an actionable plan outranks a failure: the row's whole
-  // job is the decision, and the failure still flies its own badge.
-  if (thread.hasActionableProposedPlan) return "plan_ready";
+  // T3-CUSTOM(expbkt3): Plan Ready means a plan is waiting for a human, and a
+  // plan waits only while its thread is in plan mode
+  // (`phaseSidebarHasWaitingPlan`). Turning plan mode off files a stale plan
+  // under Ready. A settled turn holding a waiting plan outranks a failure: the
+  // row's whole job is the decision, and the failure still flies its own badge.
+  if (phaseSidebarHasWaitingPlan(thread)) return "plan_ready";
 
   // T3-CUSTOM(expbkt3): an idle plan-mode thread with nothing to decide is just
   // idle. It used to land in Plan Ready, which made the group unscannable — the
@@ -1513,7 +1526,8 @@ export function threadNeedsHumanAttention(thread: ThreadShell): boolean {
     // T3-CUSTOM(expbkt3): an async question is a human step too, even though it
     // leaves the agent running.
     phaseSidebarHasAsyncQuestion(thread) ||
-    thread.hasActionableProposedPlan ||
+    // T3-CUSTOM(expbkt3): a plan counts only while the thread is in plan mode.
+    phaseSidebarHasWaitingPlan(thread) ||
     thread.runtime?.status === "failed"
   );
 }

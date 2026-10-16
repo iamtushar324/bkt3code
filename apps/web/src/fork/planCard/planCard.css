@@ -1,0 +1,25 @@
+/* T3-CUSTOM(expbkt3): plan card styles. Fork-owned, loaded by PlanCardRow. */
+
+/* A wide plan card leaves the chat column, so its timeline row must not clip it.
+   The card stays inside the scrolling area, which still clips horizontally. */
+[data-timeline-root]:has([data-plan-card-width="wide"]) {
+  overflow-x: visible;
+}
+
+/* Plans read as a sequence of sections: each top-level section heading after
+   the first gets a quiet rule above it. */
+[data-plan-card-body] .chat-markdown > :is(h1, h2):not(:first-child) {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* Numbered steps are the plan's spine: their numbers carry the accent. */
+[data-plan-card-body] .chat-markdown > ol > li::marker {
+  color: var(--info-foreground);
+  font-weight: 600;
+}
+
+[data-plan-card-body] .chat-markdown > ol > li + li {
+  margin-top: 0.35rem;
+}

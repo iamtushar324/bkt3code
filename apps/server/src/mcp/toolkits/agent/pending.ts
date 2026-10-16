@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { findForkAsyncRequest } from "../../../orchestration-v2/forkAsyncResponse.expbkt3.ts";
+import { runEndedWithoutAnswer } from "../../../orchestration-v2/orphanedRuntimeRequest.expbkt3.ts";
 import type { Caller } from "../../threadAccess.ts";
 import type { QuestionView } from "./answers.ts";
 import { shortRef, toIso, type SessionShell } from "./view.ts";
@@ -147,6 +148,13 @@ const approvalSubject = (caller: Caller, shell: SessionShell, runId: RunId | nul
 
 type TurnItemType = OrchestrationV2TurnItem["type"];
 
+/** Whether the run that asked a live question has failed or stopped, which the server answers by message. */
+const runEndedFor = (caller: Caller, shell: SessionShell, runId: RunId) =>
+  caller.threads.getThreadRecords(shell.id, ["runs"], { runIds: [runId] }).pipe(
+    Effect.map(({ runs }) => runEndedWithoutAnswer(runs.find((run) => run.id === runId)?.status)),
+    Effect.orElseSucceed(() => false),
+  );
+
 /**
  * Reads the details for the waits the shell reports. `includePlan` also reads
  * the newest proposed plan, which only a plan review needs.
@@ -196,11 +204,20 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
     if (secretItem?.type === "secret_request") {
       secret = { label: secretItem.label, reason: secretItem.reason };
     } else if (item?.type === "user_input_request") {
+      // A question whose run failed or stopped no longer blocks the agent: the
+      // server sends its answer as a new turn and lets it be dismissed.
+      const orphaned =
+        runtime?.responseCapability.type === "live" &&
+        item.runId !== null &&
+        (yield* runEndedFor(caller, shell, item.runId));
       question = {
         requestId: request.id,
         questions: item.questions,
-        textOnly: runtime?.responseCapability.type === "message" || item.responseMode === "message",
-        async: false,
+        textOnly:
+          orphaned ||
+          runtime?.responseCapability.type === "message" ||
+          item.responseMode === "message",
+        async: orphaned,
         askedAt: toIso(request.createdAt),
       };
     } else if (item?.type === "approval_request") {

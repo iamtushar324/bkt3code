@@ -160,6 +160,17 @@ describe("groupCommentsByMessage", () => {
     expect(groups[1]!.comments.map((entry) => entry.number)).toEqual([1, 3]);
   });
 
+  it("labels a quoted plan with its turn and groups it in thread order", () => {
+    const groups = groupCommentsByMessage(
+      [comment({ number: 1, messageId: "a2" }), comment({ number: 2, messageId: "p1" })],
+      [...messages.slice(0, 2), { id: "p1", role: "plan" }, ...messages.slice(2)],
+    );
+    expect(groups.map((group) => [group.messageId, group.label])).toEqual([
+      ["p1", "Turn 1 · Plan"],
+      ["a2", "Turn 2"],
+    ]);
+  });
+
   it("appends the provider to the label when known", () => {
     const [group] = groupCommentsByMessage([comment({ messageId: "a1" })], messages, "Claude");
     expect(group!.label).toBe("Turn 1 · Claude");

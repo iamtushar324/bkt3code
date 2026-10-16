@@ -8,6 +8,7 @@ import {
 } from "../../fork/threadComments/threadCommentsSurface";
 import { isPlanReviewSectionId, planReviewCommentTitle } from "@t3tools/shared/planReview";
 import { MessageSenderAttribution } from "../../fork/MessageSenderAttribution";
+import { PlanCardRow } from "../../fork/planCard/PlanCardRow"; // T3-CUSTOM(expbkt3): plan card row seam.
 import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
@@ -312,9 +313,6 @@ import {
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
-  // T3-CUSTOM(expbkt3): shared review state for virtual rows.
-  onOpenPlanReview: ((documentId: string) => void) | undefined;
-  planReviewDocumentId: string | null | undefined;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -450,9 +448,6 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
-  // T3-CUSTOM(expbkt3): a card opens the shared native review.
-  onOpenPlanReview?: ((documentId: string) => void) | undefined;
-  planReviewDocumentId?: string | null | undefined;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -548,9 +543,6 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
-  // T3-CUSTOM(expbkt3): callback keeps the review controller outside virtual rows.
-  onOpenPlanReview,
-  planReviewDocumentId,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -1224,9 +1216,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
-      // T3-CUSTOM(expbkt3): keep card callbacks stable across native item updates.
-      onOpenPlanReview,
-      planReviewDocumentId,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1265,8 +1254,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
     }),
     [
-      onOpenPlanReview,
-      planReviewDocumentId,
       readyCitationRequest,
       listRef,
       timestampFormat,
@@ -2790,17 +2777,17 @@ function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      <ProposedPlanCard
-        // T3-CUSTOM(expbkt3): native plan artifacts retain the review entry point.
-        onOpenPlanReview={ctx.onOpenPlanReview}
-        planReviewDocumentId={ctx.planReviewDocumentId}
-        reviewable={row.proposedPlan.status === "active"}
-        planMarkdown={row.proposedPlan.planMarkdown}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadRef={ctx.threadRef ?? undefined}
-        cwd={ctx.markdownCwd}
-        workspaceRoot={ctx.workspaceRoot}
-      />
+      {/* T3-CUSTOM(expbkt3): BEGIN — plans share the chat's markdown, citations and comments, and can go wide. */}
+      <PlanCardRow plan={row.proposedPlan} itemKey={row.id} timeline={ctx}>
+        <ProposedPlanCard
+          planMarkdown={row.proposedPlan.planMarkdown}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadRef={ctx.threadRef ?? undefined}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={ctx.workspaceRoot}
+        />
+      </PlanCardRow>
+      {/* T3-CUSTOM(expbkt3): END */}
     </div>
   );
 }
