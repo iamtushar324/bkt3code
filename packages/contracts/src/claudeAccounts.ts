@@ -15,7 +15,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedString, UserId } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedString,
+  UserId,
+} from "./baseSchemas.ts";
 
 export const ClaudeAccountProfileName = Schema.String.check(
   Schema.isNonEmpty(),
@@ -110,6 +117,22 @@ export const ClaudeAccountsSnapshot = Schema.Struct({
 });
 export type ClaudeAccountsSnapshot = typeof ClaudeAccountsSnapshot.Type;
 
+/**
+ * A thread no account could take, waiting in the server's revive queue. The
+ * server continues it on the first account with room, in queue order.
+ */
+export const ThreadClaudeAccountWait = Schema.Struct({
+  /** 1-based place in the order the server revives waiting threads. */
+  position: PositiveInt,
+  queuedAt: IsoDateTime,
+  /** When the first account this thread may use is expected to have room. */
+  expectedAt: Schema.optionalKey(IsoDateTime),
+  expectedProfile: Schema.optionalKey(ClaudeAccountProfileName),
+  /** A turn was running when it stopped: the revive continues it on its own. */
+  wasActive: Schema.Boolean,
+});
+export type ThreadClaudeAccountWait = typeof ThreadClaudeAccountWait.Type;
+
 export const ThreadClaudeAccount = Schema.Struct({
   threadId: ThreadId,
   mode: ClaudeAccountMode,
@@ -120,6 +143,8 @@ export const ThreadClaudeAccount = Schema.Struct({
   notice: Schema.optionalKey(Schema.String),
   /** True when a mode change waits for the running turn to finish. */
   pendingRestart: Schema.optionalKey(Schema.Boolean),
+  /** Present while the thread waits in the revive queue. */
+  wait: Schema.optionalKey(ThreadClaudeAccountWait),
 });
 export type ThreadClaudeAccount = typeof ThreadClaudeAccount.Type;
 

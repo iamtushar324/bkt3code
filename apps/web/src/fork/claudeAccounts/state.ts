@@ -44,6 +44,16 @@ export const claudeAccountsEnvironment = {
       key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
     },
   }),
+  /** Takes a waiting thread out of the server's revive queue without moving it. */
+  leaveQueue: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:claude-accounts:leave-queue",
+    tag: WS_METHODS.claudeAccountsLeaveQueue,
+    scheduler,
+    concurrency: {
+      mode: "serial",
+      key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+    },
+  }),
   /** Every account's allow list (admins only). */
   access: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:claude-accounts:access",

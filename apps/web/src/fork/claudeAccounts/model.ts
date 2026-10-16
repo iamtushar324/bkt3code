@@ -22,6 +22,9 @@ export const AUTO_ACCOUNT_RULE = "new sessions go to the account with the most r
 export const SWITCH_RESTARTS_SESSION_HINT =
   "Switching restarts this thread's session on the next message";
 export const PENDING_RESTART_HINT = "Applies after this turn";
+export const LEAVE_QUEUE_LABEL = "Leave queue";
+/** Under the queue notice: picking an account is the way to continue at once. */
+export const QUEUE_PICK_HINT = "Pick an account below to continue on it now.";
 
 /** Bar bands, as on the dashboard: only the trip lines are policy. */
 export const WARN_USED_PERCENT = 60;
@@ -423,6 +426,18 @@ export function autoRowDetail(
   return isAutoMode(thread)
     ? `Picks #1 ${next} on the first message`
     : `Would pick #1 ${next} by space to reset`;
+}
+
+/**
+ * A short label for a thread waiting in the server's revive queue, for the
+ * trigger's tooltip; null when it is not waiting. The full sentence is the
+ * thread's notice.
+ */
+export function queueLabel(thread: ThreadClaudeAccount | null): string | null {
+  const wait = thread?.wait;
+  if (wait === undefined) return null;
+  const place = `number ${wait.position} in the queue`;
+  return wait.wasActive ? `Waiting for an account · ${place}` : `No account free · ${place}`;
 }
 
 export function isAutoMode(thread: ThreadClaudeAccount | null): boolean {

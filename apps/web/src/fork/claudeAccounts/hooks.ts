@@ -148,6 +148,8 @@ export interface ThreadClaudeAccountState {
   /** Null until anything is known, which reads as Auto. */
   readonly account: ThreadClaudeAccount | null;
   readonly setMode: (mode: ClaudeAccountMode) => Promise<void>;
+  /** Takes the thread out of the revive queue; the thread stream then shows it. */
+  readonly leaveQueue: () => Promise<void>;
 }
 
 /** The thread's account choice and its setter. `enabled: false` mounts no streams. */
@@ -174,6 +176,7 @@ export function useThreadClaudeAccount(
     key === null ? undefined : state.choices[key],
   );
   const write = useSetThreadClaudeAccountMode();
+  const leave = useAtomCommand(claudeAccountsEnvironment.leaveQueue);
   const isServerThread = target !== null;
 
   // A draft pick the server refused before the thread existed.
@@ -191,6 +194,14 @@ export function useThreadClaudeAccount(
     [isServerThread, server, threadRef, write],
   );
 
+  const leaveQueue = useCallback(async () => {
+    if (threadRef === null || !isServerThread) return;
+    await leave({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId },
+    });
+  }, [isServerThread, leave, threadRef]);
+
   let account = server;
   if (
     threadRef !== null &&
@@ -200,7 +211,7 @@ export function useThreadClaudeAccount(
     const base = local.result ?? server;
     account = { ...base, threadId: threadRef.threadId, mode: local.mode };
   }
-  return { account, setMode };
+  return { account, setMode, leaveQueue };
 }
 
 export interface ClaudeAccountAccessState {

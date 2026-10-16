@@ -1371,9 +1371,14 @@ describe("ClaudeAccountsService hard limits", () => {
           "tushar resets at 00:02 UTC — this thread continues on it at 00:03 UTC.",
         );
         assert.equal(waiting.resolvedProfile, "tushar");
+        assert.equal(waiting.wait?.expectedProfile, "tushar");
         assert.equal(harness.placeCalls.length, placementsBefore);
 
+        // The wait is a queue entry: the status poll after the reset continues it.
+        yield* service.refreshStatus();
+        assert.equal(harness.dispatched.length, 0);
         yield* TestClock.adjust("3 minutes");
+        yield* service.refreshStatus();
         yield* takeUntil(seen, (view) => view.notice === undefined);
         assert.equal(harness.dispatched.length, 1);
         const { command, actorUserId } = harness.dispatched[0]!;
@@ -1384,9 +1389,12 @@ describe("ClaudeAccountsService hard limits", () => {
         const resumed = yield* service.resolveForSession(threadId);
         assert.equal(resumed?.profile, "tushar");
         assert.equal(resumed?.reason, "sticky");
+        assert.equal(harness.placeCalls.length, placementsBefore);
 
         // Claude still refuses with the old reset: no second wait, the thread moves.
+        const started = yield* watchThreadInto(service, threadId);
         yield* PubSub.publish(harness.providerEvents, providerEvent("turn.started", threadId));
+        yield* Queue.take(started.seen);
         yield* service.handleHardLimit({
           threadId,
           rateLimitType: "five_hour",
@@ -1441,20 +1449,29 @@ describe("ClaudeAccountsService hard limits", () => {
     }),
   );
 
-  scenario("drops the wait when the thread's account mode changes", {}, (harness, service) =>
-    Effect.gen(function* () {
-      yield* service.refreshStatus();
-      const threadId = ThreadId.make("thread-reset-wait-mode");
-      yield* service.resolveForSession(threadId);
-      yield* service.handleHardLimit({
-        threadId,
-        rateLimitType: "five_hour",
-        resetAt: resetInTwoMinutes,
-      });
-      yield* service.setThreadMode({ threadId, mode: { kind: "profile", profile: "agent" } });
-      yield* TestClock.adjust("10 minutes");
-      assert.equal(harness.dispatched.length, 0);
-    }),
+  scenario(
+    "drops the wait when the thread's account mode changes, continuing on the chosen account now",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        yield* service.refreshStatus();
+        const threadId = ThreadId.make("thread-reset-wait-mode");
+        yield* service.resolveForSession(threadId);
+        yield* service.handleHardLimit({
+          threadId,
+          rateLimitType: "five_hour",
+          resetAt: resetInTwoMinutes,
+        });
+        const view = yield* service.setThreadMode({
+          threadId,
+          mode: { kind: "profile", profile: "agent" },
+        });
+        assert.equal(view.wait, undefined);
+        assert.equal(harness.dispatched.length, 1);
+        yield* TestClock.adjust("10 minutes");
+        yield* service.refreshStatus();
+        assert.equal(harness.dispatched.length, 1);
+      }),
   );
 
   scenario("moves instead when the reset is more than five minutes away", {}, (harness, service) =>
@@ -2036,4 +2053,447 @@ describe("ClaudeAccountsService access per user: owners, probing, hard limits, r
         );
       }),
   );
+});
+
+/**
+ * A switcher whose `--place` the test opens and closes: no room until
+ * `state.open` names accounts, then the open account with the fewest pending
+ * placements. With no room it lists when agent, then barsha, recover.
+ */
+function gatedPlace() {
+  const state: { open: ReadonlyArray<string> } = { open: [] };
+  const place = (input: PlaceInput): SwitcherPlaceResult => {
+    let chosen: string | undefined;
+    for (const name of state.open) {
+      if (input.avoid.includes(name)) continue;
+      if (chosen === undefined || (input.pending[name] ?? 0) < (input.pending[chosen] ?? 0)) {
+        chosen = name;
+      }
+    }
+    if (chosen === undefined) {
+      return {
+        status: "no_eligible_profile",
+        chosen: null,
+        dir: null,
+        reason: "every profile is over its limit",
+        recovers_at: "1970-01-01T00:30:00Z",
+        recoveries: [
+          { profile: "agent", recovers_at: "1970-01-01T00:30:00Z" },
+          { profile: "barsha", recovers_at: "1970-01-01T00:45:00Z" },
+        ],
+      };
+    }
+    return { status: "placed", chosen, dir: null, reason: "fewest sessions" };
+  };
+  return { state, place };
+}
+
+/** Domain events are handled in order on one fiber: a deleted, watched thread marks them done. */
+const drainDomainEvents = (harness: Harness, service: ClaudeAccountsService["Service"]) =>
+  Effect.gen(function* () {
+    const drainId = ThreadId.make(`thread-drain-${(eventCounter += 1)}`);
+    const drain = yield* watchThreadInto(service, drainId);
+    yield* PubSub.publish(harness.domainEvents, {
+      type: "thread.deleted",
+      payload: { threadId: drainId, deletedAt: "1970-01-01T00:00:00.000Z" },
+    } as unknown as OrchestrationEvent);
+    yield* Queue.take(drain.seen);
+  });
+
+const sessionSet = (
+  threadId: ThreadId,
+  status: "ready" | "running",
+  activeTurnId: string | null,
+): OrchestrationEvent =>
+  ({
+    type: "thread.session-set",
+    payload: { threadId, session: orchestrationSession(threadId, status, activeTurnId) },
+  }) as unknown as OrchestrationEvent;
+
+/** Marks a turn as running on the thread, as the settled projection would. */
+const markTurnRunning = (
+  harness: Harness,
+  service: ClaudeAccountsService["Service"],
+  threadId: ThreadId,
+) =>
+  Effect.gen(function* () {
+    yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "running", "turn-1"));
+    yield* drainDomainEvents(harness, service);
+  });
+
+const fiveHourAt = (threadId: ThreadId, resetAt: number) => ({
+  threadId,
+  rateLimitType: "five_hour",
+  resetAt,
+});
+
+describe("ClaudeAccountsService revive queue", () => {
+  const farReset = 1_790_000_000;
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "handles a new turn's rejection after a failed move, even with the same reset",
+      { place: gate.place },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-same-reset");
+          gate.state.open = ["tushar"];
+          assert.equal((yield* service.resolveForSession(threadId))?.profile, "tushar");
+          gate.state.open = [];
+
+          assert.isTrue(yield* service.handleHardLimit(fiveHourAt(threadId, farReset)));
+          assert.deepEqual(harness.stoppedThreads, [threadId]);
+          assert.equal(harness.dispatched.length, 0);
+          assert.equal((yield* service.getThread(threadId)).wait?.position, 1);
+          // Copies that arrive while it waits are consumed quietly.
+          yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          assert.equal(harness.hardLimitCalls.length, 1);
+
+          // The person writes: the message takes the thread out of the queue.
+          const { seen } = yield* watchThreadInto(service, threadId);
+          yield* PubSub.publish(harness.domainEvents, {
+            type: "thread.turn-start-requested",
+            payload: { threadId },
+          } as unknown as OrchestrationEvent);
+          yield* takeUntil(seen, (view) => view.wait === undefined);
+          gate.state.open = ["agent"];
+          yield* service.refreshStatus();
+          assert.equal(harness.dispatched.length, 0);
+
+          // That turn is refused with the same reset: it is a new rejection, and agent has room.
+          assert.isTrue(yield* service.handleHardLimit(fiveHourAt(threadId, farReset)));
+          assert.equal(harness.hardLimitCalls.length, 2);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+          assert.equal(harness.dispatched.length, 1);
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "parks Auto threads no account can take and revives them when one has room",
+      { place: gate.place },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const active = ThreadId.make("thread-queue-active");
+          const idle = ThreadId.make("thread-queue-idle");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(active);
+          yield* service.resolveForSession(idle);
+          gate.state.open = [];
+          yield* markTurnRunning(harness, service, active);
+
+          yield* service.handleHardLimit(fiveHourAt(active, farReset));
+          yield* service.handleHardLimit(fiveHourAt(idle, farReset));
+          assert.includeMembers(harness.stoppedThreads, [active, idle]);
+          assert.equal(harness.dispatched.length, 0);
+
+          const activeView = yield* service.getThread(active);
+          assert.deepEqual(activeView.wait && { ...activeView.wait, queuedAt: "" }, {
+            position: 1,
+            queuedAt: "",
+            expectedAt: "1970-01-01T00:30:00.000Z",
+            expectedProfile: "agent",
+            wasActive: true,
+          });
+          assert.equal(
+            activeView.notice,
+            "All Claude accounts are at their limit. This thread is number 1 in the queue and continues on agent at about 00:30 UTC.",
+          );
+          const idleView = yield* service.getThread(idle);
+          assert.equal(idleView.wait?.position, 2);
+          assert.equal(
+            idleView.notice,
+            "All Claude accounts are at their limit. This thread is number 2 in the queue and can continue on agent at about 00:30 UTC when you send a message.",
+          );
+
+          // Still no room: both keep waiting.
+          yield* service.refreshStatus();
+          assert.equal(harness.dispatched.length, 0);
+          assert.equal((yield* service.getThread(active)).wait?.position, 1);
+
+          gate.state.open = ["agent"];
+          yield* service.refreshStatus();
+          const revivedActive = yield* service.getThread(active);
+          const revivedIdle = yield* service.getThread(idle);
+          assert.equal(revivedActive.wait, undefined);
+          assert.equal(revivedActive.notice, undefined);
+          assert.equal(revivedActive.resolvedProfile, "agent");
+          assert.equal(revivedIdle.wait, undefined);
+          assert.equal(revivedIdle.resolvedProfile, "agent");
+          // Only the thread that was mid-turn is continued.
+          assert.equal(harness.dispatched.length, 1);
+          const { command, actorUserId } = harness.dispatched[0]!;
+          assert.equal(actorUserId, owner);
+          assert.equal(command.type, "thread.turn.start");
+          if (command.type === "thread.turn.start") {
+            assert.equal(command.threadId, active);
+            assert.equal(command.message.text, "Continue where you left off.");
+          }
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "spreads a wave of waiting threads over the accounts that free up",
+      {
+        place: gate.place,
+        status: (dir) =>
+          switcherStatus([
+            switcherProfile(dir, "tushar"),
+            switcherProfile(dir, "agent", { rank: 2, elected: false }),
+            switcherProfile(dir, "barsha", { rank: 3, elected: false }),
+            switcherProfile(dir, "carol", { rank: 4, elected: false }),
+          ]),
+      },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threads = [1, 2, 3].map((index) => ThreadId.make(`thread-wave-${index}`));
+          gate.state.open = ["tushar"];
+          for (const threadId of threads) yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          for (const threadId of threads) {
+            yield* markTurnRunning(harness, service, threadId);
+            yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          }
+          for (const [index, threadId] of threads.entries()) {
+            assert.equal((yield* service.getThread(threadId)).wait?.position, index + 1);
+          }
+
+          gate.state.open = ["agent", "barsha", "carol"];
+          yield* service.refreshStatus();
+          const placed = new Set<string>();
+          for (const threadId of threads) {
+            const view = yield* service.getThread(threadId);
+            assert.equal(view.wait, undefined);
+            placed.add(view.resolvedProfile ?? "");
+          }
+          assert.deepEqual([...placed].toSorted(), ["agent", "barsha", "carol"]);
+          assert.equal(harness.dispatched.length, 3);
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "takes a thread out of the queue without moving it",
+      { place: gate.place },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-leave");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = [];
+          yield* markTurnRunning(harness, service, threadId);
+          yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+          assert.isDefined((yield* service.getThread(threadId)).wait);
+
+          const left = yield* service.leaveQueue(threadId);
+          assert.equal(left.wait, undefined);
+          assert.equal(left.notice, undefined);
+          assert.equal(left.resolvedProfile, "tushar");
+          // Leaving twice is harmless.
+          yield* service.leaveQueue(threadId);
+
+          gate.state.open = ["agent"];
+          yield* service.refreshStatus();
+          assert.equal(harness.dispatched.length, 0);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "fails a start with the account expected to have room first, and does not queue it",
+      { place: gate.place },
+      (_harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-queue-spawn");
+          const result = yield* service.resolveForSession(threadId).pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") {
+            assert.equal(
+              result.failure.detail,
+              "All Claude accounts are at their limit — agent is expected to have room at 00:30 UTC.",
+            );
+          }
+          assert.equal((yield* service.getThread(threadId)).wait, undefined);
+        }),
+    );
+  }
+
+  it.effect("keeps the queue across a restart and continues the thread there", () =>
+    Effect.gen(function* () {
+      const repository = yield* Layer.build(
+        Layer.mergeAll(ThreadClaudeAccountRepo.layer, MigrationsLive).pipe(
+          Layer.provide(SqlitePersistenceMemory),
+        ),
+      );
+      const gate = gatedPlace();
+      const harness = yield* makeHarness({
+        place: gate.place,
+        threadRepository: Layer.succeedContext(repository),
+      });
+      const threadId = ThreadId.make("thread-queue-restart");
+
+      yield* Effect.gen(function* () {
+        const service = yield* ClaudeAccountsService;
+        yield* service.refreshStatus();
+        gate.state.open = ["tushar"];
+        yield* service.resolveForSession(threadId);
+        gate.state.open = [];
+        yield* markTurnRunning(harness, service, threadId);
+        yield* service.handleHardLimit(fiveHourAt(threadId, farReset));
+        assert.equal((yield* service.getThread(threadId)).wait?.position, 1);
+      }).pipe(Effect.provide(harness.layer));
+
+      // A new server over the same table.
+      yield* Effect.gen(function* () {
+        const service = yield* ClaudeAccountsService;
+        const view = yield* service.getThread(threadId);
+        assert.equal(view.wait?.position, 1);
+        assert.equal(view.wait?.wasActive, true);
+        assert.equal(harness.dispatched.length, 0);
+
+        gate.state.open = ["agent"];
+        yield* service.refreshStatus();
+        const revived = yield* service.getThread(threadId);
+        assert.equal(revived.wait, undefined);
+        assert.equal(revived.resolvedProfile, "agent");
+        assert.equal(harness.dispatched.length, 1);
+        const { command } = harness.dispatched[0]!;
+        assert.equal(command.type === "thread.turn.start" ? command.threadId : null, threadId);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("ClaudeAccountsService notices", () => {
+  scenario("drops a notice tied to a reset once that time passes", {}, (harness, service) =>
+    Effect.gen(function* () {
+      yield* service.refreshStatus();
+      const threadId = ThreadId.make("thread-notice-expiry");
+      yield* service.setThreadMode({ threadId, mode: { kind: "profile", profile: "agent" } });
+      yield* service.resolveForSession(threadId);
+      // Ten minutes after the test clock's epoch start.
+      yield* service.handleHardLimit(fiveHourAt(threadId, 600));
+      assert.equal(
+        (yield* service.getThread(threadId)).notice,
+        "agent is at its usage limit until 00:10 UTC — switch to Auto or another account.",
+      );
+      const { seen } = yield* watchThreadInto(service, threadId);
+
+      yield* TestClock.adjust("11 minutes");
+      yield* service.refreshStatus();
+      yield* takeUntil(seen, (view) => view.notice === undefined);
+      assert.equal((yield* service.getThread(threadId)).notice, undefined);
+      assert.deepEqual(harness.stoppedThreads, []);
+    }),
+  );
+});
+
+describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
+  const sharedStatus = (dir: DirFor) => ({
+    ...switcherStatus([
+      switcherProfile(dir, "tushar", { sessions: 5, fair_share: 2, load: 5 }),
+      switcherProfile(dir, "agent", { rank: 2, elected: false, fair_share: 2, load: 0 }),
+      switcherProfile(dir, "barsha", { rank: 3, elected: false, fair_share: 2, load: 0 }),
+    ]),
+    place_rule: "space-share-v2",
+  });
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "moves an idle Auto thread off an over-loaded account once, not again within the hour",
+      { place: gate.place, status: sharedStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-rebalance");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = ["agent"];
+          yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+          const { seen } = yield* watchThreadInto(service, threadId);
+
+          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* takeUntil(seen, (view) => view.resolvedProfile === "agent");
+          yield* drainDomainEvents(harness, service);
+          assert.deepEqual(harness.stoppedThreads, [threadId]);
+          assert.include(harness.placeCalls.at(-1)!.avoid, "tushar");
+          // Nothing asked the thread to continue: its next message spawns on agent.
+          assert.equal(harness.dispatched.length, 0);
+          assert.equal((yield* service.resolveForSession(threadId))?.reason, "sticky");
+
+          // agent is over its share now too, but the thread moved less than an hour ago.
+          yield* Ref.update(harness.status, (current) => ({
+            ...current,
+            profiles: current.profiles.map((profile) =>
+              profile.name === "agent" ? { ...profile, sessions: 6 } : profile,
+            ),
+          }));
+          yield* service.refreshStatus();
+          gate.state.open = ["barsha"];
+          const placements = harness.placeCalls.length;
+          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, placements);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
+
+          yield* TestClock.adjust("61 minutes");
+          yield* PubSub.publish(harness.domainEvents, sessionSet(threadId, "ready", null));
+          yield* takeUntil(seen, (view) => view.resolvedProfile === "barsha");
+          yield* drainDomainEvents(harness, service);
+          assert.deepEqual(harness.stoppedThreads, [threadId, threadId]);
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "never moves a pinned thread, and leaves a thread with a turn running alone",
+      { place: gate.place, status: sharedStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const pinned = ThreadId.make("thread-rebalance-pinned");
+          const busy = ThreadId.make("thread-rebalance-busy");
+          yield* service.setThreadMode({
+            threadId: pinned,
+            mode: { kind: "profile", profile: "tushar" },
+          });
+          yield* service.resolveForSession(pinned);
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(busy);
+          gate.state.open = ["agent"];
+          yield* Ref.set(harness.sessions, [
+            liveSession(pinned, "ready"),
+            liveSession(busy, "running"),
+          ]);
+          const placements = harness.placeCalls.length;
+
+          yield* PubSub.publish(harness.domainEvents, sessionSet(pinned, "ready", null));
+          yield* PubSub.publish(harness.domainEvents, sessionSet(busy, "ready", null));
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, placements);
+          assert.deepEqual(harness.stoppedThreads, []);
+          assert.equal((yield* service.getThread(pinned)).resolvedProfile, "tushar");
+          assert.equal((yield* service.getThread(busy)).resolvedProfile, "tushar");
+        }),
+    );
+  }
 });

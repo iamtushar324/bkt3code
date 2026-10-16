@@ -71,6 +71,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_FORK_METHODS.subscribeClaudeAccounts]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.subscribeThreadClaudeAccount]: AuthOrchestrationReadScope,
   [WS_FORK_METHODS.claudeAccountsSetThreadMode]: AuthOrchestrationOperateScope,
+  [WS_FORK_METHODS.claudeAccountsLeaveQueue]: AuthOrchestrationOperateScope,
   // T3-CUSTOM(expbkt3): Claude account access per user. Listing is a read and
   // replacing an allow list is operate; both handlers also require an admin.
   [WS_FORK_METHODS.claudeAccountsAccessList]: AuthOrchestrationReadScope,
