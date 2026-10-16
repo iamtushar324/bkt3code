@@ -149,6 +149,37 @@ describe("ClaudeAutoswitchClient", () => {
     }),
   );
 
+  it.effect("decodes the space-share-v2 fields and keeps older answers without them", () =>
+    Effect.gen(function* () {
+      const answers = [
+        '{"status":"no_eligible_profile","chosen":null,"recovers_at":"2026-10-16T12:30:00Z","recoveries":[{"profile":"tushar","recovers_at":"2026-10-16T12:30:00Z"},{"profile":"agent","recovers_at":"2026-10-16T12:31:00Z"}],"snapshot":{"place_rule":"space-share-v2","profiles":[{"name":"sam","sessions":11,"fair_share":6,"load":12},{"name":"tushar","sessions":3,"fair_share":null,"load":3}]}}',
+        '{"status":"no_eligible_profile","chosen":null,"recovers_at":null}',
+      ];
+      const { layer } = harness(() => output({ stdout: answers.shift() ?? "" }));
+      const [current, older] = yield* Effect.gen(function* () {
+        const client = yield* ClaudeAutoswitchClient;
+        const first = yield* client.place({ pending: {}, avoid: [] });
+        const second = yield* client.place({ pending: {}, avoid: [] });
+        return [first, second] as const;
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(current.kind, "ok");
+      if (current.kind === "ok") {
+        assert.deepEqual(current.value.recoveries, [
+          { profile: "tushar", recovers_at: "2026-10-16T12:30:00Z" },
+          { profile: "agent", recovers_at: "2026-10-16T12:31:00Z" },
+        ]);
+        const profiles = current.value.snapshot?.profiles ?? [];
+        assert.equal(current.value.snapshot?.place_rule, "space-share-v2");
+        assert.equal(profiles[0]?.fair_share, 6);
+        assert.equal(profiles[0]?.load, 12);
+        assert.equal(profiles[1]?.fair_share, null);
+      }
+      assert.equal(older.kind, "ok");
+      if (older.kind === "ok") assert.equal(older.value.recoveries, undefined);
+    }),
+  );
+
   it.effect(
     "passes the limit type and profile to --hard-limit and honours the configured path",
     () =>

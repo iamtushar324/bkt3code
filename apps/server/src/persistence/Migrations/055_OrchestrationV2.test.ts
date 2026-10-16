@@ -44,6 +44,7 @@ layer("055_OrchestrationV2", (it) => {
         [1050, "ThreadSnapshotWindowIndexes"],
         [1051, "ScheduledTaskCustomGroups"], // T3-CUSTOM(expbkt3): scheduled task custom groups.
         [1052, "ScheduledTaskForkOptions"], // T3-CUSTOM(expbkt3): scheduled task options.
+        [1053, "ThreadClaudeAccountWait"], // T3-CUSTOM(expbkt3): Claude account revive queue.
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -80,6 +81,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1050, name: "ThreadSnapshotWindowIndexes" },
         { migration_id: 1051, name: "ScheduledTaskCustomGroups" }, // T3-CUSTOM(expbkt3)
         { migration_id: 1052, name: "ScheduledTaskForkOptions" }, // T3-CUSTOM(expbkt3)
+        { migration_id: 1053, name: "ThreadClaudeAccountWait" }, // T3-CUSTOM(expbkt3)
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.
