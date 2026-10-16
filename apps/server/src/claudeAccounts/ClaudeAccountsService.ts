@@ -783,7 +783,10 @@ export const make = Effect.gen(function* () {
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
-      // Fresh session counts include every rebalance made before this read.
+      // One rebalance per source account per status read. A moved session
+      // whose restart was deferred is still counted in this read, so a second
+      // thread can leave the account one read early; the slack of 2 over the
+      // fair share absorbs that.
       rebalancedFrom.clear();
       const generatedMs =
         typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
@@ -1898,7 +1901,11 @@ export const make = Effect.gen(function* () {
           ),
         );
         if (outcome === undefined) continue;
-        if (outcome.continueTurn) yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+        // A message accepted while this pass waited on a lock is already the
+        // next turn; a continue on top of it would be a second one.
+        if (outcome.continueTurn && (yield* threadIsIdle(threadId))) {
+          yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+        }
         yield* announce(threadId);
       }
     }),
@@ -1976,7 +1983,9 @@ export const make = Effect.gen(function* () {
             lastFailedProbeAt.set(threadId, nowMs);
             return undefined;
           }
-          // The probe took time: a turn may have started since.
+          // The probe took time: a turn may have reached the provider since. A
+          // message the shell accepted but has not sent yet is caught later:
+          // `restartForNewAccount` re-reads the shell and defers the restart.
           if (!(yield* threadIsIdle(threadId, settled))) return undefined;
           pendingPlacements.push({ profile: to, atMs: yield* Clock.currentTimeMillis });
           lastRebalancedAt.set(threadId, nowMs);
@@ -2042,9 +2051,12 @@ export const make = Effect.gen(function* () {
           if (yield* dequeueQuietly(event.threadId, "turn-started")) {
             yield* announce(event.threadId);
           }
+          // Copies of one rejection all arrive before the next turn starts, so a
+          // new turn forgets them; a key kept after a failed park would
+          // otherwise swallow every later rejection with the same reset.
+          forgetConditions(event.threadId);
           // The first turn on the new account: from here a rejection is real.
           if (movedAwaitingTurn.delete(event.threadId)) {
-            forgetConditions(event.threadId);
             yield* announce(event.threadId);
           }
           return;
