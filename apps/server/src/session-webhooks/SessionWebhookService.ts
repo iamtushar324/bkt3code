@@ -420,6 +420,14 @@ export const make = Effect.gen(function* () {
       catch: () => fail(400, "invalid-callback-payload"),
     });
     const fingerprint = callbackFingerprint(body);
+    // Only SQL runs inside the admission transaction. The SQLite client has one
+    // connection behind a one-permit semaphore, and the transaction holds that
+    // permit until it commits. The integration checks the owner with
+    // `Effect.runPromise(users.get(...))`, a fresh fiber outside this
+    // transaction, so calling it here waited for the permit this fiber held:
+    // every push callback hung until the sender's 20 s timeout and rolled back.
+    // The binding was verified above; the drain loop re-checks it before dispatch
+    // and `retireReplacedReceiver` ends queued events of a replaced receiver.
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         const existing =
@@ -431,14 +439,7 @@ export const make = Effect.gen(function* () {
         }
         const current = (yield* sql<WebhookRow>`SELECT * FROM session_webhooks WHERE id=${id}`)[0];
         if (current?.status !== "active") return yield* fail(410, "webhook-disabled-or-removed");
-        const currentBinding = yield* integration.callbackBinding(
-          UserId.make(current.owner_user_id),
-        );
-        if (
-          !currentBinding ||
-          !currentBinding.enabled ||
-          receiverTrustBinding(currentBinding) !== current.trust_binding
-        )
+        if (current.trust_binding !== row.trust_binding)
           return yield* fail(410, "integration-disabled-or-replaced");
         const cutoff = DateTime.formatIso(DateTime.makeUnsafe(millis() - 60_000));
         const count =
