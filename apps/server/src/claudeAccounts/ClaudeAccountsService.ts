@@ -19,6 +19,14 @@
  *   affected Auto thread. Pinned threads get a notice instead. An Auto
  *   thread whose window resets within five minutes keeps its account: the
  *   session stops and the thread continues there once the window resets;
+ * - the **revive queue**: an Auto thread that no account can take stops and
+ *   waits in `thread_claude_account` (so a restart keeps it). After every
+ *   status poll the waiting threads are placed again in queue order, and one
+ *   that was mid-turn gets the continue turn;
+ * - **rebalancing**: when an idle Auto thread's turn ends on an account that
+ *   carries two or more sessions above its fair share (or can no longer take
+ *   new ones), it moves to where the switcher would place it now, at most once
+ *   an hour per thread;
  * - **access per user**: an account with no users assigned is open to
  *   everyone; once an admin assigns users, only they may use it. Placement
  *   avoids the accounts the thread's owner may not use, a pin to one fails,
@@ -51,7 +59,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -97,6 +104,12 @@ const PENDING_PLACEMENT_WINDOW_MS = 90_000;
 /** How long an exhausted mark lasts when Claude did not say when the window resets. */
 const DEFAULT_EXHAUSTED_MS = 60 * 60 * 1000;
 const MAX_HANDLED_CONDITIONS = 256;
+/** A thread is moved off an over-loaded account at most this often. */
+export const REBALANCE_COOLDOWN_MS = 60 * 60 * 1000;
+/** Sessions above the account's fair share before a finished turn moves its thread. */
+const REBALANCE_EXCESS = 2;
+/** After a rebalance probe finds nowhere better, the thread is not probed again for this long. */
+export const REBALANCE_PROBE_BACKOFF_MS = 5 * 60 * 1000;
 /** A limit that resets within this long is waited out on the same account instead of moving. */
 export const RESET_WAIT_THRESHOLD_MS = 5 * 60 * 1000;
 /** Margin after the reset so the status poll sees the account free before the thread continues. */
@@ -121,7 +134,11 @@ const sameThreadAccount = (left: ThreadClaudeAccount, right: ThreadClaudeAccount
   left.resolvedProfile === right.resolvedProfile &&
   left.resolvedAt === right.resolvedAt &&
   left.notice === right.notice &&
-  left.pendingRestart === right.pendingRestart;
+  left.pendingRestart === right.pendingRestart &&
+  left.wait?.position === right.wait?.position &&
+  left.wait?.expectedAt === right.wait?.expectedAt &&
+  left.wait?.expectedProfile === right.wait?.expectedProfile &&
+  left.wait?.wasActive === right.wait?.wasActive;
 
 /** Published after each status read: watched threads re-read their observed account. */
 const LIVE_SESSIONS_CHANGE = "\u0000live-sessions";
@@ -177,6 +194,10 @@ export interface ClaudeAccountsServiceShape {
   /** Re-reads `--status --json` now; the poller calls this on its own schedule. */
   readonly refreshStatus: () => Effect.Effect<void>;
   readonly markExhausted: (profile: string, resetsAt: string | undefined) => Effect.Effect<void>;
+  /** Takes the thread out of the revive queue without moving it. */
+  readonly leaveQueue: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ThreadClaudeAccount, ClaudeAccountsError>;
   /** Places the thread again, avoiding the given accounts, and persists the result. */
   readonly reassign: (
     threadId: ThreadId,
@@ -200,6 +221,27 @@ interface WindowOverlay {
 interface ExhaustedMark {
   readonly untilMs: number;
   readonly resetsAt: string | undefined;
+}
+
+/** A composer notice; one tied to a time disappears at that time. */
+interface Notice {
+  readonly text: string;
+  readonly untilMs?: number;
+}
+
+/** A thread in the revive queue: the stored row plus what only memory knows. */
+interface WaitEntry {
+  readonly queuedAt: string;
+  readonly wasActive: boolean;
+  readonly preferProfile: string | null;
+  readonly notBefore: string | null;
+  /** The account a model-scoped limit refused; the revive avoids it. Memory only. */
+  readonly avoid?: string;
+  /** Whether the owner may use only some accounts, for the notice's wording. */
+  readonly restricted: boolean;
+  /** When the first account the owner may use is expected to have room. */
+  readonly expectedAt?: string;
+  readonly expectedProfile?: string;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -314,7 +356,7 @@ export const make = Effect.gen(function* () {
   const fiveHourHistory: FiveHourHistory = new Map();
   // Per-thread state the row does not carry.
   const threadProfiles = new Map<ThreadId, string>();
-  const notices = new Map<ThreadId, string>();
+  const notices = new Map<ThreadId, Notice>();
   const pendingRestart = new Set<ThreadId>();
   /** Threads with a turn in flight, as seen on the provider event bus. */
   const activeTurns = new Set<ThreadId>();
@@ -326,12 +368,23 @@ export const make = Effect.gen(function* () {
   const movedAwaitingTurn = new Set<ThreadId>();
   const handledConditions = new Set<string>();
   /**
-   * Auto threads waiting out a window that resets soon, each with the timer
-   * that continues it. A thread leaves the set just before its continue turn
-   * is sent, so that turn's own start does not cancel anything.
+   * The revive queue, mirrored from `thread_claude_account` and read back at
+   * start. A thread leaves it just before its continue turn is sent, so that
+   * turn's own start does not cancel anything.
    */
-  const waitingForReset = new Set<ThreadId>();
-  const resetWaits = yield* FiberMap.make<ThreadId>();
+  const waits = new Map<ThreadId, WaitEntry>();
+  /** When each thread was last moved by a rebalance. */
+  const lastRebalancedAt = new Map<ThreadId, number>();
+  /** When a rebalance probe last found nowhere better for each thread. */
+  const lastFailedProbeAt = new Map<ThreadId, number>();
+  /**
+   * Accounts a rebalance moved a thread off since the last status read. Their
+   * session counts are stale until the next read, so each gives up at most
+   * one thread per read.
+   */
+  const rebalancedFrom = new Set<string>();
+  /** Threads whose settled projection last showed a running turn. */
+  const projectedRunning = new Set<ThreadId>();
   /**
    * Live Claude session id -> the account it runs on, from each account's
    * `sessions/<pid>.json` (the CLI writes one at start and never removes it).
@@ -344,6 +397,22 @@ export const make = Effect.gen(function* () {
   const announce = (key: string) => PubSub.publish(changes, key).pipe(Effect.ignore);
   const announceSnapshot = announce(SNAPSHOT_CHANGE);
   const placementLock = yield* Semaphore.make(1);
+  /** One revive pass at a time; a pass started meanwhile runs after it. */
+  const reviveLock = yield* Semaphore.make(1);
+
+  const storedWaits = yield* repository
+    .listWaiting()
+    .pipe(
+      Effect.catchCause((cause) =>
+        Effect.as(
+          Effect.logWarning("claude.account.queue-load-failed", { cause }),
+          [] as ReadonlyArray<ThreadClaudeAccountRow>,
+        ),
+      ),
+    );
+  for (const row of storedWaits) {
+    if (row.wait !== null) waits.set(row.threadId, { ...row.wait, restricted: false });
+  }
 
   const readSettings: Effect.Effect<ClaudeAccountProfilesSettingsView> =
     settingsService.getSettings.pipe(
@@ -714,6 +783,11 @@ export const make = Effect.gen(function* () {
       lastStatus = status;
       lastStatusAtMs = yield* Clock.currentTimeMillis;
       unavailableReason = undefined;
+      // One rebalance per source account per status read. A moved session
+      // whose restart was deferred is still counted in this read, so a second
+      // thread can leave the account one read early; the slack of 2 over the
+      // fair share absorbs that.
+      rebalancedFrom.clear();
       const generatedMs =
         typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
       for (const profile of status.profiles) {
@@ -745,6 +819,17 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  /** Drops notices whose time has passed and tells their threads. */
+  const expireNotices = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const [threadId, notice] of notices) {
+      if (notice.untilMs !== undefined && notice.untilMs <= now) {
+        notices.delete(threadId);
+        yield* announce(threadId);
+      }
+    }
+  });
+
   const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
     Effect.gen(function* () {
       const input = yield* rankInput;
@@ -764,6 +849,9 @@ export const make = Effect.gen(function* () {
         liveSessionProfiles = yield* indexLiveSessions(outcome.value);
         yield* announce(LIVE_SESSIONS_CHANGE);
       }
+      yield* expireNotices;
+      // Accounts may have room now: continue the threads waiting for one.
+      yield* revivePass;
     });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
@@ -795,8 +883,81 @@ export const make = Effect.gen(function* () {
 
   // ---------------------------------------------------------------- threads
 
-  const threadView = (row: ThreadClaudeAccountRow): ThreadClaudeAccount => {
-    const notice = notices.get(row.threadId);
+  const setNotice = (threadId: ThreadId, text: string, until?: string) => {
+    const untilMs = until === undefined ? Number.NaN : Date.parse(until);
+    notices.set(threadId, Number.isNaN(untilMs) ? { text } : { text, untilMs });
+  };
+
+  const isDue = (entry: WaitEntry, nowMs: number) =>
+    entry.notBefore !== null && Date.parse(entry.notBefore) <= nowMs;
+
+  /** The revive order: waits whose reset has passed, then interrupted turns, then the oldest. */
+  const queueOrder = (nowMs: number): ReadonlyArray<readonly [ThreadId, WaitEntry]> =>
+    [...waits].toSorted(([, left], [, right]) => {
+      const byDue = Number(isDue(right, nowMs)) - Number(isDue(left, nowMs));
+      if (byDue !== 0) return byDue;
+      const byActive = Number(right.wasActive) - Number(left.wasActive);
+      if (byActive !== 0) return byActive;
+      return left.queuedAt.localeCompare(right.queuedAt);
+    });
+
+  /** The queue state a waiting thread shows, with the notice derived from it. */
+  const waitView = (threadId: ThreadId, entry: WaitEntry, nowMs: number) => {
+    const position = queueOrder(nowMs).findIndex(([id]) => id === threadId) + 1;
+    const notBeforeMs = entry.notBefore === null ? Number.NaN : Date.parse(entry.notBefore);
+    // A short reset wait still ahead: the thread continues on its own account.
+    if (entry.preferProfile !== null && entry.notBefore !== null && notBeforeMs > nowMs) {
+      return {
+        value: {
+          position,
+          queuedAt: entry.queuedAt,
+          expectedAt: entry.notBefore,
+          expectedProfile: entry.preferProfile,
+          wasActive: entry.wasActive,
+        },
+        notice: `${entry.preferProfile} resets at ${formatResetClock(
+          isoFromUnixSeconds((notBeforeMs - RESET_WAIT_BUFFER_MS) / 1000),
+        )} — this thread continues on it at ${formatResetClock(entry.notBefore)}.`,
+      };
+    }
+    // A reset wait whose time has passed says nothing about when room comes:
+    // only the last placement's answer does.
+    const expectedAt = entry.expectedAt;
+    const expectedProfile = entry.expectedProfile;
+    const limitLine = entry.restricted
+      ? "All Claude accounts you can use are at their limit."
+      : "All Claude accounts are at their limit.";
+    const target = expectedProfile === undefined ? "" : ` on ${expectedProfile}`;
+    const when =
+      expectedAt === undefined
+        ? " once an account has room"
+        : ` at about ${formatResetClock(expectedAt)}`;
+    const next = entry.wasActive
+      ? `continues${target}${when}`
+      : `can continue${target}${when} when you send a message`;
+    return {
+      value: {
+        position,
+        queuedAt: entry.queuedAt,
+        ...(expectedAt !== undefined ? { expectedAt } : {}),
+        ...(expectedProfile !== undefined ? { expectedProfile } : {}),
+        wasActive: entry.wasActive,
+      },
+      notice: `${limitLine} This thread is number ${position} in the queue and ${next}.`,
+    };
+  };
+
+  const threadView = (row: ThreadClaudeAccountRow, nowMs: number): ThreadClaudeAccount => {
+    const entry = waits.get(row.threadId);
+    const wait = entry === undefined ? undefined : waitView(row.threadId, entry, nowMs);
+    const stored = notices.get(row.threadId);
+    // A notice tied to a time never outlives it.
+    const live =
+      stored !== undefined && (stored.untilMs === undefined || stored.untilMs > nowMs)
+        ? stored.text
+        : undefined;
+    if (stored !== undefined && live === undefined) notices.delete(row.threadId);
+    const notice = wait?.notice ?? live;
     return {
       threadId: row.threadId,
       mode: row.mode,
@@ -804,6 +965,7 @@ export const make = Effect.gen(function* () {
       ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
       ...(notice ? { notice } : {}),
       ...(pendingRestart.has(row.threadId) ? { pendingRestart: true } : {}),
+      ...(wait ? { wait: wait.value } : {}),
     };
   };
 
@@ -821,13 +983,14 @@ export const make = Effect.gen(function* () {
   const getThread: ClaudeAccountsServiceShape["getThread"] = (threadId) =>
     Effect.gen(function* () {
       const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("getThread")));
-      if (row.resolvedProfile || row.mode.kind !== "auto") return threadView(row);
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (row.resolvedProfile || row.mode.kind !== "auto") return threadView(row, nowMs);
       // A session that started before placement (on the shared link) has no
       // resolved account yet: show the one its live process really uses.
       const observed = yield* observedProfile(threadId);
-      if (observed === undefined) return threadView(row);
+      if (observed === undefined) return threadView(row, nowMs);
       threadProfiles.set(threadId, observed);
-      return threadView({ ...row, resolvedProfile: observed });
+      return threadView({ ...row, resolvedProfile: observed }, nowMs);
     });
 
   const persistResolved = (threadId: ThreadId, profile: string) =>
@@ -901,10 +1064,24 @@ export const make = Effect.gen(function* () {
       });
     });
 
+  interface PlaceOptions {
+    /** Why the placement runs, for the log. */
+    readonly purpose: "spawn" | "reassign" | "revive" | "rebalance";
+    /**
+     * Accept only a real `placed` answer: no `fallback` account above its trip
+     * line and no degraded active link. A revive or a rebalance onto either
+     * would only fail again, so it waits for a real answer instead.
+     */
+    readonly requirePlaced?: boolean;
+    /** Counts the answer as a pending placement (the default); a probe passes false. */
+    readonly commit?: boolean;
+  }
+
   /** Asks the switcher for an account. Must run under `placementLock`. */
   const placeWith = (
     threadId: ThreadId,
     avoid: ReadonlyArray<string>,
+    options: PlaceOptions,
   ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
     Effect.gen(function* () {
       const pending = yield* pendingCounts;
@@ -931,7 +1108,14 @@ export const make = Effect.gen(function* () {
           threadId,
           kind: outcome.kind,
           detail: outcome.detail,
+          purpose: options.purpose,
         });
+        if (options.requirePlaced) {
+          return yield* new ClaudeAccountPolicyError({
+            threadId,
+            detail: "Claude account placement is unavailable right now — try again shortly.",
+          });
+        }
         if (outcome.kind === "unavailable") {
           const fallback = yield* currentProfileFromActiveLink;
           if (fallback !== undefined && !avoidSet.has(fallback.profile)) return fallback;
@@ -950,9 +1134,35 @@ export const make = Effect.gen(function* () {
           chosen: result.chosen,
         });
       }
-      if (result.status === "no_eligible_profile" || chosen === null) {
+      if (
+        result.status === "no_eligible_profile" ||
+        chosen === null ||
+        (options.requirePlaced === true && result.status !== "placed")
+      ) {
+        yield* Effect.logInfo("claude.account.place-none", {
+          threadId,
+          status: result.status,
+          recoversAt: result.recovers_at ?? null,
+          recoveries: result.recoveries ?? [],
+          reason: result.reason ?? null,
+          purpose: options.purpose,
+        });
         if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
-        const recoversAt = isoOrUndefined(result.recovers_at) ?? firstRecovery(disallowed);
+        // The first account this owner may use that is expected to have room.
+        // A switcher that lists recoveries speaks for every account; an older
+        // one only gives the first reset, which may be an account off limits.
+        let first: { readonly profile: string; readonly at: string } | undefined;
+        for (const recovery of result.recoveries ?? []) {
+          const at = isoOrUndefined(recovery.recovers_at);
+          if (at !== undefined && !disallowed.has(recovery.profile)) {
+            first = { profile: recovery.profile, at };
+            break;
+          }
+        }
+        const recoversAt =
+          first?.at ??
+          (result.recoveries ? undefined : isoOrUndefined(result.recovers_at)) ??
+          firstRecovery(disallowed);
         // Nothing the owner may use is waiting on a reset, and whatever else
         // is left is off limits: that is "no access", not "at its limit". The
         // access list decides this; the host list, when known, only narrows it.
@@ -971,13 +1181,19 @@ export const make = Effect.gen(function* () {
         return yield* new ClaudeAccountPolicyError({
           threadId,
           detail:
-            recoversAt === undefined
-              ? `${limitLine}.`
-              : `${limitLine} — first resets at ${formatResetClock(recoversAt)}.`,
+            first !== undefined
+              ? `${limitLine} — ${first.profile} is expected to have room at ${formatResetClock(first.at)}.`
+              : recoversAt === undefined
+                ? `${limitLine}.`
+                : `${limitLine} — first resets at ${formatResetClock(recoversAt)}.`,
+          ...(recoversAt !== undefined ? { expectedAt: recoversAt } : {}),
+          ...(first !== undefined ? { expectedProfile: first.profile } : {}),
         });
       }
-      const atMs = yield* Clock.currentTimeMillis;
-      pendingPlacements.push({ profile: chosen, atMs });
+      if (options.commit !== false) {
+        const atMs = yield* Clock.currentTimeMillis;
+        pendingPlacements.push({ profile: chosen, atMs });
+      }
       return {
         profile: chosen,
         dir: result.dir ? result.dir : profileDir(chosen),
@@ -986,10 +1202,14 @@ export const make = Effect.gen(function* () {
       } as const;
     });
 
-  const placeAndPersist = (threadId: ThreadId, avoid: ReadonlyArray<string>) =>
+  const placeAndPersist = (
+    threadId: ThreadId,
+    avoid: ReadonlyArray<string>,
+    purpose: PlaceOptions["purpose"],
+  ) =>
     Semaphore.withPermit(placementLock)(
       Effect.gen(function* () {
-        const resolution = yield* placeWith(threadId, avoid);
+        const resolution = yield* placeWith(threadId, avoid, { purpose });
         if (resolution !== undefined) {
           yield* persistResolved(threadId, resolution.profile).pipe(
             Effect.catchCause((cause) =>
@@ -1059,8 +1279,10 @@ export const make = Effect.gen(function* () {
 
       // Sticky: an account the thread already ran on is kept until a hard
       // limit, a sign-out, an exhausted mark or its removal takes it out.
-      // Nearing a limit never moves an existing thread; only new placements
-      // avoid it. Losing access to the account re-places it too.
+      // Nearing a limit never moves a running thread here; only new
+      // placements avoid it, and the turn-boundary rebalance may move an idle
+      // thread off an over-loaded account (it writes the row this reads).
+      // Losing access to the account re-places it too.
       if (
         row.resolvedProfile !== null &&
         !disallowed.has(row.resolvedProfile) &&
@@ -1074,7 +1296,11 @@ export const make = Effect.gen(function* () {
           reason: "sticky",
         } as const;
       }
-      return yield* placeAndPersist(threadId, row.resolvedProfile ? [row.resolvedProfile] : []);
+      return yield* placeAndPersist(
+        threadId,
+        row.resolvedProfile ? [row.resolvedProfile] : [],
+        "spawn",
+      );
     });
 
   /**
@@ -1097,7 +1323,7 @@ export const make = Effect.gen(function* () {
     );
 
   const reassign: ClaudeAccountsServiceShape["reassign"] = (threadId, input) =>
-    placeAndPersist(threadId, input.avoid);
+    placeAndPersist(threadId, input.avoid, "reassign");
 
   const markExhausted: ClaudeAccountsServiceShape["markExhausted"] = (profile, resetsAt) =>
     Effect.gen(function* () {
@@ -1156,7 +1382,7 @@ export const make = Effect.gen(function* () {
     });
 
   /** Restarts the thread's provider session so its next turn spawns on the new account. */
-  const restartForNewAccount = (threadId: ThreadId) =>
+  const restartForNewAccount = (threadId: ThreadId, why = "mode-changed") =>
     Effect.gen(function* () {
       const sessions = yield* providers.listSessions();
       const live = sessions.find(
@@ -1168,7 +1394,7 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("claude.account.restart-deferred", { threadId });
         return;
       }
-      yield* stopSessionQuietly(threadId, "mode-changed");
+      yield* stopSessionQuietly(threadId, why);
     });
 
   /**
@@ -1188,13 +1414,98 @@ export const make = Effect.gen(function* () {
       yield* announce(threadId);
     });
 
-  /** Drops a pending wait-for-reset; `true` when there was one. */
-  const cancelResetWait = (threadId: ThreadId) =>
+  // ------------------------------------------------------------ revive queue
+
+  /** Forgets the rejections already handled for a thread, so the next one is judged afresh. */
+  const forgetConditions = (threadId: ThreadId) => {
+    const prefix = `${threadId}\u0000`;
+    for (const key of handledConditions) {
+      if (key.startsWith(prefix)) handledConditions.delete(key);
+    }
+  };
+
+  /** Tells every waiting thread to re-read its place in the queue. */
+  const announceQueue = Effect.suspend(() =>
+    Effect.forEach([...waits.keys()], announce, { discard: true }),
+  );
+
+  /**
+   * Puts the thread in the revive queue (keeping its place when it is already
+   * there). `false` when the row could not be written: the caller falls back.
+   */
+  const park = (
+    threadId: ThreadId,
+    input: Omit<WaitEntry, "queuedAt" | "preferProfile" | "notBefore"> & {
+      readonly preferProfile?: string;
+      readonly notBefore?: string;
+    },
+  ) =>
     Effect.gen(function* () {
-      if (!waitingForReset.delete(threadId)) return false;
-      yield* FiberMap.remove(resetWaits, threadId);
-      yield* Effect.logInfo("claude.account.reset-wait-cancelled", { threadId });
+      const queuedAt = waits.get(threadId)?.queuedAt ?? (yield* nowIso);
+      const entry: WaitEntry = {
+        ...input,
+        queuedAt,
+        preferProfile: input.preferProfile ?? null,
+        notBefore: input.notBefore ?? null,
+      };
+      yield* repository.setWait({
+        threadId,
+        wait: {
+          queuedAt,
+          wasActive: entry.wasActive,
+          preferProfile: entry.preferProfile,
+          notBefore: entry.notBefore,
+        },
+      });
+      waits.set(threadId, entry);
+      notices.delete(threadId);
+      yield* Effect.logInfo("claude.account.queued", {
+        threadId,
+        wasActive: entry.wasActive,
+        preferProfile: entry.preferProfile,
+        notBefore: entry.notBefore,
+        expectedAt: entry.expectedAt,
+        expectedProfile: entry.expectedProfile,
+      });
+      yield* announceQueue;
       return true;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.as(
+          Effect.logWarning("claude.account.queue-write-failed", { threadId, cause }),
+          false,
+        ),
+      ),
+    );
+
+  /** Takes the thread out of the revive queue; `true` when it was waiting. */
+  const dequeue = (threadId: ThreadId, why: string) =>
+    Effect.gen(function* () {
+      if (!waits.delete(threadId)) return false;
+      forgetConditions(threadId);
+      yield* Effect.logInfo("claude.account.dequeued", { threadId, why });
+      yield* announceQueue;
+      yield* repository.clearWait(threadId);
+      return true;
+    });
+
+  /** `dequeue` for event handlers: a failed write is logged, never raised. */
+  const dequeueQuietly = (threadId: ThreadId, why: string) =>
+    dequeue(threadId, why).pipe(
+      Effect.catchCause((cause) =>
+        Effect.as(
+          Effect.logWarning("claude.account.queue-clear-failed", { threadId, cause }),
+          true,
+        ),
+      ),
+    );
+
+  const leaveQueue: ClaudeAccountsServiceShape["leaveQueue"] = (threadId) =>
+    Effect.gen(function* () {
+      if (yield* dequeue(threadId, "left-queue").pipe(Effect.mapError(internal("leaveQueue")))) {
+        yield* announce(threadId);
+      }
+      return yield* getThread(threadId);
     });
 
   const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({
@@ -1238,7 +1549,9 @@ export const make = Effect.gen(function* () {
       yield* repository
         .setMode({ threadId, mode, updatedAt })
         .pipe(Effect.mapError(internal("setThreadMode")));
-      yield* cancelResetWait(threadId);
+      const waiting = waits.get(threadId);
+      yield* dequeue(threadId, "mode-changed").pipe(Effect.mapError(internal("setThreadMode")));
+      forgetConditions(threadId);
       notices.delete(threadId);
       movedAwaitingTurn.delete(threadId);
       yield* pruneExhausted;
@@ -1250,7 +1563,7 @@ export const make = Effect.gen(function* () {
             (!mayUse(access, owner, row.resolvedProfile) ||
               !(yield* usableAndPresent(row.resolvedProfile)));
       if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
-        notices.set(
+        setNotice(
           threadId,
           `Claude account ${mode.profile} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
         );
@@ -1260,6 +1573,9 @@ export const make = Effect.gen(function* () {
       } else {
         pendingRestart.delete(threadId);
       }
+      // Choosing an account for a thread that stopped mid-turn to wait is
+      // "continue now on that account": its session already stopped.
+      if (waiting?.wasActive) yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
       yield* announce(threadId);
       return yield* getThread(threadId);
     });
@@ -1272,6 +1588,21 @@ export const make = Effect.gen(function* () {
    * and the composer notice already tells the person.
    */
   const CONTINUE_TEXT = "Continue where you left off.";
+
+  /** Whether the thread's shell shows a turn accepted or running. */
+  const shellTurnInFlight = (threadId: ThreadId) =>
+    query.getThreadShellById(threadId).pipe(
+      Effect.map((shell) => {
+        const session = Option.isSome(shell) ? shell.value.session : null;
+        return (
+          session !== null &&
+          (session.activeTurnId !== null ||
+            session.status === "running" ||
+            session.status === "starting")
+        );
+      }),
+      Effect.orElseSucceed(() => false),
+    );
 
   const dispatchContinueTurn = (threadId: ThreadId, text: string) =>
     Effect.gen(function* () {
@@ -1318,6 +1649,8 @@ export const make = Effect.gen(function* () {
 
   const handleHardLimit: ClaudeAccountsServiceShape["handleHardLimit"] = (condition) =>
     Effect.gen(function* () {
+      // Read first: the turn this rejection ends may finish while this runs.
+      const wasActive = activeTurns.has(condition.threadId);
       const settings = yield* readSettings;
       if (!settings.enabled) return false;
       const { threadId, rateLimitType } = condition;
@@ -1352,10 +1685,18 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("claude.account.hard-limit-stale", { threadId, rateLimitType });
         return true;
       }
+      // A waiting thread's session is stopped; its next turn takes it out of
+      // the queue first. A rejection now is a late copy from before the wait.
+      if (waits.has(threadId)) {
+        yield* Effect.logInfo("claude.account.hard-limit-queued", { threadId, rateLimitType });
+        return true;
+      }
       // Repeated copies of one rejection against one account are consumed
       // once. Accounts often share a reset instant (5-hour windows are
       // hour-aligned), so the account is part of the key. Without a reset time
       // nothing identifies the rejection, so every copy is judged on its own.
+      // The key stays only while the thread runs where this left it: a thread
+      // that waits forgets it, so a new turn's rejection is handled again.
       const conditionKey = `${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`;
       if (resetsAt !== undefined && !rememberCondition(conditionKey)) {
         return true;
@@ -1373,6 +1714,7 @@ export const make = Effect.gen(function* () {
         rateLimitType,
         resetsAt,
         accountWide,
+        wasActive,
         election: election.kind === "ok" ? election.value.status : election.kind,
       });
       // Only an account-wide window takes the account out of rotation; a
@@ -1380,11 +1722,12 @@ export const make = Effect.gen(function* () {
       if (accountWide) yield* markExhausted(profile, resetsAt);
 
       if (row.mode.kind === "profile") {
-        notices.set(
+        setNotice(
           threadId,
           accountWide
             ? `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`
             : `${profile} has no ${scope} allowance left until ${formatResetClock(resetsAt)} — switch the model or account.`,
+          resetsAt,
         );
         yield* announce(threadId);
         return true;
@@ -1392,63 +1735,299 @@ export const make = Effect.gen(function* () {
 
       // A window that resets within the threshold is cheaper to wait out than
       // to leave: the thread keeps its account and its cache, and continues
-      // there once the window resets. The timer lives in memory, so a restart
-      // in between leaves the notice and a stopped thread.
+      // there once the window resets. The wait is a queue entry, so it
+      // survives a restart; it always continues, as part of the stopped turn.
       const nowMs = yield* Clock.currentTimeMillis;
       const resetMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
       // A reset already in the past while Claude still refuses is not worth
       // another wait: the thread moves instead.
       if (resetMs > nowMs && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
-        const continueAtMs = resetMs + RESET_WAIT_BUFFER_MS;
-        const continueAt = isoFromUnixSeconds(continueAtMs / 1000);
-        notices.set(
-          threadId,
-          `${profile} resets at ${formatResetClock(resetsAt)} — this thread continues on it at ${formatResetClock(continueAt)}.`,
-        );
-        waitingForReset.add(threadId);
-        yield* stopSessionQuietly(threadId, "hard-limit-reset-wait");
-        yield* FiberMap.run(
-          resetWaits,
-          threadId,
-          Effect.gen(function* () {
-            yield* Effect.sleep(Duration.millis(continueAtMs - nowMs));
-            if (!waitingForReset.delete(threadId)) return;
-            // The continue asks the same account again, so a fresh rejection
-            // carrying the same reset is real, not a copy of this one.
-            handledConditions.delete(conditionKey);
-            notices.delete(threadId);
-            yield* pruneExhausted;
-            yield* Effect.logInfo("claude.account.reset-wait-continue", { threadId, profile });
-            yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
-            yield* announce(threadId);
-          }),
-        );
-        yield* Effect.logInfo("claude.account.reset-wait", { threadId, profile, continueAt });
+        const continueAt = isoFromUnixSeconds((resetMs + RESET_WAIT_BUFFER_MS) / 1000);
+        const parked = yield* park(threadId, {
+          wasActive: true,
+          restricted: false,
+          preferProfile: profile,
+          ...(continueAt !== undefined ? { notBefore: continueAt } : {}),
+        });
+        if (parked) {
+          handledConditions.delete(conditionKey);
+          yield* stopSessionQuietly(threadId, "hard-limit-reset-wait");
+          yield* Effect.logInfo("claude.account.reset-wait", { threadId, profile, continueAt });
+          return true;
+        }
+      }
+
+      const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
+      if (moved._tag === "Success" && moved.success !== undefined) {
+        // Copies of this rejection are caught as stale until the first turn
+        // starts on the new account; past that, the key would only swallow a
+        // real rejection if the thread came back to this account.
+        handledConditions.delete(conditionKey);
+        notices.delete(threadId);
+        movedAwaitingTurn.add(threadId);
+        yield* stopSessionQuietly(threadId, "hard-limit");
+        yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
         yield* announce(threadId);
         return true;
       }
 
-      const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
-      if (moved._tag === "Failure") {
-        notices.set(threadId, moved.failure.detail);
-        yield* announce(threadId);
-        return true;
-      }
-      if (moved.success === undefined) {
-        notices.set(
+      // No account can take the thread now. It stops and waits in the queue;
+      // the revive pass after the next status poll continues it once an
+      // account has room.
+      const failure = moved._tag === "Failure" ? moved.failure : undefined;
+      const restriction = yield* disallowedFor(threadId).pipe(
+        Effect.orElseSucceed(() => UNRESTRICTED),
+      );
+      const parked = yield* park(threadId, {
+        wasActive,
+        restricted: isRestricted(restriction),
+        // A model-scoped limit leaves the account in rotation for others.
+        ...(accountWide ? {} : { avoid: profile }),
+        ...(failure?.expectedAt !== undefined ? { expectedAt: failure.expectedAt } : {}),
+        ...(failure?.expectedProfile !== undefined
+          ? { expectedProfile: failure.expectedProfile }
+          : {}),
+      });
+      if (!parked) {
+        setNotice(
           threadId,
-          `${profile} is at its usage limit until ${formatResetClock(resetsAt)} and no other account could be chosen.`,
+          failure?.detail ??
+            `${profile} is at its usage limit until ${formatResetClock(resetsAt)} and no other account could be chosen.`,
+          failure?.expectedAt ?? resetsAt,
         );
         yield* announce(threadId);
         return true;
       }
-      notices.delete(threadId);
-      movedAwaitingTurn.add(threadId);
-      yield* stopSessionQuietly(threadId, "hard-limit");
-      yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
-      yield* announce(threadId);
+      // While it waits, copies are caught by the queue check above.
+      handledConditions.delete(conditionKey);
+      yield* stopSessionQuietly(threadId, "hard-limit-queued");
       return true;
     });
+
+  /**
+   * Places one waiting thread if an account has room, under the placement
+   * lock. Answers whether it left the queue and should get the continue turn,
+   * which the caller sends outside the lock.
+   */
+  const reviveOne = (threadId: ThreadId, nowMs: number, anyRoom: boolean) =>
+    Semaphore.withPermit(placementLock)(
+      Effect.gen(function* () {
+        const entry = waits.get(threadId);
+        if (entry === undefined) return undefined;
+        // Still waiting out a reset on its own account.
+        if (entry.notBefore !== null && Date.parse(entry.notBefore) > nowMs) return undefined;
+        const row = yield* repository.get(threadId);
+        if (row.mode.kind !== "auto") {
+          yield* dequeue(threadId, "pinned");
+          return { continueTurn: false } as const;
+        }
+        const restriction = yield* disallowedFor(threadId);
+        const prefer = entry.preferProfile;
+        let profile: string | undefined;
+        if (
+          prefer !== null &&
+          !restriction.disallowed.has(prefer) &&
+          (yield* usableAndPresent(prefer))
+        ) {
+          profile = prefer;
+        } else {
+          if (!anyRoom) return undefined;
+          // Counted as pending only once the thread is known to take it, below.
+          const placed = yield* placeWith(threadId, entry.avoid ? [entry.avoid] : [], {
+            purpose: "revive",
+            requirePlaced: true,
+            commit: false,
+          }).pipe(Effect.result);
+          if (placed._tag === "Failure") {
+            const { expectedAt, expectedProfile } = placed.failure;
+            const next: WaitEntry = {
+              queuedAt: entry.queuedAt,
+              wasActive: entry.wasActive,
+              preferProfile: entry.preferProfile,
+              notBefore: entry.notBefore,
+              restricted: isRestricted(restriction),
+              ...(entry.avoid !== undefined ? { avoid: entry.avoid } : {}),
+              ...(expectedAt !== undefined ? { expectedAt } : {}),
+              ...(expectedProfile !== undefined ? { expectedProfile } : {}),
+            };
+            waits.set(threadId, next);
+            if (
+              next.expectedAt !== entry.expectedAt ||
+              next.expectedProfile !== entry.expectedProfile ||
+              next.restricted !== entry.restricted
+            ) {
+              yield* announce(threadId);
+            }
+            return undefined;
+          }
+          profile = placed.success?.profile;
+        }
+        if (profile === undefined) return undefined;
+        // The reads and the switcher call above yield: a message, a mode
+        // change or "Leave queue" may have taken the thread out meanwhile.
+        // `dequeue` removes it before its first yield, so only one side wins.
+        if (!(yield* dequeueQuietly(threadId, "revived"))) return undefined;
+        pendingPlacements.push({ profile, atMs: yield* Clock.currentTimeMillis });
+        yield* persistResolved(threadId, profile).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
+          ),
+        );
+        // Like a move: a rejection before the next turn starts is a stale copy.
+        movedAwaitingTurn.add(threadId);
+        yield* Effect.logInfo("claude.account.revived", {
+          threadId,
+          profile,
+          wasActive: entry.wasActive,
+        });
+        return { continueTurn: entry.wasActive } as const;
+      }),
+    );
+
+  /**
+   * Places the waiting threads again, in queue order. Each placement counts as
+   * pending for the next, so a wave of resets spreads over the accounts. A
+   * thread that still finds no room stays queued; the next one is tried anyway
+   * (owners may use different accounts).
+   */
+  const revivePass: Effect.Effect<void> = Semaphore.withPermit(reviveLock)(
+    Effect.gen(function* () {
+      if (waits.size === 0) return;
+      if (!(yield* readSettings).enabled) return;
+      yield* pruneExhausted;
+      const nowMs = yield* Clock.currentTimeMillis;
+      // While the last status shows no account that may take a new session,
+      // asking the switcher per waiting thread only spends processes.
+      const anyRoom =
+        lastStatus === undefined ||
+        lastStatus.profiles.some(
+          (profile) =>
+            profile.eligible === true &&
+            profile.auth?.state !== "logged_out" &&
+            !exhausted.has(profile.name),
+        );
+      for (const [threadId] of queueOrder(nowMs)) {
+        const outcome = yield* reviveOne(threadId, nowMs, anyRoom).pipe(
+          Effect.catchCause((cause) =>
+            Effect.as(
+              Effect.logWarning("claude.account.revive-failed", { threadId, cause }),
+              undefined,
+            ),
+          ),
+        );
+        if (outcome === undefined) continue;
+        // A message accepted while this pass waited on a lock is already the
+        // next turn; a continue on top of it would be a second one. The shell
+        // marks a turn active as soon as its command is accepted.
+        if (outcome.continueTurn && !(yield* shellTurnInFlight(threadId))) {
+          yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+        }
+        yield* announce(threadId);
+      }
+    }),
+  );
+
+  // --------------------------------------------------------------- rebalance
+
+  /**
+   * At a turn boundary, moves an idle Auto thread off an account that carries
+   * `REBALANCE_EXCESS` or more sessions above its fair share, or that can no
+   * longer take new sessions, to where the switcher would place it now. The
+   * thread loses its prompt cache once, so this runs at most once an hour per
+   * thread, and an account gives up at most one thread per status read (its
+   * session count is stale until the next one). The switcher is asked only
+   * when the last status shows another account with room the owner may use,
+   * and not again for five minutes after it found nothing better. Never
+   * fails: on any trouble the thread stays where it is.
+   */
+  const maybeRebalance = (threadId: ThreadId, settled?: OrchestrationSession) =>
+    Effect.gen(function* () {
+      if (waits.has(threadId) || pendingRestart.has(threadId)) return;
+      if (movedAwaitingTurn.has(threadId)) return;
+      const current = threadProfiles.get(threadId);
+      if (current === undefined || rebalancedFrom.has(current)) return;
+      const status = lastStatus;
+      const known = status?.profiles.find((profile) => profile.name === current);
+      // Only a switcher that reports fair shares spreads load; with an older one this never runs.
+      if (status === undefined || known === undefined || known.fair_share === undefined) return;
+      const sessions = typeof known.sessions === "number" ? known.sessions : 0;
+      const overShare =
+        typeof known.fair_share === "number" && sessions - known.fair_share >= REBALANCE_EXCESS;
+      const notPlaceable = known.fair_share === null || known.guard_ok === false;
+      if (!overShare && !notPlaceable) return;
+      const nowMs = yield* Clock.currentTimeMillis;
+      const lastMove = lastRebalancedAt.get(threadId);
+      if (lastMove !== undefined && nowMs - lastMove < REBALANCE_COOLDOWN_MS) return;
+      const lastProbe = lastFailedProbeAt.get(threadId);
+      if (lastProbe !== undefined && nowMs - lastProbe < REBALANCE_PROBE_BACKOFF_MS) return;
+      if (!(yield* readSettings).enabled) return;
+      const row = yield* repository.get(threadId);
+      if (row.mode.kind !== "auto" || row.resolvedProfile !== current) return;
+      const live = (yield* providers.listSessions()).some(
+        (session) => session.threadId === threadId && session.status !== "closed",
+      );
+      if (!live || !(yield* threadIsIdle(threadId, settled))) return;
+      // Without a subprocess: is there anywhere better at all?
+      yield* pruneExhausted;
+      const { disallowed } = yield* disallowedFor(threadId);
+      const pending = yield* pendingCounts;
+      const roomElsewhere = status.profiles.some(
+        (profile) =>
+          profile.name !== current &&
+          !disallowed.has(profile.name) &&
+          !exhausted.has(profile.name) &&
+          profile.auth?.state !== "logged_out" &&
+          typeof profile.fair_share === "number" &&
+          profile.fair_share >
+            (typeof profile.sessions === "number" ? profile.sessions : 0) +
+              (pending[profile.name] ?? 0),
+      );
+      if (!roomElsewhere) return;
+
+      const target = yield* Semaphore.withPermit(placementLock)(
+        Effect.gen(function* () {
+          if (rebalancedFrom.has(current)) return undefined;
+          // A probe: nothing is written or counted unless the thread moves.
+          const probe = yield* placeWith(threadId, [current], {
+            purpose: "rebalance",
+            requirePlaced: true,
+            commit: false,
+          }).pipe(Effect.option);
+          const to =
+            Option.isSome(probe) && probe.value !== undefined ? probe.value.profile : undefined;
+          if (to === undefined || to === current) {
+            lastFailedProbeAt.set(threadId, nowMs);
+            return undefined;
+          }
+          // The probe took time: a turn may have reached the provider since. A
+          // message the shell accepted but has not sent yet is caught later:
+          // `restartForNewAccount` re-reads the shell and defers the restart.
+          if (!(yield* threadIsIdle(threadId, settled))) return undefined;
+          pendingPlacements.push({ profile: to, atMs: yield* Clock.currentTimeMillis });
+          lastRebalancedAt.set(threadId, nowMs);
+          lastFailedProbeAt.delete(threadId);
+          rebalancedFrom.add(current);
+          // Only the row: the thread still runs on `current` until its session
+          // stops, and the sticky branch adopts the row at the next spawn.
+          yield* repository.setResolved({ threadId, profile: to, resolvedAt: yield* nowIso });
+          return to;
+        }),
+      );
+      if (target === undefined) return;
+      yield* Effect.logInfo("claude.account.rebalance", {
+        threadId,
+        from: current,
+        to: target,
+        reason: overShare ? "over-fair-share" : "not-placeable",
+      });
+      yield* restartForNewAccount(threadId, "rebalance");
+      yield* announce(threadId);
+      yield* announceSnapshot;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("claude.account.rebalance-failed", { threadId, cause }),
+      ),
+    );
 
   // ------------------------------------------------------------------ events
 
@@ -1485,12 +2064,17 @@ export const make = Effect.gen(function* () {
         case "turn.started": {
           activeTurns.add(event.threadId);
           // Someone sent a message during the wait: their turn replaces the continue.
-          if (yield* cancelResetWait(event.threadId)) {
-            notices.delete(event.threadId);
+          if (yield* dequeueQuietly(event.threadId, "turn-started")) {
             yield* announce(event.threadId);
           }
+          // Copies of one rejection all arrive before the next turn starts, so a
+          // new turn forgets them; a key kept after a failed park would
+          // otherwise swallow every later rejection with the same reset.
+          forgetConditions(event.threadId);
           // The first turn on the new account: from here a rejection is real.
-          if (movedAwaitingTurn.delete(event.threadId)) yield* announce(event.threadId);
+          if (movedAwaitingTurn.delete(event.threadId)) {
+            yield* announce(event.threadId);
+          }
           return;
         }
         case "turn.completed":
@@ -1517,35 +2101,52 @@ export const make = Effect.gen(function* () {
       // A message accepted during a wait replaces the continue, even before
       // its turn reaches the provider.
       if (event.type === "thread.turn-start-requested") {
-        if (yield* cancelResetWait(event.payload.threadId)) {
-          notices.delete(event.payload.threadId);
+        if (yield* dequeueQuietly(event.payload.threadId, "message-sent")) {
           yield* announce(event.payload.threadId);
         }
         return;
       }
       if (event.type === "thread.session-set") {
         const session = event.payload.session;
+        const running = session.status === "running" && session.activeTurnId !== null;
         // T3-CUSTOM(expbkt3): native run/session projections drive account lifecycle.
-        if (session.status === "running" && session.activeTurnId !== null) {
+        if (running) {
           activeTurns.add(event.payload.threadId);
-          if (movedAwaitingTurn.delete(event.payload.threadId))
+          projectedRunning.add(event.payload.threadId);
+          if (movedAwaitingTurn.delete(event.payload.threadId)) {
+            forgetConditions(event.payload.threadId);
             yield* announce(event.payload.threadId);
+          }
         } else if (session.status !== "starting") {
           activeTurns.delete(event.payload.threadId);
         }
-        if (
-          pendingRestart.has(event.payload.threadId) &&
+        const settled =
           session.activeTurnId === null &&
           session.status !== "running" &&
-          session.status !== "starting"
-        ) {
+          session.status !== "starting";
+        // Only the settle that ends a turn this projection saw running is a
+        // turn boundary; the many other session updates are not.
+        const turnEnded = settled && projectedRunning.delete(event.payload.threadId);
+        if (settled && pendingRestart.has(event.payload.threadId)) {
           yield* completePendingRestart(event.payload.threadId, session);
+        } else if (turnEnded) {
+          yield* maybeRebalance(event.payload.threadId, session);
+        }
+        return;
+      }
+      if (event.type === "thread.archived") {
+        // An archived thread is not continued; its account row stays for an unarchive.
+        if (yield* dequeueQuietly(event.payload.threadId, "thread-archived")) {
+          yield* announce(event.payload.threadId);
         }
         return;
       }
       if (event.type !== "thread.deleted") return;
       const threadId = event.payload.threadId;
-      yield* cancelResetWait(threadId);
+      yield* dequeueQuietly(threadId, "thread-deleted");
+      lastRebalancedAt.delete(threadId);
+      lastFailedProbeAt.delete(threadId);
+      projectedRunning.delete(threadId);
       threadProfiles.delete(threadId);
       notices.delete(threadId);
       pendingRestart.delete(threadId);
@@ -1600,7 +2201,7 @@ export const make = Effect.gen(function* () {
       if (profile === null) continue;
       const owner = yield* threadOwner(threadId);
       if (mayUse(access, owner, profile)) continue;
-      if (row.mode.kind === "profile") notices.set(threadId, noAccessDetail(profile));
+      if (row.mode.kind === "profile") setNotice(threadId, noAccessDetail(profile));
       yield* Effect.logInfo("claude.account.access-revoked", { threadId, profile });
       yield* restartForNewAccount(threadId);
       yield* announce(threadId);
@@ -1696,6 +2297,7 @@ export const make = Effect.gen(function* () {
     resolveForSession,
     refreshStatus,
     markExhausted,
+    leaveQueue,
     reassign,
     handleHardLimit,
   });

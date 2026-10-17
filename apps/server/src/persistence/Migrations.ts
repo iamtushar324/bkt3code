@@ -208,6 +208,8 @@ import Migration1048 from "./Migrations/1048_ThreadCommentLastSent.ts";
 import Migration1051 from "./Migrations/1051_ScheduledTaskCustomGroups.ts";
 // T3-CUSTOM(expbkt3): owner, tags, loudness and run-once of scheduled tasks.
 import Migration1052 from "./Migrations/1052_ScheduledTaskForkOptions.ts";
+// T3-CUSTOM(expbkt3): durable revive queue for Claude account placement.
+import Migration1053 from "./Migrations/1053_ThreadClaudeAccountWait.ts";
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -337,6 +339,8 @@ const migrationEntries = [
   [1051, "ScheduledTaskCustomGroups", Migration1051],
   // T3-CUSTOM(expbkt3): owner, tags, loudness and run-once of scheduled tasks.
   [1052, "ScheduledTaskForkOptions", Migration1052],
+  // T3-CUSTOM(expbkt3): durable revive queue for Claude account placement.
+  [1053, "ThreadClaudeAccountWait", Migration1053],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

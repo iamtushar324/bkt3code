@@ -262,13 +262,15 @@ describe("buildPlanReviewApprovalPrompt", () => {
     fullPlanMarkdown: null,
     fullPlanReason: null,
     wasEdited: false,
+    revision: 3,
+    planId: "plan-3",
   };
 
   it("sends one short line when the plan is still in context", () => {
     const prompt = buildPlanReviewApprovalPrompt(base);
 
     expect(prompt).toBe(
-      "Plan approved. Implement the plan you proposed above, exactly as written.",
+      "Plan approved (revision 3, plan plan-3). Implement the plan you proposed above, exactly as written.",
     );
   });
 
@@ -289,7 +291,7 @@ describe("buildPlanReviewApprovalPrompt", () => {
       wasEdited: true,
     });
 
-    expect(prompt).toContain("Plan approved with reviewer edits.");
+    expect(prompt).toContain("Plan approved with reviewer edits (revision 3, plan plan-3).");
     expect(prompt).toContain("3. Flip the flag safely");
     expect(prompt).not.toContain("```diff");
     expect(prompt.split("# Auth rewrite")).toHaveLength(2);
@@ -334,7 +336,9 @@ describe("buildPlanReviewApprovalPrompt", () => {
     it("tells the agent to implement now and apply the refinements", () => {
       const prompt = buildPlanReviewApprovalPrompt(withComment);
 
-      expect(prompt).toContain("Plan approved — start implementing it now.");
+      expect(prompt).toContain(
+        "Plan approved (revision 3, plan plan-3) — start implementing it now.",
+      );
       expect(prompt).toContain("Treat them as");
       expect(prompt).toContain("apply them as you implement");
       expect(prompt).toContain("Do not go back");
@@ -348,7 +352,9 @@ describe("buildPlanReviewApprovalPrompt", () => {
     it("treats overall notes alone as refinements too", () => {
       const prompt = buildPlanReviewApprovalPrompt({ ...base, notes: "Ship behind a flag." });
 
-      expect(prompt).toContain("Plan approved — start implementing it now.");
+      expect(prompt).toContain(
+        "Plan approved (revision 3, plan plan-3) — start implementing it now.",
+      );
       expect(prompt).toContain("Reviewer notes:\nShip behind a flag.");
       expect(prompt).not.toContain("exactly as written");
     });
@@ -357,7 +363,7 @@ describe("buildPlanReviewApprovalPrompt", () => {
       const prompt = buildPlanReviewApprovalPrompt(base);
 
       expect(prompt).toBe(
-        "Plan approved. Implement the plan you proposed above, exactly as written.",
+        "Plan approved (revision 3, plan plan-3). Implement the plan you proposed above, exactly as written.",
       );
     });
 
@@ -368,10 +374,18 @@ describe("buildPlanReviewApprovalPrompt", () => {
         fullPlanReason: "this session compacted its context after the plan was written",
       });
 
-      expect(prompt).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN:");
+      expect(prompt).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN (revision 3, plan plan-3):");
       expect(prompt).toContain("apply them as you implement");
       expect(prompt).toContain("Batch this.");
     });
+  });
+
+  it("names the approved revision even without a source plan", () => {
+    const prompt = buildPlanReviewApprovalPrompt({ ...base, revision: 4, planId: null });
+
+    expect(prompt).toBe(
+      "Plan approved (revision 4). Implement the plan you proposed above, exactly as written.",
+    );
   });
 
   it("repeats the plan and explains why when the policy demands it", () => {
@@ -381,7 +395,7 @@ describe("buildPlanReviewApprovalPrompt", () => {
       fullPlanReason: "this session compacted its context after the plan was written",
     });
 
-    expect(prompt).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN:");
+    expect(prompt).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN (revision 3, plan plan-3):");
     expect(prompt).toContain("3. Flip the flag");
     expect(prompt).toContain("(The full plan is repeated because this session compacted");
   });

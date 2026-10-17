@@ -239,6 +239,25 @@ describe("V2 session presentation", () => {
     expect(plan?.planMarkdown).toBe("Plan");
   });
 
+  it("never resurfaces a closed plan from an earlier run", () => {
+    const baseProjection = makeThreadProjectionFixture();
+    const earlierPlan = (name: string, status: "active" | "completed" | "superseded") => ({
+      id: PlanId.make(`plan-${name}`),
+      threadId: baseProjection.thread.id,
+      nodeId: NodeId.make(`node-plan-${name}`),
+      kind: "proposed_plan" as const,
+      markdown: `Plan ${name}`,
+      status,
+      runId: RunId.make("run-1"),
+    });
+    const latest = (plans: ReadonlyArray<ReturnType<typeof earlierPlan>>) =>
+      findLatestProposedPlan({ ...baseProjection, plans: [...plans] }, RunId.make("run-2"));
+
+    expect(latest([earlierPlan("old", "superseded"), earlierPlan("done", "completed")])).toBeNull();
+    // A background wake starts a run without ending the plan that waits for review.
+    expect(latest([earlierPlan("waiting", "active")])?.planMarkdown).toBe("Plan waiting");
+  });
+
   it("assigns run rollback to the turn-start message instead of a later steer", () => {
     const runId = RunId.make("run-steered");
     const turnStartMessageId = MessageId.make("message-turn-start");
