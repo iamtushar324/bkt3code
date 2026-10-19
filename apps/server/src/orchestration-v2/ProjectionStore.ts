@@ -2728,18 +2728,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return yield* new ProjectionStoreThreadNotFoundError({ threadId });
         }
 
+        // T3-CUSTOM(expbkt3): a run filter reads only that run's items through the
+        // (thread_id, run_id) index. In ordinal order SQLite walked every item of the
+        // thread instead, which took 0.3-2.6 s on a cold 30,000-item thread and froze
+        // the server (agent toolkit plan-flag checks run it for up to 40 sessions).
+        const turnItemRunIdsWithoutNull =
+          filter?.turnItemRunIds === undefined || filter.turnItemRunIds.includes(null)
+            ? undefined
+            : filter.turnItemRunIds.filter((id): id is RunId => id !== null);
+        const turnItemRunIndex =
+          filter?.turnItemRunId !== undefined || turnItemRunIdsWithoutNull !== undefined
+            ? sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`
+            : sql``;
+
         const boundedTurnItemRows =
           fields !== undefined && !fields.includes("turnItems")
             ? []
             : window === undefined
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
-                FROM orchestration_v2_projection_turn_items
+                FROM orchestration_v2_projection_turn_items ${turnItemRunIndex} /* T3-CUSTOM(expbkt3): run filters use the run index. */
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
-                  ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+                  ${filter?.turnItemRunIds === undefined ? sql`` : turnItemRunIdsWithoutNull !== undefined ? sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(turnItemRunIdsWithoutNull)}))` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`} /* T3-CUSTOM(expbkt3): an OR here defeats the run index. */
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
               : yield* sql<PayloadRow>`
