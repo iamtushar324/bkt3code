@@ -52,7 +52,11 @@ permissions:
 jobs:
   build:
     name: Build
-    runs-on: macos-26
+    # macos-15, not macos-26: on 2026-10-19 GitHub assigned no macos-26 runner
+    # for 40+ minutes (the bkmain release was cancelled after 15 min queued),
+    # while macos-15 is the generally available Apple Silicon image. Nothing
+    # here needs the macOS 26 SDK; the iOS build (bk-mobile-release) does.
+    runs-on: macos-15
     # Slower than a real Mac: the standard hosted runner is 3 vCPU / 7 GB.
     timeout-minutes: 90
     permissions:
@@ -259,7 +263,7 @@ jobs:
     name: Publish
     needs: build
     if: needs.build.outputs.already-published != 'true'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 30
     permissions:
       # The only job that can write releases, and it runs no build scripts and
