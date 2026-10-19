@@ -16,6 +16,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { withMcpToolCallAnalytics } from "./mcpToolAnalytics.expbkt3.ts"; // T3-CUSTOM(expbkt3)
 import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
 import {
   assertFullAccess,
@@ -300,7 +301,8 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
 }
 
 const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handlers =>
-  Struct.map(declarations, checkedHandler);
+  // T3-CUSTOM(expbkt3): count every tool call by name (TEC-1631).
+  withMcpToolCallAnalytics(Struct.map(declarations, checkedHandler));
 
 /** `Toolkit.toLayer` for handlers that all declare their access. */
 export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(

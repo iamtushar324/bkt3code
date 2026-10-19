@@ -54,6 +54,7 @@ import {
   usePlanReviewScrollSurfaceRef,
 } from "../../fork/planReviewComposerDock";
 import { canHidePlanGlobalNote, shouldShowPlanGlobalNote } from "../../fork/planReviewGlobalNote";
+import { trackProductEvent } from "../../lib/analytics/productAnalytics";
 
 interface PlanReviewPanelProps {
   readonly environmentId: EnvironmentId;
@@ -354,6 +355,11 @@ export default function PlanReviewPanel({
 
   const handleSubmit = useCallback(
     (decision: "approved" | "changes-requested" | "discarded") => {
+      trackProductEvent("plan.action", {
+        action:
+          decision === "approved" ? "approve" : decision === "discarded" ? "discard" : "revise",
+        source: "plan_review",
+      });
       void submit({
         environmentId,
         input: {

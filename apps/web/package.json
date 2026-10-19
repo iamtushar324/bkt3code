@@ -68,6 +68,7 @@
     "mermaid": "^11.17.2",
     "morphicons": "^1.7.1",
     "platejs": "53.3.3",
+    "posthog-js": "^1.438.9",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",

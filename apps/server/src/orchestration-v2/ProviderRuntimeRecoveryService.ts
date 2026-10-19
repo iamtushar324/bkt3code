@@ -27,6 +27,8 @@ import {
   settledBackgroundWakeRequest,
   settledBackgroundWakeRun,
 } from "./restartBackgroundResume.expbkt3.ts";
+// T3-CUSTOM(expbkt3): session.recovery.* product analytics (TEC-1631).
+import { withSessionRecoveryAnalytics } from "../telemetry/serverEvents.ts";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
@@ -834,9 +836,12 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
-  const recover = Effect.gen(function* () {
-    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
-  });
+  // T3-CUSTOM(expbkt3): session.recovery.* product analytics (TEC-1631).
+  const recover = withSessionRecoveryAnalytics(
+    Effect.gen(function* () {
+      return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
+    }),
+  );
 
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
 });

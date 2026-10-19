@@ -55,6 +55,51 @@ sudo systemctl daemon-reload
 > turn on the instance. Trigger a manual bkt3 deploy from the `t3.dev` instance
 > or from a human shell.
 
+## Product analytics
+
+bkt3 sends product events to the company PostHog project. The
+server reads these variables:
+
+| Variable                    | Meaning                                                                           | Default                    |
+| --------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
+| `T3CODE_TELEMETRY_ENABLED`  | Set `false` to send nothing.                                                      | `true`                     |
+| `T3CODE_POSTHOG_KEY`        | PostHog project API key. Without a key, telemetry is off.                         | none                       |
+| `T3CODE_POSTHOG_HOST`       | PostHog ingestion host.                                                           | `https://us.i.posthog.com` |
+| `T3CODE_ANALYTICS_INSTANCE` | Name of this instance, sent as the PostHog `instance` group (for example `bkt3`). | `unknown`                  |
+
+The fork has no built-in key, so it never sends to the upstream maintainers'
+project. Never commit the key. Production keeps the values in
+`/home/ubuntu/.t3/nextbkt3-dev/posthog.env` (mode `600`, owner `ubuntu`), which
+sets `T3CODE_POSTHOG_KEY`, `T3CODE_POSTHOG_HOST` and
+`T3CODE_ANALYTICS_INSTANCE=bkt3`.
+
+The existing drop-in `/etc/systemd/system/t3-nextbkt3.service.d/clerk.conf` sets
+`Environment=T3CODE_TELEMETRY_ENABLED=false`. To turn analytics on, add a second
+drop-in named `zz-analytics.conf`. systemd reads drop-ins in name order, so this
+one comes after `clerk.conf` and its value replaces the `false`:
+
+```ini
+# /etc/systemd/system/t3-nextbkt3.service.d/zz-analytics.conf
+[Service]
+EnvironmentFile=-/home/ubuntu/.t3/nextbkt3-dev/posthog.env
+Environment=T3CODE_TELEMETRY_ENABLED=true
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl show t3-nextbkt3 -p Environment   # expect T3CODE_TELEMETRY_ENABLED=true
+```
+
+The new environment takes effect at the next restart of the service. To turn
+analytics off again, remove `zz-analytics.conf`, reload systemd and restart.
+Provider and agent processes never inherit these variables: the server masks
+them when it builds a provider's environment.
+
+Events carry ids, enums, numbers and booleans only. Free text (titles, prompts,
+messages, paths, branches, errors) is dropped by the allowlist in
+`apps/server/src/telemetry/analyticsProperties.ts`. An event with a known user
+is sent as that user's `environment_users.primary_email`.
+
 ## Temporary files
 
 `start.sh` exports `TMPDIR=<base-dir>/tmp` so the service and every agent session

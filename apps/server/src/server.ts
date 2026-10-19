@@ -89,6 +89,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as SessionActivityReactor from "./telemetry/sessionActivity/SessionActivityReactor.ts"; // T3-CUSTOM(expbkt3): TEC-1631.
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
@@ -656,6 +657,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
+  SessionActivityReactor.layer, // T3-CUSTOM(expbkt3): session time-in-state metrics (TEC-1631).
 ).pipe(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
