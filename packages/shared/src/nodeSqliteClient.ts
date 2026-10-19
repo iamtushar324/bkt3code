@@ -38,6 +38,10 @@ export interface SqliteClientConfig {
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
+  // T3-CUSTOM(expbkt3): BEGIN upstream 8659fcf145 (#19226) as cherry-picked onto stage.
+  // Later upstream commits to this file (#19305, #19324, #19417, #19425, #19559) are
+  // not on stage, so these lines differ from upstream main. Upstream owns all of it:
+  // on the next upstream merge take upstream's side and drop the markers.
   /**
    * Run transactions marked with `readOnly` on a second connection in a worker
    * thread, so long reads block neither the event loop nor writes. Ignored for
@@ -64,6 +68,7 @@ const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Re
  */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, ReadOnly, true);
+// T3-CUSTOM(expbkt3): END
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
   "UnsupportedNodeSqliteVersionError",
@@ -228,6 +233,7 @@ const failed = (cause: unknown, message: string, operation: string) =>
 // so they succeed once the worker is gone instead of failing the cleanup.
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
+// T3-CUSTOM(expbkt3): BEGIN upstream 8659fcf145 (#19226), see the note on readerWorker.
 /**
  * Read-only connections served by one worker thread at a time. Each worker
  * gets its own `Connection`, so a transaction stays on the worker it began on:
@@ -425,6 +431,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     );
   });
 });
+// T3-CUSTOM(expbkt3): END
 
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
@@ -588,6 +595,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
 
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
+  // T3-CUSTOM(expbkt3): BEGIN upstream 8659fcf145 (#19226), see the note on readerWorker.
   const acquireReader =
     options.readerWorker && options.filename !== ":memory:" && options.filename !== ""
       ? yield* makeReader(options)
@@ -622,6 +630,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
     }),
   );
+  // T3-CUSTOM(expbkt3): END
 
   return yield* Client.make({
     acquirer,
