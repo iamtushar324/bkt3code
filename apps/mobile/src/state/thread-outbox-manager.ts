@@ -58,9 +58,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       operation,
       outcome: "failed",
     });
-  // Monotonic per-message write counter. Every accepted write (enqueue publish
-  // or update) bumps it, so a writer that captured a revision before slow work
-  // (an attachment upload) is rejected before its stale payload reaches disk.
   const revisions = new Map<MessageId, number>();
   const bumpRevision = (messageId: MessageId): void => {
     revisions.set(messageId, (revisions.get(messageId) ?? 0) + 1);
@@ -84,7 +81,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
 
   // Readable messages can be used after a partial load. Only a complete load
   // returns true, so cleanup cannot delete files owned by unreadable records.
-  // A later call retries failed reads without replacing live message objects.
   const load = (): Promise<boolean> => {
     if (loadPromise !== null) {
       return loadPromise;
@@ -96,8 +92,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       const recovered = result.messages.filter(
         (message) => !currentIds.has(message.messageId) && !revisions.has(message.messageId),
       );
-      // Accepted edits and removals win over a later disk read. Retaining
-      // current objects also keeps retries from restarting the drain.
       if (recovered.length > 0) setMessages([...recovered, ...current]);
       if (result.errors.length > 0) {
         throw new AggregateError(result.errors, "Some queued messages could not be read.");
@@ -121,10 +115,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     return loadPromise;
   };
 
-  // The queued atom drives the composer's immediate "queued" feedback, so it
-  // is published synchronously; the durable write happens behind it and rolls
-  // the message back out if it fails (durability only matters for crash
-  // recovery, not for the in-session queue).
   const enqueue = (message: QueuedThreadMessage): Promise<void> => {
     bumpRevision(message.messageId);
     setMessages([
@@ -147,9 +137,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         if (!currentMessages().some((candidate) => candidate.messageId === message.messageId)) {
           try {
             await options.storage.remove(message);
-          } catch {
-            // Best effort: bootstrap reconciles the queue against storage.
-          }
+          } catch {}
         }
         throw new ThreadOutboxManagerError({
           operation: "enqueue",
@@ -162,25 +150,15 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     });
   };
 
-  // Resolves once all pending mutations (including any in-flight enqueue
-  // write) have settled, reporting whether the message is still queued. The
-  // drain awaits this before dispatching so a message whose durable write
-  // later fails can never have been delivered first.
+  // The drain awaits this before dispatching so a message whose durable write later fails can
+  // never have been delivered first.
   const confirmQueued = (message: QueuedThreadMessage): Promise<boolean> =>
     serialize(async () => currentMessages().some((candidate) => candidate === message));
 
-  // Rewrites an already-queued message. A no-op when the message has been
-  // removed in the meantime (e.g. deleted or delivered), so a trailing editor
-  // flush can never resurrect it. Returns whether the message was updated.
-  //
-  // `expectedRevision` makes the update a compare-and-set: pass the revision
-  // read before starting slow work, and the update is rejected before the
-  // stale payload is persisted when any other write was accepted since. An
-  // enqueue can still publish synchronously while the durable write below is
-  // in flight, so the revision is re-checked after the write too; the stale
-  // payload it just persisted is then overwritten with the winning payload
-  // inside this mutation, so a crash before the winner's own serialized write
-  // cannot leave stale state on disk.
+  // An enqueue can still publish synchronously while the durable write below is in flight, so the
+  // revision is re-checked after the write too; the stale payload it just persisted is then
+  // overwritten with the winning payload inside this mutation, so a crash before the winner's own
+  // serialized write cannot leave stale state on disk.
   const update = (message: QueuedThreadMessage, expectedRevision?: number): Promise<boolean> =>
     serialize(async () => {
       const staleOrMissing = (): boolean =>
@@ -209,10 +187,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         if (winner !== undefined) {
           try {
             await options.storage.write(winner);
-          } catch {
-            // The winner's own serialized write follows this mutation and
-            // owns the failure handling for its payload.
-          }
+          } catch {}
         }
         return false;
       }
@@ -224,9 +199,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       return true;
     });
 
-  // `expectedRevision` makes the removal a compare-and-set too: an edit
-  // accepted after the caller decided to remove (restore-to-composer reads
-  // the payload it is about to delete) keeps the newer message queued.
   // `canRemove` adds a live ownership check for state such as an open editor,
   // which can change without writing a new message revision.
   const remove = (
@@ -242,9 +214,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       if (removalCanceled()) {
         return null;
       }
-      // The live payload may carry attachments an accepted update added after
-      // the caller's snapshot; the caller releases files from what actually
-      // leaves the queue.
       const removed =
         currentMessages().find((candidate) => candidate.messageId === message.messageId) ?? message;
       try {
@@ -354,8 +323,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         }),
       );
 
-      // A same-id enqueue can publish while one of the removes above waits.
-      // Put its payload back before the later serialized enqueue write runs.
       await Promise.all(
         candidates.map(async (message) => {
           if (
@@ -413,7 +380,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     load,
     enqueue,
     confirmQueued,
-    /** Current write revision for a queued message; input to update's CAS. */
     revisionOf: (messageId: MessageId): number => revisions.get(messageId) ?? 0,
     update,
     remove,

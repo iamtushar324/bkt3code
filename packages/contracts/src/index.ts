@@ -60,6 +60,7 @@ export * from "./sourceControlProfiles.ts";
 export * from "./sessionArchive.ts";
 // T3-CUSTOM(expbkt3): fork websocket RPC definitions
 export * from "./rpcFork.ts";
+export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";

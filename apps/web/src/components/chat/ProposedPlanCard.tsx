@@ -1,4 +1,6 @@
+import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { memo, useState, useId } from "react";
+import { findRevealRef } from "./markdownFindContext";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -12,8 +14,6 @@ import {
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
   normalizePlanMarkdownForExport,
-  proposedPlanTitle,
-  stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 // T3-CUSTOM(expbkt3): BEGIN — plans render like chat (HTML parts, citations, comments) and stay mounted when folded.
 import ChatMarkdown from "../../fork/planCard/PlanMarkdown";
@@ -49,18 +49,21 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  findActive = false,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  findActive?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   useExpandPlanForCitation(setExpanded); // T3-CUSTOM(expbkt3): a quote inside a folded plan opens it.
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [savePath, setSavePath] = useState("");
+  // The path last submitted, so reopening the dialog offers it again.
+  const [lastSavePath, setLastSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
     reportFailure: false,
@@ -77,7 +80,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       );
     },
   });
-  const savePathInputId = useId();
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
@@ -85,6 +87,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
+  const isCollapsed = canCollapse && !expanded;
+  // While finding, the full plan stays mounted but clipped, so a match past the
+  // preview can be counted and then opened only once it is selected.
+  const showPreview = isCollapsed && !findActive;
+  const revealRef = findRevealRef(() => setExpanded(true));
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
@@ -108,11 +115,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       );
       return;
     }
-    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
     setIsSaveDialogOpen(true);
   };
 
-  const handleSaveToWorkspace = () => {
+  const handleSaveToWorkspace = (savePath: string) => {
     const relativePath = savePath.trim();
     if (!workspaceRoot || !readEnvironmentScope(environmentId, AuthFilesystemWriteScope)) {
       return;
@@ -125,6 +131,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       return;
     }
 
+    setLastSavePath(savePath);
     setIsSavingToWorkspace(true);
     void (async () => {
       const result = await writeProjectFile({
@@ -184,8 +191,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          {canCollapse && !expanded ? (
+        <div
+          ref={revealRef}
+          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          data-thread-find-text="true"
+          data-thread-find-fold={isCollapsed ? "" : undefined}
+        >
+          {showPreview ? (
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
@@ -204,7 +216,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               headingLevelOffset={3}
             />
           )}
-          {canCollapse && !expanded ? (
+          {isCollapsed ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
@@ -230,45 +242,71 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           }
         }}
       >
+        {/* The form owns the path so a keystroke re-renders it, not the dialog chrome. */}
         <DialogPopup className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Save plan to workspace</DialogTitle>
-            <DialogDescription>
-              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel>
-            <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Workspace path</span>
-              <Input
-                id={savePathInputId}
-                value={savePath}
-                onChange={(event) => setSavePath(event.target.value)}
-                placeholder={downloadFilename}
-                spellCheck={false}
-                disabled={isSavingToWorkspace}
-              />
-            </label>
-          </DialogPanel>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsSaveDialogOpen(false)}
-              disabled={isSavingToWorkspace}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void handleSaveToWorkspace()}
-              disabled={!canWriteFiles || isSavingToWorkspace}
-            >
-              {isSavingToWorkspace ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
+          <SavePlanToWorkspaceForm
+            initialPath={lastSavePath || downloadFilename}
+            placeholder={downloadFilename}
+            workspaceRoot={workspaceRoot}
+            canWriteFiles={canWriteFiles}
+            saving={isSavingToWorkspace}
+            onCancel={() => setIsSaveDialogOpen(false)}
+            onSave={handleSaveToWorkspace}
+          />
         </DialogPopup>
       </Dialog>
     </div>
   );
 });
+
+function SavePlanToWorkspaceForm({
+  initialPath,
+  placeholder,
+  workspaceRoot,
+  canWriteFiles,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initialPath: string;
+  placeholder: string;
+  workspaceRoot: string | undefined;
+  canWriteFiles: boolean;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (path: string) => void;
+}) {
+  const [savePath, setSavePath] = useState(initialPath);
+  const savePathInputId = useId();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Save plan to workspace</DialogTitle>
+        <DialogDescription>
+          Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogPanel>
+        <label htmlFor={savePathInputId} className="grid gap-1.5">
+          <span className="text-xs font-medium text-foreground">Workspace path</span>
+          <Input
+            id={savePathInputId}
+            value={savePath}
+            onChange={(event) => setSavePath(event.target.value)}
+            placeholder={placeholder}
+            spellCheck={false}
+            disabled={saving}
+          />
+        </label>
+      </DialogPanel>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>
+          {saving ? "Saving..." : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}

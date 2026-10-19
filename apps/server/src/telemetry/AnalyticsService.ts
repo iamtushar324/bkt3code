@@ -1,14 +1,9 @@
 /**
- * Anonymous PostHog telemetry service.
- *
- * Persists an installation-scoped anonymous identifier, buffers events in
- * memory, and flushes batches over Effect's HTTP client. A failed batch is
- * retried with backoff and dropped after a few tries. Each event carries a
- * uuid, so PostHog can tell a retried copy from a new event.
- *
- * @module AnalyticsService
+ * Events go to the T3 Code ingest endpoint, which keeps a copy and forwards
+ * them to PostHog. Each event carries a uuid, so PostHog can tell a retried
+ * copy from a new event.
  */
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -50,28 +45,34 @@ interface BufferedAnalyticsEvent {
 }
 
 interface DeliveryState {
-  /** Batch that failed last. It is sent again before newer events. */
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
-  /** Failed sends of `failedBatch`. */
   readonly batchAttempts: number;
-  /** Failed sends since the last success. Sets the backoff delay. */
   readonly failures: number;
-  /** The background flush does not send before this time (epoch ms). */
   readonly retryAt: number;
 }
 
-const FLUSH_INTERVAL_MS = 1_000;
+// The background flush checks for work at this interval, so a retry delay
+// shorter than it waits for the next check.
+const FLUSH_INTERVAL_MS = 10_000;
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
 const MAX_BATCH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 2_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+// The endpoint answers these when the batch itself is wrong (bad body, wrong
+// api_key, too large), so sending it again cannot help. 408 and 429 are not
+// here because a later send can succeed.
+const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
 
 /**
- * Delay before the next send after `failures` consecutive failed sends. The
- * ceiling doubles from 2s up to 5 minutes, and the delay is a random point in
- * its upper half. `random` is in [0, 1).
+ * Release channel of this build. Release workflows set it for
+ * pingdotgg/t3code builds (see apps/server/vite.config.ts); every other build
+ * reports "dev". It is separate from `__T3CODE_BUILD_CHANNEL__`, which names
+ * stable "latest" and preview "nightly" for the sign-in page.
  */
+declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
+
+/** `random` is in [0, 1). */
 export function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
@@ -84,7 +85,7 @@ const TelemetryEnvConfig = Config.all({
   // T3-CUSTOM(expbkt3): the PostHog `instance` group every event belongs to.
   instance: Config.String("T3CODE_ANALYTICS_INSTANCE").pipe(Config.withDefault("unknown")),
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://us.i.posthog.com"),
+    Config.withDefault("https://ingest.t3.codes"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
@@ -108,18 +109,16 @@ export interface AnalyticsRecordOptions {
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** Record an event for best-effort buffered delivery. T3-CUSTOM(expbkt3): may identify a user. */
+    /** T3-CUSTOM(expbkt3): may identify a user. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
       options?: AnalyticsRecordOptions, // T3-CUSTOM(expbkt3): identity and backfill options.
     ) => Effect.Effect<void>;
 
-    /** Flush all currently queued telemetry events. */
     readonly flush: Effect.Effect<void>;
   }
 >()("t3/telemetry/AnalyticsService") {
-  /** No-op layer for callers that intentionally disable telemetry. */
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
@@ -144,6 +143,7 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
@@ -161,8 +161,10 @@ export const make = Effect.gen(function* () {
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
+  const telemetryChannel =
+    typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArchitecture = yield* HostProcess.Architecture;
   // T3-CUSTOM(expbkt3): BEGIN — key-gated telemetry, identity and instance group.
   const telemetryEnabled = telemetryConfig.enabled && telemetryConfig.posthogKey.trim() !== "";
   const userDirectory = yield* makeAnalyticsUserDirectory;
@@ -220,6 +222,7 @@ export const make = Effect.gen(function* () {
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
+          telemetryChannel,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
@@ -244,8 +247,8 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
-  // Sends batches until the buffer is empty or a send fails. A failed batch is
-  // kept for the next flush, and dropped after MAX_BATCH_ATTEMPTS failed sends.
+  // A rejected batch is dropped at once, but the next batch still waits for the
+  // backoff, so a wrong api_key does not send every batch as fast as it can.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
@@ -263,20 +266,26 @@ export const make = Effect.gen(function* () {
       const failures = delivery.failures + 1;
       const batchAttempts = delivery.batchAttempts + 1;
       const retryAt = (yield* Clock.currentTimeMillis) + retryDelayMs(failures, yield* Random.next);
-      if (batchAttempts < MAX_BATCH_ATTEMPTS) {
+      const error = sent.failure;
+      const rejected =
+        error._tag === "HttpClientError" &&
+        error.reason._tag === "StatusCodeError" &&
+        REJECTED_BATCH_STATUSES.has(error.reason.response.status);
+      if (!rejected && batchAttempts < MAX_BATCH_ATTEMPTS) {
         yield* Ref.set(deliveryRef, { failedBatch: batch, batchAttempts, failures, retryAt });
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
-          cause: sent.failure,
+          cause: error,
         });
         return;
       }
       yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures, retryAt });
-      yield* Effect.logWarning("Dropped telemetry batch after repeated send failures", {
-        events: batch.length,
-        attempts: batchAttempts,
-        cause: sent.failure,
-      });
+      yield* Effect.logWarning(
+        rejected
+          ? "Dropped telemetry batch the endpoint rejected"
+          : "Dropped telemetry batch after repeated send failures",
+        { events: batch.length, attempts: batchAttempts, cause: error },
+      );
       return;
     }
   }).pipe(flushLock.withPermit);
@@ -315,7 +324,7 @@ export const make = Effect.gen(function* () {
         );
         if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
       }
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
+      const uuid = yield* Effect.exit(crypto.randomUUIDv7());
       return Exit.isSuccess(uuid) ? uuid.value : undefined;
     });
 
@@ -359,6 +368,7 @@ export const make = Effect.gen(function* () {
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
+      // T3-CUSTOM(expbkt3): an insert id yields a stable uuid, so a backfill never duplicates.
       const uuid = yield* eventUuid(options?.insertId);
       if (uuid === undefined) return;
 

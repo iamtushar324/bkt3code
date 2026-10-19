@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -93,7 +94,6 @@ const seedV1Database = Effect.gen(function* () {
       )
     `;
   }
-  // The V1 projector had applied both events before the upgrade.
   yield* sql`
     INSERT INTO projection_projects (
       project_id, title, workspace_root, default_model_selection_json, default_thread_env_mode,
@@ -116,7 +116,6 @@ const unusedEnrichment = {
   repositoryIdentityResolved: false,
 };
 
-/** The production V2 runtime and project service against one file-backed database. */
 const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
     NodeServices.layer,
@@ -153,6 +152,7 @@ const layerRuntime = (dbPath: string) => {
       }),
     ),
     Layer.provide(McpSessionRegistryTestkit.layer),
+    Layer.provide(McpProviderSessions.layer),
     Layer.provideMerge(SqlitePersistence.layerFromPath(dbPath)),
     Layer.provide(layerCheckpointStore),
     Layer.provide(layerServerConfig),

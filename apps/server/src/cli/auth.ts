@@ -1,5 +1,4 @@
 import {
-  AuthAdministrativeScopes,
   // T3-CUSTOM(expbkt3): extra scope grantable on issued sessions.
   AuthExternalSyncWriteScope,
   AuthSessionId,
@@ -172,7 +171,7 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
-  scopes: authScopesFlag(AuthAdministrativeScopes),
+  scopes: authScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,

@@ -12,6 +12,11 @@ if (process.argv.includes("auth") && process.argv.includes("status")) {
   );
   process.exit(0);
 }
+const requiredCwd = process.env.T3_CLAUDE_REQUIRED_CWD;
+if (requiredCwd && process.cwd() !== NodeFS.realpathSync(requiredCwd)) {
+  process.stderr.write(`claude: refusing to run outside ${requiredCwd}\n`);
+  process.exit(1);
+}
 if (process.argv.includes("--version")) {
   process.stdout.write("claude 2.1.219\n");
   process.exit(0);

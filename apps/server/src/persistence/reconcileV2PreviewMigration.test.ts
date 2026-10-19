@@ -21,6 +21,10 @@ const pendingV2Migrations = [
   [1051, "ScheduledTaskCustomGroups"],
   [1052, "ScheduledTaskForkOptions"],
   [1053, "ThreadClaudeAccountWait"],
+  // Upstream 61, 62 and 64, remapped into the 1000+ lane (63 stays unregistered).
+  [1054, "PullRequestReviewGuides"],
+  [1055, "ThreadFailureLookupIndex"],
+  [1056, "CanonicalizeThreadPullRequestLinks"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -67,6 +71,9 @@ describe("fork V2 ledger upgrade", () => {
         pendingV2Migrations[8],
         pendingV2Migrations[9],
         pendingV2Migrations[10],
+        pendingV2Migrations[11],
+        pendingV2Migrations[12],
+        pendingV2Migrations[13],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -101,6 +108,21 @@ describe("fork V2 ledger upgrade", () => {
       );
       yield* sql`DROP TRIGGER fail_v2_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+    }).pipe(Effect.provide(database)),
+  );
+
+  // Upstream's guard against a ledger that would skip a V2 migration, on the fork's ids.
+  it.effect("refuses unexpected later migrations without modifying their history", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 1042 });
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (1044, 'UnknownFork')`;
+      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        history,
+      );
     }).pipe(Effect.provide(database)),
   );
 });

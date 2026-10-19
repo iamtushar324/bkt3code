@@ -19,9 +19,10 @@ layer("055_OrchestrationV2", (it) => {
           // upstream's scheduled-task webhook migrations (57-58) at 1046-1047, the
           // review comment send-once mark at 1048 and upstream's MCP app context and
           // snapshot indexes (59-60) at 1049-1050, scheduled task custom
-          // groups at 1051, scheduled task options at 1052 and the Claude account
-          // revive queue at 1053.
-          ...Array.from({ length: 54 }, (_, index) => 1000 + index),
+          // groups at 1051, scheduled task options at 1052, the Claude account
+          // revive queue at 1053 and upstream 61, 62 and 64 at 1054-1056
+          // (upstream 63 stays unregistered).
+          ...Array.from({ length: 57 }, (_, index) => 1000 + index),
         ],
       );
     }),
@@ -46,6 +47,10 @@ layer("055_OrchestrationV2", (it) => {
         [1051, "ScheduledTaskCustomGroups"], // T3-CUSTOM(expbkt3): scheduled task custom groups.
         [1052, "ScheduledTaskForkOptions"], // T3-CUSTOM(expbkt3): scheduled task options.
         [1053, "ThreadClaudeAccountWait"], // T3-CUSTOM(expbkt3): Claude account revive queue.
+        // T3-CUSTOM(expbkt3): upstream 61, 62 and 64 remapped to 1054-1056; 63 unregistered.
+        [1054, "PullRequestReviewGuides"],
+        [1055, "ThreadFailureLookupIndex"],
+        [1056, "CanonicalizeThreadPullRequestLinks"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -83,6 +88,10 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 1051, name: "ScheduledTaskCustomGroups" }, // T3-CUSTOM(expbkt3)
         { migration_id: 1052, name: "ScheduledTaskForkOptions" }, // T3-CUSTOM(expbkt3)
         { migration_id: 1053, name: "ThreadClaudeAccountWait" }, // T3-CUSTOM(expbkt3)
+        // T3-CUSTOM(expbkt3): upstream 61, 62 and 64 remapped to 1054-1056; 63 unregistered.
+        { migration_id: 1054, name: "PullRequestReviewGuides" },
+        { migration_id: 1055, name: "ThreadFailureLookupIndex" },
+        { migration_id: 1056, name: "CanonicalizeThreadPullRequestLinks" },
       ]);
 
       // T3-CUSTOM(expbkt3): verify callback destinations and durable deliveries after the full upgrade.

@@ -6,12 +6,10 @@ import type { DesktopUpdateChannel } from "@t3tools/contracts";
 const NIGHTLY_VERSION_PATTERN =
   /^[^-+]+-(?:stage-|production-)?nightly\.\d{8}\.\d+(?:\.upstream\.g[0-9a-f]+)?$/;
 // T3-CUSTOM(expbkt3): END
-// Preview builds are the maintainers' test train, cut by hand from unreleased
-// branches to exercise the release flow. They share nightly's branding but
-// are packaged without an update feed (see
-// isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so the
-// channel a preview install reports is cosmetic: it never checks for updates
-// and no updater feed ever lists a preview release.
+// They share nightly's branding but are packaged without an update feed (see
+// isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so the channel
+// a preview install reports is cosmetic: it never checks for updates and no
+// updater feed ever lists a preview release.
 // T3-CUSTOM(expbkt3): the fork's brand-channel prefix and upstream-revision suffix.
 const PRERELEASE_VERSION_PATTERN =
   /^[^-+]+-(?:(?:stage-|production-)?nightly|preview)\.\d{8}\.\d+(?:\.upstream\.g[0-9a-f]+)?$/;

@@ -221,7 +221,6 @@ export const make = Effect.gen(function* () {
             requires_proof_of_possession = 0
             OR ${proofKeyThumbprint} IS NOT NULL
           )
-          -- T3-CUSTOM(expbkt3): bind 1/0, not a boolean; node:sqlite on Node 24.16 (stage) refuses booleans.
           AND (${requestedScopes === undefined ? 1 : 0} OR EXISTS (
             SELECT 1
             FROM json_each(${JSON.stringify(requestedScopes ?? [])}) AS requested

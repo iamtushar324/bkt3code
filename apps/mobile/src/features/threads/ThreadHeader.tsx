@@ -1,13 +1,14 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
 // T3-CUSTOM(expbkt3): Platform — iOS gets the fork's right-side header items.
 import { Platform } from "react-native";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
-import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
+import { AppBar } from "../../components/ui/AppBar";
+import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
+import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
+import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 // T3-CUSTOM(expbkt3): compact headers keep Git utilities; the cost pill leads them.
 import { useThreadGitCenterHeaderItems, useThreadGitCompactHeaderItems } from "./ThreadGitControls";
 // T3-CUSTOM(expbkt3): smart git action asks the agent (features/smartgit).
@@ -26,7 +27,7 @@ export function ThreadHeader(
     readonly threadCostHeader?: { readonly label: string; readonly onPress: () => void } | null;
   },
 ) {
-  const navigation = useNavigation();
+  const returnToList = useWorkspaceListNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
@@ -64,8 +65,8 @@ export function ThreadHeader(
           unstable_headerRightItems: () => [...threadCostHeaderItems, ...forkRightHeaderItems],
         };
   // T3-CUSTOM(expbkt3): END
-  const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
-    const actions: ScreenHeaderAction[] = [];
+  const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
+    const actions: AppBarAction[] = [];
     // T3-CUSTOM(expbkt3): BEGIN — the smart git action leads, so it stays a direct button.
     if (smartGit.visible) {
       actions.push({
@@ -115,7 +116,7 @@ export function ThreadHeader(
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
-        icon: "arrow.triangle.merge",
+        icon: PullRequestGlyph.merged,
         onPress: onMergeBack,
       });
     }
@@ -144,7 +145,7 @@ export function ThreadHeader(
 
   return (
     <>
-      <ScreenHeader
+      <AppBar
         title={props.title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}
@@ -173,16 +174,7 @@ export function ThreadHeader(
             />
           ) : null
         }
-        onBack={
-          layout.usesSplitView
-            ? undefined
-            : () => {
-                // A deep link or cold start has no previous route; Home is the way out.
-                // Read the history at press time: it changes without re-rendering this screen.
-                if (navigation.canGoBack()) navigation.goBack();
-                else navigation.dispatch(StackActions.replace("Home"));
-              }
-        }
+        onBack={layout.usesSplitView ? undefined : returnToList}
         actions={androidHeaderActions}
         hideBottomBorder
       />

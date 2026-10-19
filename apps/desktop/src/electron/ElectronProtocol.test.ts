@@ -49,7 +49,6 @@ describe("ElectronProtocol", () => {
       const request = (pathname: string, init?: RequestInit) =>
         Effect.promise(() => handler!(new Request(`t3code://app${pathname}`, init)));
 
-      // SPA routes fall back to index.html, including ones containing dots.
       const page = yield* request("/settings/connections");
       assert.equal(yield* Effect.promise(() => page.text()), "<html>app</html>");
       assert.include(page.headers.get("content-security-policy") ?? "", "default-src 'self'");
@@ -343,6 +342,7 @@ describe("ElectronProtocol", () => {
       "https://challenges.cloudflare.com",
     ]);
     // T3-CUSTOM(expbkt3): END
+    assert.deepEqual(directives["object-src"], ["'self'", "blob:", "http:", "https:"]);
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
   });
 });

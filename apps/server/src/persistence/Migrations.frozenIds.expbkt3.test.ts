@@ -30,6 +30,10 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         [1052, "ScheduledTaskForkOptions"],
         // Durable revive queue for Claude account placement.
         [1053, "ThreadClaudeAccountWait"],
+        // Upstream 61, 62 and 64, remapped into the 1000+ lane (63 stays unregistered).
+        [1054, "PullRequestReviewGuides"],
+        [1055, "ThreadFailureLookupIndex"],
+        [1056, "CanonicalizeThreadPullRequestLinks"],
       ]);
       const after = yield* sql<{
         migration_id: number;
