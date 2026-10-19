@@ -78,6 +78,8 @@ import { hasUserWideScope, resolveMcpSessionTarget } from "../../mcpSessionTarge
 import { boundSessionDetail } from "./sessionDetail.ts";
 import { T3ControlToolkit, T3ControlToolError, type T3CreateSessionTool } from "./tools.ts";
 import type { Tool } from "effect/ai";
+import { recordLinearLinked } from "../../../telemetry/serverEvents.ts";
+import { CurrentOrchestrationActorUserId } from "../../../orchestration-v2/forkActor.expbkt3.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommandSchema);
@@ -1662,10 +1664,17 @@ const handlers = {
     const after = yield* readLinearLinks(operation, sessionId);
     const urls = links.map((link) => link.url);
     const has = (list: typeof before, url: string) => list.some((entry) => entry.url === url);
+    const added = urls.filter((url) => !has(before, url) && has(after, url));
+    // Product analytics: how many items were linked, never which (TEC-1631).
+    yield* recordLinearLinked({
+      threadId: sessionId,
+      count: added.length,
+      userId: yield* CurrentOrchestrationActorUserId,
+    });
     return {
       sessionId,
       linearLinks: after,
-      added: urls.filter((url) => !has(before, url) && has(after, url)),
+      added,
       alreadyLinked: urls.filter((url) => has(before, url)),
       // Left out because the session already holds the maximum number of tags.
       notAdded: urls.filter((url) => !has(before, url) && !has(after, url)),

@@ -632,6 +632,8 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+// T3-CUSTOM(expbkt3): product analytics (TEC-1631).
+import { lastInputWasKeyboard, trackProductEvent } from "../lib/analytics/productAnalytics";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
@@ -9229,6 +9231,13 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+      trackProductEvent("plan.action", {
+        threadId: activeThread.id,
+        action: followUp.interactionMode === "plan" ? "revise" : "approve",
+        source: "composer",
+      });
+      // T3-CUSTOM(expbkt3): END
       const followUpSent = await onSubmitPlanFollowUp({
         text: followUp.text,
         context: buildMessageContext({
@@ -9467,6 +9476,14 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
       return;
     }
+    // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+    trackProductEvent("composer.sent", {
+      threadId: threadIdForSend,
+      interactionMode: sendInteractionMode,
+      hasAttachments: composerAttachmentsSnapshot.length > 0,
+      viaKeyboard: lastInputWasKeyboard(),
+    });
+    // T3-CUSTOM(expbkt3): END
     const turnUsesAttachmentUploads =
       composerFilesSnapshot.length > 0
         ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
@@ -10238,11 +10255,15 @@ export default function ChatView(props: ChatViewProps) {
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
         return;
-      if (
-        pendingApprovals.find((approval) => approval.requestId === requestId)
-          ?.responseCapability !== "live"
-      )
-        return;
+      // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+      const pendingApproval = pendingApprovals.find((approval) => approval.requestId === requestId);
+      if (pendingApproval?.responseCapability !== "live") return;
+      trackProductEvent("approval.answered_in_ui", {
+        threadId: activeThreadId,
+        kind: pendingApproval.requestKind,
+        decision,
+      });
+      // T3-CUSTOM(expbkt3): END
 
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -10305,6 +10326,12 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
       userInputResponsesInFlight.current.add(responseKey);
+      // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+      trackProductEvent("question.answered_in_ui", {
+        threadId: activeThreadId,
+        kind: "user_input",
+      });
+      // T3-CUSTOM(expbkt3): END
 
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -10682,6 +10709,13 @@ export default function ChatView(props: ChatViewProps) {
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
 
+    // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+    trackProductEvent("plan.action", {
+      threadId: activeThread.id,
+      action: "approve",
+      source: "new_thread",
+    });
+    // T3-CUSTOM(expbkt3): END
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {

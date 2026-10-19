@@ -13,6 +13,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Metrics from "../observability/Metrics.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import { recordWebhookDelivered } from "../telemetry/serverEvents.ts"; // T3-CUSTOM(expbkt3)
 
 /** Largest request body a webhook accepts. The relay enforces the same cap. */
 export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
@@ -111,6 +112,8 @@ export const layer = HttpApiBuilder.group(
                 Effect.as({ _tag: "error" as const }),
               ),
             ),
+            // T3-CUSTOM(expbkt3): product analytics, outcome tag only (TEC-1631).
+            Effect.tap((delivery) => recordWebhookDelivered("scheduled_task", delivery._tag)),
           );
 
         switch (result._tag) {

@@ -262,6 +262,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import { clientConnectionMode } from "./telemetry/serverEvents.ts"; // T3-CUSTOM(expbkt3)
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1262,10 +1263,15 @@ const layerWsRpc = (
       // client starts is credited to its surface + app version. Best-effort:
       // attribution must never fail the user's command.
       const originProps = clientAnalyticsProps;
+      // T3-CUSTOM(expbkt3): client events carry the signed-in user (TEC-1631).
+      const analyticsUser =
+        currentSession.userId === null ? undefined : { userId: currentSession.userId };
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         switch (command.type) {
           case "message.dispatch":
-            return analytics.record("client.turn.requested", originProps).pipe(Effect.ignore);
+            return analytics
+              .record("client.turn.requested", originProps, analyticsUser)
+              .pipe(Effect.ignore);
           default:
             return Effect.void;
         }
@@ -2492,13 +2498,14 @@ const layerWsRpc = (
                 )
                 .pipe(
                   Effect.tap(() =>
+                    // T3-CUSTOM(expbkt3): client events carry the signed-in user (TEC-1631).
                     analytics
-                      .record("client.thread.started", originProps)
+                      .record("client.thread.started", originProps, analyticsUser)
                       .pipe(
                         Effect.andThen(
                           input.initialMessage === undefined
                             ? Effect.void
-                            : analytics.record("client.turn.requested", originProps),
+                            : analytics.record("client.turn.requested", originProps, analyticsUser),
                         ),
                         Effect.ignore,
                       ),
@@ -3899,7 +3906,18 @@ export const layer = Layer.unwrap(
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
-        yield* analytics.record("client.connected", clientAnalyticsProps);
+        // T3-CUSTOM(expbkt3): the signed-in user and how the client reached us (TEC-1631).
+        yield* analytics.record(
+          "client.connected",
+          {
+            ...clientAnalyticsProps,
+            connectionMode: clientConnectionMode({
+              ...clientAnalyticsProps,
+              host: request.headers.host,
+            }),
+          },
+          session.userId === null ? undefined : { userId: session.userId },
+        );
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(

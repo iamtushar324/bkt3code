@@ -595,3 +595,32 @@ it("matches loopback redirects on everything but the port, and https redirects e
   expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
   expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
 });
+
+// T3-CUSTOM(expbkt3): BEGIN — hosted connectors such as Google's register many redirect URIs.
+it.live("registers a hosted client with up to 20 https redirect URIs", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      const registerMany = (count: number) =>
+        handler(
+          at("/oauth/mcp/register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: encodeJson({
+              client_name: "Google",
+              redirect_uris: Array.from(
+                { length: count },
+                (_, index) => `https://connector${index}.example/oauth-redirect`,
+              ),
+            }),
+          }),
+        );
+
+      expect((yield* registerMany(8)).status).toBe(201);
+      expect((yield* registerMany(20)).status).toBe(201);
+      const tooMany = yield* registerMany(21);
+      expect(tooMany.status).toBe(400);
+      expect(yield* json<unknown>(tooMany)).toMatchObject({ error: "invalid_redirect_uri" });
+    }),
+  ),
+);
+// T3-CUSTOM(expbkt3): END

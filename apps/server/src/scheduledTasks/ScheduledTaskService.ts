@@ -53,6 +53,7 @@ import {
   type WebhookRequest,
 } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { recordScheduledTaskRan } from "../telemetry/serverEvents.ts"; // T3-CUSTOM(expbkt3)
 // T3-CUSTOM(expbkt3): BK sidebar custom group of the threads a task launches (XFN-59).
 import {
   deleteScheduledTaskCustomGroup,
@@ -904,6 +905,16 @@ export const layer = Layer.effect(
           lastRunError,
           runCount: scheduleSource.runCount + 1,
         };
+        // T3-CUSTOM(expbkt3): product analytics for each finished run (TEC-1631).
+        yield* recordScheduledTaskRan({
+          taskId: task.id,
+          scheduleType: scheduleSource.schedule.type,
+          trigger,
+          creationSource: active.creationSource,
+          status: lastRunStatus,
+          durationMs: DateTime.toEpochMillis(completedAt) - DateTime.toEpochMillis(startedAt),
+          ownerUserId: forkOwner,
+        });
         if (current !== null) {
           // startedAtIso in the guard ensures this writes only to the row this
           // run marked as running — a task deleted mid-run and recreated with
