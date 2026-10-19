@@ -13,11 +13,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -179,7 +181,7 @@ it.effect(
         );
         yield* seed([parent, other, subagent, delegated, fork, otherSubagent]);
 
-        const cascade = yield* SubagentArchiveCascade.make;
+        const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
         yield* cascade.start();
         // Every parent is active, so the startup pass archives nothing.
         yield* cascade.drain;
@@ -219,7 +221,7 @@ it.effect("deleting a parent archives its provider subagents", () =>
       );
       yield* seed([parent, subagent]);
 
-      const cascade = yield* SubagentArchiveCascade.make;
+      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
       yield* cascade.start();
       yield* cascade.drain;
 
@@ -252,7 +254,7 @@ it.effect("unarchiving the parent unarchives its provider subagents and nothing 
       });
       yield* seed([parent, subagent, delegated]);
 
-      const cascade = yield* SubagentArchiveCascade.make;
+      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
       yield* cascade.start();
       yield* cascade.drain;
 
@@ -341,7 +343,7 @@ it.effect(
         ]);
         yield* seedRunningRun(stillRunning.id, now);
 
-        const cascade = yield* SubagentArchiveCascade.make;
+        const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
         yield* cascade.start();
         yield* cascade.drain;
 
@@ -354,4 +356,52 @@ it.effect(
         assert.isFalse(yield* isArchived(activeParent.id));
       }),
     ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("the startup pass archives one orphan per pause", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const parent = makeThread("thread:paced-parent", now, { archivedAt: now });
+      const first = makeChild("provider-subagent", parent.id, "thread:paced-parent:1", now);
+      const second = makeChild("provider-subagent", parent.id, "thread:paced-parent:2", now);
+      const third = makeChild("provider-subagent", parent.id, "thread:paced-parent:3", now);
+      yield* seed([parent, first, second, third]);
+      const firstArchived = yield* nextEvent(first.id, "thread.archived");
+      const secondArchived = yield* nextEvent(second.id, "thread.archived");
+      const thirdArchived = yield* nextEvent(third.id, "thread.archived");
+
+      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.seconds(2) });
+      yield* cascade.start();
+
+      // The first orphan goes at once; each later one waits for the clock to move a pause.
+      yield* Fiber.join(firstArchived);
+      assert.isFalse(yield* isArchived(second.id));
+      yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(secondArchived);
+      assert.isFalse(yield* isArchived(third.id));
+      yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(thirdArchived);
+      yield* cascade.drain;
+
+      const archivedAtMillis = (threadId: ThreadId) =>
+        orchestrator
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.map((shell) =>
+              shell?.archivedAt == null ? null : DateTime.toEpochMillis(shell.archivedAt),
+            ),
+          );
+      const start = DateTime.toEpochMillis(now);
+      assert.deepEqual(
+        [
+          yield* archivedAtMillis(first.id),
+          yield* archivedAtMillis(second.id),
+          yield* archivedAtMillis(third.id),
+        ],
+        [start, start + 2_000, start + 4_000],
+      );
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
