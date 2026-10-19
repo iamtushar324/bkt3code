@@ -120,19 +120,17 @@ const make = Effect.gen(function* () {
     );
   const threadShell = (threadId: ThreadId) =>
     wrap(
-      projections.getThreadShell(threadId).pipe(
-        // On the reader a deferred BEGIN does not wait on another process's
-        // write lock; the writer's BEGIN IMMEDIATE blocks the event loop for
-        // up to busy_timeout. Only the read is marked, not the name lookup.
-        NodeSqliteClient.readOnly,
-        Effect.flatMap((thread) =>
-          thread === null || thread.deletedAt !== null
-            ? Effect.succeed(Option.none())
-            : providerName(thread.providerInstanceId).pipe(
-                Effect.map((driver) => Option.some(legacyThreadShell(thread, driver))),
-              ),
+      projections
+        .getThreadShell(threadId)
+        .pipe(
+          Effect.flatMap((thread) =>
+            thread === null || thread.deletedAt !== null
+              ? Effect.succeed(Option.none())
+              : providerName(thread.providerInstanceId).pipe(
+                  Effect.map((driver) => Option.some(legacyThreadShell(thread, driver))),
+                ),
+          ),
         ),
-      ),
     );
   const retainedPlanRows = () =>
     wrap(

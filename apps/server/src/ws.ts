@@ -1076,10 +1076,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             if ("aggregateKind" in stored) {
               return yield* projectItem(stored);
             }
-            // T3-CUSTOM(expbkt3): events arrive after their commit, so the reader sees them.
-            const shell = yield* threadManagement
-              .getThreadShell(stored.event.threadId)
-              .pipe(NodeSqliteClient.readOnly);
+            const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
             return shellStreamItemFromThreadShell({ stored, shell });
           }),
         { concurrency: 8 },
