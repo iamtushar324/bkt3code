@@ -12,6 +12,7 @@ import {
   OrchestrationV2PlanArtifact,
   OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -53,7 +54,12 @@ const make = Effect.gen(function* () {
   const shell = (location: "active" | "archive" = "active", unsettledOnly = false) =>
     wrap(
       Effect.gen(function* () {
-        const snapshot = yield* projections.getShellSnapshot({ location, unsettledOnly });
+        // The full shell read takes seconds on a large database: run it on the
+        // SQLite reader worker, off the event loop and the writer. Every caller
+        // reads committed state; inside an open transaction it stays on the writer.
+        const snapshot = yield* projections
+          .getShellSnapshot({ location, unsettledOnly })
+          .pipe(NodeSqliteClient.readOnly);
         // The V2 store returns archived rows in `archivedThreads`, never in `threads`.
         const threads = location === "archive" ? snapshot.archivedThreads : snapshot.threads;
         const names = new Map(
@@ -114,17 +120,19 @@ const make = Effect.gen(function* () {
     );
   const threadShell = (threadId: ThreadId) =>
     wrap(
-      projections
-        .getThreadShell(threadId)
-        .pipe(
-          Effect.flatMap((thread) =>
-            thread === null || thread.deletedAt !== null
-              ? Effect.succeed(Option.none())
-              : providerName(thread.providerInstanceId).pipe(
-                  Effect.map((driver) => Option.some(legacyThreadShell(thread, driver))),
-                ),
-          ),
+      projections.getThreadShell(threadId).pipe(
+        // On the reader a deferred BEGIN does not wait on another process's
+        // write lock; the writer's BEGIN IMMEDIATE blocks the event loop for
+        // up to busy_timeout. Only the read is marked, not the name lookup.
+        NodeSqliteClient.readOnly,
+        Effect.flatMap((thread) =>
+          thread === null || thread.deletedAt !== null
+            ? Effect.succeed(Option.none())
+            : providerName(thread.providerInstanceId).pipe(
+                Effect.map((driver) => Option.some(legacyThreadShell(thread, driver))),
+              ),
         ),
+      ),
     );
   const retainedPlanRows = () =>
     wrap(

@@ -9,6 +9,8 @@ import {
   TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): shell snapshot reads run on the SQLite reader worker.
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 // T3-CUSTOM(expbkt3): resolve the bound operator.
 import * as Option from "effect/Option";
@@ -145,16 +147,20 @@ export const layer = HttpApiBuilder.group(
     );
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projectStore.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
-        }),
-      );
+      // T3-CUSTOM(expbkt3): read on the SQLite reader worker, off the event loop and the
+      // writer (upstream does this in loadShellSnapshotParts, which stage does not have).
+      const base = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+            return buildActiveShellSnapshot({
+              projects: yield* projectStore.listShells(),
+              threads,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+            });
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly);
       const projects = yield* enrichProjectShells(base.projects);
       // T3-CUSTOM(expbkt3): HTTP shell visibility matches the native socket stream.
       return filterNativeShell({ ...base, projects }, yield* currentActorUserId);

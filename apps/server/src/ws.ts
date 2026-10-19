@@ -143,6 +143,8 @@ import {
   FORK_WS_RPCS,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+// T3-CUSTOM(expbkt3): shell reads run on the SQLite reader worker.
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -1015,16 +1017,20 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projects.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
-        }),
-      );
+      // T3-CUSTOM(expbkt3): read on the SQLite reader worker, off the event loop and the
+      // writer (upstream does this in loadShellSnapshotParts, which stage does not have).
+      const base = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+            return buildActiveShellSnapshot({
+              projects: yield* projects.listShells(),
+              threads,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+            });
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly);
       const enriched = yield* enrichProjectShells(base.projects);
       return {
         snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
@@ -1070,7 +1076,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             if ("aggregateKind" in stored) {
               return yield* projectItem(stored);
             }
-            const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
+            // T3-CUSTOM(expbkt3): events arrive after their commit, so the reader sees them.
+            const shell = yield* threadManagement
+              .getThreadShell(stored.event.threadId)
+              .pipe(NodeSqliteClient.readOnly);
             return shellStreamItemFromThreadShell({ stored, shell });
           }),
         { concurrency: 8 },
@@ -1923,6 +1932,8 @@ const layerWsRpc = (
           }),
         )
         .pipe(
+          // T3-CUSTOM(expbkt3): read on the SQLite reader worker; enrichment runs after it.
+          NodeSqliteClient.readOnly,
           Effect.flatMap((snapshot) =>
             enrichProjectShells(snapshot.projects).pipe(
               Effect.map(({ projects }) => ({ ...snapshot, projects })),
