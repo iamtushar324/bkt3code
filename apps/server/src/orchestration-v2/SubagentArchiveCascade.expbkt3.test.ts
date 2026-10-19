@@ -3,13 +3,12 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
-  MessageId,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2StoredEvent,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
-  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +38,7 @@ const layerTest = layerWithRegistry(
 
 const projectId = ProjectId.make("project:subagent-archive-cascade");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+const driver = ProviderDriverKind.make("codex");
 
 const makeThread = (
   id: string,
@@ -107,34 +107,49 @@ const seed = (threads: ReadonlyArray<OrchestrationV2AppThread>) =>
     });
   });
 
-const seedRunningRun = (threadId: ThreadId, now: DateTime.Utc) =>
+/**
+ * The parent's record of a provider-native subagent, as the adapters write it:
+ * a native subagent's thread has no run, so this record says whether it is live.
+ */
+const seedSubagentRecord = (
+  child: OrchestrationV2AppThread,
+  status: "running" | "completed",
+  now: DateTime.Utc,
+) =>
   Effect.gen(function* () {
     const eventSink = yield* EventSinkV2;
-    const runId = RunId.make(`run:${threadId}:1`);
+    const parentThreadId = child.lineage.parentThreadId!;
+    const subagentId = NodeId.make(`subagent:${child.id}`);
     yield* eventSink.write({
       events: [
         {
-          id: EventId.make(`event:${runId}:created`),
-          type: "run.created",
-          threadId,
-          runId,
+          id: EventId.make(`event:${subagentId}:${status}`),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          nodeId: subagentId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
           payload: {
-            id: runId,
-            threadId,
-            ordinal: 1,
+            id: subagentId,
+            threadId: parentThreadId,
+            runId: null,
+            parentNodeId: NodeId.make(`node:${parentThreadId}:root`),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
             providerInstanceId: modelSelection.instanceId,
-            modelSelection,
             providerThreadId: null,
-            userMessageId: MessageId.make(`message:${runId}`),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: "running",
-            requestedAt: now,
+            childThreadId: child.id,
+            nativeTaskRef: null,
+            prompt: "Explore the repository",
+            title: null,
+            model: null,
+            status,
+            result: status === "completed" ? "Done." : null,
             startedAt: now,
-            completedAt: null,
-            checkpointId: null,
-            contextHandoffId: null,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
           },
         },
       ],
@@ -161,6 +176,15 @@ const isArchived = (threadId: ThreadId) =>
     return shell !== null && shell.archivedAt !== null;
   });
 
+/** When the thread was archived, on the test clock. */
+const archivedAtMillis = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const shell = yield* orchestrator.getThreadShell(threadId);
+    if (shell?.archivedAt == null) return yield* Effect.die(`${threadId} is not archived.`);
+    return DateTime.toEpochMillis(shell.archivedAt);
+  });
+
 it.effect(
   "archiving a parent archives its provider subagents, not its delegated tasks, forks or other threads",
   () =>
@@ -181,7 +205,10 @@ it.effect(
         );
         yield* seed([parent, other, subagent, delegated, fork, otherSubagent]);
 
-        const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
+        const cascade = yield* SubagentArchiveCascade.make({
+          startupPause: Duration.zero,
+          cascadePause: Duration.zero,
+        });
         yield* cascade.start();
         // Every parent is active, so the startup pass archives nothing.
         yield* cascade.drain;
@@ -221,7 +248,10 @@ it.effect("deleting a parent archives its provider subagents", () =>
       );
       yield* seed([parent, subagent]);
 
-      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
+      const cascade = yield* SubagentArchiveCascade.make({
+        startupPause: Duration.zero,
+        cascadePause: Duration.zero,
+      });
       yield* cascade.start();
       yield* cascade.drain;
 
@@ -254,7 +284,10 @@ it.effect("unarchiving the parent unarchives its provider subagents and nothing 
       });
       yield* seed([parent, subagent, delegated]);
 
-      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
+      const cascade = yield* SubagentArchiveCascade.make({
+        startupPause: Duration.zero,
+        cascadePause: Duration.zero,
+      });
       yield* cascade.start();
       yield* cascade.drain;
 
@@ -341,9 +374,12 @@ it.effect(
           delegated,
           ofActive,
         ]);
-        yield* seedRunningRun(stillRunning.id, now);
+        yield* seedSubagentRecord(stillRunning, "running", now);
 
-        const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.zero });
+        const cascade = yield* SubagentArchiveCascade.make({
+          startupPause: Duration.zero,
+          cascadePause: Duration.zero,
+        });
         yield* cascade.start();
         yield* cascade.drain;
 
@@ -361,7 +397,6 @@ it.effect(
 it.effect("the startup pass archives one orphan per pause", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
       const now = yield* DateTime.now;
       const parent = makeThread("thread:paced-parent", now, { archivedAt: now });
       const first = makeChild("provider-subagent", parent.id, "thread:paced-parent:1", now);
@@ -372,7 +407,10 @@ it.effect("the startup pass archives one orphan per pause", () =>
       const secondArchived = yield* nextEvent(second.id, "thread.archived");
       const thirdArchived = yield* nextEvent(third.id, "thread.archived");
 
-      const cascade = yield* SubagentArchiveCascade.make({ startupPause: Duration.seconds(2) });
+      const cascade = yield* SubagentArchiveCascade.make({
+        startupPause: Duration.seconds(2),
+        cascadePause: Duration.zero,
+      });
       yield* cascade.start();
 
       // The first orphan goes at once; each later one waits for the clock to move a pause.
@@ -385,14 +423,6 @@ it.effect("the startup pass archives one orphan per pause", () =>
       yield* Fiber.join(thirdArchived);
       yield* cascade.drain;
 
-      const archivedAtMillis = (threadId: ThreadId) =>
-        orchestrator
-          .getThreadShell(threadId)
-          .pipe(
-            Effect.map((shell) =>
-              shell?.archivedAt == null ? null : DateTime.toEpochMillis(shell.archivedAt),
-            ),
-          );
       const start = DateTime.toEpochMillis(now);
       assert.deepEqual(
         [
@@ -402,6 +432,98 @@ it.effect("the startup pass archives one orphan per pause", () =>
         ],
         [start, start + 2_000, start + 4_000],
       );
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a subagent still running when its parent is archived follows once it finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const parent = makeThread("thread:busy-parent", now);
+      // Read before its sibling, so the sibling's archive shows the cascade has passed it.
+      const running = makeChild(
+        "provider-subagent",
+        parent.id,
+        "thread:busy-parent:a-running",
+        now,
+      );
+      const done = makeChild("provider-subagent", parent.id, "thread:busy-parent:b-done", now);
+      yield* seed([parent, running, done]);
+      yield* seedSubagentRecord(running, "running", now);
+      yield* seedSubagentRecord(done, "completed", now);
+
+      const cascade = yield* SubagentArchiveCascade.make({
+        startupPause: Duration.zero,
+        cascadePause: Duration.zero,
+      });
+      yield* cascade.start();
+      yield* cascade.drain;
+
+      const doneArchived = yield* nextEvent(done.id, "thread.archived");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:archive-busy-parent"),
+        threadId: parent.id,
+      });
+      yield* Fiber.join(doneArchived);
+      yield* cascade.drain;
+      assert.isFalse(yield* isArchived(running.id));
+
+      const runningArchived = yield* nextEvent(running.id, "thread.archived");
+      yield* seedSubagentRecord(running, "completed", now);
+      const stored = yield* Fiber.join(runningArchived);
+      yield* cascade.drain;
+
+      assert.isTrue(commandIdOf(stored).startsWith("server:subagent-archive-cascade:"));
+      assert.isTrue(yield* isArchived(running.id));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a parent's subagents follow it one per pause", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const parent = makeThread("thread:paced-cascade", now);
+      const first = makeChild("provider-subagent", parent.id, "thread:paced-cascade:1", now);
+      const second = makeChild("provider-subagent", parent.id, "thread:paced-cascade:2", now);
+      const third = makeChild("provider-subagent", parent.id, "thread:paced-cascade:3", now);
+      yield* seed([parent, first, second, third]);
+
+      const cascade = yield* SubagentArchiveCascade.make({
+        startupPause: Duration.zero,
+        cascadePause: Duration.millis(500),
+      });
+      yield* cascade.start();
+      yield* cascade.drain;
+
+      const firstArchived = yield* nextEvent(first.id, "thread.archived");
+      const thirdArchived = yield* nextEvent(third.id, "thread.archived");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:archive-paced-cascade"),
+        threadId: parent.id,
+      });
+      yield* Fiber.join(firstArchived);
+      // The clock has not moved, so the next child still waits for its pause.
+      assert.isFalse(yield* isArchived(second.id));
+
+      // Move the clock in small steps until the last child lands; the bound turns a
+      // stuck cascade into a failure instead of a hang.
+      for (let step = 0; step < 1_000 && thirdArchived.pollUnsafe() === undefined; step += 1) {
+        yield* TestClock.adjust("50 millis");
+      }
+      assert.isDefined(thirdArchived.pollUnsafe());
+      yield* cascade.drain;
+
+      const firstAt = yield* archivedAtMillis(first.id);
+      const secondAt = yield* archivedAtMillis(second.id);
+      const thirdAt = yield* archivedAtMillis(third.id);
+      assert.isAtLeast(secondAt - firstAt, 500);
+      assert.isAtLeast(thirdAt - secondAt, 500);
     }),
   ).pipe(Effect.provide(layerTest)),
 );
