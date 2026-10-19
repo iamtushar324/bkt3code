@@ -12,6 +12,8 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+// T3-CUSTOM(expbkt3): the idle-thread rotation reads the clock.
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -28,6 +30,8 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+// T3-CUSTOM(expbkt3): idle threads ride a slow rotation in the periodic sweep.
+import { includeInPeriodicSweep } from "./threadPullRequestSweep.expbkt3.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -106,6 +110,8 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const pendingBackfill = new Map<ThreadId, number>();
+  // T3-CUSTOM(expbkt3): counts all-thread passes for the idle-thread rotation.
+  let periodicPass = 0;
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -167,8 +173,17 @@ export const make = Effect.gen(function* () {
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
+    // T3-CUSTOM(expbkt3): BEGIN — an all-thread pass checks idle threads on a rotation.
+    const nowMs = yield* Clock.currentTimeMillis;
+    const pass = periodicPass;
+    if (request.threadId === null) periodicPass += 1;
+    // T3-CUSTOM(expbkt3): END
     const threads = threadSnapshot.threads.filter(
       (thread) =>
+        // T3-CUSTOM(expbkt3): a one-thread check and backfill are never rotated.
+        (request.threadId !== null ||
+          pendingBackfill.has(thread.id) ||
+          includeInPeriodicSweep(thread, nowMs, pass)) &&
         thread.archivedAt === null &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
