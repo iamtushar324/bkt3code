@@ -20,6 +20,7 @@ const pendingV2Migrations = [
   [1050, "ThreadSnapshotWindowIndexes"],
   [1051, "ScheduledTaskCustomGroups"],
   [1052, "ScheduledTaskForkOptions"],
+  [1053, "ThreadClaudeAccountWait"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -65,6 +66,7 @@ describe("fork V2 ledger upgrade", () => {
         pendingV2Migrations[7],
         pendingV2Migrations[8],
         pendingV2Migrations[9],
+        pendingV2Migrations[10],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);

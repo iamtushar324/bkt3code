@@ -8,6 +8,7 @@ const baseSignals = {
   planThreadId: "thread-1",
   targetThreadId: "thread-1",
   providerSessionStatus: "running",
+  agentRevisionCount: 1,
 } as const;
 
 describe("decidePlanResend", () => {
@@ -19,6 +20,12 @@ describe("decidePlanResend", () => {
     const decision = decidePlanResend({ ...baseSignals, targetThreadId: "thread-2" });
     expect(decision.shouldResend).toBe(true);
     expect(decision.reason).toContain("different session");
+  });
+
+  it("resends when the agent revised the plan", () => {
+    const decision = decidePlanResend({ ...baseSignals, agentRevisionCount: 3 });
+    expect(decision.shouldResend).toBe(true);
+    expect(decision.reason).toContain("only this revision is approved");
   });
 
   it("resends when the thread compacted after the plan was written", () => {

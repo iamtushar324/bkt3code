@@ -9,6 +9,8 @@
  * Claude Accounts dashboard. Rows follow Auto's order for the next new
  * session (#1 = next pick). The chosen mode carries the theme's primary
  * colour; under Auto, the account this thread runs on gets a lighter tint.
+ * A thread waiting in the server's revive queue shows its place and a way
+ * out; picking an account continues it there at once.
  */
 import {
   CLAUDE_ACCOUNT_MODE_AUTO,
@@ -28,6 +30,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
   Menu,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -50,8 +53,11 @@ import {
   AUTO_ACCOUNT_LABEL,
   autoRowDetail,
   isAutoMode,
+  LEAVE_QUEUE_LABEL,
   modeEquals,
   PENDING_RESTART_HINT,
+  QUEUE_PICK_HINT,
+  queueLabel,
   spaceLine,
   SWITCH_RESTARTS_SESSION_HINT,
   switchRestartsSession,
@@ -344,7 +350,7 @@ function ClaudeAccountPickerMenu(props: {
   readonly hidden: boolean;
 }) {
   const { snapshot } = props;
-  const { account, setMode } = useThreadClaudeAccount(props.threadRef, true);
+  const { account, setMode, leaveQueue } = useThreadClaudeAccount(props.threadRef, true);
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const [now, setNow] = useState(() => Date.now());
   const [hoveredValue, setHoveredValue] = useState<string | null>(null);
@@ -356,7 +362,8 @@ function ClaudeAccountPickerMenu(props: {
   }, [open]);
 
   const view = triggerView(snapshot, account);
-  const tooltip = triggerTooltip(view);
+  const queued = queueLabel(account);
+  const tooltip = queued === null ? triggerTooltip(view) : `${triggerTooltip(view)} · ${queued}`;
   const mode = account?.mode ?? CLAUDE_ACCOUNT_MODE_AUTO;
   const rows = accountRows(snapshot, account, now);
   const auto = isAutoMode(account);
@@ -406,6 +413,9 @@ function ClaudeAccountPickerMenu(props: {
           {account?.notice ? (
             <span className="text-warning-foreground text-xs">{account.notice}</span>
           ) : null}
+          {account?.wait ? (
+            <span className="text-muted-foreground text-2xs">{QUEUE_PICK_HINT}</span>
+          ) : null}
           {account?.pendingRestart ? (
             <span className="text-muted-foreground text-xs">{PENDING_RESTART_HINT}</span>
           ) : null}
@@ -413,6 +423,11 @@ function ClaudeAccountPickerMenu(props: {
             <span className="text-muted-foreground text-xs">{unavailable}</span>
           ) : null}
         </span>
+        {account?.wait ? (
+          <MenuItem className="text-muted-foreground text-xs" onClick={() => void leaveQueue()}>
+            {LEAVE_QUEUE_LABEL}
+          </MenuItem>
+        ) : null}
         <MenuRadioGroup
           value={modeValue(mode)}
           onValueChange={(value: string) => {

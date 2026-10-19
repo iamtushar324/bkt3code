@@ -1,8 +1,15 @@
 /**
- * T3-CUSTOM(expbkt3): the admin gate on Claude account access RPCs, and the
- * per-connection identity the account handlers hand the service.
+ * T3-CUSTOM(expbkt3): the admin gate on Claude account access RPCs, the
+ * per-connection identity the account handlers hand the service, and the
+ * thread access check in front of leaving the revive queue.
  */
-import { ClaudeAccountsError, ThreadId, UserId, WS_FORK_METHODS } from "@t3tools/contracts";
+import {
+  ClaudeAccountsError,
+  OrchestrationGetSnapshotError,
+  ThreadId,
+  UserId,
+  WS_FORK_METHODS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -17,6 +24,7 @@ function makeHandlers(
   actorUserId: UserId | null,
   actorIsAdmin: boolean,
   directory: ReadonlyArray<UserId> | null = [member],
+  threadAccess: "draft" | "allowed" | "denied" = "draft",
 ) {
   const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
   const entries = { entries: [{ profile: "agent", userIds: [member] }] };
@@ -34,6 +42,11 @@ function makeHandlers(
     setThreadMode: (input: unknown) =>
       Effect.sync(() => {
         calls.push({ method: "setThreadMode", input });
+        return { threadId: ThreadId.make("thread-1"), mode: { kind: "auto" } } as const;
+      }),
+    leaveQueue: (threadId: unknown) =>
+      Effect.sync(() => {
+        calls.push({ method: "leaveQueue", input: threadId });
         return { threadId: ThreadId.make("thread-1"), mode: { kind: "auto" } } as const;
       }),
     watchSnapshot: (viewer: unknown) => {
@@ -63,8 +76,13 @@ function makeHandlers(
     observeRpcEffect: (_method, effect) => effect,
     observeRpcStream: (_method, stream) => stream,
     projectionSnapshotQuery: {
-      getThreadShellById: () => Effect.succeedNone,
+      getThreadShellById: () =>
+        threadAccess === "draft" ? Effect.succeedNone : Effect.succeedSome({}),
     } as unknown as ForkWsHandlerDeps["projectionSnapshotQuery"],
+    requireThreadAccess: () =>
+      threadAccess === "denied"
+        ? Effect.fail(new OrchestrationGetSnapshotError({ message: "Thread not found." }))
+        : Effect.void,
   } satisfies Partial<ForkWsHandlerDeps>;
   return { handlers: makeForkWsHandlers(deps as unknown as ForkWsHandlerDeps), calls };
 }
@@ -155,6 +173,22 @@ describe("Claude account access websocket handlers", () => {
           },
         },
       ]);
+    }),
+  );
+
+  it.effect("takes a thread out of the queue only after the thread access check", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-queued");
+      const allowed = makeHandlers(member, false, [member], "allowed");
+      yield* allowed.handlers[WS_FORK_METHODS.claudeAccountsLeaveQueue]({ threadId });
+      expect(allowed.calls).toEqual([{ method: "leaveQueue", input: threadId }]);
+
+      const denied = makeHandlers(outsider, false, [member], "denied");
+      const error = yield* denied.handlers[WS_FORK_METHODS.claudeAccountsLeaveQueue]({
+        threadId,
+      }).pipe(Effect.flip);
+      expect(error._tag === "ClaudeAccountsError" ? error.reason : error._tag).toBe("not-found");
+      expect(denied.calls).toEqual([]);
     }),
   );
 });

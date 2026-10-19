@@ -379,7 +379,7 @@ describe("PlanReviewService approval", () => {
 
         expect(result.resentPlan).toBe(false);
         expect(result.prompt).toBe(
-          "Plan approved. Implement the plan you proposed above, exactly as written.",
+          "Plan approved (revision 1, plan plan:a). Implement the plan you proposed above, exactly as written.",
         );
 
         const commands = yield* Ref.get(dispatched);
@@ -456,10 +456,40 @@ describe("PlanReviewService approval", () => {
 
           expect(result.resentPlan).toBe(true);
           const text = turnText(yield* Ref.get(dispatched));
-          expect(text).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN:");
+          expect(text).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN (revision 1, plan plan:a):");
           expect(text).toContain("3. Flip the flag");
           expect(text).toContain("compacted its context");
         }),
+    ),
+  );
+
+  it.effect("implements the approved revision, not an earlier one", () =>
+    runWithService({ sessionStatus: "running", compactionAt: null }, ({ service, dispatched }) =>
+      Effect.gen(function* () {
+        const document = yield* capturePlan(service, "plan:a");
+        yield* capturePlan(service, "plan:b", `${PLAN}\n4. Announce it`);
+        const result = yield* service.submit({
+          documentId: document.documentId,
+          decision: "approved",
+          globalComment: "",
+          editedMarkdown: null,
+          actorUserId: reviewerId,
+          actorLabel: "Tushar",
+        });
+
+        // Earlier revisions are still in the agent's context, so the approved
+        // one is named and repeated in full.
+        expect(result.resentPlan).toBe(true);
+        const commands = yield* Ref.get(dispatched);
+        const text = turnText(commands);
+        expect(text).toContain("PLEASE IMPLEMENT THIS APPROVED PLAN (revision 2, plan plan:b):");
+        expect(text).toContain("4. Announce it");
+        expect(text).toContain("only this revision is approved");
+        const turn = commands.find((command) => command.type === "thread.turn.start");
+        expect(turn?.type === "thread.turn.start" && turn.sourceProposedPlan?.planId).toBe(
+          "plan:b",
+        );
+      }),
     ),
   );
 
@@ -495,7 +525,7 @@ describe("PlanReviewService approval", () => {
         });
 
         const text = turnText(yield* Ref.get(dispatched));
-        expect(text).toContain("Plan approved with reviewer edits.");
+        expect(text).toContain("Plan approved with reviewer edits (revision 2, plan plan:a).");
         expect(text).toContain("1. Add the migration\n2. Backfill the rows");
         expect(text).toContain("3. Flip the flag behind a kill switch");
         expect(text).not.toContain("```diff");
@@ -534,7 +564,9 @@ describe("PlanReviewService approval", () => {
         const text = turnText(yield* Ref.get(dispatched));
         // T3-CUSTOM(expbkt3): approving with comments open means "start now, and
         // fold these in" — so the prompt must not also say "exactly as written".
-        expect(text).toContain("Plan approved — start implementing it now.");
+        expect(text).toContain(
+          "Plan approved (revision 1, plan plan:a) — start implementing it now.",
+        );
         expect(text).toContain("apply them as you implement");
         expect(text).not.toContain("exactly as written");
         expect(text).toContain("Reviewer notes:\nStart with the migration.");

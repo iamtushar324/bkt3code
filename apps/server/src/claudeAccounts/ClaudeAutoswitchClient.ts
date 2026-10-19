@@ -68,6 +68,10 @@ export const SwitcherProfile = Schema.Struct({
   place_rank: Schema.optionalKey(NullableNumber),
   place_score: Schema.optionalKey(NullableNumber),
   guard_ok: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  // `space-share-v2`: the share of live sessions this account should carry
+  // (null when it is not placeable now) and its live plus pending sessions.
+  fair_share: Schema.optionalKey(NullableNumber),
+  load: Schema.optionalKey(NullableNumber),
 });
 export type SwitcherProfile = typeof SwitcherProfile.Type;
 
@@ -91,6 +95,20 @@ export const SwitcherPlaceResult = Schema.Struct({
   dir: Schema.optionalKey(NullableString),
   reason: Schema.optionalKey(NullableString),
   recovers_at: Schema.optionalKey(NullableString),
+  /**
+   * On `no_eligible_profile`, when each account is expected to have room,
+   * earliest first (`recovers_at` is the first). Absent from older switchers.
+   */
+  recoveries: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          profile: Schema.String,
+          recovers_at: Schema.String,
+        }),
+      ),
+    ),
+  ),
   snapshot: Schema.optionalKey(Schema.NullOr(SwitcherStatus)),
 });
 export type SwitcherPlaceResult = typeof SwitcherPlaceResult.Type;

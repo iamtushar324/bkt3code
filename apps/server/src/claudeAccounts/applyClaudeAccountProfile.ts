@@ -23,6 +23,9 @@ export class ClaudeAccountPolicyError extends Schema.TaggedError<ClaudeAccountPo
   {
     threadId: Schema.String,
     detail: Schema.String,
+    /** When no account had room: when the first one the owner may use is expected to. */
+    expectedAt: Schema.optionalKey(Schema.String),
+    expectedProfile: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {

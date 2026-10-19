@@ -500,7 +500,25 @@ export const layer: Layer.Layer<
                     occurredAt,
                   )
                 : plan;
+            // A thread has one actionable proposed plan: the newest. Retiring the
+            // others here covers every adapter and survives restarts.
+            const superseded =
+              plan.kind === "proposed_plan" && plan.status === "active"
+                ? (yield* projections.getActiveProposedPlans(plan.threadId)).filter(
+                    (candidate) => candidate.id !== plan.id,
+                  )
+                : [];
             return [
+              ...(yield* Effect.forEach(superseded, (previousPlan) =>
+                makeDomainEvent(input, {
+                  type: "plan.updated",
+                  threadId: previousPlan.threadId,
+                  payload: { ...previousPlan, status: "superseded" },
+                  runId: previousPlan.runId,
+                  nodeId: previousPlan.nodeId,
+                  occurredAt,
+                }),
+              )),
               yield* makeDomainEvent(input, {
                 type: "plan.updated",
                 threadId: plan.threadId,

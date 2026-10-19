@@ -151,6 +151,7 @@ export const WS_FORK_METHODS = {
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   claudeAccountsGetThread: "claudeAccounts.getThread",
   claudeAccountsSetThreadMode: "claudeAccounts.setThreadMode",
+  claudeAccountsLeaveQueue: "claudeAccounts.leaveQueue",
   subscribeClaudeAccounts: "subscribeClaudeAccounts",
   subscribeThreadClaudeAccount: "subscribeThreadClaudeAccount",
   // T3-CUSTOM(expbkt3): Claude account access per user (admin only).
@@ -502,6 +503,13 @@ export const WsClaudeAccountsSetThreadModeRpc = Rpc.make(
   },
 );
 
+/** Takes a waiting thread out of the revive queue without moving it. */
+export const WsClaudeAccountsLeaveQueueRpc = Rpc.make(WS_FORK_METHODS.claudeAccountsLeaveQueue, {
+  payload: ClaudeAccountsThreadInput,
+  success: ThreadClaudeAccount,
+  error: claudeAccountsError,
+});
+
 export const WsSubscribeClaudeAccountsRpc = Rpc.make(WS_FORK_METHODS.subscribeClaudeAccounts, {
   payload: Schema.Struct({}),
   success: ClaudeAccountsSnapshot,
@@ -628,6 +636,7 @@ export const FORK_WS_RPCS = [
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   WsClaudeAccountsGetThreadRpc,
   WsClaudeAccountsSetThreadModeRpc,
+  WsClaudeAccountsLeaveQueueRpc,
   WsSubscribeClaudeAccountsRpc,
   WsSubscribeThreadClaudeAccountRpc,
   // T3-CUSTOM(expbkt3): Claude account access per user.
