@@ -174,7 +174,7 @@ export const settleReleasedSessionSubagents = (
       // The thread's open subagents, nodes and items, as startup recovery reads them.
       const projection = yield* input.projectionStore
         .getRuntimeRecoveryProjection(threadId)
-        .pipe(Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)));
+        .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
       // A deleted thread has nothing left to show as running.
       if (projection === null) return [];
       const settledNodeIds = new Set<string>();

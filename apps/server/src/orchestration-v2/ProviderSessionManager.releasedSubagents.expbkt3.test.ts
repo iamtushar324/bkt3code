@@ -219,6 +219,8 @@ function fixture(
 ) {
   const projections = options.projections ?? incidentProjections();
   const written: Array<OrchestrationV2DomainEvent> = [];
+  /** Threads whose full recovery read ran, in order. */
+  const recoveryReads: Array<ThreadId> = [];
   const adapter: ProviderAdapterV2Shape = {
     instanceId,
     driver,
@@ -286,8 +288,10 @@ function fixture(
               turnItems: [],
               providerThreads: [],
               providerTurns: [],
+              subagents: projections.get(threadId)?.subagents ?? [],
             } as unknown as OrchestrationV2ThreadProjection),
           getRuntimeRecoveryProjection: (threadId) => {
+            recoveryReads.push(threadId);
             if (options.failRecoveryRead === true) {
               return Effect.fail(
                 new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "boom" }),
@@ -325,7 +329,7 @@ function fixture(
       }
       return event.payload.status === "cancelled" ? [String(event.payload.id)] : [];
     });
-  return { layer, written, open, cancelled };
+  return { layer, written, recoveryReads, open, cancelled };
 }
 
 it.effect(
@@ -409,6 +413,31 @@ it.effect("a server shutdown leaves the subagents to startup recovery and its wa
 
     assert.deepEqual(f.cancelled("subagent.updated"), []);
     assert.deepEqual(f.cancelled("node.updated"), []);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("a release with no open subagent skips the full recovery read", () => {
+  const finished = subagent("finished", { status: "completed", completedAt: epoch });
+  const f = fixture({
+    projections: new Map([
+      [
+        parentThreadId,
+        projection(parentThreadId, {
+          subagents: [finished],
+          turnItems: [subagentItem(finished)] as never,
+        }),
+      ],
+    ]),
+  });
+  return Effect.gen(function* () {
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    yield* manager.open(f.open(parentThreadId));
+    yield* TestClock.adjust("10 minutes");
+    yield* manager.release({ providerSessionId: releasedSessionId, reason: "idle_timeout" });
+
+    assert.isTrue(Option.isNone(yield* manager.get(releasedSessionId)));
+    assert.deepEqual(f.recoveryReads, []);
+    assert.deepEqual(f.cancelled("subagent.updated"), []);
   }).pipe(Effect.provide(f.layer));
 });
 
