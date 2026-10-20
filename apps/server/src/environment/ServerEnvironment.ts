@@ -279,6 +279,7 @@ export const make = Effect.gen(function* () {
       // T3-CUSTOM(expbkt3): t3_user_presence and GET /api/presence.
       userPresence: true,
       serverResolvedCommandContext: true,
+      threadStop: true,
       environmentIcon: true,
       // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
       environmentAppearance: true,

@@ -25,6 +25,9 @@ const pendingV2Migrations = [
   [1054, "PullRequestReviewGuides"],
   [1055, "ThreadFailureLookupIndex"],
   [1056, "CanonicalizeThreadPullRequestLinks"],
+  // Upstream 65-66, remapped into the 1000+ lane.
+  [1057, "CodexUsageNativeTurnIndex"],
+  [1058, "RepairClientSettlementTimestamps"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {

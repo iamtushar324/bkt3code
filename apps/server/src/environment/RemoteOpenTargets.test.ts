@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- replace the native OS lookup and sync its ESM bindings.
+import * as NodeModule from "node:module";
+import type * as NodeOS from "node:os";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -7,9 +10,16 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { describe, expect } from "vite-plus/test";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
+
+const mutableOs = NodeModule.createRequire(import.meta.url)("node:os") as typeof NodeOS;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  NodeModule.syncBuiltinESMExports();
+});
 
 const encoder = new TextEncoder();
 
@@ -59,22 +69,23 @@ const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
   readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
   readonly hostname: string;
-  // T3-CUSTOM(expbkt3): username is a backport of upstream #8305.
   readonly username?: string | null;
-}) =>
-  Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
+}) => {
+  const resolve = Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) =>
+    service.resolveTargets(),
+  ).pipe(
     Effect.provideService(HostProcess.Hostname, input.hostname),
-    // T3-CUSTOM(expbkt3): backport of upstream #8305.
-    Effect.provideService(
-      RemoteOpenTargets.HostUsername,
-      input.username === undefined ? null : input.username,
-    ),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
       ),
     ),
   );
+
+  return input.username === undefined
+    ? resolve
+    : resolve.pipe(Effect.provideService(HostProcess.Username, input.username));
+};
 
 const prefsJson = (prefs: { readonly RunSSH: boolean; readonly WantRunning: boolean }) => ({
   exitCode: 0,
@@ -97,6 +108,7 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: false },
         tailscale: TAILSCALE_UP,
         hostname: "bb-1",
+        username: "t3-user",
       });
       expect(targets).toEqual([]);
     }),
@@ -108,8 +120,11 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: false },
         tailscale: TAILSCALE_SSH,
         hostname: "bb-1",
+        username: "t3-user",
       });
-      expect(targets).toEqual([{ kind: "tailscale", host: "bb-1.tail1234.ts.net" }]);
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+      ]);
     }),
   );
 
@@ -119,6 +134,7 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: false },
         tailscale: { status: STATUS_UP, prefs: prefsJson({ RunSSH: true, WantRunning: false }) },
         hostname: "bb-1",
+        username: null,
       });
       expect(targets).toEqual([]);
     }),
@@ -130,10 +146,11 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: true, ipv6: true },
         tailscale: TAILSCALE_UP,
         hostname: "bb-1",
+        username: "t3-user",
       });
       expect(targets).toEqual([
-        { kind: "tailscale", host: "bb-1.tail1234.ts.net" },
-        { kind: "mdns", host: "bb-1.local" },
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
     }),
   );
@@ -144,8 +161,9 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: true },
         tailscale: TAILSCALE_DOWN,
         hostname: "bb-1",
+        username: "t3-user",
       });
-      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local" }]);
+      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
     }),
   );
 
@@ -155,8 +173,9 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: true, ipv6: false },
         tailscale: TAILSCALE_DOWN,
         hostname: "bb-1",
+        username: "t3-user",
       });
-      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local" }]);
+      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
     }),
   );
 
@@ -166,40 +185,24 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: true, ipv6: true },
         tailscale: TAILSCALE_DOWN,
         hostname: "bb-1.example.com",
+        username: "t3-user",
       });
-      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local" }]);
+      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
     }),
   );
-});
 
-// T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. One client opens
-// worktrees on several hosts (ds1 runs as `ubuntu`, a Mac as something else),
-// so each host advertises the account to SSH as rather than letting the viewer's
-// own username be guessed.
-describe("RemoteOpenTargets host login account", () => {
-  it.effect("advertises the host's own login account with every name", () =>
+  it.effect("still advertises hostname targets when the OS login lookup fails", () =>
     Effect.gen(function* () {
+      const userInfo = vi.spyOn(mutableOs, "userInfo").mockImplementation(() => {
+        throw new Error("No passwd entry for this UID");
+      });
+      NodeModule.syncBuiltinESMExports();
       const targets = yield* resolveTargets({
         sshd: { ipv4: true, ipv6: true },
         tailscale: TAILSCALE_UP,
         hostname: "bb-1",
-        username: "ubuntu",
       });
-      expect(targets).toEqual([
-        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "ubuntu" },
-        { kind: "mdns", host: "bb-1.local", username: "ubuntu" },
-      ]);
-    }),
-  );
-
-  it.effect("still advertises hostnames when the username is unavailable", () =>
-    Effect.gen(function* () {
-      const targets = yield* resolveTargets({
-        sshd: { ipv4: true, ipv6: true },
-        tailscale: TAILSCALE_UP,
-        hostname: "bb-1",
-        username: null,
-      });
+      expect(userInfo).toHaveBeenCalled();
       expect(targets).toEqual([
         { kind: "tailscale", host: "bb-1.tail1234.ts.net" },
         { kind: "mdns", host: "bb-1.local" },
@@ -207,4 +210,3 @@ describe("RemoteOpenTargets host login account", () => {
     }),
   );
 });
-// T3-CUSTOM(expbkt3): END

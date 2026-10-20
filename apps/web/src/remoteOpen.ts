@@ -22,7 +22,6 @@ import { environmentPresentations } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
-  // T3-CUSTOM(expbkt3): `username` is a backport of upstream #8305.
   readonly username?: string;
 }
 
@@ -55,10 +54,7 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305; was `sshAlias: string | null`.
-  /** Configured target for desktop-SSH environments; null elsewhere. */
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
-  // T3-CUSTOM(expbkt3): END
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -80,18 +76,22 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
   if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
+    const { alias } = input.sshTarget;
+    const userSeparator = alias.lastIndexOf("@");
+    const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
+    const username =
+      input.sshTarget.username?.trim() ||
+      (userSeparator === -1 ? null : alias.slice(0, userSeparator));
     return {
       mode: "remote-links",
       host: {
         kind: "ssh-alias",
-        host: input.sshTarget.alias,
-        ...(input.sshTarget.username === null ? {} : { username: input.sshTarget.username }),
+        host,
+        ...(username === null ? {} : { username }),
       },
     };
   }
-  // T3-CUSTOM(expbkt3): END
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
     return { mode: "remote-links", host: advertised };
@@ -105,7 +105,6 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   return (
     previous.host.kind === next.host.kind &&
     previous.host.host === next.host.host &&
-    // T3-CUSTOM(expbkt3): the #8305 backport's login account is part of the host.
     previous.host.username === next.host.username
   );
 }
@@ -124,12 +123,8 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
-        // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
         sshTarget:
-          profile !== null && profile._tag === "SshConnectionProfile"
-            ? { alias: profile.target.alias, username: profile.target.username }
-            : null,
-        // T3-CUSTOM(expbkt3): END
+          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         // T3-CUSTOM(expbkt3): the flag means "the desktop app manages its own
         // primary backend", which a managed BK build does not — see

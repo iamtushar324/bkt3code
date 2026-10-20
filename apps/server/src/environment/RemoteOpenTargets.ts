@@ -6,29 +6,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-// T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
-import * as NodeOS from "node:os";
-
-/**
- * The login account on the environment host, so a remote open-in-editor deep
- * link can name the user to SSH as. Hosts differ (ds1 is `ubuntu`, a Mac is
- * not), and the viewer's own username is not a usable guess, so the host
- * reports its own. Lived in `@t3tools/shared/hostProcess` until upstream
- * replaced that module with `HostProcess`.
- */
-export const HostUsername = Context.Reference<string | null>(
-  "t3/environment/RemoteOpenTargets/HostUsername",
-  {
-    defaultValue: () => {
-      try {
-        return NodeOS.userInfo().username.trim() || null;
-      } catch {
-        return null;
-      }
-    },
-  },
-);
-// T3-CUSTOM(expbkt3): END
 
 const SSH_PORT = 22;
 
@@ -51,12 +28,7 @@ export const make = Effect.gen(function* () {
       net.hasListenerOnHost(SSH_PORT, "::1"),
       (ipv4, ipv6) => ipv4 || ipv6,
     );
-
-    // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305. Each host reports
-    // the account its own T3 server runs as, so one client can open worktrees on
-    // several machines with different logins without per-host configuration.
-    const username = yield* HostUsername;
-    // T3-CUSTOM(expbkt3): END
+    const username = yield* HostProcess.Username;
 
     const magicDnsName = yield* readTailscaleStatus.pipe(
       Effect.map((status) => status.magicDnsName),
@@ -76,25 +48,21 @@ export const make = Effect.gen(function* () {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ))
       ) {
-        // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
         targets.push({
           kind: "tailscale",
           host: magicDnsName,
           ...(username === null ? {} : { username }),
         });
-        // T3-CUSTOM(expbkt3): END
       }
       return targets;
     }
 
     if (magicDnsName !== null) {
-      // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
       targets.push({
         kind: "tailscale",
         host: magicDnsName,
         ...(username === null ? {} : { username }),
       });
-      // T3-CUSTOM(expbkt3): END
     }
 
     // os.hostname() may already be an FQDN (macOS often reports
@@ -102,13 +70,11 @@ export const make = Effect.gen(function* () {
     const hostname = yield* HostProcess.Hostname;
     const shortHostname = hostname.split(".")[0]?.trim();
     if (shortHostname !== undefined && shortHostname.length > 0) {
-      // T3-CUSTOM(expbkt3): BEGIN - backport of upstream #8305.
       targets.push({
         kind: "mdns",
         host: `${shortHostname}.local`,
         ...(username === null ? {} : { username }),
       });
-      // T3-CUSTOM(expbkt3): END
     }
 
     return targets;

@@ -125,8 +125,10 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
       `;
 
       // T3-CUSTOM(expbkt3): upstream 64 registers as 1056 in the fork lane.
-      assert.deepEqual(yield* runMigrations(), [[1056, "CanonicalizeThreadPullRequestLinks"]]);
-      assert.deepEqual(yield* runMigrations(), []);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 1056 }), [
+        [1056, "CanonicalizeThreadPullRequestLinks"],
+      ]);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 1056 }), []);
       const rows = yield* sql<{ readonly thread_id: string; readonly payload_json: string }>`
         SELECT thread_id, payload_json FROM orchestration_v2_projection_threads
       `;

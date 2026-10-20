@@ -14,6 +14,9 @@ if (
   })
 ) {
   const command = process.argv[2];
+  // Guard sockets before either dispatch path can load outbound-capable modules.
+  const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
+  ignoreMacosTypeOfServiceEinval();
   // T3-CUSTOM(expbkt3): native Toolyard stdio access avoids the full CLI startup graph.
   if (command === "toolyard-mcp-bridge") {
     const { runNativeToolyardCli } = await import("./toolyard/ToolyardNativeCli.ts");

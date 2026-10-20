@@ -173,9 +173,9 @@ const DEFAULT_MAXIMUM_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 // T3-CUSTOM(expbkt3): END
 
 /**
- * The bound matters because `/mcp` is mounted outside the environment auth
- * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
+ * `/mcp` is outside environment auth, so idle tokens stop authenticating.
+ * Keep expired records until explicit revocation: a trusted provider turn can
+ * refresh the token its subprocess still holds; MCP requests cannot.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -220,18 +220,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
+  // T3-CUSTOM(expbkt3): BEGIN — drop credentials whose backing login has ended.
+  // Idle records stay (upstream #19491): resolve() refuses them and touch() can
+  // restore them until revocation. A passed login expiry never comes back.
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(
-      // T3-CUSTOM(expbkt3): a credential must satisfy both bounds — upstream's
-      // liveness window (session died without a clean stop) and the fork's
-      // login expiry (the authenticated login that produced it has ended).
-      Array.from(records).filter(
-        ([, record]) =>
-          timestamp <= record.expiresAt && timestamp - record.lastAliveAt <= livenessWindowMs,
-      ),
-    );
+    const next = new Map(Array.from(records).filter(([, record]) => timestamp <= record.expiresAt));
     return next.size === records.size ? records : next;
   };
+  // T3-CUSTOM(expbkt3): END
 
   // T3-CUSTOM(expbkt3): grant checks fail closed and never substitute a browser login.
   const grantIsActive = Effect.fnUntraced(function* (userId: UserId | null, grantHash: string) {
@@ -381,11 +377,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
-      // T3-CUSTOM(expbkt3): renamed to make room for the external-user/operator fallback below.
+      // T3-CUSTOM(expbkt3): renamed to make room for the external-user/operator fallback below;
+      // records whose login expired are pruned before the liveness check.
       const providerScope = yield* SynchronizedRef.modify(state, ({ records }) => {
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
+        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+          return [undefined, { records: current }] as const;
+        }
         // T3-CUSTOM(expbkt3): a login-derived credential is only as authorized
         // as its logins.
         if (record.loginSessionIds !== undefined && record.loginSessionIds.size === 0) {
@@ -480,9 +479,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (threadId) {
       const timestamp = yield* currentTimeMillis;
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const next = new Map(current);
-        for (const [tokenHash, record] of current) {
+        const next = new Map(records);
+        for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }

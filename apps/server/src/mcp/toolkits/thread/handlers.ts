@@ -96,12 +96,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           yield* McpInvocationContext.McpInvocationContext,
           forkTask.projectId,
         );
-      const { task } = yield* scheduler
+      const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(Effect.mapError(unavailable));
       return {
         taskId: task.id,
-        threadId: task.threadId,
+        threadId,
         lastRunStatus: task.lastRunStatus,
         runCount: task.runCount,
         nextRunAt: task.nextRunAt,

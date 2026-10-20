@@ -205,6 +205,10 @@ import Migration1053 from "./Migrations/1053_ThreadClaudeAccountWait.ts";
 import Migration1054 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration1055 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 import Migration1056 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 65-66. They register at the
+// next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 // T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
 // deliberately NOT registered. It drops projection_thread_activities,
 // projection_turns, projection_thread_proposed_plans, projection_pending_approvals,
@@ -350,6 +354,9 @@ export const migrationEntries = [
   [1054, "PullRequestReviewGuides", Migration1054],
   [1055, "ThreadFailureLookupIndex", Migration1055],
   [1056, "CanonicalizeThreadPullRequestLinks", Migration1056],
+  // T3-CUSTOM(expbkt3): upstream 65-66 remapped above the shipped 1056 migration.
+  [1057, "CodexUsageNativeTurnIndex", Migration1057],
+  [1058, "RepairClientSettlementTimestamps", Migration1058],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

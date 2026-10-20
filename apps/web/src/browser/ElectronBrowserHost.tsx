@@ -13,6 +13,7 @@ import { desktopOwnEnvironmentIdAtom } from "~/fork/desktopOwnEnvironment"; // T
 
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useDesktopHostedPreviewSessions } from "~/components/preview/usePreviewSession";
 import { useActivePreviewSessions } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentScope } from "~/state/session";
@@ -30,6 +31,7 @@ export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   // T3-CUSTOM(expbkt3): a managed build launched `bk-local`, not its dev-server-1 primary.
   const primaryEnvironmentId = useAtomValue(desktopOwnEnvironmentIdAtom);
+  useDesktopHostedPreviewSessions(primaryEnvironmentId);
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
     return threadRef

@@ -21,7 +21,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-// T3-CUSTOM(expbkt3): fence async Keychain catalog operations against stale rotation writes.
 import * as Semaphore from "effect/Semaphore";
 
 // T3-CUSTOM(expbkt3): packaged BK clients keep encrypted catalogs per app identity.
@@ -29,6 +28,7 @@ import { resolveDesktopConnectionCatalogPath } from "../branding/BkConnectionCat
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopSafeStorageIdentity from "./DesktopSafeStorageIdentity.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -49,6 +49,8 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeCatalogJsonOption = Schema.decodeOption(RuntimeConnectionCatalogDocumentJson);
+const decodeNativeCatalogJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -386,6 +388,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  const safeStorageIdentity = yield* DesktopSafeStorageIdentity.DesktopSafeStorageIdentity;
   // T3-CUSTOM(expbkt3): encrypt the catalog document before asynchronous Electron safe-storage writes.
   const crypto = yield* Crypto.Crypto;
   // T3-CUSTOM(expbkt3): desktop catalog migration remains a fork-owned dependency.
@@ -400,6 +403,7 @@ export const make = Effect.gen(function* () {
     appDataDirectory: environment.appDataDirectory,
     joinPath: path.join,
   });
+  const writeLock = yield* Semaphore.make(1);
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -508,15 +512,51 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const recoverPreviousIdentityCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.recoverPreviousIdentityCatalog",
+  )(function* (
+    document: EncryptedConnectionCatalogDocument,
+    encryptedCatalog: Uint8Array,
+    cause: ElectronSafeStorage.ElectronSafeStorageDecryptError | Schema.SchemaError,
+  ) {
+    const recovered = Option.filter(
+      yield* safeStorageIdentity.decryptWithPreviousName(encryptedCatalog),
+      (catalog) => Option.isSome(decodeCatalogJsonOption(catalog)),
+    );
+    if (Option.isNone(recovered)) {
+      return yield* new DesktopConnectionCatalogStoreProtectionError({
+        operation: "decrypt-catalog",
+        catalogPath,
+        cause,
+      });
+    }
+    // Reading the previous key can wait on a Keychain prompt, so a newer catalog
+    // may have been saved since this one was read.
+    yield* Effect.gen(function* () {
+      const current = yield* readDocument(fileSystem, catalogPath);
+      if (Option.isSome(current) && current.value.encryptedCatalog === document.encryptedCatalog) {
+        yield* writeCatalog(recovered.value);
+      }
+    }).pipe(
+      writeLock.withPermits(1),
+      Effect.catch((error) =>
+        Effect.logWarning("Could not re-encrypt the connection catalog.", { catalogPath, error }),
+      ),
+    );
+    return recovered.value;
+  });
+
   // T3-CUSTOM(expbkt3): BEGIN serialize catalog reads, rotation rewrites, saves, and clears.
   return DesktopConnectionCatalogStore.of({
-    // T3-CUSTOM(expbkt3): one permit fences a rotating async read with saves and clears.
-    get: catalogOperationLock
-      .withPermits(1)(
+    get: Effect.gen(function* () {
+      // T3-CUSTOM(expbkt3): one permit fences a rotating async read with saves and
+      // clears. Previous-identity recovery runs after the permit is released: it
+      // can wait on a Keychain prompt and fences its own rewrite with `writeLock`.
+      const read = yield* catalogOperationLock.withPermits(1)(
         Effect.gen(function* () {
           const document = yield* readDocument(fileSystem, catalogPath);
           if (Option.isNone(document)) {
-            return yield* migrateLegacyCatalog;
+            return { _tag: "Read" as const, catalog: yield* migrateLegacyCatalog };
           }
           // T3-CUSTOM(expbkt3): wait for a locked keyring before reporting no catalog.
           if (!(yield* awaitEncryptionAvailable)) {
@@ -524,31 +564,37 @@ export const make = Effect.gen(function* () {
               "Desktop secure storage is unavailable, so saved connections stay locked for this run.",
               { catalogPath },
             );
-            return Option.none<string>();
+            return { _tag: "Read" as const, catalog: Option.none<string>() };
           }
-          const decrypted = yield* decodeSecretBytes(
+          const encryptedCatalog = yield* decodeSecretBytes(
             catalogPath,
             document.value.encryptedCatalog,
-          ).pipe(
-            Effect.flatMap((encryptedCatalog) =>
-              safeStorage.decryptStringWithMetadata(encryptedCatalog).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new DesktopConnectionCatalogStoreProtectionError({
-                      operation: "decrypt-catalog",
-                      catalogPath,
-                      cause,
-                    }),
-                ),
-              ),
-            ),
           );
+          const decrypted = yield* safeStorage.decryptStringWithMetadata(encryptedCatalog).pipe(
+            // CBC can decrypt with the wrong key without failing its padding check.
+            Effect.tap((catalog) =>
+              environment.platform === "darwin" || environment.platform === "linux"
+                ? decodeNativeCatalogJson(catalog.value)
+                : Effect.void,
+            ),
+            Effect.map((catalog) => ({ _tag: "Decrypted" as const, ...catalog })),
+            Effect.catch((cause) => Effect.succeed({ _tag: "Failed" as const, cause })),
+          );
+          if (decrypted._tag === "Failed") {
+            return {
+              _tag: "Recover" as const,
+              document: document.value,
+              encryptedCatalog,
+              cause: decrypted.cause,
+            };
+          }
           // T3-CUSTOM(expbkt3): Electron's async decryptor reports when a key was
           // rotated or upgraded. Rewrite only after a successful read; a failed
           // rewrite leaves the original ciphertext intact and never hides a valid
           // catalog from the user.
           if (decrypted.shouldReEncrypt) {
             yield* writeCatalog(decrypted.value).pipe(
+              writeLock.withPermits(1),
               Effect.catch((error) =>
                 Effect.logWarning("Could not re-encrypt the desktop connection catalog.", {
                   catalogPath,
@@ -557,17 +603,23 @@ export const make = Effect.gen(function* () {
               ),
             );
           }
-          return Option.some(decrypted.value);
+          return { _tag: "Read" as const, catalog: Option.some(decrypted.value) };
         }),
-      )
-      .pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
+      );
+      if (read._tag === "Read") {
+        return read.catalog;
+      }
+      return Option.some(
+        yield* recoverPreviousIdentityCatalog(read.document, read.encryptedCatalog, read.cause),
+      );
+    }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       return yield* catalogOperationLock.withPermits(1)(
         Effect.gen(function* () {
           if (!(yield* encryptionAvailable)) {
             return false;
           }
-          yield* writeCatalog(catalog);
+          yield* writeCatalog(catalog).pipe(writeLock.withPermits(1));
           return true;
         }),
       );
@@ -575,6 +627,7 @@ export const make = Effect.gen(function* () {
     clear: catalogOperationLock
       .withPermits(1)(
         fileSystem.remove(catalogPath, { force: true }).pipe(
+          writeLock.withPermits(1),
           Effect.catch((error) =>
             Effect.logWarning("Could not clear the desktop connection catalog.", {
               catalogPath,

@@ -57,6 +57,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const { isMobile } = useSidebar();
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
@@ -77,15 +78,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
-      <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
-        <SidebarTrigger
-          variant={backdropVariant ? "media-navigation" : "ghost"}
-          className="relative top-auto translate-y-0"
-          aria-label="Toggle main sidebar"
-        />
-      </div>
+      {isMobile ? (
+        <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center">
+          <SidebarTrigger
+            variant={backdropVariant ? "media-navigation" : "ghost"}
+            className="relative top-auto translate-y-0"
+            aria-label="Toggle main sidebar"
+          />
+        </div>
+      ) : null}
       {/* T3-CUSTOM(expbkt3): min-h, not h, so the row can grow to wrap the lifecycle counters. */}
       <div className="relative z-10 flex min-h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
+        {/* T3-CUSTOM(expbkt3): rendered on mobile too; there it shows only the lifecycle counters. */}
         <SidebarBrand onBackdrop={backdropVariant !== null} />
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
@@ -125,6 +129,7 @@ export function SidebarBrandWidthProbe({
 
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   // T3-CUSTOM(expbkt3): BEGIN — derive experimental global unsettled/running counters.
+  const { isMobile } = useSidebar();
   const { environments } = useEnvironments();
   const threads = useThreadShells();
   const serverConfigs = useServerConfigs();
@@ -164,7 +169,9 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <Link
         aria-label="Go to threads"
         className={cn(
-          "hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+          // T3-CUSTOM(expbkt3): upstream hides the brand on mobile through `isMobile`, not `md:`.
+          isMobile ? "hidden" : "flex",
+          "h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
           onBackdrop ? "text-white" : "text-foreground",
         )}
         to="/"
