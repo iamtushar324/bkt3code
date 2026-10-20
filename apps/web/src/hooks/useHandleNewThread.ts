@@ -233,12 +233,14 @@ export function useNewThreadHandler() {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
+        // T3-CUSTOM(expbkt3): BEGIN — an explicit parent thread is also a workspace option.
         const hasExplicitWorkspaceOption =
           hasBranchOption ||
           hasWorktreePathOption ||
           hasEnvModeOption ||
-          hasStartFromOriginOption || // T3-CUSTOM(expbkt3): joins the parent-thread check below.
-          hasParentThreadIdOption; // T3-CUSTOM(expbkt3)
+          hasStartFromOriginOption ||
+          hasParentThreadIdOption;
+        // T3-CUSTOM(expbkt3): END
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         if (hasExplicitWorkspaceOption) {
           // T3-CUSTOM(expbkt3): carry parent-thread lineage into the resurrected draft's context.

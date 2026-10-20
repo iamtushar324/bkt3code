@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): multi-line to add the extra session scope below.
 import {
   // T3-CUSTOM(expbkt3): extra scope grantable on issued sessions.
   AuthExternalSyncWriteScope,

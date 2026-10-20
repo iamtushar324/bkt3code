@@ -117,6 +117,7 @@ export function PullRequestThreadDialog({
       reference: parsedReference,
     })?.pullRequest ?? null;
   // The prepare action keys on this scope object, so it only ever reaches the hook.
+  // T3-CUSTOM(expbkt3): multi-line to pass the thread scope below.
   const preparePullRequestThreadAction = usePreparePullRequestThreadAction({
     environmentId,
     cwd,
