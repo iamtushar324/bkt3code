@@ -114,6 +114,11 @@ export const REBALANCE_PROBE_BACKOFF_MS = 5 * 60 * 1000;
 export const RESET_WAIT_THRESHOLD_MS = 5 * 60 * 1000;
 /** Margin after the reset so the status poll sees the account free before the thread continues. */
 export const RESET_WAIT_BUFFER_MS = 60 * 1000;
+/**
+ * How long a deferred account restart waits for the session's background work
+ * (a subagent, a background command) before it restarts the session anyway.
+ */
+export const BACKGROUND_WORK_RESTART_CAP_MS = 60 * 60 * 1000;
 const SNAPSHOT_CHANGE = "\u0000snapshot";
 /** The fields the CLI's `sessions/<pid>.json` carries that the live-session index needs. */
 const decodeSessionFile = Schema.decodeUnknownEffect(
@@ -358,6 +363,19 @@ export const make = Effect.gen(function* () {
   const threadProfiles = new Map<ThreadId, string>();
   const notices = new Map<ThreadId, Notice>();
   const pendingRestart = new Set<ThreadId>();
+  /**
+   * When each deferred restart first found the session's background work
+   * running. Its wait is capped at BACKGROUND_WORK_RESTART_CAP_MS from here.
+   */
+  const backgroundWaitSince = new Map<ThreadId, number>();
+  /** Deferred restarts that wait for the turn only, never for background work (access revoked). */
+  const restartIgnoresBackgroundWork = new Set<ThreadId>();
+  /** Forgets a deferred restart and its wait. True when one was pending. */
+  const forgetPendingRestart = (threadId: ThreadId): boolean => {
+    backgroundWaitSince.delete(threadId);
+    restartIgnoresBackgroundWork.delete(threadId);
+    return pendingRestart.delete(threadId);
+  };
   /** Threads with a turn in flight, as seen on the provider event bus. */
   const activeTurns = new Set<ThreadId>();
   /**
@@ -852,6 +870,8 @@ export const make = Effect.gen(function* () {
       yield* expireNotices;
       // Accounts may have room now: continue the threads waiting for one.
       yield* revivePass;
+      // Restarts deferred for background work have no turn end to wake them.
+      yield* recheckBackgroundWaits;
     });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
@@ -1241,7 +1261,7 @@ export const make = Effect.gen(function* () {
       const row = rowResult.success;
       yield* pruneExhausted;
       // A spawn is the restart a deferred mode change was waiting for.
-      if (pendingRestart.delete(threadId)) yield* announce(threadId);
+      if (forgetPendingRestart(threadId)) yield* announce(threadId);
 
       if (row.mode.kind === "profile") {
         const pinned = row.mode.profile;
@@ -1351,10 +1371,7 @@ export const make = Effect.gen(function* () {
    * shell (which marks a turn active as soon as its command is accepted, before
    * the provider has started it) and the provider session itself.
    */
-  const threadIsIdle = (
-    threadId: ThreadId,
-    settled?: OrchestrationSession,
-  ): Effect.Effect<boolean> =>
+  const turnIsIdle = (threadId: ThreadId, settled?: OrchestrationSession): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       if (activeTurns.has(threadId)) return false;
       // A `thread.session-set` event carries the session as just applied; the
@@ -1381,38 +1398,145 @@ export const make = Effect.gen(function* () {
       return live === undefined || (live.status !== "running" && live.activeTurnId === undefined);
     });
 
-  /** Restarts the thread's provider session so its next turn spawns on the new account. */
-  const restartForNewAccount = (threadId: ThreadId, why = "mode-changed") =>
+  /**
+   * Whether the thread can lose its provider session now: between turns, and
+   * with no background work (a subagent, a background command) still running
+   * in that session, which a stop would kill.
+   */
+  const threadIsIdle = (
+    threadId: ThreadId,
+    settled?: OrchestrationSession,
+  ): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      if (!(yield* turnIsIdle(threadId, settled))) return false;
+      return !(yield* providers.hasLiveBackgroundWork({ threadId }));
+    });
+
+  /**
+   * Whether a deferred restart keeps waiting for the session's background
+   * work. The wait counts from the first check that finds work. Past
+   * BACKGROUND_WORK_RESTART_CAP_MS the restart runs anyway, and the released
+   * session marks the subagents it leaves open as cancelled.
+   */
+  const waitsForBackgroundWork = (threadId: ThreadId): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      if (restartIgnoresBackgroundWork.has(threadId)) return false;
+      if (!(yield* providers.hasLiveBackgroundWork({ threadId }))) return false;
+      const nowMs = yield* Clock.currentTimeMillis;
+      const since = backgroundWaitSince.get(threadId);
+      if (since === undefined) {
+        backgroundWaitSince.set(threadId, nowMs);
+        return true;
+      }
+      if (nowMs - since < BACKGROUND_WORK_RESTART_CAP_MS) return true;
+      yield* Effect.logWarning("claude.account.restart-background-wait-expired", {
+        threadId,
+        waitedMs: nowMs - since,
+      });
+      return false;
+    });
+
+  /**
+   * Restarts the thread's provider session so its next turn spawns on the new
+   * account. A running turn defers the restart to its end, and so does the
+   * session's background work, unless `waitForBackgroundWork` is false.
+   */
+  const restartForNewAccount = (
+    threadId: ThreadId,
+    why = "mode-changed",
+    options: { readonly waitForBackgroundWork?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
       const sessions = yield* providers.listSessions();
       const live = sessions.find(
         (session) => session.threadId === threadId && session.status !== "closed",
       );
       if (live === undefined) return;
-      if (!(yield* threadIsIdle(threadId))) {
+      const ignoresBackgroundWork = options.waitForBackgroundWork === false;
+      const turnIdle = yield* turnIsIdle(threadId);
+      const waitingForBackgroundWork =
+        turnIdle && !ignoresBackgroundWork && (yield* waitsForBackgroundWork(threadId));
+      if (!turnIdle || waitingForBackgroundWork) {
         pendingRestart.add(threadId);
-        yield* Effect.logInfo("claude.account.restart-deferred", { threadId });
+        if (ignoresBackgroundWork) restartIgnoresBackgroundWork.add(threadId);
+        yield* Effect.logInfo("claude.account.restart-deferred", {
+          threadId,
+          waitingFor: turnIdle ? "background-work" : "turn",
+        });
         return;
       }
+      backgroundWaitSince.delete(threadId);
       yield* stopSessionQuietly(threadId, why);
     });
 
   /**
-   * The turn a mode change waited for has ended. Stop only if nothing new has
-   * started since (a queued message may already be on its way); otherwise
-   * keep waiting for the next completion.
+   * The turn or the background work a mode change waited for has ended. Stop
+   * only if nothing new has started since (a queued message may already be on
+   * its way); otherwise keep waiting for the next completion.
    */
   const completePendingRestart = (threadId: ThreadId, settled?: OrchestrationSession) =>
     Effect.gen(function* () {
       if (!pendingRestart.has(threadId)) return;
-      if (!(yield* threadIsIdle(threadId, settled))) {
-        yield* Effect.logInfo("claude.account.restart-still-deferred", { threadId });
+      if (!(yield* turnIsIdle(threadId, settled))) {
+        yield* Effect.logInfo("claude.account.restart-still-deferred", {
+          threadId,
+          waitingFor: "turn",
+        });
         return;
       }
-      pendingRestart.delete(threadId);
+      if (yield* waitsForBackgroundWork(threadId)) {
+        // Another fiber completed the restart while this check ran: its wait
+        // start must not outlive it.
+        if (!pendingRestart.has(threadId)) {
+          backgroundWaitSince.delete(threadId);
+          return;
+        }
+        yield* Effect.logInfo("claude.account.restart-still-deferred", {
+          threadId,
+          waitingFor: "background-work",
+        });
+        return;
+      }
+      // Another fiber may have completed this restart while the checks ran.
+      if (!forgetPendingRestart(threadId)) return;
       yield* stopSessionQuietly(threadId, "mode-changed-after-turn");
       yield* announce(threadId);
     });
+
+  /**
+   * A restart deferred for background work has no turn end to wake it when
+   * that work ends between turns, so the status poll checks each such thread.
+   * The cheap check reads only the thread's own sessions: the full idle check
+   * reads every session, and each read starts that session's idle release
+   * again.
+   */
+  const recheckBackgroundWaits: Effect.Effect<void> = Effect.suspend(() =>
+    Effect.forEach(
+      [...backgroundWaitSince],
+      ([threadId, since]) =>
+        Effect.gen(function* () {
+          if (!pendingRestart.has(threadId)) {
+            backgroundWaitSince.delete(threadId);
+            return;
+          }
+          // A running turn re-checks the restart itself when it ends.
+          if (activeTurns.has(threadId)) return;
+          const nowMs = yield* Clock.currentTimeMillis;
+          if (
+            nowMs - since < BACKGROUND_WORK_RESTART_CAP_MS &&
+            (yield* providers.hasLiveBackgroundWork({ threadId }))
+          ) {
+            return;
+          }
+          yield* completePendingRestart(threadId);
+        }),
+      { discard: true },
+    ),
+  ).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("claude.account.background-wait-recheck-failed", { cause }),
+    ),
+  );
 
   // ------------------------------------------------------------ revive queue
 
@@ -1571,7 +1695,7 @@ export const make = Effect.gen(function* () {
       if (wouldChange) {
         yield* restartForNewAccount(threadId);
       } else {
-        pendingRestart.delete(threadId);
+        forgetPendingRestart(threadId);
       }
       // Choosing an account for a thread that stopped mid-turn to wait is
       // "continue now on that account": its session already stopped.
@@ -2149,7 +2273,7 @@ export const make = Effect.gen(function* () {
       projectedRunning.delete(threadId);
       threadProfiles.delete(threadId);
       notices.delete(threadId);
-      pendingRestart.delete(threadId);
+      forgetPendingRestart(threadId);
       activeTurns.delete(threadId);
       movedAwaitingTurn.delete(threadId);
       yield* repository
@@ -2203,7 +2327,9 @@ export const make = Effect.gen(function* () {
       if (mayUse(access, owner, profile)) continue;
       if (row.mode.kind === "profile") setNotice(threadId, noAccessDetail(profile));
       yield* Effect.logInfo("claude.account.access-revoked", { threadId, profile });
-      yield* restartForNewAccount(threadId);
+      // The session must leave an account its owner may no longer use, even
+      // while its background work runs.
+      yield* restartForNewAccount(threadId, "mode-changed", { waitForBackgroundWork: false });
       yield* announce(threadId);
     }
   }).pipe(
