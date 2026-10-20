@@ -1845,12 +1845,13 @@ export function requiredScopesForServerSettingsPatch(
 export function requiredScopesForProjectMutation(
   mutation: ProjectMutation,
 ): ReadonlyArray<AuthEnvironmentScope> {
+  // T3-CUSTOM(expbkt3): BEGIN — fork project-member mutations carry no scripts.
   if (
     mutation.type === "project.delete" ||
-    // T3-CUSTOM(expbkt3): fork project-member mutations carry no scripts.
     !("scripts" in mutation) ||
     mutation.scripts === undefined
   ) {
+    // T3-CUSTOM(expbkt3): END
     return [AuthOrchestrationOperateScope];
   }
   return [
