@@ -32,10 +32,6 @@ import {
 import { ENVIRONMENT_COLOR_OPTIONS } from "./environmentAppearance.ts";
 import { PHASE_SIDEBAR_UNGROUPED_ID } from "./phaseSidebar.ts";
 
-// ---------------------------------------------------------------------------
-// Colours
-// ---------------------------------------------------------------------------
-
 export interface PhaseSidebarCustomGroupColorOption {
   readonly id: ThreadCustomGroupColorId;
   readonly label: string;
@@ -60,9 +56,7 @@ export function phaseSidebarCustomGroupColorValue(
   );
 }
 
-// ---------------------------------------------------------------------------
 // Reading — merge every host's registry into one view
-// ---------------------------------------------------------------------------
 
 export interface PhaseSidebarCustomGroupRegistryEntry {
   /** The comparison key, which is also the custom section's id. */
@@ -175,9 +169,7 @@ export function buildPhaseSidebarCustomGroupRegistry(
   return result;
 }
 
-// ---------------------------------------------------------------------------
 // Writing — plan the settings patches, one per host
-// ---------------------------------------------------------------------------
 
 export interface PhaseSidebarCustomGroupRegistryWrite {
   readonly environmentId: string;

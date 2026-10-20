@@ -32,6 +32,13 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
+// T3-CUSTOM(expbkt3): BEGIN — the fork's auth routes also resolve Clerk identities,
+// environment users and server settings.
+import { ClerkDirectoryLive } from "../auth/ClerkDirectory.ts";
+import * as ClerkIdentityVerifier from "../auth/ClerkIdentityVerifier.ts";
+import * as EnvironmentUserService from "../auth/EnvironmentUserService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+// T3-CUSTOM(expbkt3): END
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectHttp from "./http.ts";
@@ -72,9 +79,21 @@ const layerConfig = Layer.effect(
   }),
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-link-proof-test-" })));
 
+// T3-CUSTOM(expbkt3): BEGIN — services the fork's auth routes need beyond upstream's.
+// Clerk stays disabled: the test config sets no Clerk secret.
+const forkSettingsLayer = ServerSettings.layerTest();
+const forkAuthServicesLayer = Layer.mergeAll(
+  ClerkDirectoryLive,
+  ClerkIdentityVerifier.layer,
+  EnvironmentUserService.layer.pipe(Layer.provide(forkSettingsLayer)),
+  forkSettingsLayer,
+);
+// T3-CUSTOM(expbkt3): END
+
 // Real credential issuance, verification, origin checks and signing; no relay or tunnel is started.
 const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
-  Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
+  // T3-CUSTOM(expbkt3): fork services for the auth routes.
+  Layer.provide([AuthHttp.layer.pipe(Layer.provide(forkAuthServicesLayer)), ConnectHttp.layer]),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(

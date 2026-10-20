@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 
 import type { SourceControlProfileId } from "@t3tools/contracts";
 
-export const RESERVED_SOURCE_CONTROL_ENVIRONMENT_KEYS = new Set([
+const RESERVED_SOURCE_CONTROL_ENVIRONMENT_KEYS = new Set([
   "GH_TOKEN",
   "GITHUB_TOKEN",
   "GH_ENTERPRISE_TOKEN",

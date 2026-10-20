@@ -1488,13 +1488,11 @@ export function resolvePhaseSidebarTraversalTarget(input: {
     : null;
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Lifecycle counters.
 //
 // Moved here from apps/web/src/components/sidebar/sidebarSessionCounters.ts so
 // the mobile home list can show the same running/idle summary the web sidebar
 // chrome does.
-// ---------------------------------------------------------------------------
 
 export interface SidebarSessionCounts {
   /** Unsettled sessions with no agent working: the ones waiting on a human. */
@@ -1600,13 +1598,11 @@ export function summarizeSidebarSessions(
   return { nonRunning, running, unread, nextSnoozeWakeAt };
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Running-session emphasis.
 //
 // Moved from apps/web/src/components/sidebar/RunningSessionGlint.logic.ts. Web
 // renders the emphasis as an animated glint; mobile renders it statically, so
 // only the decision is shared, never the presentation.
-// ---------------------------------------------------------------------------
 
 export function isRunningSessionPhase(phaseId: PhaseSidebarPhaseId): boolean {
   return phaseId === "planning" || phaseId === "implementing";
@@ -1628,13 +1624,11 @@ export function runningSessionDividerPhase(
   return phaseIds.find(isRunningSessionPhase) ?? null;
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): "Move under session" candidates.
 //
 // Moved from apps/web/src/components/sidebar/MoveUnderSessionDialog.logic.ts.
 // This is the client-side mirror of the server's cycle guard, and the two must
 // not drift — so both clients run the same copy.
-// ---------------------------------------------------------------------------
 
 export interface MoveUnderCandidate {
   readonly thread: ThreadShell;
@@ -1752,14 +1746,12 @@ export function resolveMoveUnderCandidates(input: {
     }));
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Unread tracking.
 //
 // Moved from apps/web/src/threadVisitTimestamp.ts. Both clients compare a
 // thread's newest activity against the last time this device opened it; where
 // that "last visited" map is stored is platform-specific, but the rule that
 // decides what counts as newer is not.
-// ---------------------------------------------------------------------------
 
 export interface ThreadVisitTimestampInput {
   readonly threadUpdatedAt: string;
@@ -1934,9 +1926,7 @@ export function buildPhaseSidebarRows(
   });
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): row status — elapsed working time and running subagents.
-// ---------------------------------------------------------------------------
 
 /**
  * Upstream's "working" rule, copied from `resolveSidebarThreadStatus` in

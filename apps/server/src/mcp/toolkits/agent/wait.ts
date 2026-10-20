@@ -135,19 +135,19 @@ export const waitForChange = Effect.fn("agentToolkit.waitForChange")(function* (
   const known = new Map<string, boolean>();
   let lastSeen = input.afterSequence;
 
-  const mayReport = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      if (input.threadIds !== null) return input.threadIds.has(threadId);
-      const cached = known.get(threadId);
-      if (cached !== undefined) return cached;
-      const shell = yield* caller.threads
-        .getThreadShell(threadId)
-        .pipe(Effect.orElseSucceed(() => null));
-      const allowed =
-        shell !== null && visible(shell) && (input.includeSubagents === true || !isSubagent(shell));
-      known.set(threadId, allowed);
-      return allowed;
-    });
+  // Untraced: runs for every stored event the wait stream reads, usually from the cache.
+  const mayReport = Effect.fnUntraced(function* (threadId: ThreadId) {
+    if (input.threadIds !== null) return input.threadIds.has(threadId);
+    const cached = known.get(threadId);
+    if (cached !== undefined) return cached;
+    const shell = yield* caller.threads
+      .getThreadShell(threadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    const allowed =
+      shell !== null && visible(shell) && (input.includeSubagents === true || !isSubagent(shell));
+    known.set(threadId, allowed);
+    return allowed;
+  });
 
   /** Whether the run that just ended left a plan that waits for review. */
   const runProposedPlan = (threadId: ThreadId, runId: string) =>

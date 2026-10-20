@@ -497,8 +497,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   return McpSessionRegistry.of({
     // T3-CUSTOM(expbkt3): profile lookup cannot mint, revoke, or consume a provider credential.
-    inspectUpstreamServers: (request) =>
-      Effect.gen(function* () {
+    inspectUpstreamServers: Effect.fn("McpSessionRegistry.inspectUpstreamServers")(
+      function* (request) {
         const actorUserId = request.actorUserId ?? null;
         const loadProfile = options.loadPersonalProfileForInspection ?? options.loadPersonalProfile;
         // T3-CUSTOM(expbkt3): inspect the authenticated local profile without changing orchestration identity.
@@ -520,10 +520,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: request.providerInstanceId,
           profile,
         });
-      }).pipe(
-        // An unavailable snapshot is distinct from a successful empty catalog. Keep the live process.
-        Effect.catchCause(() => Effect.undefined),
-      ),
+      },
+      // An unavailable snapshot is distinct from a successful empty catalog. Keep the live process.
+      Effect.catchCause(() => Effect.undefined),
+    ),
     issue,
     resolve,
     touch,

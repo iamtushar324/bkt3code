@@ -1,7 +1,7 @@
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
-  AuthStandardClientScopes,
+  AuthMemberClientScopes,
   EnvironmentId,
   WS_FORK_METHODS,
 } from "@t3tools/contracts";
@@ -52,7 +52,7 @@ it.layer(
       expect(verified.subject).toBe("clerk:user_clerk_alice");
       expect(verified.userId).toBe(userId);
       // Toolyard checks the active administrator independently, without administrative pairing scopes.
-      expect(verified.scopes).toEqual(AuthStandardClientScopes);
+      expect(verified.scopes).toEqual(AuthMemberClientScopes);
       expect(verified.scopes).not.toContain(AuthAccessWriteScope);
       expect(requiredScopeForRpcMethod(WS_FORK_METHODS.toolyardIntegrationConfigure)).toBe(
         AuthOrchestrationOperateScope,

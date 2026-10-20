@@ -1219,6 +1219,9 @@ export const make = Effect.gen(function* () {
       Effect.map(({ cwd: canonicalCwd, sourceControlProfileId }) => {
         const cacheKey = `${canonicalCwd}\0${sourceControlProfileId ?? "machine"}`;
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
+        // T3-CUSTOM(expbkt3): Git state is shared by every profile, so remembered Git reads
+        // (rememberPrLookupGitState) watch the plain cwd epoch that any profile's action bumps.
+        prLookupEpochByCwd.set(canonicalCwd, prLookupEpoch(canonicalCwd) + 1);
       }),
     );
   // T3-CUSTOM(expbkt3): PR lookup cache keys carry the source-control profile

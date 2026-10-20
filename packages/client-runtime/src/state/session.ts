@@ -86,7 +86,7 @@ export const fetchOrchestrationUsers = Effect.fn("clientRuntime.state.fetchOrche
       // `client.users(...)` rather than `client.orchestration.users(...)`.
       group: "orchestration",
       method: "GET",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/users"),
+      url: (urls) => urls.users(),
       timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
       request: ({ client, headers }) => client.users({ headers }),
     });

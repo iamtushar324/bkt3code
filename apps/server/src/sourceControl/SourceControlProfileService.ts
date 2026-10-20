@@ -32,7 +32,6 @@ import { scrubSourceControlIdentityEnvironment } from "./SourceControlExecutionE
 
 export {
   mergeSourceControlEnvironment,
-  RESERVED_SOURCE_CONTROL_ENVIRONMENT_KEYS,
   scrubSourceControlIdentityEnvironment,
 } from "./SourceControlExecutionEnvironment.ts";
 

@@ -381,38 +381,42 @@ export function createThreadEnvironmentAtoms<R, E>(
     // that was persisted before send (see startThreadTurnDurably above).
     queueOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:queue-outbox",
-      execute: (message: QueuedThreadMessage, registry) =>
-        Effect.gen(function* () {
-          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
-          if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
-            return yield* Effect.fail(
-              new ThreadOutboxPersistenceError({
-                operation: "save-before-send",
-                cause: "Outbox storage unavailable",
-              }),
-            );
-          }
-          yield* cacheOption.value.saveOutbox(message);
-          bumpOutboxRevision(
-            registry,
-            message.environmentId,
-            message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+      execute: Effect.fn("ThreadCommands.queueOutbox")(function* (
+        message: QueuedThreadMessage,
+        registry: AtomRegistry.AtomRegistry,
+      ) {
+        const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+        if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
+          return yield* Effect.fail(
+            new ThreadOutboxPersistenceError({
+              operation: "save-before-send",
+              cause: "Outbox storage unavailable",
+            }),
           );
-        }),
+        }
+        yield* cacheOption.value.saveOutbox(message);
+        bumpOutboxRevision(
+          registry,
+          message.environmentId,
+          message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+        );
+      }),
     }),
     discardOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:discard-outbox",
-      execute: (message: DiscardDurableOutboxInput, registry) =>
-        Effect.gen(function* () {
-          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
-          if (Option.isNone(cacheOption) || cacheOption.value.removeOutbox === undefined) return;
-          yield* cacheOption.value.removeOutbox(message);
-          bumpOutboxRevision(
-            registry,
-            message.environmentId,
-            message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
-          );
-        }),
+      execute: Effect.fn("ThreadCommands.discardOutbox")(function* (
+        message: DiscardDurableOutboxInput,
+        registry: AtomRegistry.AtomRegistry,
+      ) {
+        const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+        if (Option.isNone(cacheOption) || cacheOption.value.removeOutbox === undefined) return;
+        yield* cacheOption.value.removeOutbox(message);
+        bumpOutboxRevision(
+          registry,
+          message.environmentId,
+          message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+        );
+      }),
     }),
     // T3-CUSTOM(expbkt3): END
     create: createEnvironmentCommand(runtime, {

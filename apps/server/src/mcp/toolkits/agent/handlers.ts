@@ -248,8 +248,6 @@ const actorLabel = (
   return name === null ? `via ${via}` : `${name} (via ${via})`;
 };
 
-// -- t3_whoami ---------------------------------------------------------------
-
 const whoami = Effect.fn("agentToolkit.whoami")(function* (
   _input: Tool.Parameters<typeof WhoamiTool>,
 ) {
@@ -335,8 +333,6 @@ const whoami = Effect.fn("agentToolkit.whoami")(function* (
     cursor: String(sessions.sequence),
   });
 });
-
-// -- t3_inbox ------------------------------------------------------------------
 
 const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<typeof InboxTool>) {
   const caller = yield* loadAgentCaller("t3.read");
@@ -455,8 +451,6 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
   });
 });
 
-// -- t3_answer -----------------------------------------------------------------
-
 /** An ISO time as epoch milliseconds, or null. */
 const toMillisOrNull = (iso: string | null) => {
   if (iso === null) return null;
@@ -487,12 +481,12 @@ type AnswerDelivery = keyof typeof DELIVERY_TEXT;
  * it joined the running turn, started one or waits behind it (as
  * ThreadManagementService.sendToThread reads it). Null when that cannot be read.
  */
-const answerDelivery = (
+const answerDelivery: (
   caller: Caller,
   threadId: ThreadId,
   requestId: string,
-): Effect.Effect<AnswerDelivery | null> =>
-  Effect.gen(function* () {
+) => Effect.Effect<AnswerDelivery | null> = Effect.fn("agentToolkit.answerDelivery")(
+  function* (caller: Caller, threadId: ThreadId, requestId: string) {
     const messageId = MessageId.make(`async-answer:${requestId}`);
     const { messages } = yield* caller.threads.getThreadRecords(threadId, ["messages"], {
       messageIds: [messageId],
@@ -519,7 +513,9 @@ const answerDelivery = (
             ? "started"
             : "steered";
     return delivery;
-  }).pipe(Effect.orElseSucceed(() => null));
+  },
+  Effect.orElseSucceed(() => null),
+);
 
 const DECISIONS: Record<string, ProviderApprovalDecision> = {
   approve: "accept",
@@ -812,8 +808,6 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
   return yield* answerResult({ caller, shell, cursor, nowMs, origin, answered, delivery: null });
 });
 
-// -- t3_find_sessions ------------------------------------------------------------
-
 const ACTIVE_STATES: ReadonlySet<SessionState> = new Set([
   "waiting",
   "running",
@@ -897,8 +891,6 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
     sessions: page.map((shell) => sessionData(shell, context(shell))),
   });
 });
-
-// -- t3_session_brief ---------------------------------------------------------------
 
 interface BriefMessage {
   readonly role: "User" | "Agent";
@@ -1096,8 +1088,6 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
   });
 });
 
-// -- t3_start_session -----------------------------------------------------------------
-
 const workspaceFor = (workspace: string | undefined) => {
   const value = workspace?.trim();
   if (value === undefined || value.length === 0) return undefined;
@@ -1291,8 +1281,6 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
   });
 });
 
-// -- t3_send_message --------------------------------------------------------------------
-
 const sendError = (error: { readonly _tag: string; readonly message: string }) => {
   switch (error._tag) {
     case "ThreadManagementThreadArchivedError":
@@ -1391,8 +1379,6 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
     },
   );
 });
-
-// -- t3_wait --------------------------------------------------------------------------
 
 const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<typeof WaitTool>) {
   const caller = yield* loadAgentCaller("t3.read");

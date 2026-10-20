@@ -4091,6 +4091,10 @@ it.layer(
                 if (args.join(" ") === "--version") {
                   return { stdout: "2.1.288\n", stderr: "", code: 0 };
                 }
+                // T3-CUSTOM(expbkt3): the fork probes `claude auth status` before the capabilities.
+                if (args.join(" ") === "auth status") {
+                  return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
+                }
                 throw new Error(`Unexpected args: ${args.join(" ")}`);
               }),
             ),
@@ -4151,6 +4155,15 @@ it.layer(
             Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make((command) => {
+                // T3-CUSTOM(expbkt3): the fork probes `claude auth status` after a healthy version.
+                if (
+                  (command as unknown as { args: ReadonlyArray<string> }).args.join(" ") ===
+                  "auth status"
+                ) {
+                  return Effect.succeed(
+                    mockHandle({ stdout: '{"loggedIn":true}\n', stderr: "", code: 0 }),
+                  );
+                }
                 assert.deepStrictEqual(
                   (command as unknown as { args: ReadonlyArray<string> }).args,
                   ["--version"],
@@ -4235,6 +4248,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -4273,6 +4290,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -4309,6 +4330,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -4334,6 +4359,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -4355,6 +4384,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -4378,6 +4411,10 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            // A logged-in answer leaves the capability-based auth logic under test.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),

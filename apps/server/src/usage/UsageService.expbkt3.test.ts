@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -74,9 +74,15 @@ const serviceLayer = (home: string, prefix: string) =>
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
       ServerSettings.layerTest({
-        providers: {
-          claudeAgent: { homePath: NodePath.join(home, "claude") },
-          codex: { homePath: NodePath.join(home, "codex") },
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { homePath: NodePath.join(home, "claude") },
+          },
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { homePath: NodePath.join(home, "codex") },
+          },
         },
       }),
     ),
@@ -89,7 +95,11 @@ const serviceLayer = (home: string, prefix: string) =>
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcess.Environment, { GROK_HOME: NodePath.join(home, "grok") }),
+      Layer.succeed(HostProcess.Environment, {
+        HOME: home,
+        GROK_HOME: NodePath.join(home, "grok"),
+        PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
+      }),
     ),
   );
 

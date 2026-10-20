@@ -73,67 +73,66 @@ export const make = Effect.gen(function* () {
   // A failing CSPRNG is a defect, not something a caller can recover from.
   const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
 
-  const show: AgentUiServiceShape["show"] = (input) =>
-    Effect.gen(function* () {
-      const title = input.title.trim() || "Agent view";
-      const html = input.html?.trim() ?? "";
-      const rawUrl = input.url?.trim() ?? "";
+  const show: AgentUiServiceShape["show"] = Effect.fn("AgentUiService.show")(function* (input) {
+    const title = input.title.trim() || "Agent view";
+    const html = input.html?.trim() ?? "";
+    const rawUrl = input.url?.trim() ?? "";
 
-      if (html.length === 0 && rawUrl.length === 0) {
-        return yield* new AgentUiError({
-          operation: "show",
-          message: "Provide either `html` or `url`.",
-        });
-      }
-      if (html.length > 0 && rawUrl.length > 0) {
-        return yield* new AgentUiError({
-          operation: "show",
-          message: "Provide only one of `html` or `url`, not both.",
-        });
-      }
-      if (html.length > AGENT_UI_MAX_HTML_CHARS) {
-        return yield* new AgentUiError({
-          operation: "show",
-          message: `The document is ${html.length} characters; the limit is ${AGENT_UI_MAX_HTML_CHARS}. Render a smaller view, or link to a URL.`,
-        });
-      }
+    if (html.length === 0 && rawUrl.length === 0) {
+      return yield* new AgentUiError({
+        operation: "show",
+        message: "Provide either `html` or `url`.",
+      });
+    }
+    if (html.length > 0 && rawUrl.length > 0) {
+      return yield* new AgentUiError({
+        operation: "show",
+        message: "Provide only one of `html` or `url`, not both.",
+      });
+    }
+    if (html.length > AGENT_UI_MAX_HTML_CHARS) {
+      return yield* new AgentUiError({
+        operation: "show",
+        message: `The document is ${html.length} characters; the limit is ${AGENT_UI_MAX_HTML_CHARS}. Render a smaller view, or link to a URL.`,
+      });
+    }
 
-      const url = rawUrl.length > 0 ? normalizeUrl(rawUrl) : null;
-      if (rawUrl.length > 0 && url === null) {
-        return yield* new AgentUiError({
-          operation: "show",
-          message: "`url` must be an absolute https:// URL.",
-        });
-      }
+    const url = rawUrl.length > 0 ? normalizeUrl(rawUrl) : null;
+    if (rawUrl.length > 0 && url === null) {
+      return yield* new AgentUiError({
+        operation: "show",
+        message: "`url` must be an absolute https:// URL.",
+      });
+    }
 
-      const kind = url === null ? ("html" as const) : ("url" as const);
-      const height = clampHeight(input.height);
-      const renderId = `aui_${(yield* uuid).replaceAll("-", "").slice(0, 20)}`;
-      const createdAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const kind = url === null ? ("html" as const) : ("url" as const);
+    const height = clampHeight(input.height);
+    const renderId = `aui_${(yield* uuid).replaceAll("-", "").slice(0, 20)}`;
+    const createdAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
 
-      yield* repository
-        .insertRender({
-          renderId,
-          threadId: input.threadId,
-          title,
-          kind,
-          html: kind === "html" ? html : null,
-          url,
-          height,
-          createdAt,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AgentUiError({
-                operation: "show",
-                message: `Could not store the view: ${String(cause)}`,
-              }),
-          ),
-        );
+    yield* repository
+      .insertRender({
+        renderId,
+        threadId: input.threadId,
+        title,
+        kind,
+        html: kind === "html" ? html : null,
+        url,
+        height,
+        createdAt,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentUiError({
+              operation: "show",
+              message: `Could not store the view: ${String(cause)}`,
+            }),
+        ),
+      );
 
-      return { renderId, kind, height, title } satisfies AgentUiRenderHandle;
-    });
+    return { renderId, kind, height, title } satisfies AgentUiRenderHandle;
+  });
 
   const getRender: AgentUiServiceShape["getRender"] = (input) =>
     repository.getRender(input).pipe(

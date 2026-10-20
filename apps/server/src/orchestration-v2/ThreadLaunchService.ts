@@ -827,18 +827,20 @@ const make = Effect.gen(function* () {
           : request;
       // T3-CUSTOM(expbkt3): retain actor access on receipt recovery and every empty-thread reuse path.
       const actorUserId = yield* CurrentOrchestrationActorUserId;
-      const requireThreadAccess = (threadId: ThreadId, allowAbsent = true) =>
-        Effect.gen(function* () {
-          if (actorUserId === null) return;
-          const shell = yield* threads
-            .getThreadShell(threadId)
-            .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
-          if (
-            (shell === null && !allowAbsent) ||
-            (shell !== null && !isOwnerOrMember(shell, actorUserId))
-          )
-            return yield* mapError(input, "create-thread", threadId)("Thread not found.");
-        });
+      const requireThreadAccess = Effect.fn("ThreadLaunchService.requireThreadAccess")(function* (
+        threadId: ThreadId,
+        allowAbsent = true,
+      ) {
+        if (actorUserId === null) return;
+        const shell = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        if (
+          (shell === null && !allowAbsent) ||
+          (shell !== null && !isOwnerOrMember(shell, actorUserId))
+        )
+          return yield* mapError(input, "create-thread", threadId)("Thread not found.");
+      });
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,

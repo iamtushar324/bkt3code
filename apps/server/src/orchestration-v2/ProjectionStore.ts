@@ -4774,15 +4774,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     // T3-CUSTOM(expbkt3): one indexed read, so plan supersession never loads the thread.
-    const getActiveProposedPlans: ProjectionStoreV2Shape["getActiveProposedPlans"] = (threadId) =>
-      Effect.gen(function* () {
+    const getActiveProposedPlans: ProjectionStoreV2Shape["getActiveProposedPlans"] = Effect.fn(
+      "ProjectionStore.getActiveProposedPlans",
+    )(
+      function* (threadId) {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_plans
           WHERE thread_id = ${threadId} AND kind = 'proposed_plan' AND status = 'active'
         `;
         const plans = yield* decodeRows(decodePlanPayload, threadId)(rows);
         return plans.filter(isProposedPlanArtifact);
-      }).pipe(Effect.mapError(controlReadError(threadId)));
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
 
     const hasUnpairedRunInterruptRequest: ProjectionStoreV2Shape["hasUnpairedRunInterruptRequest"] =
       Effect.fn("ProjectionStore.hasUnpairedRunInterruptRequest")(
@@ -6861,14 +6865,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         return projection.plans.find((plan) => plan.id === planId);
       }),
       // T3-CUSTOM(expbkt3): plan supersession read.
-      getActiveProposedPlans: (threadId) =>
-        Effect.gen(function* () {
+      getActiveProposedPlans: Effect.fn("ProjectionStore.getActiveProposedPlans")(
+        function* (threadId) {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
           if (projection === undefined) return [];
           return projection.plans
             .filter(isProposedPlanArtifact)
             .filter((plan) => plan.status === "active");
-        }),
+        },
+      ),
       hasUnpairedRunInterruptRequest: Effect.fn("ProjectionStore.hasUnpairedRunInterruptRequest")(
         function* (threadId, requestId, resultId) {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

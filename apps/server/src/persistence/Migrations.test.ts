@@ -6,10 +6,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 
-// T3-CUSTOM(expbkt3): the fork keeps FIRST_V2_MIGRATION_ID at 55, so the guarded
-// range is the whole 1000+ lane (V2 itself is 1043). Ids 46-999 are empty, so
-// `toMigrationInclusive: 54` still means "everything below the guarded range".
-const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
+// T3-CUSTOM(expbkt3): V2 is fork id 1043 (upstream 55), so upstream's last pre-V2
+// id 54 is fork 1042 throughout this file.
+const v2Migrations = migrationManifest.filter(([id]) => id >= 1043);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
 
 const history = Effect.gen(function* () {
@@ -60,7 +59,8 @@ describe("runMigrations", () => {
   it.effect("refuses to start when a later id would skip V2 migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      // T3-CUSTOM(expbkt3): fork 1042 is upstream 54.
+      yield* runMigrations({ toMigrationInclusive: 1042 });
       yield* sql`
         INSERT INTO effect_sql_migrations (migration_id, name)
         VALUES (${newerMigrationId}, 'FutureMainMigration')
@@ -80,18 +80,20 @@ describe("runMigrations", () => {
 
   it.effect("upgrades a database at exactly 54", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      // T3-CUSTOM(expbkt3): fork 1042 is upstream 54.
+      yield* runMigrations({ toMigrationInclusive: 1042 });
       assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  // T3-CUSTOM(expbkt3): 45 is the fork's highest id below the guarded range (upstream 54).
-  it.effect.each([30, 45])("still starts with a site-local migration at id %s", (id) =>
+  // T3-CUSTOM(expbkt3): fork 1042 is upstream 54, the last id below V2.
+  it.effect.each([30, 1042])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      // T3-CUSTOM(expbkt3): fork 1042 is upstream 54.
+      yield* runMigrations({ toMigrationInclusive: 1042 });
       yield* sql`
         UPDATE effect_sql_migrations SET name = 'SiteLocalMigration' WHERE migration_id = ${id}
       `;

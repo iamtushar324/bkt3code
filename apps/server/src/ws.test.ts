@@ -101,6 +101,23 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
+// T3-CUSTOM(expbkt3): BEGIN — fork services the WebSocket RPC layer reads at construction.
+import * as Option from "effect/Option";
+import { HttpClient } from "effect/http";
+import { ClerkDirectory } from "./auth/ClerkDirectory.ts";
+import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
+import { AgentUiService } from "./agentui/AgentUiService.ts";
+import { ClaudeAccountsService } from "./claudeAccounts/ClaudeAccountsService.ts";
+import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
+import { OrchestrationAccessControl } from "./orchestration-v2/Services/AccessControl.ts";
+import * as OrchestrationEngine from "./orchestration-v2/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./orchestration-v2/Services/ProjectionSnapshotQuery.ts";
+import { PlanReviewService } from "./planreview/PlanReviewService.ts";
+import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
+import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+import { ThreadCommentsService } from "./threadcomments/ThreadCommentsService.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+// T3-CUSTOM(expbkt3): END
 import * as Keybindings from "./keybindings.ts";
 import * as ServerSettings from "./serverSettings.ts";
 
@@ -512,6 +529,23 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+  // T3-CUSTOM(expbkt3): BEGIN — an unbound local session is an unrestricted operator;
+  // the other fork services are unused by the config RPC.
+  Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
+  Layer.mock(ClerkDirectory)({ enabled: false, descriptor: null }),
+  Layer.mock(OrchestrationEngine.OrchestrationEngineService)({}),
+  Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({}),
+  Layer.mock(UserMcpProfileStore.UserMcpProfileStore)({}),
+  Layer.mock(HttpClient.HttpClient)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(SourceControlProfileService.SourceControlProfileService)({}),
+  Layer.mock(SessionArchiveService.SessionArchiveService)({}),
+  Layer.mock(EnvironmentUserService.EnvironmentUserService)({}),
+  Layer.mock(PlanReviewService)({}),
+  Layer.mock(AgentUiService)({}),
+  Layer.mock(ThreadCommentsService)({}),
+  Layer.mock(ClaudeAccountsService)({}),
+  // T3-CUSTOM(expbkt3): END
 );
 
 const layerConfigSources = Layer.mergeAll(

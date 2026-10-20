@@ -47,6 +47,8 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+// T3-CUSTOM(expbkt3): startup starts the fork archive sweeper.
+import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
 
 it("uses the canonical Codex model for auto-bootstrap", () => {
   assert.deepEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
@@ -226,6 +228,8 @@ it.effect.each([
         Layer.mock(HttpServer.HttpServer)({
           address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
         }),
+        // T3-CUSTOM(expbkt3): archive sweeps stay off, as they do unless configured.
+        Layer.mock(SessionArchiveSweeper.SessionArchiveSweeper)({ start: () => Effect.void }),
       );
       yield* Effect.gen(function* () {
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;

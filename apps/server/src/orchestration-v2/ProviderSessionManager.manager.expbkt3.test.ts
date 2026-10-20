@@ -27,6 +27,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { isActiveExternalGrant } from "../mcp/UserMcpProfileStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -149,34 +150,38 @@ function fixture(provider = "codex") {
         };
       }),
   };
+  const eventSink = Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) });
+  const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
+    getThread: () => Effect.succeed(thread as never),
+    getThreadRecords: () =>
+      Effect.succeed({
+        thread,
+        messages,
+        runtimeRequests: [],
+        nodes: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection),
+    getThreadShell: () =>
+      Effect.succeed({
+        ...thread,
+        activeRunId: state.stopped ? null : runId,
+        status: state.stopped ? "interrupted" : "starting",
+        pendingRuntimeRequest: state.pendingPrompt ? { id: "human-question" } : null,
+        hasActionableProposedPlan: false,
+        pendingBackgroundTasks: [],
+      } as never),
+  });
   const layer = ProviderSessionManager.layerWithOptions({ idleTimeoutMs: 60_000 }).pipe(
     Layer.provide(
       Layer.mergeAll(
         IdAllocator.layer,
         FileSystem.layerNoop({}),
         ProviderAdapterRegistry.layerSingle(adapter),
-        Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
+        eventSink,
         Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThread: () => Effect.succeed(thread as never),
-          getThreadRecords: () =>
-            Effect.succeed({
-              thread,
-              messages,
-              runtimeRequests: [],
-              nodes: [],
-              turnItems: [],
-            } as unknown as OrchestrationV2ThreadProjection),
-          getThreadShell: () =>
-            Effect.succeed({
-              ...thread,
-              activeRunId: state.stopped ? null : runId,
-              status: state.stopped ? "interrupted" : "starting",
-              pendingRuntimeRequest: state.pendingPrompt ? { id: "human-question" } : null,
-              hasActionableProposedPlan: false,
-              pendingBackgroundTasks: [],
-            } as never),
-        }),
+        projections,
+        // The manager forwards command output through the hub, as upstream's own fixture wires it.
+        CommandOutputHub.layer.pipe(Layer.provide(Layer.merge(eventSink, projections))),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed({
             experimental: { externalMcp: { enabled: true } },

@@ -7364,17 +7364,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         // T3-CUSTOM(expbkt3) BEGIN: a subagent that ends between turns completes its card at once.
         // Subagent ends already shown on their cards while the root was idle.
-        // Each frame still waits in the wake buffer: until a continuation
-        // drains it, it pins the session as the running subagent did, and the
-        // drain does not apply it to the card a second time.
+        // Each frame still waits in the wake buffer for its continuation, and
+        // the drain does not apply it to the card a second time. Like
+        // upstream's confirmed idle outcomes, a shown end does not pin the
+        // session.
         const subagentEndsShownBetweenTurns = new WeakSet<SDKMessage>();
-        const hasUndrainedSubagentEndShownBetweenTurns = Ref.get(wakeBuffers).pipe(
-          Effect.map((buffers) =>
-            [...buffers.values()].some((entry) =>
-              entry.messages.some((message) => subagentEndsShownBetweenTurns.has(message)),
-            ),
-          ),
-        );
         // A running subagent's end reaches its card at once, through the turn
         // that settled last, as its progress does. That covers a nested
         // subagent too, whose end never wakes the root. Call it after
@@ -7394,6 +7388,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             settled.ignoredTaskIds.has(taskId) ||
             subagent === undefined ||
             subagent.task.status !== "running" ||
+            // A workflow's outcome waits for the drain's transcript replay, as upstream's idle path does.
+            subagent.task.workflow !== undefined ||
             (yield* isKnownOpaqueBackgroundTaskOnNativeThread(nativeThreadId, taskId))
           ) {
             return;
@@ -10087,10 +10083,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (subagent.task.status === "running") {
                 return true;
               }
-            }
-            // T3-CUSTOM(expbkt3): an end shown between turns pins until its continuation drains it.
-            if (yield* hasUndrainedSubagentEndShownBetweenTurns) {
-              return true;
             }
             const buffers = yield* Ref.get(wakeBuffers);
             for (const entry of buffers.values()) {

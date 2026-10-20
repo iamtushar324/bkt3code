@@ -180,9 +180,24 @@ export const AuthStandardClientScopes = [
   AuthAccessWriteScope,
   AuthRelayWriteScope,
 ] as const;
-// T3-CUSTOM(expbkt3): upstream folded the administrative scopes into
+// T3-CUSTOM(expbkt3): BEGIN — upstream folded the administrative scopes into
 // AuthStandardClientScopes (#20432); fork-owned callers keep the old name.
 export const AuthAdministrativeScopes = AuthStandardClientScopes;
+/**
+ * What a team member's own sessions carry: the standard set without access and
+ * relay management. Upstream's argument for granting those by default (a shell
+ * or full-access agent reaches them anyway) holds for the machine's owner, but in
+ * team mode `access:write` is what separates an environment administrator from a
+ * member, so Clerk sign-ins, self-issued pairings and member MCP clients stay on
+ * this narrower set.
+ */
+export const AuthMemberClientScopes = AuthStandardClientScopes.filter(
+  (scope) =>
+    scope !== AuthAccessReadScope &&
+    scope !== AuthAccessWriteScope &&
+    scope !== AuthRelayWriteScope,
+);
+// T3-CUSTOM(expbkt3): END
 
 export const AuthTokenExchangeGrantType =
   "urn:ietf:params:oauth:grant-type:token-exchange" as const;

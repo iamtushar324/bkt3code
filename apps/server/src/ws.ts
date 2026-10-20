@@ -2162,15 +2162,13 @@ export const layerWsRpc = (
         },
       );
 
-      const withThreadSourceControlEnvironment = <
-        A extends {
-          readonly threadId: string;
-          readonly env?: Readonly<Record<string, string>> | undefined;
-        },
-      >(
-        input: A,
-      ): Effect.Effect<A, SourceControlProfileError> =>
-        Effect.gen(function* () {
+      const withThreadSourceControlEnvironment = Effect.fn("ws.withThreadSourceControlEnvironment")(
+        function* <
+          A extends {
+            readonly threadId: string;
+            readonly env?: Readonly<Record<string, string>> | undefined;
+          },
+        >(input: A): Effect.fn.Return<A, SourceControlProfileError> {
           const threadId = ThreadId.make(input.threadId);
           const settings = yield* serverSettings.getSettings.pipe(
             Effect.mapError(
@@ -2223,7 +2221,8 @@ export const layerWsRpc = (
             ),
           );
           return { ...input, env } as A;
-        });
+        },
+      );
       // T3-CUSTOM(expbkt3): END
 
       // T3-CUSTOM(expbkt3): BEGIN fork RPC handlers (wsForkHandlers.ts)
@@ -3326,21 +3325,21 @@ export const layerWsRpc = (
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
-        [WS_METHODS.agentSessionsImport]: (input) =>
-          // T3-CUSTOM(expbkt3): imports require the authenticated project access.
-          Effect.gen(function* () {
-            if (
-              actorUserId !== null &&
-              !(yield* accessControl
-                .canAccessProject(actorUserId, input.projectId)
-                .pipe(Effect.orElseSucceed(() => false)))
-            )
-              return yield* new EnvironmentAuthorizationError({
-                message: "Project not found.",
-                requiredScope: "orchestration:operate",
-              });
-            return yield* agentSessionImporter.importRecentAgentThreads(input);
-          }), // T3-CUSTOM(expbkt3): imports retain actor ownership and visibility.
+        // T3-CUSTOM(expbkt3): imports require the authenticated project access. Request
+        // instrumentation already owns the span, so this handler stays untraced.
+        [WS_METHODS.agentSessionsImport]: Effect.fnUntraced(function* (input) {
+          if (
+            actorUserId !== null &&
+            !(yield* accessControl
+              .canAccessProject(actorUserId, input.projectId)
+              .pipe(Effect.orElseSucceed(() => false)))
+          )
+            return yield* new EnvironmentAuthorizationError({
+              message: "Project not found.",
+              requiredScope: "orchestration:operate",
+            });
+          return yield* agentSessionImporter.importRecentAgentThreads(input);
+        }), // T3-CUSTOM(expbkt3): imports retain actor ownership and visibility.
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

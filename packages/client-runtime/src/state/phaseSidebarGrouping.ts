@@ -122,10 +122,6 @@ export function phaseSidebarCustomGroupId(label: string): string {
   return normalizeThreadCustomGroup(label);
 }
 
-// ---------------------------------------------------------------------------
-// Sanitizing
-// ---------------------------------------------------------------------------
-
 function sanitizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [
@@ -193,11 +189,9 @@ export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupi
   };
 }
 
-// ---------------------------------------------------------------------------
 // Editing — every operation is pure and returns the next preferences, so web's
 // zustand store and mobile's preference file apply the same rules. Placing a
 // session in a group is NOT here: that is a thread.meta.update on the server.
-// ---------------------------------------------------------------------------
 
 export function setPhaseSidebarGroupBy(
   preferences: PhaseSidebarGroupingPreferences,
@@ -435,9 +429,7 @@ export function prunePhaseSidebarGrouping(
   return changed ? { ...preferences, customGroups } : preferences;
 }
 
-// ---------------------------------------------------------------------------
 // The group registry — every custom group in view, for menus and sections
-// ---------------------------------------------------------------------------
 
 export interface PhaseSidebarCustomGroupOption {
   readonly id: string;
@@ -511,9 +503,7 @@ export function listPhaseSidebarCustomGroups(
   return options;
 }
 
-// ---------------------------------------------------------------------------
 // Sections — what the list renders
-// ---------------------------------------------------------------------------
 
 export function phaseSidebarSectionKey(kind: PhaseSidebarGroupBy, id: string): string {
   return `${kind}:${id}`;

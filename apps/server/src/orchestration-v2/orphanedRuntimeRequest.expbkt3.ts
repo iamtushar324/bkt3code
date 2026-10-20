@@ -58,28 +58,29 @@ export function isOrphanedRuntimeRequest(input: {
  * still answer, else in message mode. Only the request's own run is read, and
  * only while its session is still bound.
  */
-export const respondableRuntimeRequest = (input: {
+export const respondableRuntimeRequest = Effect.fn(
+  "OrphanedRuntimeRequest.respondableRuntimeRequest",
+)(function* (input: {
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">;
   readonly threadId: ThreadId;
   readonly context: ProjectionRuntimeResponseContext;
-}) =>
-  Effect.gen(function* () {
-    const { request, node, item, session } = input.context;
-    if (request === undefined || request.status !== "pending") return request;
-    if (request.responseCapability.type !== "live") return request;
-    let runStatus: OrchestrationV2Run["status"] | undefined;
-    // The node names the run; older requests carry it only on their timeline item.
-    const runId = node?.runId ?? item?.runId ?? null;
-    if (session !== undefined && runId !== null) {
-      const { runs } = yield* input.projectionStore.getThreadRecords(input.threadId, ["runs"], {
-        runIds: [runId],
-      });
-      runStatus = runs.find((run) => run.id === runId)?.status;
-    }
-    return isOrphanedRuntimeRequest({ request, sessionBound: session !== undefined, runStatus })
-      ? { ...request, responseCapability: { type: "message" as const } }
-      : request;
-  });
+}) {
+  const { request, node, item, session } = input.context;
+  if (request === undefined || request.status !== "pending") return request;
+  if (request.responseCapability.type !== "live") return request;
+  let runStatus: OrchestrationV2Run["status"] | undefined;
+  // The node names the run; older requests carry it only on their timeline item.
+  const runId = node?.runId ?? item?.runId ?? null;
+  if (session !== undefined && runId !== null) {
+    const { runs } = yield* input.projectionStore.getThreadRecords(input.threadId, ["runs"], {
+      runIds: [runId],
+    });
+    runStatus = runs.find((run) => run.id === runId)?.status;
+  }
+  return isOrphanedRuntimeRequest({ request, sessionBound: session !== undefined, runStatus })
+    ? { ...request, responseCapability: { type: "message" as const } }
+    : request;
+});
 
 /** One question's answer as message text; a multi-select answer lists its choices. */
 export function messageAnswerText(answer: unknown): unknown {

@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
@@ -145,6 +146,8 @@ it.effect(
               createdAt: input.createdAt,
             }),
         }),
+        // Upstream's orchestrator reads server settings at construction.
+        ServerSettings.layerTest(),
         NodeServices.layer,
       );
       const layer = Orchestrator.layer.pipe(Layer.provideMerge(dependencies));

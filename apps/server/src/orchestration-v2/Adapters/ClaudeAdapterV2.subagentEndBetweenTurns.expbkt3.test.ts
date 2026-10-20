@@ -37,6 +37,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
 const NATIVE_SESSION = "native-thread-claude-subagent-end";
@@ -240,7 +241,7 @@ const makeHarness = Effect.gen(function* () {
   const continuationRequests: Array<ProviderContinuationRequest> = [];
   const events: Array<ProviderAdapterV2Event> = [];
   const eventReceipts = yield* Queue.unbounded<ProviderAdapterV2Event>();
-  const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+  const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
     instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
     settings: CLAUDE_SETTINGS,
     environment: {},
@@ -280,7 +281,10 @@ const makeHarness = Effect.gen(function* () {
           ),
           offer: () => Effect.void,
           setModel: () => Effect.void,
+          applyFlagSettings: () => Effect.void,
           setPermissionMode: () => Effect.void,
+          stopTask: () => Effect.void,
+          backgroundTasks: () => Effect.succeed(false),
           interrupt: Effect.void,
           close: Effect.void,
         })),
@@ -485,7 +489,11 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
         // No continuation run was needed for it.
         assert.lengthOf(harness.continuationRequests, 0);
         assert.equal(harness.terminalCount(), 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     ),
   );
 
@@ -589,7 +597,11 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
           summary: `Subagent "${REVIEW_DESCRIPTION}" finished`,
         });
         assert.equal(harness.terminalCount(), 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     ),
   );
 
@@ -644,7 +656,11 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
           "command_execution:failed",
         ]);
         assert.deepEqual(reviewUpdates.at(-1), shownAtEnd);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     ),
   );
 
@@ -758,7 +774,11 @@ describe("ClaudeAdapterV2 subagent ends between turns", () => {
         assert.isAtLeast(continuationStart, 0);
         assert.isAbove(reopened, continuationStart);
         assert.isAbove(resumedEnd, reopened);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     ),
   );
 });

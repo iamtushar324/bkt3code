@@ -559,6 +559,9 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   const instanceId = ProviderInstanceId.make("acp-test-instruction-compaction");
   const threadId = ThreadId.make("thread-acp-instruction-compaction");
   yield* (yield* McpProviderSessions.McpProviderSessions).set({
+    // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+    actorUserId: null,
+    upstreamServers: [],
     environmentId: EnvironmentId.make("environment-acp-instruction-compaction"),
     threadId,
     providerSessionId: "mcp-session-acp-instruction-compaction",

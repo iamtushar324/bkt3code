@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as NodeOS from "node:os";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { ProcessRunner } from "../processRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -179,9 +180,12 @@ export class ClaudeAutoswitchClient extends Context.Service<
  */
 export function resolveAutoswitchPath(configured: string | undefined): string {
   const fromEnv = process.env.T3_CLAUDE_AUTOSWITCH_BIN?.trim();
-  if (fromEnv) return expandHomePath(fromEnv);
+  if (fromEnv) return expandHomePath(fromEnv, NodeOS.homedir());
   const trimmed = configured?.trim() ?? "";
-  return expandHomePath(trimmed.length > 0 ? trimmed : DEFAULT_CLAUDE_AUTOSWITCH_PATH);
+  return expandHomePath(
+    trimmed.length > 0 ? trimmed : DEFAULT_CLAUDE_AUTOSWITCH_PATH,
+    NodeOS.homedir(),
+  );
 }
 
 /** The switcher binary this server's settings resolve to; unreadable settings fall back to the default. */
@@ -241,11 +245,12 @@ export const make = Effect.gen(function* () {
 
   const binaryPath = autoswitchPathFrom(settings);
 
-  const invoke = <A>(
+  const invoke = Effect.fn("ClaudeAutoswitchClient.invoke")(function* <A>(
     args: ReadonlyArray<string>,
     decode: (stdout: string) => Option.Option<A>,
-  ): Effect.Effect<ClaudeAutoswitchOutcome<A>> =>
-    Effect.gen(function* () {
+  ): Effect.fn.Return<ClaudeAutoswitchOutcome<A>> {
+    // The catch stays inside the body so the outcome keeps its generic payload type.
+    return yield* Effect.gen(function* () {
       const command = yield* binaryPath;
       const result = yield* runner
         .run({
@@ -291,6 +296,7 @@ export const make = Effect.gen(function* () {
         Effect.succeed({ kind: "failed", detail: String(cause) } as const),
       ),
     );
+  });
 
   return ClaudeAutoswitchClient.of({
     status: (input) => invoke(["--status", "--json", ...rankArgs(input)], decodeStatus),

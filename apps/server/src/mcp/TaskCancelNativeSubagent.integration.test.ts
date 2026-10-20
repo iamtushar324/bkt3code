@@ -328,6 +328,9 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
         yield* worker.drain();
 
         const scope: McpInvocationScope = {
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          principal: "provider-session",
+          actorUserId: null,
           environmentId: EnvironmentId.make("environment:task-cancel"),
           requestNamespace: "provider-session:task-cancel",
           thread: {

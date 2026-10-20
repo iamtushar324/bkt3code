@@ -5323,40 +5323,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       delegatedCompletion === undefined &&
       command.notification === undefined &&
       !isNativeMaintenanceCommand(command);
-    const completeSourcePlan = (
+    const completeSourcePlan = Effect.fn("Orchestrator.completeSourcePlan")(function* (
       occurredAt: DateTime.Utc,
       options: { readonly supersedeOpenPlans: boolean } = { supersedeOpenPlans: true },
-    ) =>
-      Effect.gen(function* () {
-        const openPlans =
-          continuesThread && options.supersedeOpenPlans
-            ? yield* projectionStore
-                .getActiveProposedPlans(command.threadId)
-                .pipe(mapDispatchError(command))
-            : [];
-        const retired = [
-          ...openPlans
-            .filter((plan) => plan.id !== sourcePlan?.id)
-            .map((plan) => ({ ...plan, status: "superseded" as const })),
-          ...(sourcePlan === null ? [] : [{ ...sourcePlan, status: "completed" as const }]),
-        ];
-        yield* Effect.forEach(
-          retired,
-          (plan) =>
-            emit(
-              events,
-              command,
-            )({
-              type: "plan.updated",
-              threadId: plan.threadId,
-              ...(plan.runId === null ? {} : { runId: plan.runId }),
-              nodeId: plan.nodeId,
-              occurredAt,
-              payload: plan,
-            }),
-          { discard: true },
-        );
-      });
+    ) {
+      const openPlans =
+        continuesThread && options.supersedeOpenPlans
+          ? yield* projectionStore
+              .getActiveProposedPlans(command.threadId)
+              .pipe(mapDispatchError(command))
+          : [];
+      const retired = [
+        ...openPlans
+          .filter((plan) => plan.id !== sourcePlan?.id)
+          .map((plan) => ({ ...plan, status: "superseded" as const })),
+        ...(sourcePlan === null ? [] : [{ ...sourcePlan, status: "completed" as const }]),
+      ];
+      yield* Effect.forEach(
+        retired,
+        (plan) =>
+          emit(
+            events,
+            command,
+          )({
+            type: "plan.updated",
+            threadId: plan.threadId,
+            ...(plan.runId === null ? {} : { runId: plan.runId }),
+            nodeId: plan.nodeId,
+            occurredAt,
+            payload: plan,
+          }),
+        { discard: true },
+      );
+    });
 
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       yield* dispatchSteerIntoRun({
@@ -7716,127 +7715,125 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   // T3-CUSTOM(expbkt3): MCP message questions resolve and dispatch within one native receipt.
-  const dispatchForkAsyncResponse = (
+  const dispatchForkAsyncResponse = Effect.fn("Orchestrator.dispatchForkAsyncResponse")(function* (
     command: Extract<
       OrchestrationV2Command,
       { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) =>
-    Effect.gen(function* () {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      if (!thread.pendingAsyncUserInputIds?.includes(command.requestId)) return false;
-      const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["turnItems"])
-        .pipe(mapDispatchError(command));
-      const request = findForkAsyncRequest(projection.turnItems, command.requestId);
-      const dismissed =
-        command.type === "thread.user-input.dismiss" || command.decision === "cancel";
-      const answer =
-        command.type === "runtime-request.respond" && !dismissed
-          ? forkAsyncAnswer(request, command.answers, command.attachmentsByQuestionId)
-          : undefined;
-      if (
-        request?.kind !== "user-input.requested" ||
-        (answer !== undefined && Result.isFailure(answer))
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause:
-            answer !== undefined && Result.isFailure(answer)
-              ? answer.failure
-              : "This question has already been answered.",
-        });
-      }
-      const now = yield* DateTime.now;
-      const activity = {
-        id: EventId.make(`async-${dismissed ? "dismiss" : "answer"}:${command.requestId}`),
-        kind: "user-input.resolved",
-        summary: dismissed ? "User input dismissed" : "User input submitted",
-        tone: "info" as const,
-        turnId: request.turnId,
-        createdAt: DateTime.formatIso(now),
-        payload: {
-          requestId: command.requestId,
-          responseMode: "message",
-          ...(command.type === "runtime-request.respond" && !dismissed
-            ? {
-                answers: command.answers,
-                ...(command.attachmentsByQuestionId === undefined
-                  ? {}
-                  : { attachmentsByQuestionId: command.attachmentsByQuestionId }),
-              }
-            : {}),
-        },
-      };
-      const item = legacyActivityItem(
-        command.threadId,
-        activity,
-        projection.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) + 1,
-      );
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        occurredAt: now,
-        payload: { ...item, id: TurnItemId.make(`fork:activity:${activity.id}`) },
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    if (!thread.pendingAsyncUserInputIds?.includes(command.requestId)) return false;
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["turnItems"])
+      .pipe(mapDispatchError(command));
+    const request = findForkAsyncRequest(projection.turnItems, command.requestId);
+    const dismissed = command.type === "thread.user-input.dismiss" || command.decision === "cancel";
+    const answer =
+      command.type === "runtime-request.respond" && !dismissed
+        ? forkAsyncAnswer(request, command.answers, command.attachmentsByQuestionId)
+        : undefined;
+    if (
+      request?.kind !== "user-input.requested" ||
+      (answer !== undefined && Result.isFailure(answer))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          answer !== undefined && Result.isFailure(answer)
+            ? answer.failure
+            : "This question has already been answered.",
       });
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: now,
-        payload: {
-          ...thread,
-          pendingAsyncUserInputIds: (thread.pendingAsyncUserInputIds ?? []).filter(
-            (id) => id !== command.requestId,
-          ),
-          updatedAt: now,
-        },
-      });
-      if (dismissed || answer === undefined || Result.isFailure(answer)) return true;
-      let dispatchMode: Extract<
-        OrchestrationV2Command,
-        { type: "message.dispatch" }
-      >["dispatchMode"] = { type: "queue_after_active" };
-      const running = yield* projectionStore
-        .getRunningTurnContext(command.threadId)
-        .pipe(mapDispatchError(command));
-      if (running.run && running.providerTurn && running.providerThread?.providerSessionId) {
-        const session = yield* providerSessions
-          .get(running.providerThread.providerSessionId)
-          .pipe(mapDispatchError(command));
-        if (
-          Option.isSome(session) &&
-          session.value.providerSession.capabilities.turns.supportsActiveSteering
-        )
-          dispatchMode = { type: "steer_active", targetRunId: running.run.id };
-      }
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: MessageId.make(`async-answer:${command.requestId}`),
-          text: answer.success.text,
-          attachments: answer.success.attachments,
-          createdBy: "user",
-          creationSource: "server",
-          dispatchMode,
-        },
-        events,
-        effects,
-      );
-      return true;
+    }
+    const now = yield* DateTime.now;
+    const activity = {
+      id: EventId.make(`async-${dismissed ? "dismiss" : "answer"}:${command.requestId}`),
+      kind: "user-input.resolved",
+      summary: dismissed ? "User input dismissed" : "User input submitted",
+      tone: "info" as const,
+      turnId: request.turnId,
+      createdAt: DateTime.formatIso(now),
+      payload: {
+        requestId: command.requestId,
+        responseMode: "message",
+        ...(command.type === "runtime-request.respond" && !dismissed
+          ? {
+              answers: command.answers,
+              ...(command.attachmentsByQuestionId === undefined
+                ? {}
+                : { attachmentsByQuestionId: command.attachmentsByQuestionId }),
+            }
+          : {}),
+      },
+    };
+    const item = legacyActivityItem(
+      command.threadId,
+      activity,
+      projection.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) + 1,
+    );
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: { ...item, id: TurnItemId.make(`fork:activity:${activity.id}`) },
     });
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        pendingAsyncUserInputIds: (thread.pendingAsyncUserInputIds ?? []).filter(
+          (id) => id !== command.requestId,
+        ),
+        updatedAt: now,
+      },
+    });
+    if (dismissed || answer === undefined || Result.isFailure(answer)) return true;
+    let dispatchMode: Extract<
+      OrchestrationV2Command,
+      { type: "message.dispatch" }
+    >["dispatchMode"] = { type: "queue_after_active" };
+    const running = yield* projectionStore
+      .getRunningTurnContext(command.threadId)
+      .pipe(mapDispatchError(command));
+    if (running.run && running.providerTurn && running.providerThread?.providerSessionId) {
+      const session = yield* providerSessions
+        .get(running.providerThread.providerSessionId)
+        .pipe(mapDispatchError(command));
+      if (
+        Option.isSome(session) &&
+        session.value.providerSession.capabilities.turns.supportsActiveSteering
+      )
+        dispatchMode = { type: "steer_active", targetRunId: running.run.id };
+    }
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: MessageId.make(`async-answer:${command.requestId}`),
+        text: answer.success.text,
+        attachments: answer.success.attachments,
+        createdBy: "user",
+        creationSource: "server",
+        dispatchMode,
+      },
+      events,
+      effects,
+    );
+    return true;
+  });
 
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (

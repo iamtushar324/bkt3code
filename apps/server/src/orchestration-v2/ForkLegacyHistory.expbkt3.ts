@@ -194,199 +194,202 @@ export function legacyActivityItem(
   };
 }
 
-export const reserveLegacyTimelinePositions = (threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    // The first shell preview reserves its final slot, so later lazy hydration cannot reorder it.
-    yield* sql`WITH timeline AS (
+export const reserveLegacyTimelinePositions = Effect.fn(
+  "ForkLegacyHistory.reserveTimelinePositions",
+)(function* (threadId: ThreadId) {
+  const sql = yield* SqlClient.SqlClient;
+  // The first shell preview reserves its final slot, so later lazy hydration cannot reorder it.
+  yield* sql`WITH timeline AS (
     SELECT 'migration:v1:turn-item:' || message_id AS item_id, created_at, 0 AS kind_order, message_id AS source_id FROM projection_thread_messages WHERE thread_id=${threadId}
     UNION ALL SELECT 'migration:v1:activity:' || activity_id, created_at, 1, activity_id FROM projection_thread_activities WHERE thread_id=${threadId}
     UNION ALL SELECT 'migration:v1:plan-item:' || plan_id, created_at, 2, plan_id FROM projection_thread_proposed_plans WHERE thread_id=${threadId}
   ), positioned AS (SELECT item_id, ROW_NUMBER() OVER (ORDER BY created_at ASC,kind_order ASC,source_id ASC) AS ordinal FROM timeline)
   INSERT INTO orchestration_v2_turn_item_positions (thread_id,turn_item_id,ordinal)
   SELECT ${threadId},item_id,ordinal FROM positioned WHERE true ON CONFLICT(thread_id,turn_item_id) DO NOTHING`;
-  });
+});
 
 /** Read only question lifecycle rows once; shell refreshes use the persisted native metadata. */
-export const legacyPendingAsyncUserInputIds = (threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ kind: string; request_id: unknown; response_mode: unknown }>`
+export const legacyPendingAsyncUserInputIds = Effect.fn(
+  "ForkLegacyHistory.pendingAsyncUserInputIds",
+)(function* (threadId: ThreadId) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ kind: string; request_id: unknown; response_mode: unknown }>`
     SELECT kind,json_extract(payload_json,'$.requestId') AS request_id,
       json_extract(payload_json,'$.responseMode') AS response_mode
     FROM projection_thread_activities WHERE thread_id=${threadId}
       AND kind IN ('user-input.requested','user-input.resolved','user-input.dismissed','user-input.expired')
     ORDER BY sequence ASC,created_at ASC,activity_id ASC
   `;
-    const pending = new Set<string>();
-    for (const row of rows) {
-      if (typeof row.request_id !== "string" || row.request_id.trim().length === 0) continue;
-      if (row.kind === "user-input.requested") {
-        if (row.response_mode === "message") pending.add(row.request_id);
-      } else pending.delete(row.request_id);
-    }
-    return [...pending];
-  });
+  const pending = new Set<string>();
+  for (const row of rows) {
+    if (typeof row.request_id !== "string" || row.request_id.trim().length === 0) continue;
+    if (row.kind === "user-input.requested") {
+      if (row.response_mode === "message") pending.add(row.request_id);
+    } else pending.delete(row.request_id);
+  }
+  return [...pending];
+});
 
-export const forkLegacyHistoryEvents = (thread: OrchestrationV2AppThread) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const projects = yield* sql<{
-      workspace_root: string;
-    }>`SELECT workspace_root FROM projection_projects WHERE project_id=${thread.projectId}`;
-    const workspaceRoot = projects[0]?.workspace_root;
-    if (workspaceRoot === undefined)
-      return yield* new PersistenceSqlError({
-        operation: "import legacy checkpoint workspace",
-        correlation: { threadId: thread.id },
-        detail: "The legacy project workspace is missing.",
-      });
-    const runs = yield* sql<LegacyRunRow>`
+export const forkLegacyHistoryEvents = Effect.fn("ForkLegacyHistory.events")(function* (
+  thread: OrchestrationV2AppThread,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const projects = yield* sql<{
+    workspace_root: string;
+  }>`SELECT workspace_root FROM projection_projects WHERE project_id=${thread.projectId}`;
+  const workspaceRoot = projects[0]?.workspace_root;
+  if (workspaceRoot === undefined)
+    return yield* new PersistenceSqlError({
+      operation: "import legacy checkpoint workspace",
+      correlation: { threadId: thread.id },
+      detail: "The legacy project workspace is missing.",
+    });
+  const runs = yield* sql<LegacyRunRow>`
     SELECT turn_id, pending_message_id, state, requested_at, started_at, completed_at,
       checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json,
       ROW_NUMBER() OVER (ORDER BY requested_at ASC, turn_id ASC) AS ordinal
     FROM projection_turns WHERE thread_id = ${thread.id} AND turn_id IS NOT NULL
     ORDER BY requested_at ASC, turn_id ASC
   `;
-    const events = [...legacyRunEvents(thread, runs, workspaceRoot)];
-    const reasoning = yield* sql<{
-      message_id: string;
-      turn_id: string | null;
-      text: string;
-      created_at: string;
-      updated_at: string;
-      ordinal: number;
-    }>`SELECT message.message_id,message.turn_id,message.text,message.created_at,message.updated_at,position.ordinal FROM projection_thread_messages message INNER JOIN orchestration_v2_turn_item_positions position ON position.thread_id=message.thread_id AND position.turn_item_id='migration:v1:turn-item:' || message.message_id WHERE message.thread_id=${thread.id} AND message.role='reasoning' ORDER BY message.created_at ASC,message.message_id ASC`;
-    for (const row of reasoning) {
-      const at = date(row.updated_at);
-      events.push({
-        id: EventId.make(`migration:v1:reasoning:${row.message_id}`),
-        type: "turn-item.updated",
+  const events = [...legacyRunEvents(thread, runs, workspaceRoot)];
+  const reasoning = yield* sql<{
+    message_id: string;
+    turn_id: string | null;
+    text: string;
+    created_at: string;
+    updated_at: string;
+    ordinal: number;
+  }>`SELECT message.message_id,message.turn_id,message.text,message.created_at,message.updated_at,position.ordinal FROM projection_thread_messages message INNER JOIN orchestration_v2_turn_item_positions position ON position.thread_id=message.thread_id AND position.turn_item_id='migration:v1:turn-item:' || message.message_id WHERE message.thread_id=${thread.id} AND message.role='reasoning' ORDER BY message.created_at ASC,message.message_id ASC`;
+  for (const row of reasoning) {
+    const at = date(row.updated_at);
+    events.push({
+      id: EventId.make(`migration:v1:reasoning:${row.message_id}`),
+      type: "turn-item.updated",
+      threadId: thread.id,
+      occurredAt: at,
+      payload: {
+        id: TurnItemId.make(`migration:v1:turn-item:${row.message_id}`),
         threadId: thread.id,
-        occurredAt: at,
-        payload: {
-          id: TurnItemId.make(`migration:v1:turn-item:${row.message_id}`),
-          threadId: thread.id,
-          runId: row.turn_id === null ? null : RunId.make(row.turn_id),
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: row.ordinal,
-          status: "completed",
-          title: null,
-          startedAt: date(row.created_at),
-          completedAt: at,
-          updatedAt: at,
-          type: "reasoning",
-          text: row.text,
-          streaming: false,
-        },
-      });
-    }
-    const activityRows = yield* sql<{
-      activity_id: string;
-      tone: string;
-      kind: string;
-      summary: string;
-      payload_json: string;
-      turn_id: string | null;
-      sequence: number | null;
-      created_at: string;
-      ordinal: number;
-    }>`
+        runId: row.turn_id === null ? null : RunId.make(row.turn_id),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: row.ordinal,
+        status: "completed",
+        title: null,
+        startedAt: date(row.created_at),
+        completedAt: at,
+        updatedAt: at,
+        type: "reasoning",
+        text: row.text,
+        streaming: false,
+      },
+    });
+  }
+  const activityRows = yield* sql<{
+    activity_id: string;
+    tone: string;
+    kind: string;
+    summary: string;
+    payload_json: string;
+    turn_id: string | null;
+    sequence: number | null;
+    created_at: string;
+    ordinal: number;
+  }>`
     SELECT activity.activity_id, activity.tone, activity.kind, activity.summary, activity.payload_json, activity.turn_id, activity.sequence, activity.created_at, position.ordinal
     FROM projection_thread_activities activity INNER JOIN orchestration_v2_turn_item_positions position ON position.thread_id=activity.thread_id AND position.turn_item_id='migration:v1:activity:' || activity.activity_id
     WHERE activity.thread_id = ${thread.id} ORDER BY activity.created_at ASC, activity.activity_id ASC
   `;
-    for (const row of activityRows) {
-      const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
-        row.payload_json,
-      );
-      const activity = yield* Schema.decodeUnknownEffect(OrchestrationThreadActivity)({
-        id: row.activity_id,
-        tone: row.tone,
-        kind: row.kind,
-        summary: row.summary,
-        payload,
-        turnId: row.turn_id,
-        sequence: row.sequence ?? undefined,
-        createdAt: row.created_at,
-      });
-      const item = legacyActivityItem(thread.id, activity, row.ordinal);
-      events.push({
-        id: EventId.make(item.id),
-        type: "turn-item.updated",
-        threadId: thread.id,
-        occurredAt: item.updatedAt,
-        payload: item,
-      });
-    }
-    const plans = yield* sql<{
-      plan_id: string;
-      turn_id: string | null;
-      plan_markdown: string;
-      implemented_at: string | null;
-      created_at: string;
-      updated_at: string;
-      ordinal: number;
-    }>`
+  for (const row of activityRows) {
+    const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+      row.payload_json,
+    );
+    const activity = yield* Schema.decodeUnknownEffect(OrchestrationThreadActivity)({
+      id: row.activity_id,
+      tone: row.tone,
+      kind: row.kind,
+      summary: row.summary,
+      payload,
+      turnId: row.turn_id,
+      sequence: row.sequence ?? undefined,
+      createdAt: row.created_at,
+    });
+    const item = legacyActivityItem(thread.id, activity, row.ordinal);
+    events.push({
+      id: EventId.make(item.id),
+      type: "turn-item.updated",
+      threadId: thread.id,
+      occurredAt: item.updatedAt,
+      payload: item,
+    });
+  }
+  const plans = yield* sql<{
+    plan_id: string;
+    turn_id: string | null;
+    plan_markdown: string;
+    implemented_at: string | null;
+    created_at: string;
+    updated_at: string;
+    ordinal: number;
+  }>`
     SELECT plan.plan_id,plan.turn_id,plan.plan_markdown,plan.implemented_at,plan.created_at,plan.updated_at,position.ordinal
     FROM projection_thread_proposed_plans plan INNER JOIN orchestration_v2_turn_item_positions position ON position.thread_id=plan.thread_id AND position.turn_item_id='migration:v1:plan-item:' || plan.plan_id
     WHERE plan.thread_id = ${thread.id} ORDER BY plan.created_at ASC, plan.plan_id ASC
   `;
-    for (const row of plans) {
-      const id = PlanId.make(row.plan_id);
-      const nodeId = NodeId.make(`migration:v1:plan-node:${row.plan_id}`);
-      const runId = row.turn_id === null ? null : RunId.make(row.turn_id);
-      const at = date(row.updated_at);
-      events.push({
-        id: EventId.make(`migration:v1:plan:${row.plan_id}`),
-        type: "plan.updated",
+  for (const row of plans) {
+    const id = PlanId.make(row.plan_id);
+    const nodeId = NodeId.make(`migration:v1:plan-node:${row.plan_id}`);
+    const runId = row.turn_id === null ? null : RunId.make(row.turn_id);
+    const at = date(row.updated_at);
+    events.push({
+      id: EventId.make(`migration:v1:plan:${row.plan_id}`),
+      type: "plan.updated",
+      threadId: thread.id,
+      occurredAt: at,
+      payload: {
+        id,
         threadId: thread.id,
-        occurredAt: at,
-        payload: {
-          id,
-          threadId: thread.id,
-          runId,
-          nodeId,
-          kind: "proposed_plan",
-          status: row.implemented_at === null ? "active" : "completed",
-          markdown: row.plan_markdown,
-        },
-      });
-      // Plans remain visible even when V1 only stored an artifact, without a tool activity.
-      events.push({
-        id: EventId.make(`migration:v1:plan-item:${row.plan_id}`),
-        type: "turn-item.updated",
+        runId,
+        nodeId,
+        kind: "proposed_plan",
+        status: row.implemented_at === null ? "active" : "completed",
+        markdown: row.plan_markdown,
+      },
+    });
+    // Plans remain visible even when V1 only stored an artifact, without a tool activity.
+    events.push({
+      id: EventId.make(`migration:v1:plan-item:${row.plan_id}`),
+      type: "turn-item.updated",
+      threadId: thread.id,
+      occurredAt: at,
+      payload: {
+        id: TurnItemId.make(`migration:v1:plan-item:${row.plan_id}`),
         threadId: thread.id,
-        occurredAt: at,
-        payload: {
-          id: TurnItemId.make(`migration:v1:plan-item:${row.plan_id}`),
-          threadId: thread.id,
-          runId,
-          nodeId,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: row.ordinal,
-          status: "completed",
-          title: "Proposed plan",
-          startedAt: date(row.created_at),
-          completedAt: at,
-          updatedAt: at,
-          type: "proposed_plan",
-          planId: id,
-          markdown: row.plan_markdown,
-          streaming: false,
-        },
-      });
-    }
-    const existing = yield* sql<{
-      event_id: string;
-    }>`SELECT event_id FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${thread.id} AND event_id LIKE 'migration:v1:%'`;
-    const ids = new Set(existing.map((row) => row.event_id));
-    return events.filter((event) => !ids.has(event.id));
-  });
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: row.ordinal,
+        status: "completed",
+        title: "Proposed plan",
+        startedAt: date(row.created_at),
+        completedAt: at,
+        updatedAt: at,
+        type: "proposed_plan",
+        planId: id,
+        markdown: row.plan_markdown,
+        streaming: false,
+      },
+    });
+  }
+  const existing = yield* sql<{
+    event_id: string;
+  }>`SELECT event_id FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${thread.id} AND event_id LIKE 'migration:v1:%'`;
+  const ids = new Set(existing.map((row) => row.event_id));
+  return events.filter((event) => !ids.has(event.id));
+});

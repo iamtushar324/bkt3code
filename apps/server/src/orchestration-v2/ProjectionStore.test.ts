@@ -3693,12 +3693,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ProjectionStore.threadShellFromProjection(projection),
         ]) {
           assert.equal(questionShell.activeRunId, runId);
-          assert.deepEqual(questionShell.pendingRuntimeRequest, {
-            id: requestId,
-            kind: "user_input",
-            createdAt: now,
-            blocking,
-          });
+          // T3-CUSTOM(expbkt3): BEGIN — the fork leaves message-mode (async) questions out of
+          // pendingRuntimeRequest and flags them through hasPendingAsyncUserInput instead.
+          assert.deepEqual(
+            questionShell.pendingRuntimeRequest,
+            blocking
+              ? {
+                  id: requestId,
+                  kind: "user_input",
+                  createdAt: now,
+                  blocking,
+                }
+              : null,
+          );
+          assert.equal(questionShell.hasPendingAsyncUserInput, !blocking);
+          // T3-CUSTOM(expbkt3): END
         }
       }
 
@@ -4947,14 +4956,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const projection = yield* projectionStore.getThreadProjection(threadId);
         const memoryShell = ProjectionStore.threadShellFromProjection(projection);
         const terminal = status === "completed" || status === "rolled_back";
+        // T3-CUSTOM(expbkt3): BEGIN — the async (message-mode) question never fills
+        // pendingRuntimeRequest in the fork; hasPendingAsyncUserInput carries it instead.
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.id, memoryShell.pendingRuntimeRequest?.id],
-          terminal ? [requestId, requestId] : ["secret:b", "secret:b"],
+          terminal ? [undefined, undefined] : ["secret:b", "secret:b"],
         );
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.blocking, memoryShell.pendingRuntimeRequest?.blocking],
-          terminal ? [false, false] : [true, true],
+          terminal ? [undefined, undefined] : [true, true],
         );
+        assert.deepEqual(
+          [thread?.hasPendingAsyncUserInput, memoryShell.hasPendingAsyncUserInput],
+          [true, true],
+        );
+        // T3-CUSTOM(expbkt3): END
       }
     }),
   );

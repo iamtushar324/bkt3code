@@ -28,6 +28,8 @@ import { EnvironmentToolkit } from "./tools.ts";
 const environmentId = EnvironmentId.make("environment:preferences");
 const threadId = ThreadId.make("thread:preferences");
 const caller: McpInvocationContext.McpInvocationScope = {
+  principal: "provider-session", // T3-CUSTOM(expbkt3): fork scope fields.
+  actorUserId: null, // T3-CUSTOM(expbkt3)
   environmentId,
   requestNamespace: "provider:preferences",
   thread: {

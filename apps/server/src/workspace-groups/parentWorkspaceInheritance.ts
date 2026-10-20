@@ -75,10 +75,6 @@ export function shouldJoinParentWorkspaceGroup(input: {
   return !input.hasExplicitWorkspace && input.parentThreadId !== null;
 }
 
-// ---------------------------------------------------------------------------
-// Serialising creation of one shared worktree
-// ---------------------------------------------------------------------------
-
 const worktreeCreationLocks = new Map<string, Semaphore.Semaphore>();
 
 /**

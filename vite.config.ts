@@ -447,6 +447,36 @@ export default defineConfig({
         rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
       },
       // T3-CUSTOM(expbkt3): END
+      // T3-CUSTOM(expbkt3): BEGIN — fork React Compiler debt. These fork-only surfaces
+      // predate the compiler rules above, and clearing these bailouts needs a rewrite
+      // (ref-backed render state, effects that sync with servers or the URL), not a
+      // lint fix. The lists are a ratchet: drop a file or rule once it is converted,
+      // and never add an upstream-owned file.
+      {
+        files: ["apps/web/src/components/PhaseGroupedSidebar.tsx"],
+        rules: {
+          "react/exhaustive-effect-dependencies": "off",
+          "react/memo-dependencies": "off",
+          "react/preserve-manual-memoization": "off",
+          "react/refs": "off",
+          "react/set-state-in-effect": "off",
+        },
+      },
+      {
+        files: [
+          "apps/web/src/components/auth/ClerkSignInGate.tsx",
+          "apps/web/src/components/settings/ToolyardSettingsSection.tsx",
+          "apps/web/src/fork/LocalPhonePairingSection.tsx",
+          "apps/web/src/fork/MemberDevicesSection.tsx",
+        ],
+        rules: { "react/set-state-in-effect": "off" },
+      },
+      {
+        // Reads the draft store imperatively so typing never re-renders the sidebar.
+        files: ["apps/web/src/components/sidebar/PhaseSidebarDraftsGroup.tsx"],
+        rules: { "react/hooks": "off" },
+      },
+      // T3-CUSTOM(expbkt3): END
       {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],

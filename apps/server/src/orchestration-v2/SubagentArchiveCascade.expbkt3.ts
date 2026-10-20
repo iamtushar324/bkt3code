@@ -110,33 +110,32 @@ function cascadeRequestFor(event: OrchestrationV2DomainEvent): CascadeRequest | 
   };
 }
 
-export const make = (
+export const make = Effect.fn("SubagentArchiveCascade.make")(function* (
   options: {
     readonly startupPause?: Duration.Input;
     readonly cascadePause?: Duration.Input;
   } = {},
-) =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const eventSink = yield* EventSinkV2;
-    const sql = yield* SqlClient.SqlClient;
-    const activation = (yield* ServerActivation) ?? Effect.void;
-    const startupPause = Duration.fromInputUnsafe(options.startupPause ?? DEFAULT_STARTUP_PAUSE);
-    const cascadePauseMillis = Duration.toMillis(options.cascadePause ?? DEFAULT_CASCADE_PAUSE);
-    // Completed once the startup pass has queued its last orphan.
-    const startupQueued = yield* Deferred.make<void>();
-    const startupPass = { candidates: 0, processed: 0, archived: 0 };
-    let lastLiveMoveAt: number | null = null;
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSinkV2;
+  const sql = yield* SqlClient.SqlClient;
+  const activation = (yield* ServerActivation) ?? Effect.void;
+  const startupPause = Duration.fromInputUnsafe(options.startupPause ?? DEFAULT_STARTUP_PAUSE);
+  const cascadePauseMillis = Duration.toMillis(options.cascadePause ?? DEFAULT_CASCADE_PAUSE);
+  // Completed once the startup pass has queued its last orphan.
+  const startupQueued = yield* Deferred.make<void>();
+  const startupPass = { candidates: 0, processed: 0, archived: 0 };
+  let lastLiveMoveAt: number | null = null;
 
-    /**
-     * Provider-native subagents in `scope` that are not where their parent is.
-     * To archive: the child is unarchived, its parent is archived, deleted or
-     * gone, and its subagent record is not live. To unarchive: the child is
-     * archived and its parent is active. A child shares its parent's project, so
-     * a parent's read stays on the project index; a child's is a key lookup.
-     */
-    const selectChildren = (direction: CascadeDirection, scope: ChildScope) =>
-      sql<ChildRow>`
+  /**
+   * Provider-native subagents in `scope` that are not where their parent is.
+   * To archive: the child is unarchived, its parent is archived, deleted or
+   * gone, and its subagent record is not live. To unarchive: the child is
+   * archived and its parent is active. A child shares its parent's project, so
+   * a parent's read stays on the project index; a child's is a key lookup.
+   */
+  const selectChildren = (direction: CascadeDirection, scope: ChildScope) =>
+    sql<ChildRow>`
         SELECT child.thread_id AS thread_id
         FROM orchestration_v2_projection_threads AS child
         LEFT JOIN orchestration_v2_projection_threads AS parent
@@ -179,46 +178,44 @@ export const make = (
         ORDER BY child.created_at ASC, child.thread_id ASC
       `;
 
-    /** Waits until the last live move is `cascadePause` old. */
-    const paceLiveMove = Effect.gen(function* () {
-      if (lastLiveMoveAt === null) return;
-      const wait = lastLiveMoveAt + cascadePauseMillis - (yield* Clock.currentTimeMillis);
-      if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
-    });
+  /** Waits until the last live move is `cascadePause` old. */
+  const paceLiveMove = Effect.gen(function* () {
+    if (lastLiveMoveAt === null) return;
+    const wait = lastLiveMoveAt + cascadePauseMillis - (yield* Clock.currentTimeMillis);
+    if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+  });
 
-    const isDue = (direction: CascadeDirection, threadId: ThreadId) =>
-      selectChildren(direction, { kind: "child", threadId }).pipe(
-        Effect.map((rows) => rows.length > 0),
-      );
+  const isDue = (direction: CascadeDirection, threadId: ThreadId) =>
+    selectChildren(direction, { kind: "child", threadId }).pipe(
+      Effect.map((rows) => rows.length > 0),
+    );
 
-    /**
-     * Re-reads one child and moves it when it still needs to; true when the
-     * orchestrator accepted the command. A live move waits for its pace, then
-     * reads the child again, so a check with nothing to do never waits.
-     */
-    const moveChild = (
-      direction: CascadeDirection,
-      threadId: ThreadId,
-      source: "cascade" | "startup",
-    ) =>
-      Effect.gen(function* () {
+  /**
+   * Re-reads one child and moves it when it still needs to; true when the
+   * orchestrator accepted the command. A live move waits for its pace, then
+   * reads the child again, so a check with nothing to do never waits.
+   */
+  const moveChild = Effect.fn("SubagentArchiveCascade.moveChild")(
+    function* (direction: CascadeDirection, threadId: ThreadId, source: "cascade" | "startup") {
+      if (!(yield* isDue(direction, threadId))) return false;
+      if (source === "cascade" && lastLiveMoveAt !== null && cascadePauseMillis > 0) {
+        yield* paceLiveMove;
         if (!(yield* isDue(direction, threadId))) return false;
-        if (source === "cascade" && lastLiveMoveAt !== null && cascadePauseMillis > 0) {
-          yield* paceLiveMove;
-          if (!(yield* isDue(direction, threadId))) return false;
-        }
-        const uuid = yield* randomUuidV4;
-        const commandId = CommandId.make(
-          `server:subagent-${direction}-${source}:${threadId}:${uuid}`,
-        );
-        const command: OrchestrationV2ServerCommand =
-          direction === "archive"
-            ? { type: "thread.archive", commandId, threadId }
-            : { type: "thread.unarchive", commandId, threadId };
-        yield* orchestrator.dispatch(command);
-        if (source === "cascade") lastLiveMoveAt = yield* Clock.currentTimeMillis;
-        return true;
-      }).pipe(
+      }
+      const uuid = yield* randomUuidV4;
+      const commandId = CommandId.make(
+        `server:subagent-${direction}-${source}:${threadId}:${uuid}`,
+      );
+      const command: OrchestrationV2ServerCommand =
+        direction === "archive"
+          ? { type: "thread.archive", commandId, threadId }
+          : { type: "thread.unarchive", commandId, threadId };
+      yield* orchestrator.dispatch(command);
+      if (source === "cascade") lastLiveMoveAt = yield* Clock.currentTimeMillis;
+      return true;
+    },
+    (effect, direction, threadId) =>
+      effect.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
@@ -228,132 +225,133 @@ export const make = (
                 cause: Cause.pretty(cause),
               }).pipe(Effect.as(false)),
         ),
-      );
+      ),
+  );
 
-    const processRequest = Effect.fn("SubagentArchiveCascade.process")(function* (
-      request: CascadeRequest,
-    ) {
-      switch (request.type) {
-        case "follow": {
-          const children = yield* selectChildren(request.direction, {
-            kind: "parent",
-            parentThreadId: request.parentThreadId,
-            projectId: request.projectId,
-          });
-          if (children.length === 0) return;
-          let moved = 0;
-          for (const child of children) {
-            if (yield* moveChild(request.direction, ThreadId.make(child.thread_id), "cascade")) {
-              moved += 1;
-            }
+  const processRequest = Effect.fn("SubagentArchiveCascade.process")(function* (
+    request: CascadeRequest,
+  ) {
+    switch (request.type) {
+      case "follow": {
+        const children = yield* selectChildren(request.direction, {
+          kind: "parent",
+          parentThreadId: request.parentThreadId,
+          projectId: request.projectId,
+        });
+        if (children.length === 0) return;
+        let moved = 0;
+        for (const child of children) {
+          if (yield* moveChild(request.direction, ThreadId.make(child.thread_id), "cascade")) {
+            moved += 1;
           }
-          yield* Effect.logInfo("subagent archive cascade: subagents followed their parent", {
-            parentThreadId: request.parentThreadId,
-            direction: request.direction,
-            candidates: children.length,
-            moved,
-          });
-          return;
         }
-        case "finished":
-          if (yield* moveChild("archive", request.threadId, "cascade")) {
-            yield* Effect.logInfo(
-              "subagent archive cascade: a finished subagent followed its archived parent",
-              { threadId: request.threadId },
-            );
-          }
-          return;
-        case "startup-orphan": {
-          if (yield* moveChild("archive", request.threadId, "startup")) {
-            startupPass.archived += 1;
-          }
-          startupPass.processed += 1;
-          if (
-            startupPass.processed % STARTUP_PROGRESS_EVERY === 0 &&
-            startupPass.processed < startupPass.candidates
-          ) {
-            yield* Effect.logInfo("subagent archive cascade: startup pass progress", {
-              ...startupPass,
-            });
-          }
-          return;
-        }
-        case "startup-summary":
-          yield* Effect.logInfo(
-            "subagent archive cascade: archived the subagents of archived or deleted parents",
-            { ...startupPass },
-          );
-          return;
+        yield* Effect.logInfo("subagent archive cascade: subagents followed their parent", {
+          parentThreadId: request.parentThreadId,
+          direction: request.direction,
+          candidates: children.length,
+          moved,
+        });
+        return;
       }
-    });
+      case "finished":
+        if (yield* moveChild("archive", request.threadId, "cascade")) {
+          yield* Effect.logInfo(
+            "subagent archive cascade: a finished subagent followed its archived parent",
+            { threadId: request.threadId },
+          );
+        }
+        return;
+      case "startup-orphan": {
+        if (yield* moveChild("archive", request.threadId, "startup")) {
+          startupPass.archived += 1;
+        }
+        startupPass.processed += 1;
+        if (
+          startupPass.processed % STARTUP_PROGRESS_EVERY === 0 &&
+          startupPass.processed < startupPass.candidates
+        ) {
+          yield* Effect.logInfo("subagent archive cascade: startup pass progress", {
+            ...startupPass,
+          });
+        }
+        return;
+      }
+      case "startup-summary":
+        yield* Effect.logInfo(
+          "subagent archive cascade: archived the subagents of archived or deleted parents",
+          { ...startupPass },
+        );
+        return;
+    }
+  });
 
-    // Items wait for activation. Live work and startup orphans share this one
-    // worker, so they never race each other on the same child.
-    const worker = yield* makeDrainableWorker((request: CascadeRequest) =>
-      activation.pipe(
-        Effect.andThen(processRequest(request)),
+  // Items wait for activation. Live work and startup orphans share this one
+  // worker, so they never race each other on the same child.
+  const worker = yield* makeDrainableWorker((request: CascadeRequest) =>
+    activation.pipe(
+      Effect.andThen(processRequest(request)),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("subagent archive cascade: request failed", {
+              request,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    ),
+  );
+
+  /** Queues the orphans one per pause, so live work runs between them. */
+  const queueStartupPass = Effect.gen(function* () {
+    const orphans = yield* selectChildren("archive", { kind: "all" });
+    startupPass.candidates = orphans.length;
+    for (const [index, orphan] of orphans.entries()) {
+      if (index > 0 && !Duration.isZero(startupPause)) yield* Effect.sleep(startupPause);
+      yield* worker.enqueue({
+        type: "startup-orphan",
+        threadId: ThreadId.make(orphan.thread_id),
+      });
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.failCause(cause)
+        : Effect.logWarning("subagent archive cascade: startup pass failed", {
+            cause: Cause.pretty(cause),
+          }),
+    ),
+    Effect.andThen(worker.enqueue({ type: "startup-summary" })),
+    Effect.ensuring(Deferred.succeed(startupQueued, undefined)),
+  );
+
+  const start = Effect.fn("SubagentArchiveCascade.start")(function* () {
+    // Read from the current head: an event that lands before the parked
+    // stream subscribes is replayed rather than lost.
+    const afterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
+    yield* forkParked(
+      eventSink.stream({ afterSequence }).pipe(
+        Stream.runForEach((stored) => {
+          const request = cascadeRequestFor(stored.event);
+          return request === null ? Effect.void : worker.enqueue(request);
+        }),
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
-            : Effect.logWarning("subagent archive cascade: request failed", {
-                request,
+            : Effect.logWarning("subagent archive cascade: event stream failed", {
                 cause: Cause.pretty(cause),
               }),
         ),
       ),
     );
-
-    /** Queues the orphans one per pause, so live work runs between them. */
-    const queueStartupPass = Effect.gen(function* () {
-      const orphans = yield* selectChildren("archive", { kind: "all" });
-      startupPass.candidates = orphans.length;
-      for (const [index, orphan] of orphans.entries()) {
-        if (index > 0 && !Duration.isZero(startupPause)) yield* Effect.sleep(startupPause);
-        yield* worker.enqueue({
-          type: "startup-orphan",
-          threadId: ThreadId.make(orphan.thread_id),
-        });
-      }
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("subagent archive cascade: startup pass failed", {
-              cause: Cause.pretty(cause),
-            }),
-      ),
-      Effect.andThen(worker.enqueue({ type: "startup-summary" })),
-      Effect.ensuring(Deferred.succeed(startupQueued, undefined)),
-    );
-
-    const start = Effect.fn("SubagentArchiveCascade.start")(function* () {
-      // Read from the current head: an event that lands before the parked
-      // stream subscribes is replayed rather than lost.
-      const afterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
-      yield* forkParked(
-        eventSink.stream({ afterSequence }).pipe(
-          Stream.runForEach((stored) => {
-            const request = cascadeRequestFor(stored.event);
-            return request === null ? Effect.void : worker.enqueue(request);
-          }),
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning("subagent archive cascade: event stream failed", {
-                  cause: Cause.pretty(cause),
-                }),
-          ),
-        ),
-      );
-      yield* forkParked(queueStartupPass);
-    });
-
-    return {
-      start,
-      /** After `start`: waits for the whole startup pass, then for every queued item. */
-      drain: Deferred.await(startupQueued).pipe(Effect.andThen(worker.drain)),
-    };
+    yield* forkParked(queueStartupPass);
   });
+
+  return {
+    start,
+    /** After `start`: waits for the whole startup pass, then for every queued item. */
+    drain: Deferred.await(startupQueued).pipe(Effect.andThen(worker.drain)),
+  };
+});
 
 /** Starts the cascade with the server; one marked line in `server.ts` provides it. */
 export const layer = Layer.effectDiscard(Effect.flatMap(make(), (cascade) => cascade.start()));

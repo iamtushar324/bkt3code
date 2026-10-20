@@ -234,30 +234,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const appendActivity = (input: {
+  const appendActivity = Effect.fn("PlanReviewService.appendActivity")(function* (input: {
     readonly threadId: ThreadId;
     readonly summary: string;
     readonly tone: "info" | "approval" | "error";
     readonly payload: unknown;
-  }) =>
-    Effect.gen(function* () {
-      const [commandUuid, eventUuid, createdAt] = yield* Effect.all([uuid, uuid, nowIso]);
-      return yield* dispatcher.dispatch({
-        type: "thread.activity.append",
-        commandId: CommandId.make(`plan-review:activity:${commandUuid}`),
-        threadId: input.threadId,
-        activity: {
-          id: EventId.make(`plan-review:${eventUuid}`),
-          tone: input.tone,
-          kind: "plan-review",
-          summary: input.summary,
-          payload: input.payload,
-          turnId: null,
-          createdAt,
-        },
+  }) {
+    const [commandUuid, eventUuid, createdAt] = yield* Effect.all([uuid, uuid, nowIso]);
+    return yield* dispatcher.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make(`plan-review:activity:${commandUuid}`),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(`plan-review:${eventUuid}`),
+        tone: input.tone,
+        kind: "plan-review",
+        summary: input.summary,
+        payload: input.payload,
+        turnId: null,
         createdAt,
-      });
-    }).pipe(Effect.ignore);
+      },
+      createdAt,
+    });
+  }, Effect.ignore);
 
   /**
    * Close the proposed-plan records a decided review came from.
@@ -276,12 +275,12 @@ export const make = Effect.gen(function* () {
    * Failure is swallowed: a decision that reached the agent must not be undone
    * by a projection write.
    */
-  const markPlansImplemented = (input: {
-    readonly threadId: ThreadId;
-    readonly documentId: string;
-    readonly implementationThreadId: ThreadId | null;
-  }) =>
-    Effect.gen(function* () {
+  const markPlansImplemented = Effect.fn("PlanReviewService.markPlansImplemented")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly documentId: string;
+      readonly implementationThreadId: ThreadId | null;
+    }) {
       const versions = yield* repository.listVersions(input.documentId);
       const sourcePlanIds = new Set(
         versions.flatMap((version) =>
@@ -319,161 +318,165 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.ignore),
         { discard: true },
       );
-    }).pipe(Effect.ignore);
+    },
+    Effect.ignore,
+  );
 
-  const capturePlan: PlanReviewService["Service"]["capturePlan"] = (input) =>
-    Effect.gen(function* () {
-      // A plan id we have already captured means this is a redelivery, not a
-      // new revision — return the existing document untouched.
-      const existingForPlan = yield* repository
-        .findDocumentBySourcePlanId(input.planId)
-        .pipe(asInvariant("capturePlan.findBySourcePlan"));
-      if (Option.isSome(existingForPlan)) {
-        // Reconciliation and redelivery both land here, which makes it the one
-        // place that sees a plan whose review already ended while its
-        // proposed-plan record is still open — decisions taken before this
-        // write-back existed, or an approval whose turn never started. Heal it.
-        const decided = existingForPlan.value;
-        if (decided.status === "approved" || decided.status === "discarded") {
-          yield* markPlansImplemented({
-            threadId: decided.threadId,
-            documentId: decided.documentId,
-            implementationThreadId: decided.status === "approved" ? decided.threadId : null,
-          });
-        }
-        return decided;
+  const capturePlan: PlanReviewService["Service"]["capturePlan"] = Effect.fn(
+    "PlanReviewService.capturePlan",
+  )(function* (input) {
+    // A plan id we have already captured means this is a redelivery, not a
+    // new revision — return the existing document untouched.
+    const existingForPlan = yield* repository
+      .findDocumentBySourcePlanId(input.planId)
+      .pipe(asInvariant("capturePlan.findBySourcePlan"));
+    if (Option.isSome(existingForPlan)) {
+      // Reconciliation and redelivery both land here, which makes it the one
+      // place that sees a plan whose review already ended while its
+      // proposed-plan record is still open — decisions taken before this
+      // write-back existed, or an approval whose turn never started. Heal it.
+      const decided = existingForPlan.value;
+      if (decided.status === "approved" || decided.status === "discarded") {
+        yield* markPlansImplemented({
+          threadId: decided.threadId,
+          documentId: decided.documentId,
+          implementationThreadId: decided.status === "approved" ? decided.threadId : null,
+        });
       }
+      return decided;
+    }
 
-      // An open document on the same thread is the lineage this plan revises.
-      // A lineage awaiting a revision is still the lineage this plan belongs
-      // to. Only approved and discarded documents are closed for good — without
-      // "changes-requested" here, the agent's answer to feedback would start a
-      // brand-new history and orphan the comments that asked for it.
-      const threadDocuments = yield* repository
-        .listDocumentsForThread(input.threadId)
-        .pipe(asInvariant("capturePlan.listForThread"));
-      const openDocument = threadDocuments.find(
-        (document) => document.status === "open" || document.status === "changes-requested",
-      );
+    // An open document on the same thread is the lineage this plan revises.
+    // A lineage awaiting a revision is still the lineage this plan belongs
+    // to. Only approved and discarded documents are closed for good — without
+    // "changes-requested" here, the agent's answer to feedback would start a
+    // brand-new history and orphan the comments that asked for it.
+    const threadDocuments = yield* repository
+      .listDocumentsForThread(input.threadId)
+      .pipe(asInvariant("capturePlan.listForThread"));
+    const openDocument = threadDocuments.find(
+      (document) => document.status === "open" || document.status === "changes-requested",
+    );
 
-      const createdAt = yield* nowIso;
+    const createdAt = yield* nowIso;
 
-      if (openDocument === undefined) {
-        const documentUuid = yield* uuid;
-        const documentId = `plan-doc:${documentUuid}`;
-        const versionUuid = yield* uuid;
-
-        const document: PlanDocumentRecord = {
-          documentId,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          title: input.title,
-          currentRevision: 1,
-          status: "open",
-          // Providers put an HTML plan in the same field as markdown, so the
-          // renderer is decided once at capture and remembered.
-          format: detectPlanFormat(input.planMarkdown),
-          createdByUserId: input.authorUserId,
-          createdAt,
-          updatedAt: createdAt,
-        };
-
-        yield* repository.upsertDocument(document).pipe(asInvariant("capturePlan.upsertDocument"));
-        yield* repository
-          .appendVersion({
-            versionId: `plan-ver:${versionUuid}`,
-            documentId,
-            revision: 1,
-            authorKind: "agent",
-            authorUserId: null,
-            origin: "agent-proposed",
-            contentMarkdown: input.planMarkdown,
-            contentValueJson: null,
-            sourcePlanId: input.planId,
-            summary: null,
-            createdAt,
-          })
-          .pipe(asInvariant("capturePlan.appendVersion"));
-
-        return document;
-      }
-
-      // Revision of an existing lineage: skip when the content is unchanged so
-      // a redelivered projection event cannot inflate the history.
-      const latest = yield* repository
-        .getLatestVersion(openDocument.documentId)
-        .pipe(asInvariant("capturePlan.getLatestVersion"));
-      if (
-        Option.isSome(latest) &&
-        latest.value.contentMarkdown.trim() === input.planMarkdown.trim()
-      ) {
-        return openDocument;
-      }
-
-      const nextRevision = openDocument.currentRevision + 1;
+    if (openDocument === undefined) {
+      const documentUuid = yield* uuid;
+      const documentId = `plan-doc:${documentUuid}`;
       const versionUuid = yield* uuid;
+
+      const document: PlanDocumentRecord = {
+        documentId,
+        threadId: input.threadId,
+        projectId: input.projectId,
+        title: input.title,
+        currentRevision: 1,
+        status: "open",
+        // Providers put an HTML plan in the same field as markdown, so the
+        // renderer is decided once at capture and remembered.
+        format: detectPlanFormat(input.planMarkdown),
+        createdByUserId: input.authorUserId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+
+      yield* repository.upsertDocument(document).pipe(asInvariant("capturePlan.upsertDocument"));
       yield* repository
         .appendVersion({
           versionId: `plan-ver:${versionUuid}`,
-          documentId: openDocument.documentId,
-          revision: nextRevision,
+          documentId,
+          revision: 1,
           authorKind: "agent",
           authorUserId: null,
-          origin: "agent-revision",
+          origin: "agent-proposed",
           contentMarkdown: input.planMarkdown,
           contentValueJson: null,
           sourcePlanId: input.planId,
           summary: null,
           createdAt,
         })
-        .pipe(asInvariant("capturePlan.appendRevision"));
+        .pipe(asInvariant("capturePlan.appendVersion"));
 
-      const updated: PlanDocumentRecord = {
-        ...openDocument,
-        title: input.title,
-        currentRevision: nextRevision,
-        format: detectPlanFormat(input.planMarkdown),
-        // The revision answers the feedback, so the review is live again.
-        status: "open",
-        updatedAt: createdAt,
-      };
-      yield* repository.upsertDocument(updated).pipe(asInvariant("capturePlan.updateDocument"));
+      return document;
+    }
 
-      // A new agent revision invalidates the human draft it was based on.
-      yield* repository
-        .clearDraft(openDocument.documentId)
-        .pipe(asInvariant("capturePlan.clearDraft"));
+    // Revision of an existing lineage: skip when the content is unchanged so
+    // a redelivered projection event cannot inflate the history.
+    const latest = yield* repository
+      .getLatestVersion(openDocument.documentId)
+      .pipe(asInvariant("capturePlan.getLatestVersion"));
+    if (
+      Option.isSome(latest) &&
+      latest.value.contentMarkdown.trim() === input.planMarkdown.trim()
+    ) {
+      return openDocument;
+    }
 
-      yield* announce(openDocument.documentId);
-      return updated;
-    });
+    const nextRevision = openDocument.currentRevision + 1;
+    const versionUuid = yield* uuid;
+    yield* repository
+      .appendVersion({
+        versionId: `plan-ver:${versionUuid}`,
+        documentId: openDocument.documentId,
+        revision: nextRevision,
+        authorKind: "agent",
+        authorUserId: null,
+        origin: "agent-revision",
+        contentMarkdown: input.planMarkdown,
+        contentValueJson: null,
+        sourcePlanId: input.planId,
+        summary: null,
+        createdAt,
+      })
+      .pipe(asInvariant("capturePlan.appendRevision"));
 
-  const getReview: PlanReviewService["Service"]["getReview"] = (documentId) =>
-    Effect.gen(function* () {
-      const document = yield* requireDocument(documentId);
-      const [versions, draftOption, discussions, comments] = yield* Effect.all([
-        repository.listVersions(documentId).pipe(asInvariant("getReview.versions")),
-        repository.getDraft(documentId).pipe(asInvariant("getReview.draft")),
-        repository.listDiscussions(documentId).pipe(asInvariant("getReview.discussions")),
-        repository.listDiscussionComments(documentId).pipe(asInvariant("getReview.comments")),
-      ]);
+    const updated: PlanDocumentRecord = {
+      ...openDocument,
+      title: input.title,
+      currentRevision: nextRevision,
+      format: detectPlanFormat(input.planMarkdown),
+      // The revision answers the feedback, so the review is live again.
+      status: "open",
+      updatedAt: createdAt,
+    };
+    yield* repository.upsertDocument(updated).pipe(asInvariant("capturePlan.updateDocument"));
 
-      return {
-        document,
-        versions,
-        draft: Option.isSome(draftOption)
-          ? {
-              contentValueJson: draftOption.value.contentValueJson,
-              baseVersionId: draftOption.value.baseVersionId,
-              revisionToken: draftOption.value.revisionToken,
-              updatedByUserId: draftOption.value.updatedByUserId,
-              updatedAt: draftOption.value.updatedAt,
-            }
-          : null,
-        discussions,
-        comments,
-      } satisfies PlanReviewSnapshot;
-    });
+    // A new agent revision invalidates the human draft it was based on.
+    yield* repository
+      .clearDraft(openDocument.documentId)
+      .pipe(asInvariant("capturePlan.clearDraft"));
+
+    yield* announce(openDocument.documentId);
+    return updated;
+  });
+
+  const getReview: PlanReviewService["Service"]["getReview"] = Effect.fn(
+    "PlanReviewService.getReview",
+  )(function* (documentId) {
+    const document = yield* requireDocument(documentId);
+    const [versions, draftOption, discussions, comments] = yield* Effect.all([
+      repository.listVersions(documentId).pipe(asInvariant("getReview.versions")),
+      repository.getDraft(documentId).pipe(asInvariant("getReview.draft")),
+      repository.listDiscussions(documentId).pipe(asInvariant("getReview.discussions")),
+      repository.listDiscussionComments(documentId).pipe(asInvariant("getReview.comments")),
+    ]);
+
+    return {
+      document,
+      versions,
+      draft: Option.isSome(draftOption)
+        ? {
+            contentValueJson: draftOption.value.contentValueJson,
+            baseVersionId: draftOption.value.baseVersionId,
+            revisionToken: draftOption.value.revisionToken,
+            updatedByUserId: draftOption.value.updatedByUserId,
+            updatedAt: draftOption.value.updatedAt,
+          }
+        : null,
+      discussions,
+      comments,
+    } satisfies PlanReviewSnapshot;
+  });
 
   /**
    * Lists a thread's plan documents, capturing the thread's reviewable plan
@@ -485,206 +488,212 @@ export const make = Effect.gen(function* () {
    * entry point appears wherever a reviewable plan exists. `capturePlan`
    * dedupes on the source plan id, so repeating this is a no-op.
    */
-  const listForThread: PlanReviewService["Service"]["listForThread"] = (threadId) =>
-    Effect.gen(function* () {
-      const existing = yield* repository
-        .listDocumentsForThread(threadId)
-        .pipe(asInvariant("listForThread"));
-      if (
-        existing.some(
-          (document) => document.status === "open" || document.status === "changes-requested",
-        )
-      ) {
-        return existing;
-      }
+  const listForThread: PlanReviewService["Service"]["listForThread"] = Effect.fn(
+    "PlanReviewService.listForThread",
+  )(function* (threadId) {
+    const existing = yield* repository
+      .listDocumentsForThread(threadId)
+      .pipe(asInvariant("listForThread"));
+    if (
+      existing.some(
+        (document) => document.status === "open" || document.status === "changes-requested",
+      )
+    ) {
+      return existing;
+    }
 
-      const threadOption = yield* query
-        .getThreadDetailById(threadId)
-        .pipe(asInvariant("listForThread.getThread"));
-      if (Option.isNone(threadOption)) return existing;
-      const thread = threadOption.value;
+    const threadOption = yield* query
+      .getThreadDetailById(threadId)
+      .pipe(asInvariant("listForThread.getThread"));
+    if (Option.isNone(threadOption)) return existing;
+    const thread = threadOption.value;
 
-      const reviewable = [...thread.proposedPlans]
-        .filter((plan) => plan.implementedAt === null)
-        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
-        .at(-1);
-      if (reviewable === undefined) return existing;
+    const reviewable = [...thread.proposedPlans]
+      .filter((plan) => plan.implementedAt === null)
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
+      .at(-1);
+    if (reviewable === undefined) return existing;
 
-      const planMarkdown = withoutLegacyReviewMarker(reviewable.planMarkdown).trim();
-      if (planMarkdown.length === 0) return existing;
+    const planMarkdown = withoutLegacyReviewMarker(reviewable.planMarkdown).trim();
+    if (planMarkdown.length === 0) return existing;
 
-      yield* capturePlan({
-        threadId,
-        projectId: thread.projectId,
-        planId: reviewable.id,
-        planMarkdown,
-        title: derivePlanTitle(planMarkdown),
-        authorUserId: null,
+    yield* capturePlan({
+      threadId,
+      projectId: thread.projectId,
+      planId: reviewable.id,
+      planMarkdown,
+      title: derivePlanTitle(planMarkdown),
+      authorUserId: null,
+    });
+
+    return yield* repository
+      .listDocumentsForThread(threadId)
+      .pipe(asInvariant("listForThread.reload"));
+  });
+
+  const saveDraft: PlanReviewService["Service"]["saveDraft"] = Effect.fn(
+    "PlanReviewService.saveDraft",
+  )(function* (input) {
+    const document = yield* requireDocument(input.documentId);
+    if (document.status !== "open") {
+      return yield* new PlanReviewInvariantError({
+        operation: "saveDraft",
+        detail: `This review is ${document.status} and can no longer be edited.`,
       });
+    }
+    const latest = yield* repository
+      .getLatestVersion(document.documentId)
+      .pipe(asInvariant("saveDraft.getLatestVersion"));
+    if (Option.isNone(latest)) {
+      return yield* new PlanReviewInvariantError({
+        operation: "saveDraft",
+        detail: "The plan has no versions yet.",
+      });
+    }
 
-      return yield* repository
-        .listDocumentsForThread(threadId)
-        .pipe(asInvariant("listForThread.reload"));
-    });
+    const [tokenUuid, updatedAt] = yield* Effect.all([uuid, nowIso]);
+    const nextRevisionToken = `draft:${tokenUuid}`;
 
-  const saveDraft: PlanReviewService["Service"]["saveDraft"] = (input) =>
-    Effect.gen(function* () {
-      const document = yield* requireDocument(input.documentId);
-      if (document.status !== "open") {
-        return yield* new PlanReviewInvariantError({
-          operation: "saveDraft",
-          detail: `This review is ${document.status} and can no longer be edited.`,
-        });
-      }
-      const latest = yield* repository
-        .getLatestVersion(document.documentId)
-        .pipe(asInvariant("saveDraft.getLatestVersion"));
-      if (Option.isNone(latest)) {
-        return yield* new PlanReviewInvariantError({
-          operation: "saveDraft",
-          detail: "The plan has no versions yet.",
-        });
-      }
-
-      const [tokenUuid, updatedAt] = yield* Effect.all([uuid, nowIso]);
-      const nextRevisionToken = `draft:${tokenUuid}`;
-
-      yield* repository
-        .saveDraft({
-          documentId: document.documentId,
-          baseVersionId: latest.value.versionId,
-          contentValueJson: input.contentValueJson,
-          updatedByUserId: input.actorUserId,
-          updatedAt,
-          expectedRevisionToken: input.expectedRevisionToken,
-          nextRevisionToken,
-        })
-        .pipe(asInvariant("saveDraft"));
-
-      // Deliberately not announced: a draft is one reviewer's working copy, and
-      // broadcasting it would push the whole version history on every keystroke.
-      return { revisionToken: nextRevisionToken };
-    });
-
-  const cutVersion: PlanReviewService["Service"]["cutVersion"] = (input) =>
-    Effect.gen(function* () {
-      const document = yield* requireDocument(input.documentId);
-      const latest = yield* repository
-        .getLatestVersion(document.documentId)
-        .pipe(asInvariant("cutVersion.getLatestVersion"));
-
-      if (
-        Option.isSome(latest) &&
-        latest.value.contentMarkdown.trim() === input.contentMarkdown.trim()
-      ) {
-        return latest.value;
-      }
-
-      const [versionUuid, createdAt] = yield* Effect.all([uuid, nowIso]);
-      const revision = document.currentRevision + 1;
-      const version: PlanVersionRecord = {
-        versionId: `plan-ver:${versionUuid}`,
+    yield* repository
+      .saveDraft({
         documentId: document.documentId,
-        revision,
-        authorKind: "user",
-        authorUserId: input.actorUserId,
-        origin: "human-edit",
-        contentMarkdown: input.contentMarkdown,
+        baseVersionId: latest.value.versionId,
         contentValueJson: input.contentValueJson,
-        sourcePlanId: null,
-        summary: input.summary,
+        updatedByUserId: input.actorUserId,
+        updatedAt,
+        expectedRevisionToken: input.expectedRevisionToken,
+        nextRevisionToken,
+      })
+      .pipe(asInvariant("saveDraft"));
+
+    // Deliberately not announced: a draft is one reviewer's working copy, and
+    // broadcasting it would push the whole version history on every keystroke.
+    return { revisionToken: nextRevisionToken };
+  });
+
+  const cutVersion: PlanReviewService["Service"]["cutVersion"] = Effect.fn(
+    "PlanReviewService.cutVersion",
+  )(function* (input) {
+    const document = yield* requireDocument(input.documentId);
+    const latest = yield* repository
+      .getLatestVersion(document.documentId)
+      .pipe(asInvariant("cutVersion.getLatestVersion"));
+
+    if (
+      Option.isSome(latest) &&
+      latest.value.contentMarkdown.trim() === input.contentMarkdown.trim()
+    ) {
+      return latest.value;
+    }
+
+    const [versionUuid, createdAt] = yield* Effect.all([uuid, nowIso]);
+    const revision = document.currentRevision + 1;
+    const version: PlanVersionRecord = {
+      versionId: `plan-ver:${versionUuid}`,
+      documentId: document.documentId,
+      revision,
+      authorKind: "user",
+      authorUserId: input.actorUserId,
+      origin: "human-edit",
+      contentMarkdown: input.contentMarkdown,
+      contentValueJson: input.contentValueJson,
+      sourcePlanId: null,
+      summary: input.summary,
+      createdAt,
+    };
+
+    yield* repository.appendVersion(version).pipe(asInvariant("cutVersion.appendVersion"));
+    yield* repository
+      .upsertDocument({ ...document, currentRevision: revision, updatedAt: createdAt })
+      .pipe(asInvariant("cutVersion.updateDocument"));
+
+    yield* announce(document.documentId);
+    return version;
+  });
+
+  const upsertDiscussion: PlanReviewService["Service"]["upsertDiscussion"] = Effect.fn(
+    "PlanReviewService.upsertDiscussion",
+  )(function* (input) {
+    const document = yield* requireDocument(input.documentId);
+    const latest = yield* repository
+      .getLatestVersion(document.documentId)
+      .pipe(asInvariant("upsertDiscussion.getLatestVersion"));
+    if (Option.isNone(latest)) {
+      return yield* new PlanReviewInvariantError({
+        operation: "upsertDiscussion",
+        detail: "The plan has no versions yet.",
+      });
+    }
+
+    const [commentUuid, createdAt] = yield* Effect.all([uuid, nowIso]);
+    yield* repository
+      .upsertDiscussion({
+        discussionId: input.discussionId,
+        documentId: document.documentId,
+        anchorVersionId: latest.value.versionId,
+        quotedText: input.quotedText,
+        createdByUserId: input.actorUserId,
         createdAt,
-      };
+      })
+      .pipe(asInvariant("upsertDiscussion"));
 
-      yield* repository.appendVersion(version).pipe(asInvariant("cutVersion.appendVersion"));
-      yield* repository
-        .upsertDocument({ ...document, currentRevision: revision, updatedAt: createdAt })
-        .pipe(asInvariant("cutVersion.updateDocument"));
+    yield* repository
+      .addDiscussionComment({
+        commentId: `plan-comment:${commentUuid}`,
+        discussionId: input.discussionId,
+        documentId: document.documentId,
+        authorUserId: input.actorUserId,
+        bodyMarkdown: input.bodyMarkdown,
+        createdAt,
+      })
+      .pipe(asInvariant("upsertDiscussion.addComment"));
 
-      yield* announce(document.documentId);
-      return version;
-    });
+    yield* announce(document.documentId);
+  });
 
-  const upsertDiscussion: PlanReviewService["Service"]["upsertDiscussion"] = (input) =>
-    Effect.gen(function* () {
-      const document = yield* requireDocument(input.documentId);
-      const latest = yield* repository
-        .getLatestVersion(document.documentId)
-        .pipe(asInvariant("upsertDiscussion.getLatestVersion"));
-      if (Option.isNone(latest)) {
-        return yield* new PlanReviewInvariantError({
-          operation: "upsertDiscussion",
-          detail: "The plan has no versions yet.",
-        });
-      }
+  const resolveDiscussion: PlanReviewService["Service"]["resolveDiscussion"] = Effect.fn(
+    "PlanReviewService.resolveDiscussion",
+  )(function* (input) {
+    yield* requireDocument(input.documentId);
+    const resolvedAt = yield* nowIso;
+    yield* repository
+      .resolveDiscussion({
+        discussionId: input.discussionId,
+        documentId: input.documentId,
+        isResolved: input.isResolved,
+        resolvedByUserId: input.isResolved ? input.actorUserId : null,
+        resolvedAt: input.isResolved ? resolvedAt : null,
+      })
+      .pipe(asInvariant("resolveDiscussion"));
 
-      const [commentUuid, createdAt] = yield* Effect.all([uuid, nowIso]);
-      yield* repository
-        .upsertDiscussion({
-          discussionId: input.discussionId,
-          documentId: document.documentId,
-          anchorVersionId: latest.value.versionId,
-          quotedText: input.quotedText,
-          createdByUserId: input.actorUserId,
-          createdAt,
-        })
-        .pipe(asInvariant("upsertDiscussion"));
+    yield* announce(input.documentId);
+  });
 
-      yield* repository
-        .addDiscussionComment({
-          commentId: `plan-comment:${commentUuid}`,
-          discussionId: input.discussionId,
-          documentId: document.documentId,
-          authorUserId: input.actorUserId,
-          bodyMarkdown: input.bodyMarkdown,
-          createdAt,
-        })
-        .pipe(asInvariant("upsertDiscussion.addComment"));
+  const getVersionDiff: PlanReviewService["Service"]["getVersionDiff"] = Effect.fn(
+    "PlanReviewService.getVersionDiff",
+  )(function* (input) {
+    const document = yield* requireDocument(input.documentId);
+    const [fromOption, toOption] = yield* Effect.all([
+      repository
+        .getVersion({ documentId: document.documentId, versionId: input.fromVersionId })
+        .pipe(asInvariant("getVersionDiff.from")),
+      repository
+        .getVersion({ documentId: document.documentId, versionId: input.toVersionId })
+        .pipe(asInvariant("getVersionDiff.to")),
+    ]);
+    if (Option.isNone(fromOption) || Option.isNone(toOption)) {
+      return yield* new PlanReviewInvariantError({
+        operation: "getVersionDiff",
+        detail: "One of the requested versions does not exist.",
+      });
+    }
 
-      yield* announce(document.documentId);
-    });
-
-  const resolveDiscussion: PlanReviewService["Service"]["resolveDiscussion"] = (input) =>
-    Effect.gen(function* () {
-      yield* requireDocument(input.documentId);
-      const resolvedAt = yield* nowIso;
-      yield* repository
-        .resolveDiscussion({
-          discussionId: input.discussionId,
-          documentId: input.documentId,
-          isResolved: input.isResolved,
-          resolvedByUserId: input.isResolved ? input.actorUserId : null,
-          resolvedAt: input.isResolved ? resolvedAt : null,
-        })
-        .pipe(asInvariant("resolveDiscussion"));
-
-      yield* announce(input.documentId);
-    });
-
-  const getVersionDiff: PlanReviewService["Service"]["getVersionDiff"] = (input) =>
-    Effect.gen(function* () {
-      const document = yield* requireDocument(input.documentId);
-      const [fromOption, toOption] = yield* Effect.all([
-        repository
-          .getVersion({ documentId: document.documentId, versionId: input.fromVersionId })
-          .pipe(asInvariant("getVersionDiff.from")),
-        repository
-          .getVersion({ documentId: document.documentId, versionId: input.toVersionId })
-          .pipe(asInvariant("getVersionDiff.to")),
-      ]);
-      if (Option.isNone(fromOption) || Option.isNone(toOption)) {
-        return yield* new PlanReviewInvariantError({
-          operation: "getVersionDiff",
-          detail: "One of the requested versions does not exist.",
-        });
-      }
-
-      const { diff } = buildUnifiedDiff(
-        fromOption.value.contentMarkdown,
-        toOption.value.contentMarkdown,
-      );
-      return { diff: toRenderableFileDiff(`${document.title}.md`, diff) };
-    });
+    const { diff } = buildUnifiedDiff(
+      fromOption.value.contentMarkdown,
+      toOption.value.contentMarkdown,
+    );
+    return { diff: toRenderableFileDiff(`${document.title}.md`, diff) };
+  });
 
   /** Builds the anchored comment payloads the prompt embeds. */
   const buildAnchoredComments = (
@@ -725,8 +734,8 @@ export const make = Effect.gen(function* () {
     return { comments: anchored, discussionIds };
   };
 
-  const submit: PlanReviewService["Service"]["submit"] = (input) =>
-    Effect.gen(function* () {
+  const submit: PlanReviewService["Service"]["submit"] = Effect.fn("PlanReviewService.submit")(
+    function* (input) {
       const snapshot = yield* getReview(input.documentId);
       const document = snapshot.document;
 
@@ -995,7 +1004,8 @@ export const make = Effect.gen(function* () {
         turnStarted: true,
         resentPlan,
       } satisfies SubmitReviewResult;
-    });
+    },
+  );
 
   const watch: PlanReviewService["Service"]["watch"] = (documentId) =>
     Stream.concat(

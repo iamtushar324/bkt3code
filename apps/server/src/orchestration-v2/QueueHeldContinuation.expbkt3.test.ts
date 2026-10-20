@@ -91,6 +91,31 @@ const sendUserMessage = (
     });
   });
 
+/**
+ * A message an agent sends over MCP. Since upstream #21473 a message the user
+ * sends from a client releases a held queue, so the held-queue scenarios below
+ * use an agent's message, which leaves the user's hold in place.
+ */
+const sendAgentMessage = (
+  threadId: ThreadId,
+  label: string,
+  type: "start_immediately" | "queue_after_active",
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`agent-send:${threadId}:${label}`),
+      threadId,
+      messageId: messageIdFor(threadId, label),
+      text: label,
+      attachments: [],
+      dispatchMode: { type },
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+  });
+
 /** The dispatch ProviderContinuationService sends when the CLI starts a turn by itself. */
 const sendAdapterContinuation = (threadId: ThreadId, label: string) =>
   Effect.gen(function* () {
@@ -194,7 +219,7 @@ const queuedStartEffects = (runId: RunId) =>
   });
 
 /**
- * A stopped thread: the user's queued message is held, and a later user turn runs
+ * A stopped thread: the user's queued message is held, and a later turn runs
  * ahead of it, as on the thread where the Claude output was lost.
  */
 const stoppedThreadWithActiveRun = (threadId: ThreadId) =>
@@ -203,7 +228,7 @@ const stoppedThreadWithActiveRun = (threadId: ThreadId) =>
     yield* sendUserMessage(threadId, "first", "start_immediately");
     yield* sendUserMessage(threadId, "queued before stop", "queue_after_active");
     yield* stop(threadId, (yield* runFor(threadId, "first")).id);
-    yield* sendUserMessage(threadId, "after stop", "start_immediately");
+    yield* sendAgentMessage(threadId, "after stop", "start_immediately");
     assert.deepEqual(yield* runStates(threadId), ["interrupted", "queued:held", "starting"]);
     return yield* runFor(threadId, "after stop");
   });
@@ -241,13 +266,13 @@ it.effect("an adapter continuation starts past a held queue while held messages 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a user message queued behind a held queue is still held and does not start", () =>
+it.effect("an agent message queued behind a held queue is still held and does not start", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const threadId = ThreadId.make("thread:held-queue-user-message");
     const active = yield* stoppedThreadWithActiveRun(threadId);
 
-    yield* sendUserMessage(threadId, "queued after stop", "queue_after_active");
+    yield* sendAgentMessage(threadId, "queued after stop", "queue_after_active");
     const queued = yield* runFor(threadId, "queued after stop");
     assert.equal(queued.status, "queued");
     assert.isTrue(queued.queueHeld);

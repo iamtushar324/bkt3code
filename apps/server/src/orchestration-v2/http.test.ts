@@ -40,6 +40,16 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+// T3-CUSTOM(expbkt3): BEGIN — services the fork's orchestration routes read at construction.
+import * as Option from "effect/Option";
+import { ClerkDirectory } from "../auth/ClerkDirectory.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { TurnStartBootstrap } from "./turnStartBootstrap.expbkt3.ts";
+// T3-CUSTOM(expbkt3): END
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
@@ -151,6 +161,20 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ),
       Layer.provide(Layer.succeedContext(services)),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
+      // T3-CUSTOM(expbkt3): BEGIN — an unbound local session is an unrestricted operator, so
+      // the transcript route keeps upstream's access; the other fork routes are not called here.
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
+          Layer.mock(ClerkDirectory)({ enabled: false, descriptor: null }),
+          Layer.mock(ProviderRegistry)({}),
+          Layer.mock(VcsStatusBroadcaster)({}),
+          Layer.mock(ProjectionSnapshotQuery)({}),
+          Layer.mock(TurnStartBootstrap)({}),
+          Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): END
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),

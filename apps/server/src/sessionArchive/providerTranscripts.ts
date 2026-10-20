@@ -101,28 +101,30 @@ export const findCodexRolloutFiles = Effect.fn("findCodexRolloutFiles")(function
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const walk = (dir: string, depth: number): Effect.Effect<ReadonlyArray<string>> =>
-    Effect.gen(function* () {
-      if (depth > CODEX_WALK_MAX_DEPTH) {
-        return [];
+  const walk = Effect.fn("findCodexRolloutFiles.walk")(function* (
+    dir: string,
+    depth: number,
+  ): Effect.fn.Return<ReadonlyArray<string>> {
+    if (depth > CODEX_WALK_MAX_DEPTH) {
+      return [];
+    }
+    const entries = yield* fs
+      .readDirectory(dir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const found: Array<string> = [];
+    for (const entry of entries) {
+      const child = path.join(dir, entry);
+      if (entry.includes(input.sessionId) && entry.endsWith(".jsonl")) {
+        found.push(child);
+        continue;
       }
-      const entries = yield* fs
-        .readDirectory(dir)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      const found: Array<string> = [];
-      for (const entry of entries) {
-        const child = path.join(dir, entry);
-        if (entry.includes(input.sessionId) && entry.endsWith(".jsonl")) {
-          found.push(child);
-          continue;
-        }
-        const stat = yield* fs.stat(child).pipe(Effect.result);
-        if (stat._tag === "Success" && stat.success.type === "Directory") {
-          found.push(...(yield* walk(child, depth + 1)));
-        }
+      const stat = yield* fs.stat(child).pipe(Effect.result);
+      if (stat._tag === "Success" && stat.success.type === "Directory") {
+        found.push(...(yield* walk(child, depth + 1)));
       }
-      return found;
-    });
+    }
+    return found;
+  });
 
   return yield* walk(input.sessionsDir, 0);
 });

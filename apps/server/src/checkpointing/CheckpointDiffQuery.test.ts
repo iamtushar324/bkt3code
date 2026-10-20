@@ -11,6 +11,7 @@ import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointServ
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
@@ -96,6 +97,8 @@ it.effect("uses preserved legacy baseline refs for imported full-thread diffs", 
       toCheckpointRef: secondRef,
       fallbackFromToHead: false,
       ignoreWhitespace: true,
+      // Upstream caps each patch; one extra byte detects truncation.
+      maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES + 1,
     });
   }).pipe(Effect.provide(layerFor({ projection: Effect.succeed(projection), diffCheckpoints })));
 });

@@ -53,8 +53,8 @@ export const makeLinearStatusBridge = (input: {
   readonly token: string;
   readonly baseUrl?: string;
 }): LinearStatusBridge => ({
-  lookup: (identifiers) =>
-    Effect.gen(function* () {
+  lookup: Effect.fn("LinearStatusBridge.lookup")(
+    function* (identifiers) {
       if (identifiers.length === 0) return new Map<string, LinearIssueStatusSummary>();
       const base = input.baseUrl ?? LINEAR_STATUS_BRIDGE_URL;
       const request = HttpClientRequest.get(
@@ -73,10 +73,10 @@ export const makeLinearStatusBridge = (input: {
         known.set(issue.identifier, issue);
       }
       return known;
-    }).pipe(
-      // The bridge being down must never be worse than not having it: fall
-      // through to the per-viewer path rather than failing the whole read.
-      Effect.timeout("5 seconds"),
-      Effect.catchCause(() => Effect.succeed(new Map<string, LinearIssueStatusSummary>())),
-    ),
+    },
+    // The bridge being down must never be worse than not having it: fall
+    // through to the per-viewer path rather than failing the whole read.
+    Effect.timeout("5 seconds"),
+    Effect.catchCause(() => Effect.succeed(new Map<string, LinearIssueStatusSummary>())),
+  ),
 });

@@ -81,6 +81,13 @@ const node = (number: number, headRefName: string, owner = "acme") => ({
   updatedAt: "2026-01-02T00:00:00Z",
   headRepository: { name: "web", nameWithOwner: `${owner}/web` },
   headRepositoryOwner: { __typename: "User", login: owner },
+  // T3-CUSTOM(expbkt3): the fork's PullRequestNode also selects the readiness fields GitHub
+  // always returns; a fixture without them fails the generated decoder.
+  mergeable: "UNKNOWN",
+  mergeStateStatus: "UNKNOWN",
+  reviewDecision: null,
+  autoMergeRequest: null,
+  commits: { nodes: [] },
 });
 
 /**

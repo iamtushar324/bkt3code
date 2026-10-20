@@ -194,91 +194,90 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const runSetupProgram = (input: {
+  const runSetupProgram = Effect.fn("TurnStartBootstrap.runSetupProgram")(function* (input: {
     readonly threadId: ThreadId;
     readonly projectId: ProjectId | undefined;
     readonly projectCwd: string | undefined;
     readonly worktreePath: string;
-  }) =>
-    Effect.gen(function* () {
-      const requestedAt = yield* nowIso;
-      yield* projectSetupScriptRunner
-        .runForThread({
-          threadId: input.threadId,
-          ...(input.projectId ? { projectId: input.projectId } : {}),
-          ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
-          worktreePath: input.worktreePath,
-        })
-        .pipe(
-          Effect.matchEffect({
-            onFailure: (error) => {
-              const detail = projectSetupScriptCompatibilityDetail(error);
-              return appendSetupScriptActivity({
-                threadId: input.threadId,
-                kind: "setup-script.failed",
-                summary: "Setup script failed to start",
-                createdAt: requestedAt,
-                payload: { detail, worktreePath: input.worktreePath },
-                tone: "error",
-              }).pipe(
-                Effect.ignoreCause({ log: false }),
-                Effect.flatMap(() =>
-                  Effect.logWarning("bootstrap turn start failed to launch setup script", {
-                    threadId: input.threadId,
-                    worktreePath: input.worktreePath,
-                    detail,
-                  }),
+  }) {
+    const requestedAt = yield* nowIso;
+    yield* projectSetupScriptRunner
+      .runForThread({
+        threadId: input.threadId,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.projectCwd ? { projectCwd: input.projectCwd } : {}),
+        worktreePath: input.worktreePath,
+      })
+      .pipe(
+        Effect.matchEffect({
+          onFailure: (error) => {
+            const detail = projectSetupScriptCompatibilityDetail(error);
+            return appendSetupScriptActivity({
+              threadId: input.threadId,
+              kind: "setup-script.failed",
+              summary: "Setup script failed to start",
+              createdAt: requestedAt,
+              payload: { detail, worktreePath: input.worktreePath },
+              tone: "error",
+            }).pipe(
+              Effect.ignoreCause({ log: false }),
+              Effect.flatMap(() =>
+                Effect.logWarning("bootstrap turn start failed to launch setup script", {
+                  threadId: input.threadId,
+                  worktreePath: input.worktreePath,
+                  detail,
+                }),
+              ),
+            );
+          },
+          onSuccess: (setupResult) =>
+            Effect.gen(function* () {
+              if (setupResult.status !== "started") {
+                return;
+              }
+              const startedAt = yield* nowIso;
+              const payload = {
+                scriptId: setupResult.scriptId,
+                scriptName: setupResult.scriptName,
+                terminalId: setupResult.terminalId,
+                worktreePath: input.worktreePath,
+              };
+              yield* Effect.all([
+                appendSetupScriptActivity({
+                  threadId: input.threadId,
+                  kind: "setup-script.requested",
+                  summary: "Starting setup script",
+                  createdAt: requestedAt,
+                  payload,
+                  tone: "info",
+                }),
+                appendSetupScriptActivity({
+                  threadId: input.threadId,
+                  kind: "setup-script.started",
+                  summary: "Setup script started",
+                  createdAt: startedAt,
+                  payload,
+                  tone: "info",
+                }),
+              ]).pipe(
+                Effect.asVoid,
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "bootstrap turn start launched setup script but failed to record setup activity",
+                    {
+                      threadId: input.threadId,
+                      worktreePath: input.worktreePath,
+                      scriptId: setupResult.scriptId,
+                      terminalId: setupResult.terminalId,
+                      detail: error.message,
+                    },
+                  ),
                 ),
               );
-            },
-            onSuccess: (setupResult) =>
-              Effect.gen(function* () {
-                if (setupResult.status !== "started") {
-                  return;
-                }
-                const startedAt = yield* nowIso;
-                const payload = {
-                  scriptId: setupResult.scriptId,
-                  scriptName: setupResult.scriptName,
-                  terminalId: setupResult.terminalId,
-                  worktreePath: input.worktreePath,
-                };
-                yield* Effect.all([
-                  appendSetupScriptActivity({
-                    threadId: input.threadId,
-                    kind: "setup-script.requested",
-                    summary: "Starting setup script",
-                    createdAt: requestedAt,
-                    payload,
-                    tone: "info",
-                  }),
-                  appendSetupScriptActivity({
-                    threadId: input.threadId,
-                    kind: "setup-script.started",
-                    summary: "Setup script started",
-                    createdAt: startedAt,
-                    payload,
-                    tone: "info",
-                  }),
-                ]).pipe(
-                  Effect.asVoid,
-                  Effect.catch((error) =>
-                    Effect.logWarning(
-                      "bootstrap turn start launched setup script but failed to record setup activity",
-                      {
-                        threadId: input.threadId,
-                        worktreePath: input.worktreePath,
-                        scriptId: setupResult.scriptId,
-                        terminalId: setupResult.terminalId,
-                        detail: error.message,
-                      },
-                    ),
-                  ),
-                );
-              }),
-          }),
-        );
-    });
+            }),
+        }),
+      );
+  });
 
   /**
    * Resolve the base ref exactly like upstream's ws.ts: "start from origin" is
@@ -286,125 +285,123 @@ export const make = Effect.gen(function* () {
    * to the local base branch. Returns null when the base cannot be resolved,
    * which upstream treats as "do not prepare a worktree".
    */
-  const resolveWorktreeBase = (
+  const resolveWorktreeBase = Effect.fn("TurnStartBootstrap.resolveWorktreeBase")(function* (
     prepareWorktree: NonNullable<NonNullable<TurnStartCommand["bootstrap"]>["prepareWorktree"]>,
-  ) =>
-    Effect.gen(function* () {
-      const isRepository = yield* gitWorkflow.isRepository(prepareWorktree.projectCwd);
-      if (!isRepository) return null;
-      let worktreeBaseRef: string = prepareWorktree.baseBranch;
-      const startFromOrigin =
-        prepareWorktree.startFromOrigin === true &&
-        (yield* gitWorkflow.remoteExists({
-          cwd: prepareWorktree.projectCwd,
-          remoteName: "origin",
-        }));
-      if (startFromOrigin) {
-        yield* gitWorkflow.fetchRemote({ cwd: prepareWorktree.projectCwd, remoteName: "origin" });
-        const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
+  ) {
+    const isRepository = yield* gitWorkflow.isRepository(prepareWorktree.projectCwd);
+    if (!isRepository) return null;
+    let worktreeBaseRef: string = prepareWorktree.baseBranch;
+    const startFromOrigin =
+      prepareWorktree.startFromOrigin === true &&
+      (yield* gitWorkflow.remoteExists({
+        cwd: prepareWorktree.projectCwd,
+        remoteName: "origin",
+      }));
+    if (startFromOrigin) {
+      yield* gitWorkflow.fetchRemote({ cwd: prepareWorktree.projectCwd, remoteName: "origin" });
+      const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
+        cwd: prepareWorktree.projectCwd,
+        refName: prepareWorktree.baseBranch,
+        remoteName: "origin",
+      });
+      if (remoteBaseExists) {
+        const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
           cwd: prepareWorktree.projectCwd,
           refName: prepareWorktree.baseBranch,
-          remoteName: "origin",
+          fallbackRemoteName: "origin",
         });
-        if (remoteBaseExists) {
-          const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-            cwd: prepareWorktree.projectCwd,
-            refName: prepareWorktree.baseBranch,
-            fallbackRemoteName: "origin",
-          });
-          worktreeBaseRef = resolvedRemoteBase.commitSha;
-        }
+        worktreeBaseRef = resolvedRemoteBase.commitSha;
       }
-      const hasCommit = yield* gitWorkflow.hasCommit({
-        cwd: prepareWorktree.projectCwd,
-        refName: worktreeBaseRef,
-      });
-      return hasCommit ? worktreeBaseRef : null;
+    }
+    const hasCommit = yield* gitWorkflow.hasCommit({
+      cwd: prepareWorktree.projectCwd,
+      refName: worktreeBaseRef,
     });
+    return hasCommit ? worktreeBaseRef : null;
+  });
 
   /**
    * Create the worktree, or join the parent's shared one when a workspace
    * group is named. Records the new worktree on the thread and refreshes its
    * git status. Returns the worktree path, or null when nothing was prepared.
    */
-  const prepareWorktreeFor = (input: {
+  const prepareWorktreeFor = Effect.fn("TurnStartBootstrap.prepareWorktree")(function* (input: {
     readonly threadId: ThreadId;
     readonly prepareWorktree: NonNullable<TurnStartCommand["bootstrap"]>["prepareWorktree"];
     readonly options: TurnStartBootstrapDispatchOptions | undefined;
-  }) =>
-    Effect.gen(function* () {
-      const prepareWorktree = input.prepareWorktree;
-      if (!prepareWorktree) return null;
-      const group = input.options?.workspaceGroup;
+  }) {
+    const prepareWorktree = input.prepareWorktree;
+    if (!prepareWorktree) return null;
+    const group = input.options?.workspaceGroup;
 
-      const createWorktree = Effect.gen(function* () {
-        const worktreeBaseRef = yield* resolveWorktreeBase(prepareWorktree);
-        if (worktreeBaseRef === null) return null;
-        const worktree = yield* gitWorkflow.createWorktree({
-          cwd: prepareWorktree.projectCwd,
-          refName: worktreeBaseRef,
-          newRefName: prepareWorktree.branch,
-          baseRefName: prepareWorktree.baseBranch,
-          path: null,
-        });
-        return { path: worktree.worktree.path, branch: worktree.worktree.refName };
+    const createWorktree = Effect.gen(function* () {
+      const worktreeBaseRef = yield* resolveWorktreeBase(prepareWorktree);
+      if (worktreeBaseRef === null) return null;
+      const worktree = yield* gitWorkflow.createWorktree({
+        cwd: prepareWorktree.projectCwd,
+        refName: worktreeBaseRef,
+        newRefName: prepareWorktree.branch,
+        baseRefName: prepareWorktree.baseBranch,
+        path: null,
       });
-
-      // One worktree per (parent, repository): siblings created together must
-      // not race `git worktree add`, so the get-or-create runs under a permit.
-      const createOrJoin =
-        group === undefined
-          ? createWorktree
-          : withWorktreeCreationPermit(
-              `${group.ownerThreadId}:${group.projectId}`,
-              Effect.gen(function* () {
-                const existing = yield* workspaceGroups
-                  .get({ ownerThreadId: group.ownerThreadId, projectId: group.projectId })
-                  .pipe(Effect.option, Effect.map(Option.flatten));
-                if (Option.isSome(existing) && existing.value.isReady) {
-                  return {
-                    path: existing.value.worktreePath,
-                    branch: existing.value.branch,
-                  };
-                }
-                const created = yield* createWorktree;
-                if (created === null) return null;
-                // A reservation we cannot write must not block the session. The
-                // cost of falling back is one extra worktree, not a failed creation.
-                yield* workspaceGroups
-                  .claim({
-                    ownerThreadId: group.ownerThreadId,
-                    projectId: group.projectId,
-                    branch: created.branch,
-                    worktreePath: created.path,
-                    createdAt: yield* nowIso,
-                  })
-                  .pipe(
-                    Effect.flatMap(() =>
-                      workspaceGroups.markReady({
-                        ownerThreadId: group.ownerThreadId,
-                        projectId: group.projectId,
-                        worktreePath: created.path,
-                      }),
-                    ),
-                    Effect.ignoreCause({ log: true }),
-                  );
-                return created;
-              }),
-            );
-
-      const worktree = yield* createOrJoin;
-      if (worktree === null) return null;
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
-        threadId: input.threadId,
-        branch: worktree.branch,
-        worktreePath: worktree.path,
-      });
-      yield* refreshGitStatus(worktree.path);
-      return worktree.path;
+      return { path: worktree.worktree.path, branch: worktree.worktree.refName };
     });
+
+    // One worktree per (parent, repository): siblings created together must
+    // not race `git worktree add`, so the get-or-create runs under a permit.
+    const createOrJoin =
+      group === undefined
+        ? createWorktree
+        : withWorktreeCreationPermit(
+            `${group.ownerThreadId}:${group.projectId}`,
+            Effect.gen(function* () {
+              const existing = yield* workspaceGroups
+                .get({ ownerThreadId: group.ownerThreadId, projectId: group.projectId })
+                .pipe(Effect.option, Effect.map(Option.flatten));
+              if (Option.isSome(existing) && existing.value.isReady) {
+                return {
+                  path: existing.value.worktreePath,
+                  branch: existing.value.branch,
+                };
+              }
+              const created = yield* createWorktree;
+              if (created === null) return null;
+              // A reservation we cannot write must not block the session. The
+              // cost of falling back is one extra worktree, not a failed creation.
+              yield* workspaceGroups
+                .claim({
+                  ownerThreadId: group.ownerThreadId,
+                  projectId: group.projectId,
+                  branch: created.branch,
+                  worktreePath: created.path,
+                  createdAt: yield* nowIso,
+                })
+                .pipe(
+                  Effect.flatMap(() =>
+                    workspaceGroups.markReady({
+                      ownerThreadId: group.ownerThreadId,
+                      projectId: group.projectId,
+                      worktreePath: created.path,
+                    }),
+                  ),
+                  Effect.ignoreCause({ log: true }),
+                );
+              return created;
+            }),
+          );
+
+    const worktree = yield* createOrJoin;
+    if (worktree === null) return null;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+      threadId: input.threadId,
+      branch: worktree.branch,
+      worktreePath: worktree.path,
+    });
+    yield* refreshGitStatus(worktree.path);
+    return worktree.path;
+  });
 
   const cleanupCreatedThread = (threadId: ThreadId) =>
     serverCommandId("bootstrap-thread-delete").pipe(
@@ -448,11 +445,8 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const dispatchBootstrapTurnStart = (
-    command: TurnStartCommand,
-    options: TurnStartBootstrapDispatchOptions | undefined,
-  ) =>
-    Effect.gen(function* () {
+  const dispatchBootstrapTurnStart = Effect.fn("TurnStartBootstrap.dispatchBootstrapTurnStart")(
+    function* (command: TurnStartCommand, options: TurnStartBootstrapDispatchOptions | undefined) {
       const bootstrap = command.bootstrap;
       const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
       let createdThread = false;
@@ -497,7 +491,8 @@ export const make = Effect.gen(function* () {
       });
 
       return yield* withThreadCleanup(command.threadId, () => createdThread, bootstrapProgram);
-    });
+    },
+  );
 
   const dispatch: TurnStartBootstrap["Service"]["dispatch"] = (command, options) => {
     const dispatchEffect =

@@ -55,8 +55,8 @@ export const make = Effect.gen(function* () {
   const query = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
 
-  const capture = (input: PlanIngestInput) =>
-    Effect.gen(function* () {
+  const capture = Effect.fn("PlanIngestListener.capture")(
+    function* (input: PlanIngestInput) {
       // An implemented plan is history; there is nothing left to review.
       if (input.proposedPlan.implementedAt !== null) return;
 
@@ -74,15 +74,18 @@ export const make = Effect.gen(function* () {
         title: derivePlanTitle(planMarkdown),
         authorUserId: null,
       });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("could not capture a proposed plan for review", {
-          threadId: input.threadId,
-          planId: input.proposedPlan.id,
-          cause: String(cause),
-        }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not capture a proposed plan for review", {
+            threadId: input.threadId,
+            planId: input.proposedPlan.id,
+            cause: String(cause),
+          }),
+        ),
       ),
-    );
+  );
 
   // Coalesce per plan so a burst of streaming-plan upserts captures once, with
   // the newest body winning.

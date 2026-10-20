@@ -510,7 +510,11 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
   // The clones keep each tool's id, name and decoded parameter type, so handlers still match.
   Toolkit.make(
     ...Object.values(toolkit.tools).map((tool) =>
-      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+      // T3-CUSTOM(expbkt3): setParameters drops a dynamic tool's raw JSON Schema (the
+      // web UI bridge's tools), so those keep the schema they advertise and decode themselves.
+      Tool.isDynamic(tool) && tool.jsonSchema !== undefined
+        ? tool
+        : tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
     ),
   ) as unknown as Toolkit.Toolkit<Tools>;
 

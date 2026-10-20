@@ -63,21 +63,7 @@ describe("fork V2 ledger upgrade", () => {
       `;
       const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
       const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        pendingV2Migrations[1],
-        pendingV2Migrations[2],
-        pendingV2Migrations[3],
-        pendingV2Migrations[4],
-        pendingV2Migrations[5],
-        pendingV2Migrations[6],
-        pendingV2Migrations[7],
-        pendingV2Migrations[8],
-        pendingV2Migrations[9],
-        pendingV2Migrations[10],
-        pendingV2Migrations[11],
-        pendingV2Migrations[12],
-        pendingV2Migrations[13],
-      ]);
+      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations.slice(1));
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
       assert.deepStrictEqual(

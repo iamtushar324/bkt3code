@@ -71,15 +71,14 @@ export const makeAnalyticsUserDirectory = Effect.gen(function* () {
   });
 
   /** The person for `userId`, or undefined when unknown or without an email. */
-  const resolve = (userId: string) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const state = yield* Ref.get(stateRef);
-      if (state.loadedAt === null || now - state.loadedAt >= USER_DIRECTORY_REFRESH_MS) {
-        yield* refresh;
-      }
-      return (yield* Ref.get(stateRef)).people.get(userId);
-    });
+  const resolve = Effect.fn("AnalyticsUserDirectory.resolve")(function* (userId: string) {
+    const now = yield* Clock.currentTimeMillis;
+    const state = yield* Ref.get(stateRef);
+    if (state.loadedAt === null || now - state.loadedAt >= USER_DIRECTORY_REFRESH_MS) {
+      yield* refresh;
+    }
+    return (yield* Ref.get(stateRef)).people.get(userId);
+  });
 
   return { resolve } as const;
 });

@@ -710,23 +710,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     t3McpServerName(threadId).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
   // T3-CUSTOM(expbkt3): retain identity on daemon reconnects as well as first opens.
-  const borrow = (executionEnvironment?: NodeJS.ProcessEnv) =>
-    Effect.gen(function* () {
-      const lent = yield* Deferred.make<
-        OpenCode2Server.OpenCode2Connection,
-        OpenCodeRuntime.OpenCodeRuntimeError
-      >();
-      yield* server
-        .withConnection(
-          (connection) => Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
-          executionEnvironment, // T3-CUSTOM(expbkt3): per-thread daemon isolation.
-        )
-        .pipe(
-          Effect.catch((error) => Deferred.fail(lent, error)),
-          Effect.forkScoped,
-        );
-      return yield* Deferred.await(lent);
-    });
+  const borrow = Effect.fn("OpenCode2Adapter.borrow")(function* (
+    executionEnvironment?: NodeJS.ProcessEnv,
+  ) {
+    const lent = yield* Deferred.make<
+      OpenCode2Server.OpenCode2Connection,
+      OpenCodeRuntime.OpenCodeRuntimeError
+    >();
+    yield* server
+      .withConnection(
+        (connection) => Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
+        executionEnvironment, // T3-CUSTOM(expbkt3): per-thread daemon isolation.
+      )
+      .pipe(
+        Effect.catch((error) => Deferred.fail(lent, error)),
+        Effect.forkScoped,
+      );
+    return yield* Deferred.await(lent);
+  });
 
   const openSession = Effect.fn("OpenCode2Adapter.openSession")(function* (
     input: Parameters<ProviderAdapter.ProviderAdapterV2["Service"]["openSession"]>[0],

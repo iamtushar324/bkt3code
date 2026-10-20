@@ -369,7 +369,9 @@ const makeMigrationLoader = (throughId?: number) =>
     ),
   );
 
-const FIRST_V2_MIGRATION_ID = 55;
+// T3-CUSTOM(expbkt3): V2 is fork id 1043 (upstream 55). Fork 1000-1042 are pre-V2
+// and stay unguarded, like upstream's ids below 55.
+const FIRST_V2_MIGRATION_ID = 1043;
 
 /**
  * Fail before migrating when the migrator would skip one of V2's own

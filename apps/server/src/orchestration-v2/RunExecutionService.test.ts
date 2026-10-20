@@ -48,6 +48,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+// T3-CUSTOM(expbkt3): the fork MCP registry layer needs the auth session store.
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1114,6 +1116,13 @@ const layerMcpSessionRegistryTest = McpSessionRegistry.layer.pipe(
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:mcp-liveness")),
+      }),
+      // T3-CUSTOM(expbkt3): the fork registry reads the external MCP switch and ties credentials to logins.
+      ServerSettings.layerTest(),
+      // T3-CUSTOM(expbkt3)
+      Layer.mock(SessionStore.SessionStore)({
+        listActive: () => Effect.succeed([]),
+        streamChanges: Stream.never,
       }),
     ),
   ),

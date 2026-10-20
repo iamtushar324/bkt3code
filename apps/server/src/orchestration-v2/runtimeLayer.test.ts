@@ -2971,6 +2971,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       let headSha = "ad70160aaa";
       const host = Layer.mergeAll(
         NodeServices.layer,
+        // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+        Layer.mock(SourceControlProfileService)({
+          resolveThreadExecutionContext: () => Effect.succeed(null),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           detail: () =>
             Effect.sync(() => ({
@@ -3094,6 +3098,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       const host = Layer.mergeAll(
         NodeServices.layer,
+        // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+        Layer.mock(SourceControlProfileService)({
+          resolveThreadExecutionContext: () => Effect.succeed(null),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           detail: () =>
             Effect.sync(() => ({
@@ -3567,6 +3575,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
+              // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+              Layer.mock(SourceControlProfileService)({
+                resolveThreadExecutionContext: () => Effect.succeed(null),
+              }),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getThreadsWithPullRequests: () =>
                   projections
@@ -3574,6 +3586,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                     .pipe(
                       Effect.map((threads) => threads.filter((thread) => thread.id === threadId)),
                     ),
+                // T3-CUSTOM(expbkt3): owner resolution reads the watched thread's shell.
+                getThreadShell: (id) => projections.getThreadShell(id),
               }),
               Layer.mock(PullRequestService.PullRequestService)({
                 watchFingerprint: () =>

@@ -317,60 +317,65 @@ export const make = Effect.gen(function* () {
   });
 
   // T3-CUSTOM(expbkt3): BEGIN — allowlist, identity, insert ids (TEC-1631).
-  const logDroppedKeys = (event: string, dropped: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (dropped.length === 0) return;
-      const fresh = yield* Ref.modify(
-        droppedKeysLogged,
-        (logged): readonly [ReadonlyArray<string>, ReadonlySet<string>] => {
-          const unseen = dropped.filter((key) => !logged.has(key));
-          return [unseen, unseen.length === 0 ? logged : new Set([...logged, ...unseen])];
-        },
-      );
-      for (const key of fresh) {
-        yield* Effect.logDebug("analytics property key not allowlisted; dropping it", {
-          event,
-          key,
-        });
-      }
-    });
+  const logDroppedKeys = Effect.fn("AnalyticsService.logDroppedKeys")(function* (
+    event: string,
+    dropped: ReadonlyArray<string>,
+  ) {
+    if (dropped.length === 0) return;
+    const fresh = yield* Ref.modify(
+      droppedKeysLogged,
+      (logged): readonly [ReadonlyArray<string>, ReadonlySet<string>] => {
+        const unseen = dropped.filter((key) => !logged.has(key));
+        return [unseen, unseen.length === 0 ? logged : new Set([...logged, ...unseen])];
+      },
+    );
+    for (const key of fresh) {
+      yield* Effect.logDebug("analytics property key not allowlisted; dropping it", {
+        event,
+        key,
+      });
+    }
+  });
 
-  const eventUuid = (insertId: string | undefined) =>
-    Effect.gen(function* () {
-      if (insertId !== undefined) {
-        const digest = yield* Effect.exit(
-          crypto.digest("SHA-256", new TextEncoder().encode(insertId)),
-        );
-        if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
-      }
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7());
-      return Exit.isSuccess(uuid) ? uuid.value : undefined;
-    });
+  const eventUuid = Effect.fn("AnalyticsService.eventUuid")(function* (
+    insertId: string | undefined,
+  ) {
+    if (insertId !== undefined) {
+      const digest = yield* Effect.exit(
+        crypto.digest("SHA-256", new TextEncoder().encode(insertId)),
+      );
+      if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
+    }
+    const uuid = yield* Effect.exit(crypto.randomUUIDv7());
+    return Exit.isSuccess(uuid) ? uuid.value : undefined;
+  });
 
   /** Sends the person's profile once per user per process start. */
-  const identifyOnce = (userId: string, person: AnalyticsPerson) =>
-    Effect.gen(function* () {
-      const first = yield* Ref.modify(
-        identifiedUsers,
-        (seen): readonly [boolean, ReadonlySet<string>] =>
-          seen.has(userId) ? [false, seen] : [true, new Set([...seen, userId])],
-      );
-      if (!first) return;
-      const uuid = yield* eventUuid(undefined);
-      if (uuid === undefined) return;
-      yield* enqueueBufferedEvent({
-        uuid,
-        event: "$identify",
-        distinctId: person.email,
-        properties: {
-          $set: {
-            email: person.email,
-            role: person.role,
-            ...(person.name === undefined ? {} : { name: person.name }),
-          },
+  const identifyOnce = Effect.fn("AnalyticsService.identifyOnce")(function* (
+    userId: string,
+    person: AnalyticsPerson,
+  ) {
+    const first = yield* Ref.modify(
+      identifiedUsers,
+      (seen): readonly [boolean, ReadonlySet<string>] =>
+        seen.has(userId) ? [false, seen] : [true, new Set([...seen, userId])],
+    );
+    if (!first) return;
+    const uuid = yield* eventUuid(undefined);
+    if (uuid === undefined) return;
+    yield* enqueueBufferedEvent({
+      uuid,
+      event: "$identify",
+      distinctId: person.email,
+      properties: {
+        $set: {
+          email: person.email,
+          role: person.role,
+          ...(person.name === undefined ? {} : { name: person.name }),
         },
-      });
+      },
     });
+  });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties, options) {

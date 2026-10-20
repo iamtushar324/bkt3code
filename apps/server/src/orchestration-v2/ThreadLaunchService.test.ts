@@ -3609,6 +3609,9 @@ it.effect.each(
           creationSource: "web",
         });
         const scope = {
+          // T3-CUSTOM(expbkt3): fork-required invocation identity; an unrestricted provider actor.
+          principal: "provider-session" as const,
+          actorUserId: null,
           environmentId: EnvironmentId.make("delegated-worktree-test"),
           requestNamespace: "parent-session",
           thread: {

@@ -754,15 +754,20 @@ it.layer(layerTest)("LegacyV1ThreadImporter transcript lookup", (it) => {
       });
       yield* importer.ensureTranscript(threadId).pipe(Effect.withTracer(tracer));
 
-      assert.lengthOf(statements, 1);
-      const plan = yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${statements[0]}`,
-        [threadId, "migration:v1:message:%"],
-      );
-      assert.match(
-        plan.map((row) => row.detail).join("\n"),
-        /USING INDEX idx_orchestration_events_agent_stream_sequence \(stream_id=\?\)/,
-      );
+      // T3-CUSTOM(expbkt3): BEGIN — the fork's V1 history import (forkLegacyHistoryEvents)
+      // runs a second existing-event lookup on the same thread; both must use the hint.
+      assert.lengthOf(statements, 2);
+      for (const statement of statements) {
+        const plan = yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${statement}`,
+          [threadId, "migration:v1:message:%"].slice(0, statement.split("?").length - 1),
+        );
+        assert.match(
+          plan.map((row) => row.detail).join("\n"),
+          /USING INDEX idx_orchestration_events_agent_stream_sequence \(stream_id=\?\)/,
+        );
+      }
+      // T3-CUSTOM(expbkt3): END
     }),
   );
 });

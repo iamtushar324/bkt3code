@@ -71,21 +71,20 @@ export const layer = Layer.effect(
       }),
     );
     return ForkProviderSessions.of({
-      stopSession: ({ threadId }) =>
-        Effect.gen(function* () {
-          const { providerThreads } = yield* projection.getThreadRecords(threadId, [
-            "providerThreads",
-          ]);
-          for (const providerSessionId of new Set(
-            providerThreads.flatMap((thread) =>
-              thread.providerSessionId === null ? [] : [thread.providerSessionId],
-            ),
-          )) {
-            yield* sessions.release({ providerSessionId, reason: "manual_shutdown" });
-          }
-        }).pipe(Effect.orDie),
-      hasLiveBackgroundWork: ({ threadId }) =>
-        Effect.gen(function* () {
+      stopSession: Effect.fn("ForkProviderSessions.stopSession")(function* ({ threadId }) {
+        const { providerThreads } = yield* projection.getThreadRecords(threadId, [
+          "providerThreads",
+        ]);
+        for (const providerSessionId of new Set(
+          providerThreads.flatMap((thread) =>
+            thread.providerSessionId === null ? [] : [thread.providerSessionId],
+          ),
+        )) {
+          yield* sessions.release({ providerSessionId, reason: "manual_shutdown" });
+        }
+      }, Effect.orDie),
+      hasLiveBackgroundWork: Effect.fn("ForkProviderSessions.hasLiveBackgroundWork")(
+        function* ({ threadId }) {
           const { providerThreads } = yield* projection.getThreadRecords(threadId, [
             "providerThreads",
           ]);
@@ -99,44 +98,43 @@ export const layer = Layer.effect(
             if (yield* live.value.hasPendingBackgroundWork) return true;
           }
           return false;
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(true),
-          ),
+        },
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(true),
         ),
-      listSessions: () =>
-        Effect.gen(function* () {
-          const shell = yield* projection.getShellSnapshot();
-          const result: ProviderSession[] = [];
-          for (const thread of [...shell.threads, ...shell.archivedThreads]) {
-            const records = yield* projection.getThreadRecords(thread.id, ["providerSessions"]);
-            for (const session of records.providerSessions) {
-              const live = yield* sessions.get(session.id);
-              if (live._tag === "None") continue;
-              result.push({
-                threadId: thread.id,
-                provider: ProviderDriverKind.make(
-                  String(session.driver) === "claude" ? "claudeAgent" : String(session.driver),
-                ),
-                providerInstanceId: session.providerInstanceId,
-                status:
-                  session.status === "stopped"
-                    ? "closed"
-                    : session.status === "starting"
-                      ? "connecting"
-                      : session.status === "waiting"
-                        ? "running"
-                        : session.status,
-                runtimeMode: thread.runtimeMode,
-                cwd: session.cwd,
-                ...(session.model === null ? {} : { model: session.model }),
-                createdAt: DateTime.formatIso(session.createdAt),
-                updatedAt: DateTime.formatIso(session.updatedAt),
-              });
-            }
+      ),
+      listSessions: Effect.fn("ForkProviderSessions.listSessions")(function* () {
+        const shell = yield* projection.getShellSnapshot();
+        const result: ProviderSession[] = [];
+        for (const thread of [...shell.threads, ...shell.archivedThreads]) {
+          const records = yield* projection.getThreadRecords(thread.id, ["providerSessions"]);
+          for (const session of records.providerSessions) {
+            const live = yield* sessions.get(session.id);
+            if (live._tag === "None") continue;
+            result.push({
+              threadId: thread.id,
+              provider: ProviderDriverKind.make(
+                String(session.driver) === "claude" ? "claudeAgent" : String(session.driver),
+              ),
+              providerInstanceId: session.providerInstanceId,
+              status:
+                session.status === "stopped"
+                  ? "closed"
+                  : session.status === "starting"
+                    ? "connecting"
+                    : session.status === "waiting"
+                      ? "running"
+                      : session.status,
+              runtimeMode: thread.runtimeMode,
+              cwd: session.cwd,
+              ...(session.model === null ? {} : { model: session.model }),
+              createdAt: DateTime.formatIso(session.createdAt),
+              updatedAt: DateTime.formatIso(session.updatedAt),
+            });
           }
-          return result;
-        }).pipe(Effect.orDie),
+        }
+        return result;
+      }, Effect.orDie),
       streamEvents: Stream.fromPubSub(events),
     });
   }),

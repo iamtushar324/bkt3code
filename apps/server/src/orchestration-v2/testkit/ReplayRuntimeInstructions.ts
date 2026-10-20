@@ -2,6 +2,9 @@ import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/cont
 
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
+// T3-CUSTOM(expbkt3): fork runtime-instruction blocks in recorded Muse prompts.
+import { materializeForkReplayRuntimeInstructions } from "./ReplayRuntimeInstructions.expbkt3.ts";
+
 export function materializeReplayTranscriptRuntimeInstructions(
   transcript: ProviderReplayTranscript,
   runtime: { readonly driver: ProviderDriverKind; readonly model: string },
@@ -14,7 +17,9 @@ export function materializeReplayTranscriptRuntimeInstructions(
         : runtime.driver === "acpRegistry"
           ? "acpRegistry"
           : undefined;
-  if (harness === undefined) return transcript;
+  // T3-CUSTOM(expbkt3): Muse fixtures record upstream's runtime text verbatim.
+  if (harness === undefined)
+    return materializeForkReplayRuntimeInstructions(transcript, runtime.driver);
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
 
   return {

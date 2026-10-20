@@ -112,6 +112,9 @@ it.effect("close reports why the server browser refused to close a tab", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("preview-controls-thread");
       const scope: McpInvocationContext.McpInvocationScope = {
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId: EnvironmentId.make("preview-controls-environment"),
         requestNamespace: "preview-controls-provider-session",
         thread: {

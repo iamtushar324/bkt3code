@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): an MCP client approved by a team user acts as that user.
 import {
+  AuthMemberClientScopes,
   EnvironmentUserId as EnvironmentUserIdSchema,
   userIdFromSubject,
 } from "@t3tools/contracts";
@@ -1047,7 +1048,8 @@ export const make = Effect.gen(function* () {
         subject: input.subject,
         // T3-CUSTOM(expbkt3): Make the Clerk identity available to every authenticated use case.
         userId: input.userId,
-        scopes: AuthStandardClientScopes,
+        // T3-CUSTOM(expbkt3): a member's sign-in never carries access or relay management.
+        scopes: AuthMemberClientScopes,
         client: {
           ...requestMetadata,
           ...(input.label ? { label: input.label } : {}),

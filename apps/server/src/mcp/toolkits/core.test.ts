@@ -481,10 +481,14 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
               record: (event, properties) =>
-                Deferred.succeed(recorded[recordedCount++]!, {
-                  event,
-                  properties: properties ?? {},
-                }).pipe(Effect.asVoid),
+                // T3-CUSTOM(expbkt3): the fork's own per-tool `mcp.tool.called` event
+                // (serverEvents.test.ts covers it) also lands here; this test is about upstream's.
+                event === "mcp.tool.called"
+                  ? Effect.void
+                  : Deferred.succeed(recorded[recordedCount++]!, {
+                      event,
+                      properties: properties ?? {},
+                    }).pipe(Effect.asVoid),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
