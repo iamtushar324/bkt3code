@@ -30,6 +30,7 @@ const recordingAnalytics = (recorded: Array<Recorded>) =>
         recorded.push({ event, properties, options });
       }),
     flush: Effect.void,
+    recordOwners: () => Effect.void,
   });
 
 class ToolBroke extends Schema.TaggedError<ToolBroke>()("ToolBroke", {

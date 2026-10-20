@@ -773,13 +773,13 @@ function redactMcpConfiguration(settings: Parameters<typeof redactServerSettings
 }
 
 const makeCommandId = (crypto: Crypto.Crypto, operation: string) =>
-  crypto.randomUUIDv4.pipe(
+  crypto.randomUUIDv4().pipe(
     Effect.map((uuid) => CommandId.make(`mcp:${operation}:${uuid}`)),
     mapControlError(operation),
   );
 
 const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
-  crypto.randomUUIDv4.pipe(
+  crypto.randomUUIDv4().pipe(
     Effect.map((uuid) => MessageId.make(`mcp:${uuid}`)),
     mapControlError(operation),
   );
@@ -832,7 +832,7 @@ export const createSession = Effect.fn("T3ControlToolkit.createSession")(functio
   });
   const sessionId =
     options?.sessionId ??
-    ThreadId.make(`mcp:${yield* crypto.randomUUIDv4.pipe(mapControlError(operation))}`);
+    ThreadId.make(`mcp:${yield* crypto.randomUUIDv4().pipe(mapControlError(operation))}`);
   const ownerUserId =
     scope.actorUserId ?? project.ownerUserId ?? (yield* resolveConfiguredOwnerUserId(operation));
   // T3-CUSTOM(expbkt3): the new session inherits the calling session's audience.
@@ -1463,7 +1463,7 @@ const handlers = {
       };
     }
 
-    const uuid = yield* crypto.randomUUIDv4.pipe(mapControlError(operation));
+    const uuid = yield* crypto.randomUUIDv4().pipe(mapControlError(operation));
     const projectId = ProjectId.make(`mcp-project:${uuid}`);
     const commandId = yield* makeCommandId(crypto, operation);
     const createdAt = yield* nowIso;
@@ -1731,7 +1731,7 @@ const handlers = {
       });
     }
     const [uuid, commandId, createdAt] = yield* Effect.all([
-      crypto.randomUUIDv4.pipe(mapControlError(operation)),
+      crypto.randomUUIDv4().pipe(mapControlError(operation)),
       makeCommandId(crypto, operation),
       nowIso,
     ]);

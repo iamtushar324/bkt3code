@@ -284,6 +284,7 @@ export const make = Effect.gen(function* () {
       // T3-CUSTOM(expbkt3): shared host nickname, icon and colour.
       environmentAppearance: true,
       projectCloneTracking: true,
+      ignoredFileListing: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

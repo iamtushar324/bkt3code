@@ -210,9 +210,8 @@ import Migration1056 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.t
 import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 // T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
-// deliberately NOT registered. It drops projection_thread_activities,
-// projection_turns, projection_thread_proposed_plans, projection_pending_approvals,
-// projection_state and checkpoint_diff_blobs, but the fork still reads the V1
+// deliberately NOT registered. It drops the V1 activity, turn, proposed-plan,
+// pending-approval and state projections and checkpoint diff blobs, but the fork still reads the V1
 // projections for old-thread history (ForkLegacyHistory.expbkt3.ts,
 // legacyProjection.expbkt3.ts). Running it on bkt3 would lose that history
 // irreversibly. Leave the file in the tree; register it only once no fork code

@@ -138,11 +138,13 @@ export const make = Effect.gen(function* () {
   const effectWorker = yield* OrchestrationEffectWorkerV2;
   const workspaceGroups = yield* ThreadWorkspaceGroups.ThreadWorkspaceGroupRepository;
 
-  const randomUUID = crypto.randomUUIDv4.pipe(
-    Effect.mapError((cause) =>
-      toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
-    ),
-  );
+  const randomUUID = crypto
+    .randomUUIDv4()
+    .pipe(
+      Effect.mapError((cause) =>
+        toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
+      ),
+    );
   const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
   const serverCommandId = (tag: string) =>
     randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));

@@ -15,7 +15,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
-import { getTelemetryIdentifier } from "./Identify.ts";
+import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
 interface SentEvent {
@@ -98,7 +98,7 @@ const captureEvents = <A>(
     yield* Effect.gen(function* () {
       yield* Layer.launch(layerBatchServer).pipe(Effect.forkScoped);
       const analytics = yield* AnalyticsService.AnalyticsService;
-      installId = yield* getTelemetryIdentifier;
+      installId = (yield* getTelemetryIdentity).distinctId;
       yield* body(analytics);
       yield* analytics.flush;
     }).pipe(Effect.provide(layerRuntime));

@@ -171,6 +171,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
    */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server answers projects.listIgnoredFiles. */
+  ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): server persists the shared `environmentAppearance`
   // setting (nickname, icon, colour). Absent on servers that would drop it.

@@ -28,7 +28,8 @@ export function ThreadHeader(
   },
 ) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
+    useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   // T3-CUSTOM(expbkt3): smart git — Android's header button, and a header refresh key on iOS.
@@ -177,6 +178,7 @@ export function ThreadHeader(
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
         hideBottomBorder
+        compact={composerKeyboardActive}
       />
       {native.fallback}
     </>

@@ -25,6 +25,7 @@
 - [T3 Code MCP control center](./user/t3-mcp-control.md)
 - [Agent views in chat](./user/agent-views.md)
 - [Remote access](./user/remote-access.md)
+- [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)

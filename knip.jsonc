@@ -33,7 +33,6 @@
       // not belong inside an upstream merge, so the new pass is scoped off for
       // fork sources until it is cleaned up. `files` and `dependencies` checks
       // are unaffected. Remove this block as the exports are tidied.
-      "ignoreIssues": { "src/**": ["exports", "nsExports", "duplicates"] },
       // T3-CUSTOM(expbkt3): END
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
@@ -43,12 +42,25 @@
         "scripts/analytics-backfill.ts",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
+        "scripts/fetch-expo-schema.ts",
         "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        // graphqlgen reads its config.
+        "graphql.config.ts",
       ],
+      // T3-CUSTOM(expbkt3): upstream migration 063 stays in the tree but unregistered
+      // (see Migrations.ts), so only its test imports it.
+      "ignore": ["src/persistence/Migrations/063_DropUnusedV1Projections.ts"],
+      // The generated operations export every selection's class.
+      // T3-CUSTOM(expbkt3): the "src/**" entry is the fork's, for the deferred
+      // export debt described above; one object, since a repeated key would drop it.
+      "ignoreIssues": {
+        "**/*.graphql.ts": ["exports", "types", "namespaceMembers"],
+        "src/**": ["exports", "nsExports", "duplicates"],
+      },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the
@@ -98,8 +110,9 @@
       // fork sources until it is cleaned up. `files` and `dependencies` checks
       // are unaffected. Remove this block as the exports are tidied.
       // T3-CUSTOM(expbkt3): END
-      // Worktree setup (scripts/setup-worktree.ts) runs this directly.
-      "entry": ["scripts/warm-dep-cache.ts"],
+      // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
+      // fixtures run under node.
+      "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

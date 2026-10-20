@@ -198,7 +198,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   // A failing CSPRNG is a defect, not something a caller can recover from.
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
 
   // Mutations announce the document they touched; `watch` re-reads from there.
   const changes = yield* PubSub.unbounded<string>();

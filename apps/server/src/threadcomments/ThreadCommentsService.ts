@@ -139,7 +139,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   // A failing CSPRNG is a defect, not something a caller can recover from.
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
   const shortId = (prefix: string) =>
     Effect.map(uuid, (value) => `${prefix}_${value.replaceAll("-", "").slice(0, 20)}`);
 

@@ -329,7 +329,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
 
   /** The account `~/.claude-active` points at today — the degraded answer when the switcher cannot place. */
   const currentProfileFromActiveLink: Effect.Effect<ClaudeAccountResolution | undefined> =
