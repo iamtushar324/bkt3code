@@ -46,12 +46,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../config.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../orchestration-v2/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
-import { expandHomePath } from "../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { ServerSettingsService } from "../serverSettings.ts";

@@ -23,8 +23,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-// T3-CUSTOM(expbkt3): fork code still uses useMemo.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 // T3-CUSTOM(expbkt3): BEGIN — search this device's cache for unreachable hosts.
 import { searchCachedThreads } from "@t3tools/client-runtime/state/cached-thread-search";
@@ -147,16 +146,12 @@ export function useThreadSearch(
   // results come from this device's cache, and are merged behind the live ones
   // so a reachable host's authoritative answer always leads.
   const { presentationById } = useEnvironments();
-  const unreachableEnvironmentIds = useMemo(
-    () =>
-      environmentIds.filter((environmentId) => {
-        const environment = presentationById.get(environmentId);
-        // "connected" is the only phase whose host can answer a search; the
-        // rest are some flavour of not-there, including a retry in progress.
-        return environment !== undefined && environment.connection.phase !== "connected";
-      }),
-    [environmentIds, presentationById],
-  );
+  const unreachableEnvironmentIds = environmentIds.filter((environmentId) => {
+    const environment = presentationById.get(environmentId);
+    // "connected" is the only phase whose host can answer a search; the
+    // rest are some flavour of not-there, including a retry in progress.
+    return environment !== undefined && environment.connection.phase !== "connected";
+  });
   const cachedMatches = useCachedThreadSearch(
     unreachableEnvironmentIds,
     settledQuery === null || isDebouncing ? "" : settledQuery,

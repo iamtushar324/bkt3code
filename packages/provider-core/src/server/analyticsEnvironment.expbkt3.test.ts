@@ -1,8 +1,13 @@
 // T3-CUSTOM(expbkt3): agent processes never see the server's analytics settings (TEC-1631).
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
 
-import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
-import { SERVER_ANALYTICS_ENV_KEYS, withoutAnalyticsEnvironment } from "./analyticsEnvironment.ts";
+import {
+  SERVER_ANALYTICS_ENV_KEYS,
+  withoutAnalyticsEnvironment,
+} from "./analyticsEnvironment.expbkt3.ts";
+import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
 
 const serverEnv = {
   PATH: "/usr/bin",
@@ -45,17 +50,21 @@ it("does not mutate the env it was given", () => {
   assert.equal(env.T3CODE_POSTHOG_KEY, "phc_secret");
 });
 
-it("strips the keys from every provider environment, with or without instance overrides", () => {
-  for (const environment of [
-    undefined,
-    [],
-    [{ name: "CUSTOM_VALUE", value: "x", sensitive: false }],
-    [{ name: "T3CODE_POSTHOG_KEY", value: "phc_override", sensitive: true }],
-  ]) {
-    const merged = mergeProviderInstanceEnvironment(environment, serverEnv);
-    for (const key of SERVER_ANALYTICS_ENV_KEYS) {
-      assert.isUndefined(merged[key], key);
-    }
-    assert.equal(merged.PATH, "/usr/bin");
-  }
-});
+it.effect(
+  "strips the keys from every provider environment, with or without instance overrides",
+  () =>
+    Effect.gen(function* () {
+      for (const environment of [
+        undefined,
+        [],
+        [{ name: "CUSTOM_VALUE", value: "x", sensitive: false }],
+        [{ name: "T3CODE_POSTHOG_KEY", value: "phc_override", sensitive: true }],
+      ]) {
+        const merged = yield* mergeProviderInstanceEnvironment(environment, serverEnv);
+        for (const key of SERVER_ANALYTICS_ENV_KEYS) {
+          assert.isUndefined(merged[key], key);
+        }
+        assert.equal(merged.PATH, "/usr/bin");
+      }
+    }).pipe(Effect.provideService(HostProcess.HomeDirectory, "/home/ada")),
+);

@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { expandHomePath } from "../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { ProcessRunner } from "../processRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 

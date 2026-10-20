@@ -89,7 +89,7 @@ import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import type { StatusTone } from "../../components/StatusPill";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";

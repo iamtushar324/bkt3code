@@ -68,9 +68,9 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { runOnJS } from "react-native-reanimated";
 import { FlatList, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ControlPillMenu } from "../../components/ui/ControlPill";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";

@@ -20,8 +20,8 @@ import {
 } from "@t3tools/client-runtime/toolyard-trust-setup";
 import type { ToolyardIntegrationStatus } from "@t3tools/contracts";
 import { Alert, Linking, Pressable, Switch, View } from "react-native";
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { StatusPill, type StatusTone } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
 import { appAtomRegistry } from "../../state/atom-registry";

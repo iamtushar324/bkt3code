@@ -10,8 +10,7 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-// T3-CUSTOM(expbkt3): fork code still uses useMemo.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -163,45 +162,40 @@ export function DraftHeroHeadline({
   // untouched, which is every group on a single-environment client.
   const appearances = useEnvironmentAppearances();
   // Named apart from upstream's combobox `pickerItems`, which these rows feed.
-  const projectPickerItems = useMemo<ReadonlyArray<ProjectPickerItem>>(
-    () =>
-      projectPickerEntries.flatMap(({ group }): ProjectPickerItem[] => {
-        const byEnvironment = new Map<string, SidebarProjectGroupMember>();
-        for (const member of group.memberProjects) {
-          if (!byEnvironment.has(member.environmentId)) {
-            byEnvironment.set(member.environmentId, member);
-          }
+  const projectPickerItems: ReadonlyArray<ProjectPickerItem> = projectPickerEntries.flatMap(
+    ({ group }): ProjectPickerItem[] => {
+      const byEnvironment = new Map<string, SidebarProjectGroupMember>();
+      for (const member of group.memberProjects) {
+        if (!byEnvironment.has(member.environmentId)) {
+          byEnvironment.set(member.environmentId, member);
         }
-        if (byEnvironment.size < 2) {
-          return [
-            {
-              value: group.projectKey,
-              displayName: group.displayName,
-              environmentId: null,
-              project: null,
-              group,
-            },
-          ];
-        }
-        return [...byEnvironment.values()].map((member) => ({
-          value: `${group.projectKey}::${member.environmentId}`,
-          displayName: group.displayName,
-          environmentId: member.environmentId,
-          project: member,
-          group,
-        }));
-      }),
-    [projectPickerEntries],
+      }
+      if (byEnvironment.size < 2) {
+        return [
+          {
+            value: group.projectKey,
+            displayName: group.displayName,
+            environmentId: null,
+            project: null,
+            group,
+          },
+        ];
+      }
+      return [...byEnvironment.values()].map((member) => ({
+        value: `${group.projectKey}::${member.environmentId}`,
+        displayName: group.displayName,
+        environmentId: member.environmentId,
+        project: member,
+        group,
+      }));
+    },
   );
   const projectPickerItemByValue = new Map(
     projectPickerItems.map((item) => [item.value, item] as const),
   );
-  const activeGroupSpansEnvironments = useMemo(() => {
-    if (!activeProjectGroup) return false;
-    return (
-      new Set(activeProjectGroup.memberProjects.map((member) => member.environmentId)).size > 1
-    );
-  }, [activeProjectGroup]);
+  const activeGroupSpansEnvironments =
+    activeProjectGroup !== null &&
+    new Set(activeProjectGroup.memberProjects.map((member) => member.environmentId)).size > 1;
   const activeProjectKey =
     activeProjectGroup === null
       ? ""

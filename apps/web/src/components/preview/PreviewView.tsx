@@ -44,11 +44,10 @@ import {
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
-import {
-  useEnvironment,
-  useEnvironmentHttpBaseUrl,
-  usePrimaryEnvironmentId,
-} from "~/state/environments";
+// T3-CUSTOM(expbkt3): a managed build moves tabs relative to the server it launched.
+import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useAtomValue } from "@effect/atom-react";
+import { desktopOwnEnvironmentIdAtom } from "~/fork/desktopOwnEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { usePreviewStreamAccess } from "~/state/previewStream";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -176,7 +175,8 @@ export function PreviewView({
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // T3-CUSTOM(expbkt3): a managed build launched `bk-local`, not its dev-server-1 primary.
+  const primaryEnvironmentId = useAtomValue(desktopOwnEnvironmentIdAtom);
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");

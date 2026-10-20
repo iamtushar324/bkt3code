@@ -25,7 +25,7 @@ import {
   readClaudeHardLimitAccountsHook,
 } from "../claudeAccounts/hardLimitHook.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import { ForkProviderSessions } from "./ForkProviderSessions.expbkt3.ts";
 
 const CLAUDE_AUTOSWITCH_TIMEOUT = "10 seconds";

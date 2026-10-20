@@ -20,6 +20,41 @@ export const RepositoryOwner = Schema.Struct({
 })
 export interface RepositoryOwner extends Schema.Struct.Type<typeof RepositoryOwner.fields> {}
 
+/** Represents an auto-merge request for a pull request */
+export const AutoMergeRequest = Schema.Struct({
+  /** When was this auto-merge request was enabled. */
+  enabledAt: Schema.NullOr(Shared.DateTime)
+})
+export interface AutoMergeRequest extends Schema.Struct.Type<typeof AutoMergeRequest.fields> {}
+
+/** Represents the rollup for both the check runs and status for a commit. */
+export const StatusCheckRollup = Schema.Struct({
+  /** The combined status for the commit. */
+  state: GraphQL.enumLiterals(Shared.StatusState.literals)
+})
+export interface StatusCheckRollup extends Schema.Struct.Type<typeof StatusCheckRollup.fields> {}
+
+/** Represents a Git commit. */
+export const Commit = Schema.Struct({
+  /** Check and Status rollup information for this commit. */
+  statusCheckRollup: Schema.NullOr(StatusCheckRollup)
+})
+export interface Commit extends Schema.Struct.Type<typeof Commit.fields> {}
+
+/** Represents a Git commit part of a pull request. */
+export const PullRequestCommit = Schema.Struct({
+  /** The Git commit object */
+  commit: Commit
+})
+export interface PullRequestCommit extends Schema.Struct.Type<typeof PullRequestCommit.fields> {}
+
+/** The connection type for PullRequestCommit. */
+export const PullRequestCommitConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestCommit)))
+})
+export interface PullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestCommitConnection.fields> {}
+
 /**
  * `fragment PullRequestNode on PullRequest`
  *
@@ -53,7 +88,17 @@ export const PullRequestNode = Schema.Struct({
   /** The repository associated with this pull request's head Ref. */
   headRepository: Schema.NullOr(HeadRepositoryRepository),
   /** The owner of the repository associated with this pull request's head Ref. */
-  headRepositoryOwner: Schema.NullOr(RepositoryOwner)
+  headRepositoryOwner: Schema.NullOr(RepositoryOwner),
+  /** Whether or not the pull request can be merged based on the existence of merge conflicts. */
+  mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
+  /** Detailed information about the current pull request merge state status. */
+  mergeStateStatus: GraphQL.enumLiterals(Shared.MergeStateStatus.literals),
+  /** The current status of this pull request with respect to code review. */
+  reviewDecision: Schema.NullOr(GraphQL.enumLiterals(Shared.PullRequestReviewDecision.literals)),
+  /** Returns the auto-merge request object if one exists for this pull request. */
+  autoMergeRequest: Schema.NullOr(AutoMergeRequest),
+  /** A list of commits present in this pull request's head branch not present in the base branch. */
+  commits: PullRequestCommitConnection
 })
 export interface PullRequestNode extends Schema.Struct.Type<typeof PullRequestNode.fields> {}
 
@@ -85,7 +130,7 @@ export const PullRequestsByHead = GraphQL.query("PullRequestsByHead", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(headRefName:$", "head", " states:$", "states", " first:$", "first", " orderBy:{field:CREATED_AT direction:DESC}){nodes{...PullRequestNode}}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}mergeable mergeStateStatus reviewDecision autoMergeRequest{enabledAt}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {
@@ -124,7 +169,7 @@ export const PullRequestByNumber = GraphQL.query("PullRequestByNumber", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestNode}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}mergeable mergeStateStatus reviewDecision autoMergeRequest{enabledAt}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {

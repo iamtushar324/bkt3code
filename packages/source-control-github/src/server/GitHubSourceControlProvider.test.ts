@@ -24,7 +24,7 @@ import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 // T3-CUSTOM(expbkt3): per-profile batching coverage.
 import { SourceControlProfileId } from "@t3tools/contracts";
-import { withSourceControlExecutionEnvironment } from "./SourceControlExecutionEnvironment.ts";
+import { withSourceControlExecutionEnvironment } from "@t3tools/provider-core/server/sourceControlExecutionEnvironment.expbkt3";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 

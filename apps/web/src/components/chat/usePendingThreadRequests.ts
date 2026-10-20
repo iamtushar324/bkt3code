@@ -42,6 +42,9 @@ import {
   type PendingUserInput,
 } from "../../session-logic";
 import { readEnvironmentScope } from "../../state/session";
+// T3-CUSTOM(expbkt3): ended-run question release and product analytics (TEC-1631).
+import { releaseEndedRunUserInputs } from "../../fork/orphanedUserInputs";
+import { trackProductEvent } from "../../lib/analytics/productAnalytics";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -136,7 +139,10 @@ export function usePendingThreadRequests(input: {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const pendingRequests =
-    serverProjection === null ? NO_PENDING_REQUESTS : derivePendingThreadRequests(serverProjection);
+    serverProjection === null
+      ? NO_PENDING_REQUESTS
+      : // T3-CUSTOM(expbkt3): a question whose run ended can be dismissed.
+        releaseEndedRunUserInputs(derivePendingThreadRequests(serverProjection), serverProjection);
   // The projection changes on every streamed event, so shared empties keep the
   // composer and approval panel from re-rendering while nothing is pending.
   const pendingApprovals =
@@ -279,11 +285,15 @@ export function usePendingThreadRequests(input: {
   ) => {
     if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
       return;
-    if (
-      pendingApprovals.find((approval) => approval.requestId === requestId)?.responseCapability !==
-      "live"
-    )
-      return;
+    // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+    const pendingApproval = pendingApprovals.find((approval) => approval.requestId === requestId);
+    if (pendingApproval?.responseCapability !== "live") return;
+    trackProductEvent("approval.answered_in_ui", {
+      threadId: activeThreadId,
+      kind: pendingApproval.requestKind,
+      decision,
+    });
+    // T3-CUSTOM(expbkt3): END
 
     setRespondingRequestIds((existing) =>
       existing.includes(requestId) ? existing : [...existing, requestId],
@@ -346,6 +356,12 @@ export function usePendingThreadRequests(input: {
       attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
     }
     userInputResponsesInFlight.current.add(responseKey);
+    // T3-CUSTOM(expbkt3): BEGIN TEC-1631 product analytics
+    trackProductEvent("question.answered_in_ui", {
+      threadId: activeThreadId,
+      kind: "user_input",
+    });
+    // T3-CUSTOM(expbkt3): END
 
     setRespondingUserInputRequestIds((existing) =>
       existing.includes(requestId) ? existing : [...existing, requestId],

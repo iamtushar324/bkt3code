@@ -4,7 +4,7 @@ import * as NodeVM from "node:vm";
 import * as Schema from "effect/Schema";
 import { expect, it } from "vite-plus/test";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./piT3McpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
 type Tool = {
   readonly name: string;

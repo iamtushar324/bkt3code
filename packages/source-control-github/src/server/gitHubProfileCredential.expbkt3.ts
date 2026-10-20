@@ -13,7 +13,7 @@ import {
   carriesSourceControlIdentity,
   CurrentSourceControlExecutionEnvironment,
   type SourceControlExecutionEnvironment,
-} from "./SourceControlExecutionEnvironment.ts";
+} from "@t3tools/provider-core/server/sourceControlExecutionEnvironment.expbkt3";
 
 /**
  * The current profile environment when it replaces the machine's GitHub identity, else null.

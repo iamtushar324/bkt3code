@@ -19,9 +19,6 @@ import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
 import { describe, expect } from "vite-plus/test";
 
-// T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
-// which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
-import { ForgejoCliSelfContainedLive } from "../sourceControl/forgejoCliRuntime.expbkt3.ts";
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -49,7 +46,6 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
       Layer.mergeAll(
         NodeServices.layer,
         NetService.layer,
-        ForgejoCliSelfContainedLive,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
       ),
     ),

@@ -34,9 +34,9 @@ import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
 const NATIVE_SESSION = "native-thread-claude-subagent-end";

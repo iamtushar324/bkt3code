@@ -63,7 +63,7 @@ import {
   withSessionIdentityEnvironment,
 } from "../identity/SessionIdentityEnvironment.ts";
 import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
-import type { ProviderSessionExecutionOptions } from "../provider/sessionExecutionOptions.expbkt3.ts";
+import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/server/sessionExecutionOptions.expbkt3";
 import { makeBackgroundTurnGuard } from "./backgroundTurnGrant.expbkt3.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;

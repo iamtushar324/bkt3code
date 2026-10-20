@@ -46,8 +46,8 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";

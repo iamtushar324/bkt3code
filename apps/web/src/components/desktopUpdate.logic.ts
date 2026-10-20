@@ -50,7 +50,8 @@ export function getDesktopUpdateReleaseUrl(
   if (!normalizedVersion) return null;
   // T3-CUSTOM(expbkt3): resolve the repository per build, so fork versions link
   // to fork tags instead of 404ing on upstream's.
-  return `${desktopReleaseRepositoryUrl(resolveDesktopReleaseRepository(repository))}/tag/v${encodeURIComponent(normalizedVersion)}`;
+  const repositoryUrl = desktopReleaseRepositoryUrl(resolveDesktopReleaseRepository(repository));
+  return `${repositoryUrl}/tag/v${encodeURIComponent(normalizedVersion)}`;
 }
 
 export function getDesktopUpdateReleaseHistoryUrl(

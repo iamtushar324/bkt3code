@@ -66,7 +66,8 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
   it.effect("migrates single links once, preserves arrays, and keeps links after a rebuild", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 63 });
+      // T3-CUSTOM(expbkt3): upstream 64 registers as 1056; 1055 is the last before it.
+      yield* runMigrations({ toMigrationInclusive: 1055 });
       const fixtures = [
         { ...thread("github"), linkedPullRequest: linked },
         {
@@ -123,7 +124,8 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
           'user', ${v1Payload}, '{}', 1)
       `;
 
-      assert.deepEqual(yield* runMigrations(), [[64, "CanonicalizeThreadPullRequestLinks"]]);
+      // T3-CUSTOM(expbkt3): upstream 64 registers as 1056 in the fork lane.
+      assert.deepEqual(yield* runMigrations(), [[1056, "CanonicalizeThreadPullRequestLinks"]]);
       assert.deepEqual(yield* runMigrations(), []);
       const rows = yield* sql<{ readonly thread_id: string; readonly payload_json: string }>`
         SELECT thread_id, payload_json FROM orchestration_v2_projection_threads

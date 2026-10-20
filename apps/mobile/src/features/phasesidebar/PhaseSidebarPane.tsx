@@ -36,8 +36,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Alert, FlatList, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useProjects } from "../../state/entities";

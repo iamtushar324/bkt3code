@@ -12,8 +12,8 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-// T3-CUSTOM(expbkt3): useEffect/useMemo/useState back the lifecycle counters.
-import { memo, useEffect, useMemo, useState } from "react";
+// T3-CUSTOM(expbkt3): useEffect/useState back the lifecycle counters.
+import { memo, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -130,21 +130,20 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   const serverConfigs = useServerConfigs();
   const stageLabel = useEnvironmentStageLabel();
   const lastVisitedAtByThreadKey = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-  const counts = useMemo(() => {
-    void snoozeWakeTick;
-    return summarizeSidebarSessions(threads, {
-      now: new Date().toISOString(),
-      snoozeSupported: (thread) =>
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true,
-      lastVisitedAtByThreadKey,
-    });
-  }, [lastVisitedAtByThreadKey, serverConfigs, snoozeWakeTick, threads]);
+  // `now` only decides which snoozes have woken, so it is read at mount and
+  // again when the next snooze wakes, never during render.
+  const [now, setNow] = useState(() => new Date().toISOString());
+  const counts = summarizeSidebarSessions(threads, {
+    now,
+    snoozeSupported: (thread) =>
+      serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true,
+    lastVisitedAtByThreadKey,
+  });
   useEffect(() => {
     const nextWakeAtMs = Date.parse(counts.nextSnoozeWakeAt ?? "");
     if (!Number.isFinite(nextWakeAtMs)) return;
     const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
-    const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    const id = window.setTimeout(() => setNow(new Date().toISOString()), delayMs);
     return () => window.clearTimeout(id);
   }, [counts.nextSnoozeWakeAt]);
   const syncing = environments.some(
@@ -405,21 +404,18 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
 export function SidebarEnvironmentNotices() {
   const { environments } = useEnvironments();
   const secondaries = useDesktopLocalBootstraps();
-  const localEnvByUrl = useMemo(() => {
-    const map = new Map<string, { phase: string; error: string | null }>();
-    for (const environment of environments) {
-      if (
-        isDesktopLocalConnectionTarget(environment.entry.target) &&
-        environment.displayUrl !== null
-      ) {
-        map.set(environment.displayUrl, {
-          phase: environment.connection.phase,
-          error: environment.connection.error,
-        });
-      }
+  const localEnvByUrl = new Map<string, { phase: string; error: string | null }>();
+  for (const environment of environments) {
+    if (
+      isDesktopLocalConnectionTarget(environment.entry.target) &&
+      environment.displayUrl !== null
+    ) {
+      localEnvByUrl.set(environment.displayUrl, {
+        phase: environment.connection.phase,
+        error: environment.connection.error,
+      });
     }
-    return map;
-  }, [environments]);
+  }
 
   const connecting: string[] = [];
   const failed: Array<{ label: string; error: string | null }> = [];

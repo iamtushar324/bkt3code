@@ -1,7 +1,12 @@
 // T3-CUSTOM(expbkt3): protect the fork badge data through upstream's GraphQL shape.
 import { expect, it } from "@effect/vitest";
-import { decodeGitHubPullRequestEntries } from "./gitHubPullRequests.ts";
-import { withGitHubHeadReadiness } from "./gitHubHeadReadiness.ts";
+import * as Result from "effect/Result";
+
+import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
+import { withGitHubHeadReadiness } from "./gitHubHeadReadiness.expbkt3.ts";
+
+const decodeGitHubPullRequestEntries = (entries: ReadonlyArray<unknown>) =>
+  Result.getOrThrow(decodeGitHubPullRequestListJson(JSON.stringify(entries)));
 
 const pullRequest = {
   number: 7,

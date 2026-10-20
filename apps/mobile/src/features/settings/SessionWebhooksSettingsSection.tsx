@@ -26,7 +26,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo, useState } from "react";
 import { Alert, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
 import { appAtomRegistry } from "../../state/atom-registry";

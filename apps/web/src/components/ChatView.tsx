@@ -170,12 +170,11 @@ import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-// T3-CUSTOM(expbkt3): fork code still uses useCallback and Suspense.
+// T3-CUSTOM(expbkt3): fork code still uses Suspense.
 import {
   Fragment,
   type SetStateAction,
   Suspense,
-  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -1109,11 +1108,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const currentUserId = useCurrentUserId();
   const outboxIdentityKey = currentUserId ?? "anonymous";
-  const startThreadTurn = useCallback(
-    (target: Parameters<typeof sendThreadTurn>[0]) =>
-      sendThreadTurn({ ...target, input: { ...target.input, outboxIdentityKey } }),
-    [sendThreadTurn, outboxIdentityKey],
-  );
+  const startThreadTurn = (target: Parameters<typeof sendThreadTurn>[0]) =>
+    sendThreadTurn({ ...target, input: { ...target.input, outboxIdentityKey } });
   const durableOutbox = useDurableThreadOutbox(
     routeKind === "server" ? routeThreadRef : null,
     outboxIdentityKey,

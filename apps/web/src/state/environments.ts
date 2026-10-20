@@ -156,12 +156,8 @@ export function useEnvironmentAppearance(
  */
 export function useEnvironmentAppearances(): ReadonlyMap<string, ResolvedEnvironmentAppearance> {
   const { environments } = useEnvironments();
-  return useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [environment.environmentId, environment.appearance]),
-      ),
-    [environments],
+  return new Map(
+    environments.map((environment) => [environment.environmentId, environment.appearance]),
   );
 }
 

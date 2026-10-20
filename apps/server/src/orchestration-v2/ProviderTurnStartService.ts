@@ -643,7 +643,10 @@ export const layer: Layer.Layer<
       const session = sessionResult.success;
       // T3-CUSTOM(expbkt3): construct provider calls only after the fresh grant check.
       const loadFromProvider = (
-        load: () => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
+        load: () => Effect.Effect<
+          OrchestrationV2ProviderThread,
+          ProviderAdapter.ProviderAdapterV2Error
+        >,
       ) =>
         Effect.gen(function* () {
           // T3-CUSTOM(expbkt3): every native ensure/fork/fallback checks fresh authority.

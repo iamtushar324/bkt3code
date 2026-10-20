@@ -16,7 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
-import type { ProviderSessionExecutionOptions } from "../provider/sessionExecutionOptions.expbkt3.ts";
+import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/server/sessionExecutionOptions.expbkt3";
 
 export const SESSION_IDENTITY_RUNTIME_KEY = "BK_IDENTITY_RUNTIME";
 export const SESSION_OWNER_EMAIL_KEY = "BK_SESSION_OWNER_EMAIL";

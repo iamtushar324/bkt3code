@@ -63,6 +63,9 @@ describe("CursorAdapterV2", () => {
           threadId,
           providerSessionId: "cursor-lifecycle-session",
           providerInstanceId: instanceId,
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          actorUserId: null,
+          upstreamServers: [],
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,

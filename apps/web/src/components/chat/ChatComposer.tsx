@@ -2456,9 +2456,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  // T3-CUSTOM(expbkt3): nested drag enter/leave events would otherwise flicker the
-  // drop highlight, so the composer counts depth instead of trusting one event.
-  const dragDepthRef = useRef(0);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -3468,8 +3465,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
-    // T3-CUSTOM(expbkt3): a pending drag never carries over to another thread.
-    dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
   }

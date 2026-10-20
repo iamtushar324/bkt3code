@@ -401,8 +401,9 @@ export function SourceControlWritingSettingsSection() {
                   onPromptChange={() => {}}
                   modelOptions={activeSelection.options ?? []}
                   allowPromptInjectedEffort={false}
-                  planModeEnabled={
-                    settings.planModeEnabled || selectsPlanAgent(activeSelection.options)
+                  // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable.
+                  planModeAvailable={
+                    settings.planModeAvailable || selectsPlanAgent(activeSelection.options)
                   }
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
@@ -507,8 +508,9 @@ export function SourceControlWritingSettingsSection() {
                       onPromptChange={() => {}}
                       modelOptions={reviewGuideSelection.options ?? []}
                       allowPromptInjectedEffort={false}
-                      planModeEnabled={
-                        settings.planModeEnabled || selectsPlanAgent(reviewGuideSelection.options)
+                      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable.
+                      planModeAvailable={
+                        settings.planModeAvailable || selectsPlanAgent(reviewGuideSelection.options)
                       }
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       onModelOptionsChange={(options) =>

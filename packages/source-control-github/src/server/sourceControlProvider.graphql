@@ -23,6 +23,23 @@ fragment PullRequestNode on PullRequest {
   headRepositoryOwner {
     login
   }
+  # T3-CUSTOM(expbkt3): PR readiness badges (merge state, review, auto-merge, head checks).
+  # `withGitHubHeadReadiness` flattens the head commit's rollup for the shared decoder.
+  mergeable
+  mergeStateStatus
+  reviewDecision
+  autoMergeRequest {
+    enabledAt
+  }
+  commits(last: 1) {
+    nodes {
+      commit {
+        statusCheckRollup {
+          state
+        }
+      }
+    }
+  }
 }
 
 query PullRequestsByHead(

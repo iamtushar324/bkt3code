@@ -119,6 +119,8 @@ import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+// T3-CUSTOM(expbkt3): host preview browser row.
+import { PreviewBrowserHostRow } from "./PreviewBrowserHostSetting.expbkt3";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -1616,6 +1618,8 @@ export function IntegrationsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="browser" title="Browser">
         <AgentBrowserAccessSetting />
+        {/* T3-CUSTOM(expbkt3): host preview browser. */}
+        <PreviewBrowserHostRow />
         {previewDefaultsDisabled ? (
           <SettingsUnavailableGroup message="Only available in the desktop app.">
             {previewDefaults}

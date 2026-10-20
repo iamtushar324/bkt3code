@@ -135,6 +135,10 @@
       "types": "./src/server/selectionTransition.ts",
       "import": "./src/server/selectionTransition.ts"
     },
+    "./server/sessionExecutionOptions.expbkt3": {
+      "types": "./src/server/sessionExecutionOptions.expbkt3.ts",
+      "import": "./src/server/sessionExecutionOptions.expbkt3.ts"
+    },
     "./server/snapshot": {
       "types": "./src/server/snapshot.ts",
       "import": "./src/server/snapshot.ts"
@@ -146,6 +150,10 @@
     "./server/snapshotSettings": {
       "types": "./src/server/snapshotSettings.ts",
       "import": "./src/server/snapshotSettings.ts"
+    },
+    "./server/sourceControlExecutionEnvironment.expbkt3": {
+      "types": "./src/server/sourceControlExecutionEnvironment.expbkt3.ts",
+      "import": "./src/server/sourceControlExecutionEnvironment.expbkt3.ts"
     },
     "./server/subagentProjection": {
       "types": "./src/server/subagentProjection.ts",

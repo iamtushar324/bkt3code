@@ -9,8 +9,6 @@ import * as CliError from "effect/cli/CliError";
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
-// T3-CUSTOM(expbkt3): fork CLI source-control registry requires Forgejo.
-import { ForgejoCliSelfContainedLive } from "./sourceControl/forgejoCliRuntime.expbkt3.ts";
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
@@ -32,12 +30,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 
-// T3-CUSTOM(expbkt3): source-control registry also serves the fork CLI.
-const layerCliRuntime = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  ForgejoCliSelfContainedLive,
-);
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";

@@ -12,9 +12,6 @@ import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 
-// T3-CUSTOM(expbkt3): the CLI graph reaches the source-control provider registry,
-// which needs the Forgejo CLI upstream added. See forgejoCliRuntime.expbkt3.ts.
-import { ForgejoCliSelfContainedLive } from "../sourceControl/forgejoCliRuntime.expbkt3.ts";
 import { cli } from "../binCli.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -25,14 +22,7 @@ const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        NetService.layer,
-        TestConsole.layer,
-        ForgejoCliSelfContainedLive,
-      ),
-    ),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
   );
 
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));

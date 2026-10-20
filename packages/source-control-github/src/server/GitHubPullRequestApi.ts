@@ -51,8 +51,6 @@ import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-// T3-CUSTOM(expbkt3): per-profile request batches.
-import { gitHubProfileBatchKey } from "./gitHubProfileCredential.expbkt3.ts";
 import {
   buildReviewSubmission,
   buildReviewerRequest,
@@ -1587,9 +1585,7 @@ export const make = Effect.gen(function* () {
    * rest of its batch still answers.
    */
   const summaryResolver = GraphQLResolver.aliased(client.PullRequestSummary, {
-    // T3-CUSTOM(expbkt3): a batch reads with one profile's token, so never mix profiles.
-    batchKey: (context) =>
-      JSON.stringify([GitHubGraphQlClient.batchKey(context), gitHubProfileBatchKey(context)]),
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
@@ -1620,9 +1616,7 @@ export const make = Effect.gen(function* () {
   // Every watched pull request on a host in one read per pass. A pull request the batch has no
   // answer for gets null, and its watch reads it in full; a failed request fails every entry.
   const watchFingerprintResolver = GraphQLResolver.aliased(client.PullRequestWatchFingerprint, {
-    // T3-CUSTOM(expbkt3): a batch reads with one profile's token, so never mix profiles.
-    batchKey: (context) =>
-      JSON.stringify([GitHubGraphQlClient.batchKey(context), gitHubProfileBatchKey(context)]),
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),

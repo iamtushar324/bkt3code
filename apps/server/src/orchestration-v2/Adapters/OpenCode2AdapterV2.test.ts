@@ -3251,6 +3251,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         environmentId: EnvironmentId.make("environment:opencode2-adapter"),
         threadId,
         providerSessionId: "mcp:opencode2-adapter",
@@ -3309,6 +3312,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const server = "t3-code-aa73fa1e03099934";
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         environmentId: EnvironmentId.make("environment:opencode2-adapter"),
         threadId: child,
         providerSessionId: "mcp:opencode2-adapter",

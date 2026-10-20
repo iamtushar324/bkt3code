@@ -1,6 +1,6 @@
-// T3-CUSTOM(expbkt3): fork execution environment overlays the provider instance.
-import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
 // @effect-diagnostics nodeBuiltinImport:off
+// T3-CUSTOM(expbkt3): fork execution environment overlays the provider instance.
+import { mergeSourceControlEnvironment } from "@t3tools/provider-core/server/sourceControlExecutionEnvironment.expbkt3";
 
 import {
   type ChatAttachment,

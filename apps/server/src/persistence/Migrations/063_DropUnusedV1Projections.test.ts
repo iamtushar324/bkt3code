@@ -8,7 +8,10 @@ import { runMigrations } from "../Migrations.ts";
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
 layer("063_DropUnusedV1Projections", (it) => {
-  it.effect("drops V1 projections nothing reads and keeps the transcript import sources", () =>
+  // T3-CUSTOM(expbkt3): upstream 63 is deliberately unregistered in the fork
+  // (see Migrations.ts) because fork code still reads the V1 projections it drops.
+  // Skipped rather than deleted so a later decision to register it can revive it.
+  it.effect.skip("drops V1 projections nothing reads and keeps the transcript import sources", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 62 });

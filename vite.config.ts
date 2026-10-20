@@ -391,6 +391,40 @@ export default defineConfig({
           "t3code/no-manual-memo": "error",
         },
       },
+      // T3-CUSTOM(expbkt3): BEGIN — fork memo debt. Upstream banned useMemo/useCallback
+      {
+        // after these fork-only files were written with them. Removing the hooks is
+        // a rewrite with no behaviour change, so they keep them as mobile does; memo
+        // directives stay banned. The list is a ratchet: drop a file once it is
+        // converted, and never add an upstream-owned file (convert its fork lines).
+        files: [
+          "apps/web/src/**/*.expbkt3.*",
+          "apps/web/src/fork/**",
+          "apps/web/src/components/planreview/**",
+          "apps/web/src/components/members/**",
+          "apps/web/src/mobile/**",
+          "apps/web/src/lib/analytics/**",
+          "apps/web/src/components/PhaseGroupedSidebar.tsx",
+          "apps/web/src/components/chat/ThreadCostControl.tsx",
+          "apps/web/src/components/clerk/WebLogoutControl.tsx",
+          "apps/web/src/components/settings/ActiveProjectsSettingsPanel.tsx",
+          "apps/web/src/components/settings/ClaudeAccountAccessSettingsPanel.tsx",
+          "apps/web/src/components/settings/ExternalMcpSettingsSection.tsx",
+          "apps/web/src/components/settings/GitHubProfilesSettings.tsx",
+          "apps/web/src/components/settings/ProjectAccessSettingsPanel.tsx",
+          "apps/web/src/components/settings/SessionArchiveReclaimSection.tsx",
+          "apps/web/src/components/settings/ToolyardSettingsSection.tsx",
+          "apps/web/src/components/settings/UserManagementSettings.tsx",
+          "apps/web/src/components/sidebar/MoveUnderSessionDialog.tsx",
+          "apps/web/src/components/sidebar/NewThreadProjectPicker.tsx",
+          "apps/web/src/components/sidebar/PhaseSidebarDraftsGroup.tsx",
+          "apps/web/src/components/sidebar/usePhaseSidebarCustomGroupRegistry.ts",
+          "apps/web/src/hooks/usePersonalMcpProfile.ts",
+          "apps/web/src/state/orgMembers.ts",
+        ],
+        rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
+      },
+      // T3-CUSTOM(expbkt3): END
       {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],

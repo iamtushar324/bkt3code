@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -89,7 +89,7 @@ const serviceLayer = (home: string, prefix: string) =>
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(home, "grok") }),
+      Layer.succeed(HostProcess.Environment, { GROK_HOME: NodePath.join(home, "grok") }),
     ),
   );
 

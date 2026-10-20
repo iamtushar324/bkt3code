@@ -35,9 +35,7 @@ import {
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 // T3-CUSTOM(expbkt3): batched reads keep the PR readiness badges.
-import { withGitHubHeadReadiness } from "./gitHubHeadReadiness.ts";
-// T3-CUSTOM(expbkt3): per-profile request batches.
-import { gitHubProfileBatchKey } from "./gitHubProfileCredential.expbkt3.ts";
+import { withGitHubHeadReadiness } from "./gitHubHeadReadiness.expbkt3.ts";
 import {
   gitHubApiHostForRemote,
   parseFetchRemotes,
@@ -544,9 +542,7 @@ export const make = Effect.gen(function* () {
    * resolvers, so a document is sent under one reserve setting.
    */
   const headResolver = GraphQLResolver.aliased(client.PullRequestsByHead, {
-    // T3-CUSTOM(expbkt3): a batch reads with one profile's token, so never mix profiles.
-    batchKey: (context) =>
-      JSON.stringify([GitHubGraphQlClient.batchKey(context), gitHubProfileBatchKey(context)]),
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT));
   const interactiveHeadResolver = headResolver.pipe(
     RequestResolver.setDelay(HEAD_LOOKUP_BATCH_WINDOW),

@@ -26,7 +26,8 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 // T3-CUSTOM(expbkt3): profile tokens are checked through upstream's GitHub API transport.
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { scrubSourceControlIdentityEnvironment } from "./SourceControlExecutionEnvironment.ts";
 
 export {
@@ -131,7 +132,7 @@ export class SourceControlProfileService extends Context.Service<
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const github = yield* GitHubApi.GitHubApi;
+  const github = yield* GitHubRest.GitHubRest;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -231,7 +232,7 @@ export const make = Effect.gen(function* () {
     apiPath: string,
   ) =>
     github.rest({ host: "github.com", operation, path: apiPath, allowReserve: true }).pipe(
-      Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+      Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
         host: "github.com",
         token: Redacted.make(credential),
         credentialFingerprint: `github.com:source-control-profile:${profileId}`,

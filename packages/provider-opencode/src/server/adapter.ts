@@ -1,5 +1,5 @@
 // T3-CUSTOM(expbkt3): fork execution environment overlays the provider instance.
-import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
+import { mergeSourceControlEnvironment } from "@t3tools/provider-core/server/sourceControlExecutionEnvironment.expbkt3";
 import type {
   Event as OpenCodeEvent,
   Message as OpenCodeMessage,
@@ -59,6 +59,8 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+// T3-CUSTOM(expbkt3): personal MCP integration names.
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,

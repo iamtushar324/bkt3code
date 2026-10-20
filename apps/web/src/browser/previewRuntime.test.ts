@@ -15,6 +15,23 @@ vi.mock("~/state/entities", () => ({
   readEnvironmentSupportsServerBrowser: (id: string) => state.serverBrowser.has(id),
   useEnvironmentSupportsServerBrowser: () => false,
 }));
+// T3-CUSTOM(expbkt3): BEGIN — the fork's host `previewBrowser` setting picks the runtime.
+// Its default, `client`, keeps a desktop app's tabs in its own browser.
+vi.mock("~/fork/desktopOwnEnvironment", () => ({ desktopOwnEnvironmentIdAtom: {} }));
+vi.mock("~/fork/previewBrowserHost", async () => {
+  const { resolvePreviewRuntime } = await vi.importActual<
+    typeof import("~/fork/previewBrowserHost.logic")
+  >("~/fork/previewBrowserHost.logic");
+  return {
+    forkPreviewRuntimeFor: (_environmentId: string, serverBrowser: boolean) =>
+      resolvePreviewRuntime({
+        serverBrowser,
+        desktopBrowser: state.desktop,
+        previewBrowser: "client",
+      }),
+  };
+});
+// T3-CUSTOM(expbkt3): END
 
 import { alternatePreviewRuntime, previewRuntimeFor } from "./previewRuntime";
 
@@ -34,7 +51,8 @@ describe("previewRuntimeFor", () => {
     state.serverBrowser = new Set([local, remote]);
 
     expect(previewRuntimeFor(remote)).toBeUndefined();
-    expect(previewRuntimeFor(local)).toBe("server");
+    // T3-CUSTOM(expbkt3): under the default `client` setting the desktop app keeps its tabs.
+    expect(previewRuntimeFor(local)).toBeUndefined();
   });
 
   it("uses the environment's browser where the client has none of its own", () => {

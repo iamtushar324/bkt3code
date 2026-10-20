@@ -1021,7 +1021,11 @@ export function useThreadOutboxDrain(): void {
         // T3-CUSTOM(expbkt3): rejected messages stay visibly failed until retry/edit.
         if (failure?.action === "fail") {
           try {
-            await markThreadOutboxMessageFailed(persistedMessage, failure.message, deliveryRevision);
+            await markThreadOutboxMessageFailed(
+              persistedMessage,
+              failure.message,
+              deliveryRevision,
+            );
             return true;
           } catch {
             return false;

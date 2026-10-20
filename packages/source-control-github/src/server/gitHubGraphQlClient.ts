@@ -11,6 +11,8 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
+// T3-CUSTOM(expbkt3): per-profile request batches.
+import { gitHubProfileBatchKey } from "./gitHubProfileCredential.expbkt3.ts";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -226,6 +228,8 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
     Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
       ?.credentialFingerprint ?? null,
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+    // T3-CUSTOM(expbkt3): a batch reads with one profile's token, so never mix profiles.
+    gitHubProfileBatchKey(context),
   ]);
 
 /**

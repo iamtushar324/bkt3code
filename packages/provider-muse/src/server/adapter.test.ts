@@ -377,6 +377,9 @@ describe("MuseAdapterV2", () => {
         threadId: THREAD_ID,
         providerSessionId: "test-session",
         providerInstanceId: INSTANCE_ID,
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         browserToolsAvailable: true,
@@ -433,6 +436,9 @@ describe("MuseAdapterV2", () => {
         threadId: THREAD_ID,
         providerSessionId: "test-session",
         providerInstanceId: INSTANCE_ID,
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         browserToolsAvailable: false,
