@@ -10,14 +10,14 @@ describe("BK desktop version skew", () => {
     branding.APP_VERSION = "0.0.46-production-nightly.20261019.2";
   });
 
-  it.each([
-    "0.0.46-production-nightly.20261019.2",
-    "0.0.46-stage-nightly.20261019.2",
-  ])("treats packaged fork version %s as equal to its source version", (clientVersion) => {
-    branding.APP_VERSION = clientVersion;
+  it.each(["0.0.46-production-nightly.20261019.2", "0.0.46-stage-nightly.20261019.2"])(
+    "treats packaged fork version %s as equal to its source version",
+    (clientVersion) => {
+      branding.APP_VERSION = clientVersion;
 
-    expect(resolveVersionMismatch("0.0.45")).toBeNull();
-  });
+      expect(resolveVersionMismatch("0.0.45")).toBeNull();
+    },
+  );
 
   it.each([
     "0.0.47-production-nightly.20261019.2",
