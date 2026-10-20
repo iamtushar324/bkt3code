@@ -1485,6 +1485,12 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (yield* waitsForBackgroundWork(threadId)) {
+        // Another fiber completed the restart while this check ran: its wait
+        // start must not outlive it.
+        if (!pendingRestart.has(threadId)) {
+          backgroundWaitSince.delete(threadId);
+          return;
+        }
         yield* Effect.logInfo("claude.account.restart-still-deferred", {
           threadId,
           waitingFor: "background-work",

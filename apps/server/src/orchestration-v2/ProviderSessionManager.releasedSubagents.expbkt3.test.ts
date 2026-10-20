@@ -158,7 +158,19 @@ function incidentProjections(): ReadonlyMap<ThreadId, Projection> {
   const delegated = subagent("delegated", { origin: "app_owned" });
   const otherDriver = subagent("other-driver", { driver: ProviderDriverKind.make("codex") });
   const finished = subagent("finished", { status: "completed", completedAt: epoch });
-  const tasks = [running, startedLater, otherSession, delegated, otherDriver, finished];
+  // Its provider thread was not loaded: it may run in another shared session.
+  const unloadedThread = subagent("unloaded-thread", {
+    providerThreadId: ProviderThreadId.make("unloaded-provider-thread"),
+  });
+  const tasks = [
+    running,
+    startedLater,
+    otherSession,
+    delegated,
+    otherDriver,
+    finished,
+    unloadedThread,
+  ];
   const childRoot = node("child-root-running", childThreadId("running"), "root_turn");
   // The last thing the stopped subagent ran, still open under its root turn.
   const childCommand = {
@@ -199,7 +211,7 @@ function incidentProjections(): ReadonlyMap<ThreadId, Projection> {
       }),
     ],
     // Reached only if the release wrongly settled their subagents.
-    ...["started-later", "other-session", "delegated", "other-driver"].map(
+    ...["started-later", "other-session", "delegated", "other-driver", "unloaded-thread"].map(
       (name) =>
         [
           childThreadId(name),
@@ -350,7 +362,8 @@ it.effect(
       ]);
       assert.sameMembers(f.cancelled("node.updated"), ["subagent-running", "child-root-running"]);
       // Started after the release, on another session, a delegate_task child,
-      // another provider, already finished: none of them is touched.
+      // another provider, already finished, on an unloaded provider thread:
+      // none of them is touched.
       const touched = f.written.flatMap((event) =>
         event.type === "subagent.updated" ||
         event.type === "turn-item.updated" ||
@@ -364,6 +377,7 @@ it.effect(
         "delegated",
         "other-driver",
         "finished",
+        "unloaded-thread",
       ]) {
         assert.notInclude(touched, `subagent-${name}`);
         assert.notInclude(touched, `card-subagent-${name}`);

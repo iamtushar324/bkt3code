@@ -111,9 +111,12 @@ export const settleReleasedSessionSubagents = (
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === subagent.providerThreadId,
       );
+      // The recovery read loads only live-looking provider threads: one it did
+      // not load may belong to another shared session that still runs it.
       return (
-        providerThread?.providerSessionId == null ||
-        providerThread.providerSessionId === input.providerSessionId
+        providerThread !== undefined &&
+        (providerThread.providerSessionId == null ||
+          providerThread.providerSessionId === input.providerSessionId)
       );
     };
 
