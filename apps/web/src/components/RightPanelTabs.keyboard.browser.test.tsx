@@ -9,7 +9,11 @@ import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { RightPanelTabs } from "./RightPanelTabs";
 
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("~/browser/browserDefaults", () => ({ useBrowserDefaults: () => ({ profiles: [] }) }));
+// T3-CUSTOM(expbkt3): the fork's comments tab pulls in ChatMarkdown, which uses other exports.
+vi.mock("~/browser/browserDefaults", async (original) => ({
+  ...(await original<typeof import("~/browser/browserDefaults")>()),
+  useBrowserDefaults: () => ({ profiles: [] }),
+}));
 
 const noop = () => undefined;
 

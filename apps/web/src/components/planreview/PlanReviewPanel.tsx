@@ -150,16 +150,18 @@ export default function PlanReviewPanel({
   // A saved draft is what this reviewer was last working on, so it — not the
   // committed version — is what the editor should reopen with. Without this the
   // panel silently discards unsaved edits on every close or tab switch.
+  const savedDraft = snapshot?.draft;
+  const latestVersionId = latestVersion?.versionId;
   const draftMarkdown = useMemo(() => {
-    if (!snapshot?.draft || snapshot.draft.baseVersionId !== latestVersion?.versionId) return null;
+    if (!savedDraft || savedDraft.baseVersionId !== latestVersionId) return null;
     try {
-      const parsed: unknown = JSON.parse(snapshot.draft.contentValueJson);
+      const parsed: unknown = JSON.parse(savedDraft.contentValueJson);
       const markdown = (parsed as { markdown?: unknown }).markdown;
       return typeof markdown === "string" && markdown.trim().length > 0 ? markdown : null;
     } catch {
       return null;
     }
-  }, [snapshot?.draft, latestVersion?.versionId]);
+  }, [savedDraft, latestVersionId]);
 
   // Seeded once per version: re-seeding from the live draft on every frame
   // would fight the reviewer's cursor.

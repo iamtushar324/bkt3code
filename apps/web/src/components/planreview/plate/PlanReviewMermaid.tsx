@@ -36,8 +36,8 @@ interface PlanReviewMermaidProps {
 }
 
 function PlanReviewMermaidImpl({ code, isDark }: PlanReviewMermaidProps) {
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [renderedSvg, setSvg] = useState<string | null>(null);
+  const [renderError, setError] = useState<string | null>(null);
   const [showSource, setShowSource] = useState(false);
   const reactId = useId();
   // Mermaid needs a DOM-safe id; React's contains colons.
@@ -46,11 +46,7 @@ function PlanReviewMermaidImpl({ code, isDark }: PlanReviewMermaidProps) {
   useEffect(() => {
     let cancelled = false;
     const trimmed = code.trim();
-    if (trimmed.length === 0) {
-      setSvg(null);
-      setError(null);
-      return;
-    }
+    if (trimmed.length === 0) return;
 
     void loadMermaid(isDark)
       .then((mermaid) => mermaid.render(renderId.current, trimmed))
@@ -69,6 +65,11 @@ function PlanReviewMermaidImpl({ code, isDark }: PlanReviewMermaidProps) {
       cancelled = true;
     };
   }, [code, isDark]);
+
+  // Empty source renders nothing, so a result from earlier source is not shown for it.
+  const isEmpty = code.trim().length === 0;
+  const svg = isEmpty ? null : renderedSvg;
+  const error = isEmpty ? null : renderError;
 
   return (
     <div className="my-3 overflow-hidden rounded-md border bg-muted/30">

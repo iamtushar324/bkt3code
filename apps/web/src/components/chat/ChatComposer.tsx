@@ -174,7 +174,6 @@ import {
   shouldShowPlanFollowUpDrawer,
   usePlanReviewComposerDocked,
   usePlanReviewComposerScrollSurface,
-  usePlanReviewDockedRest,
 } from "../../fork/planReviewComposerDock";
 import {
   ComposerBannerStack,

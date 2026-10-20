@@ -91,19 +91,20 @@ function useCachedThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
 ): ReadonlyArray<EnvironmentThreadSearchMatch> {
-  const [matches, setMatches] = useState<ReadonlyArray<EnvironmentThreadSearchMatch>>(
-    EMPTY_THREAD_SEARCH_MATCHES,
-  );
-  const environmentKey = environmentIds.join(",");
+  const [resolved, setResolved] = useState<{
+    readonly requestKey: string;
+    readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  } | null>(null);
+  // The key stands in for the array identity, which changes per render.
+  const environmentKey = JSON.stringify(environmentIds);
+  const requestKey = JSON.stringify([environmentKey, query]);
 
   useEffect(() => {
-    if (environmentIds.length === 0 || query.length === 0) {
-      setMatches(EMPTY_THREAD_SEARCH_MATCHES);
-      return;
-    }
+    const ids = JSON.parse(environmentKey) as ReadonlyArray<EnvironmentId>;
+    if (ids.length === 0 || query.length === 0) return;
     let cancelled = false;
     void Promise.all(
-      environmentIds.map(async (environmentId) => {
+      ids.map(async (environmentId) => {
         const snapshots = await readCachedThreadsForEnvironment(environmentId);
         return searchCachedThreads(
           snapshots.map((snapshot) => snapshot.projection),
@@ -112,15 +113,20 @@ function useCachedThreadSearch(
       }),
     ).then((perEnvironment) => {
       if (cancelled) return;
-      setMatches(perEnvironment.flat());
+      setResolved({
+        requestKey: JSON.stringify([environmentKey, query]),
+        matches: perEnvironment.flat(),
+      });
     });
     return () => {
       cancelled = true;
     };
-    // environmentKey stands in for the array identity, which changes per render.
   }, [environmentKey, query]);
 
-  return matches;
+  // Matches resolved for an older request are never shown, so an empty request needs no reset.
+  return resolved !== null && resolved.requestKey === requestKey
+    ? resolved.matches
+    : EMPTY_THREAD_SEARCH_MATCHES;
 }
 // T3-CUSTOM(expbkt3): END
 

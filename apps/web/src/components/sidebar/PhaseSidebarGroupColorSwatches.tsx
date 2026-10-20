@@ -33,7 +33,7 @@ export function PhaseSidebarGroupColorSwatches({
             aria-pressed={value === option.id}
             onClick={() => onSelect(option.id)}
             className={cn(
-              "size-5 cursor-pointer rounded-full outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+              "size-5 cursor-pointer rounded-full outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               value === option.id && "ring-2 ring-foreground ring-offset-1 ring-offset-background",
             )}
             style={{ backgroundColor: option.value }}
@@ -45,7 +45,7 @@ export function PhaseSidebarGroupColorSwatches({
         aria-pressed={value === null}
         onClick={() => onSelect(null)}
         className={cn(
-          "flex h-6 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left text-xs outline-hidden hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+          "flex h-6 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left text-xs outline-hidden hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           value === null ? "text-foreground" : "text-muted-foreground",
         )}
       >

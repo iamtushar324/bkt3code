@@ -92,7 +92,7 @@ export function useThreadCommentsActiveSummary(
       enabled,
       running,
     });
-    // threadRef is keyed by threadKey; a new object for the same thread changes nothing.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- threadRef is keyed by threadKey; a new object for the same thread changes nothing.
   }, [
     addressedCount,
     deliveryPaused,

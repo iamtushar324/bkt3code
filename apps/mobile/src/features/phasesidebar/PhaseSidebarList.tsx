@@ -69,7 +69,7 @@ import { runOnJS } from "react-native-reanimated";
 import { FlatList, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { ControlPillMenu } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
@@ -646,7 +646,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
     // A custom group's header is also where it is managed: hold for rename,
     // reorder and delete, the same way a row is managed.
     return (
-      <ControlPillMenu
+      <Menu
         actions={sectionMenuFor(section)}
         isAnchoredToRight
         onPressAction={(event: NativeActionEvent) =>
@@ -656,7 +656,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
         title={section.label}
       >
         {header}
-      </ControlPillMenu>
+      </Menu>
     );
   };
 

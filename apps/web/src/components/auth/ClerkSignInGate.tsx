@@ -26,6 +26,15 @@ import { resolveClerkSignInProps } from "../clerk/authRedirect";
 
 type GateStatus = "idle" | "exchanging" | "rejected" | "error";
 
+// Outside the component: the React Compiler cannot lower a `throw` inside `try`.
+async function readClerkSessionToken(getToken: () => Promise<string | null>): Promise<string> {
+  const token = await getToken();
+  if (!token) {
+    throw new Error("Could not read a Clerk session token.");
+  }
+  return token;
+}
+
 export function ClerkSignInGate({ onAuthenticated }: { readonly onAuthenticated: () => void }) {
   const { isLoaded, isSignedIn, getToken, signOut } = useAuth({
     treatPendingAsSignedOut: false,
@@ -42,10 +51,7 @@ export function ClerkSignInGate({ onAuthenticated }: { readonly onAuthenticated:
     setMessage(null);
     void (async () => {
       try {
-        const token = await getToken();
-        if (!token) {
-          throw new Error("Could not read a Clerk session token.");
-        }
+        const token = await readClerkSessionToken(() => getToken());
         await submitClerkSessionToken(token);
         if (!cancelled) {
           onAuthenticated();

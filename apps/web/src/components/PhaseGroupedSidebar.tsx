@@ -347,7 +347,7 @@ type ParkingCommandFailure = Extract<
 // Row hover affordances live in a shared overlay pill, so they need one
 // shared button shape.
 const ROW_ACTION_CLASS =
-  "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 // T3-CUSTOM(expbkt3): one glyph per Linear tag kind, so a project, a main issue
 // and a sub-issue read apart at a glance.
@@ -1974,7 +1974,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-testid={`linear-issue-${row.thread.id}`}
                         data-linear-tag-kind={linearTags.primary.kind}
                         aria-label={`Open ${linearTags.primary.label} in Linear`}
-                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={openLinearIssue}
                         onDoubleClick={(event) => event.stopPropagation()}
                         onKeyDown={(event) => {
@@ -1999,7 +1999,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-testid={`linear-issue-${row.thread.id}`}
                         data-linear-tag-kind={linearTags.primary.kind}
                         aria-label={`${linearTags.entries.length} Linear tags`}
-                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
                           event.stopPropagation();
                         }}
@@ -2022,7 +2022,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         type="button"
                         aria-label={entry.tooltip}
                         data-linear-tag-kind={entry.kind}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event) => {
                           event.stopPropagation();
                           openRowLink(entry.url, event, `Failed to open ${entry.label}`);
@@ -2058,7 +2058,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-change-request-state={changeRequestBadge.state}
                         aria-label={`Open ${changeRequestBadge.label} (${changeRequestBadge.statusText})`}
                         className={cn(
-                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
                           changeRequestBadge.colorClassName,
                         )}
                         onClick={openChangeRequest}
@@ -2091,7 +2091,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                             : "linked pull requests"
                         }`}
                         className={cn(
-                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
                           changeRequestBadge.colorClassName,
                         )}
                         onClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
@@ -2121,7 +2121,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         key={entry.url}
                         type="button"
                         data-change-request-state={entry.state}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event) => {
                           event.stopPropagation();
                           openChangeRequestUrl(entry.url, entry.label, event);
@@ -3950,7 +3950,7 @@ export function PhaseGroupedSidebar() {
         const threadKey = scopedThreadKey(threadRef);
         if (parkingThreadKeysRef.current.has(threadKey)) return;
         parkingThreadKeysRef.current.add(threadKey);
-        try {
+        await (async () => {
           const navigateAfterSettle = planForwardNavigation(threadKey);
           const result = await settleThread(threadRef);
           if (result._tag === "Failure") {
@@ -3962,9 +3962,9 @@ export function PhaseGroupedSidebar() {
           // Only move forward if the user is still on the settled thread — a
           // navigation made during the await wins over ours.
           if (routeThreadKeyRef.current === threadKey) navigateAfterSettle?.();
-        } finally {
+        })().finally(() => {
           parkingThreadKeysRef.current.delete(threadKey);
-        }
+        });
       })();
     },
     [planForwardNavigation, reportParkingFailure, settleThread],
@@ -3976,7 +3976,7 @@ export function PhaseGroupedSidebar() {
         const threadKey = scopedThreadKey(threadRef);
         if (parkingThreadKeysRef.current.has(threadKey)) return;
         parkingThreadKeysRef.current.add(threadKey);
-        try {
+        await (async () => {
           const navigateAfterSnooze = planForwardNavigation(threadKey);
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure") {
@@ -3998,12 +3998,12 @@ export function PhaseGroupedSidebar() {
             }),
           );
           if (routeThreadKeyRef.current === threadKey) navigateAfterSnooze?.();
-        } finally {
+        })().finally(() => {
           parkingThreadKeysRef.current.delete(threadKey);
-        }
+        });
       })();
     },
-    [attemptUnsnooze, planForwardNavigation, reportParkingFailure, snoozeThread],
+    [attemptUnsnooze, planForwardNavigation, reportParkingFailure, snoozeThread, timestampFormat],
   );
   // T3-CUSTOM(expbkt3): END
   const requestDelete = useCallback(

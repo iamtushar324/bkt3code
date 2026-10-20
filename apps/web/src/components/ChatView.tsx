@@ -6453,9 +6453,9 @@ export default function ChatView(props: ChatViewProps) {
           description:
             error instanceof Error ? error.message : "Your draft is still available. Try again.",
         });
-      } finally {
-        sendInFlightRef.current = false;
       }
+      // Not a `finally`: the React Compiler cannot lower one, and the catch above takes every error.
+      sendInFlightRef.current = false;
       return;
     }
     // T3-CUSTOM(expbkt3): END

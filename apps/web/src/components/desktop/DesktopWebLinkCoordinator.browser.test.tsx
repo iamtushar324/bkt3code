@@ -51,6 +51,12 @@ vi.mock(import("../../hooks/useScratchProject"), async (original) => ({
     openScratchProject: state.openScratchProject,
   })) as never,
 }));
+// T3-CUSTOM(expbkt3): the fork's default (native PR view off) opens a PR link like any other
+// link; these tests cover upstream's PR view path, so they run with the native view on.
+vi.mock(import("../../fork/pullRequestBrowserLinks"), async (original) => ({
+  ...(await original()),
+  useOpenPullRequestInBrowserInstead: () => () => undefined,
+}));
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { allReachableShellsLiveAtom } from "../../state/shell";

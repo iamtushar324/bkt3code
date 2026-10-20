@@ -19,9 +19,9 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { DurableStartThreadTurnInput } from "@t3tools/client-runtime/state/threads";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render, type Screen } from "../../test/render";
 import { DurableOutboxCoordinator } from "./DurableOutboxCoordinator";
 import { useDurableThreadOutbox } from "./useDurableThreadOutbox";
 import { startAttachmentUpload } from "../lib/attachmentUploadQueue";
@@ -41,40 +41,47 @@ const state = vi.hoisted(() => ({
   fail: vi.fn<(value: QueuedThreadMessage) => Promise<AtomCommandResult<void, unknown>>>(),
 }));
 
-vi.mock("@effect/atom-react", async () => {
+// These factories replace the state modules outright instead of spreading the originals:
+// the coordinator reads only these members, and the real modules build live atoms.
+vi.mock(import("@effect/atom-react"), async () => {
   const { createContext } = await import("react");
   return {
-    RegistryContext: createContext({ get: () => null }),
-    useAtomValue: (atom: { readonly kind?: string }) => {
+    RegistryContext: createContext({ get: () => null }) as never,
+    useAtomValue: ((atom: { readonly kind?: string }) => {
       if (atom.kind === "outbox") return state.items;
       if (atom.kind === "shell") return { status: "live" };
       if (atom.kind === "threads") return state.threads;
       return [];
-    },
+    }) as never,
   };
 });
-vi.mock("../state/environments", () => ({
-  useEnvironments: () => ({
+vi.mock(import("../state/environments"), () => ({
+  useEnvironments: (() => ({
     environments: [{ environmentId: "environment-1", entry: { enabled: true } }],
-  }),
-  useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
+  })) as never,
+  useEnvironment: (() => ({
+    connection: { phase: state.connected ? "connected" : "disconnected" },
+  })) as never,
 }));
-vi.mock("../state/identity", () => ({ useCurrentUserId: () => state.identityKey }));
-vi.mock("../state/shell", () => ({
-  environmentShell: { stateValueAtom: () => ({ kind: "shell" }) },
+vi.mock(import("../state/identity"), () => ({
+  useCurrentUserId: (() => state.identityKey) as never,
 }));
-vi.mock("../state/threads", () => ({
-  durableThreadOutbox: { itemsValueAtom: () => ({ kind: "outbox" }) },
-  environmentThreadShells: { environmentThreadIndexAtom: () => ({ kind: "threads" }) },
-  environmentThreadDetails: { threadAtom: () => ({ kind: "detail" }) },
-  threadEnvironment: { startTurn: "send", discardOutbox: "discard", queueOutbox: "fail" },
+vi.mock(import("../state/shell"), () => ({
+  environmentShell: { stateValueAtom: () => ({ kind: "shell" }) } as never,
 }));
-vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: (command: "send" | "discard" | "fail") => state[command],
+vi.mock(import("../state/threads"), () => ({
+  durableThreadOutbox: { itemsValueAtom: () => ({ kind: "outbox" }) } as never,
+  environmentThreadShells: { environmentThreadIndexAtom: () => ({ kind: "threads" }) } as never,
+  environmentThreadDetails: { threadAtom: () => ({ kind: "detail" }) } as never,
+  threadEnvironment: { startTurn: "send", discardOutbox: "discard", queueOutbox: "fail" } as never,
 }));
-vi.mock("../lib/attachmentUploadQueue", () => ({
+vi.mock(import("../state/use-atom-command"), () => ({
+  useAtomCommand: ((command: "send" | "discard" | "fail") => state[command]) as never,
+}));
+vi.mock(import("../lib/attachmentUploadQueue"), async (original) => ({
+  ...(await original()),
   awaitAttachmentUploads: vi.fn(async () => undefined),
-  getUploadedAttachments: vi.fn(() => state.uploaded),
+  getUploadedAttachments: vi.fn(() => state.uploaded) as never,
   readAttachmentUpload: vi.fn(),
   retryAttachmentUpload: vi.fn(),
   startAttachmentUpload: vi.fn(),
@@ -97,23 +104,34 @@ const queued = (id: string, overrides: Partial<QueuedThreadMessage> = {}): Queue
   createdAt: "2026-10-03T10:00:00.000Z",
   ...overrides,
 });
-let renderer: ReactTestRenderer | null = null;
+let screen: Screen | null = null;
 let visibleItems: ReadonlyArray<QueuedThreadMessage> = [];
-function Host({ selectedRef }: { readonly selectedRef: ScopedThreadRef | null }) {
-  visibleItems = useDurableThreadOutbox(selectedRef, state.identityKey).items;
+const reportVisibleItems = (items: ReadonlyArray<QueuedThreadMessage>) => {
+  visibleItems = items;
+};
+function Host({
+  selectedRef,
+  onItems,
+}: {
+  readonly selectedRef: ScopedThreadRef | null;
+  readonly onItems: (items: ReadonlyArray<QueuedThreadMessage>) => void;
+}) {
+  const { items } = useDurableThreadOutbox(selectedRef, state.identityKey);
+  useEffect(() => {
+    onItems(items);
+  }, [items, onItems]);
   return <DurableOutboxCoordinator />;
 }
 async function navigate(threadId: ThreadId | null) {
   const selectedRef = threadId === null ? null : { environmentId, threadId };
-  await act(async () => {
-    if (renderer === null) renderer = create(<Host selectedRef={selectedRef} />);
-    else renderer.update(<Host selectedRef={selectedRef} />);
-    await vi.advanceTimersByTimeAsync(0);
-  });
+  const host = <Host selectedRef={selectedRef} onItems={reportVisibleItems} />;
+  if (screen === null) screen = await render(host, { router: false });
+  else await screen.rerender(host);
+  await act(() => vi.advanceTimersByTimeAsync(0));
 }
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  visibleItems = [];
   resetThreadOutboxDeliveries();
   state.connected = false;
   state.identityKey = "user-1";
@@ -133,11 +151,10 @@ beforeEach(() => {
     return AsyncResult.success(undefined);
   });
 });
-afterEach(() => {
-  if (renderer !== null) act(() => renderer!.unmount());
-  renderer = null;
+afterEach(async () => {
+  await screen?.[Symbol.asyncDispose]();
+  screen = null;
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 it.each(["another thread", "a draft"])(

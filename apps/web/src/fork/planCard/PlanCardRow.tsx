@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useChatCanvas } from "../../components/chat/ChatCanvasContext";
+import { observeResize } from "../../lib/observeResize";
 import type { ProposedPlan } from "../../types";
 import "./planCard.css";
 import { PlanCardContext, type PlanCardTimeline } from "./planCardContext";
@@ -74,10 +75,7 @@ export function PlanCardRow({
       setBox((current) => (sameBox(current, next) ? current : next));
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(column);
-    observer.observe(area);
-    return () => observer.disconnect();
+    return observeResize([column, area], measure);
   }, [canvas]);
 
   const wide = width === "wide" && box !== null;

@@ -93,8 +93,15 @@ const testState = vi.hoisted(() => {
   };
 });
 
+const testServerConfigs = () =>
+  new Map([["environment-ssh", { settings: testState.targetSettings }]]);
+
+// The handler reads server configs from the registry at call time, as in upstream's test.
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => testServerConfigs() },
+}));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => new Map([["environment-ssh", { settings: testState.targetSettings }]]),
+  useAtomValue: () => testServerConfigs(),
 }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopedProjectKey: () => "remote-project",

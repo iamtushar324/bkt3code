@@ -50,7 +50,10 @@ function EnvironmentOutboxRunner({
     [environment?.connection.phase, environmentId, items, registry, shellState.status, threads],
   );
   const latestState = useRef(state);
-  latestState.current = state;
+  // Declared before the runner effect, so a recreated runner starts from this commit's state.
+  useEffect(() => {
+    latestState.current = state;
+  }, [state]);
   useEffect(() => {
     const runner = createDurableOutboxReplay({
       environmentId,

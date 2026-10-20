@@ -11,6 +11,12 @@ vi.mock("../ui/toast", () => ({
 }));
 
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
+// T3-CUSTOM(expbkt3): BEGIN — the release repository is baked from the build's
+// GITHUB_REPOSITORY, which is the fork in fork CI, so expect whichever one this build has.
+import { getDesktopUpdateReleaseHistoryUrl } from "../desktopUpdate.logic";
+
+const releasesUrl = getDesktopUpdateReleaseHistoryUrl();
+// T3-CUSTOM(expbkt3): END
 
 type AnchorElement = ReactElement<{
   readonly children?: ReactNode;
@@ -107,9 +113,9 @@ describe("SidebarUpdateReleaseNotes", () => {
     );
 
     expect(anchors.map(({ props }) => props.href)).toEqual([
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.3",
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.2",
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.1",
+      `${releasesUrl}/tag/v0.0.36-nightly.3`,
+      `${releasesUrl}/tag/v0.0.36-nightly.2`,
+      `${releasesUrl}/tag/v0.0.36-nightly.1`,
     ]);
     expect(anchors.map(({ props }) => textContent(props.children))).toEqual([
       "View release on GitHub",
@@ -127,7 +133,7 @@ describe("SidebarUpdateReleaseNotes", () => {
       }),
     );
 
-    expect(anchors.at(-1)?.props.href).toBe("https://github.com/pingdotgg/t3code/releases");
+    expect(anchors.at(-1)?.props.href).toBe(releasesUrl);
     expect(textContent(anchors.at(-1)?.props.children)).toBe("1 older release on GitHub");
   });
 
@@ -160,9 +166,7 @@ describe("SidebarUpdateReleaseNotes", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.3",
-      );
+      expect(openExternal).toHaveBeenCalledWith(`${releasesUrl}/tag/v0.0.36-nightly.3`);
       expect(testState.addToast).toHaveBeenCalledWith({
         type: "error",
         title: "Unable to open release notes",

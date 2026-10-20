@@ -18,17 +18,16 @@ export function DurableOutboxRecovery({
 }) {
   const [edit, setEdit] = useState<{ messageId: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const retry = async (message: QueuedThreadMessage, text = message.text) => {
+  // No default parameter or try/finally here: the React Compiler can lower neither.
+  const retry = async (message: QueuedThreadMessage, text?: string) => {
     setBusy(true);
-    try {
-      const result = await queue({
+    const send = async () =>
+      queue({
         ...retryQueuedThreadMessage(message, CommandId.make(randomUUID())),
-        text,
+        text: text ?? message.text,
       });
-      if (result._tag === "Success") setEdit(null);
-    } finally {
-      setBusy(false);
-    }
+    const result = await send().finally(() => setBusy(false));
+    if (result._tag === "Success") setEdit(null);
   };
   return items
     .filter((item) => item.deliveryState === "failed")

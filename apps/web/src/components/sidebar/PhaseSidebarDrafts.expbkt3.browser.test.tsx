@@ -12,9 +12,11 @@ import {
   sanitizePhaseSidebarGrouping,
   togglePhaseSidebarSectionCollapsed,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+import { act, render, type Screen } from "../../../test/render";
 
 import {
   DraftId,
@@ -40,12 +42,23 @@ import {
 import { PhaseSidebarDraftsGroup, usePhaseSidebarDraftCount } from "./PhaseSidebarDraftsGroup";
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn(), closeMobile: vi.fn(), release: vi.fn() }));
-vi.mock("@tanstack/react-router", () => ({ useRouter: () => ({ navigate: mocks.navigate }) }));
-vi.mock("../ui/sidebar", () => ({
-  useSidebar: () => ({ isMobile: true, setOpenMobile: mocks.closeMobile }),
+// The group renders without the test router (`router: false`), so navigation is observed here.
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useRouter: (() => ({ navigate: mocks.navigate })) as never,
 }));
-vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
-vi.mock("../../lib/attachmentUploadQueue", () => ({ releaseDraftAttachments: mocks.release }));
+vi.mock(import("../ui/sidebar"), async (original) => ({
+  ...(await original()),
+  useSidebar: (() => ({ isMobile: true, setOpenMobile: mocks.closeMobile })) as never,
+}));
+vi.mock(import("../ProjectFavicon"), async (original) => ({
+  ...(await original()),
+  ProjectFavicon: () => null,
+}));
+vi.mock(import("../../lib/attachmentUploadQueue"), async (original) => ({
+  ...(await original()),
+  releaseDraftAttachments: mocks.release,
+}));
 
 const environment = EnvironmentId.make("local");
 const remoteEnvironment = EnvironmentId.make("remote");
@@ -264,10 +277,20 @@ describe("unstarted draft selection", () => {
   });
 });
 
-let renderer: ReactTestRenderer | null = null;
-let parentRenderCount = 0;
-function Host({ scope }: { readonly scope: PhaseSidebarDraftScope }) {
-  parentRenderCount += 1;
+let screen: Screen | null = null;
+// Counts the parent's commits from an effect with no dependencies, which runs after every
+// render of it that React commits.
+const onParentCommit = vi.fn();
+function Host({
+  scope,
+  onCommit,
+}: {
+  readonly scope: PhaseSidebarDraftScope;
+  readonly onCommit: () => void;
+}) {
+  useEffect(() => {
+    onCommit();
+  });
   const count = usePhaseSidebarDraftCount(scope);
   return (
     <>
@@ -276,17 +299,30 @@ function Host({ scope }: { readonly scope: PhaseSidebarDraftScope }) {
     </>
   );
 }
-function mount(scope = allScope) {
-  act(() => {
-    if (renderer) renderer.update(<Host scope={scope} />);
-    else renderer = create(<Host scope={scope} />);
-  });
+async function mount(scope = allScope) {
+  const host = <Host scope={scope} onCommit={onParentCommit} />;
+  if (screen) await screen.rerender(host);
+  else screen = await render(host, { router: false });
+}
+async function unmount() {
+  await screen?.[Symbol.asyncDispose]();
+  screen = null;
 }
 function rows() {
-  return renderer!.root.findAllByProps({ "data-testid": "phase-sidebar-draft-row" });
+  return [
+    ...screen!.container.querySelectorAll<HTMLElement>('[data-testid="phase-sidebar-draft-row"]'),
+  ];
 }
 function count() {
-  return renderer!.root.findByProps({ "data-testid": "draft-count" }).children[0];
+  return screen!.container.querySelector('[data-testid="draft-count"]')!.textContent;
+}
+function group() {
+  return screen!.container.querySelectorAll('[data-testid="phase-sidebar-drafts"]');
+}
+function toggle() {
+  return screen!.container.querySelector<HTMLElement>(
+    '[data-testid="phase-sidebar-drafts-toggle"]',
+  )!;
 }
 function seed(value: PhaseSidebarDraftSource) {
   useComposerDraftStore.setState({
@@ -295,8 +331,8 @@ function seed(value: PhaseSidebarDraftSource) {
   });
 }
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.useFakeTimers();
+  // The composer store debounces its persistence on setTimeout.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   mocks.navigate.mockReset();
   mocks.closeMobile.mockReset();
   mocks.release.mockReset();
@@ -307,18 +343,16 @@ beforeEach(() => {
   });
   usePhaseSidebarGroupingStore.setState({ grouping: DEFAULT_PHASE_SIDEBAR_GROUPING });
   useThreadSelectionStore.getState().clearSelection();
-  parentRenderCount = 0;
+  onParentCommit.mockReset();
 });
-afterEach(() => {
-  if (renderer) act(() => renderer!.unmount());
-  renderer = null;
+afterEach(async () => {
+  await unmount();
   usePhaseSidebarGroupingStore.persist.clearStorage();
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 describe("Drafts group interactions", () => {
-  it("hides the entire group when no eligible draft exists", () => {
+  it("hides the entire group when no eligible draft exists", async () => {
     seed(
       source([
         ["empty", session("empty"), composer()],
@@ -329,33 +363,27 @@ describe("Drafts group interactions", () => {
         ],
       ]),
     );
-    mount();
-    expect(renderer!.root.findAllByProps({ "data-testid": "phase-sidebar-drafts" })).toHaveLength(
-      0,
-    );
+    await mount();
+    expect(group()).toHaveLength(0);
     expect(count()).toBe("0");
   });
 
   it("starts expanded, persists collapse through reload, and retains the count while closed", async () => {
     seed(source([["saved", session("saved"), composer("Saved work")]]));
-    mount();
-    const toggle = () =>
-      renderer!.root.findByProps({ "data-testid": "phase-sidebar-drafts-toggle" });
-    expect(toggle().props["aria-expanded"]).toBe(true);
+    await mount();
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
     expect(rows()).toHaveLength(1);
-    act(() => toggle().props.onClick());
-    expect(toggle().props["aria-expanded"]).toBe(false);
+    await userEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
     expect(rows()).toHaveLength(0);
     expect(count()).toBe("1");
-    act(() => useComposerDraftStore.getState().clearDraftThread(DraftId.make("saved")));
-    expect(renderer!.root.findAllByProps({ "data-testid": "phase-sidebar-drafts" })).toHaveLength(
-      0,
-    );
+    await act(() => useComposerDraftStore.getState().clearDraftThread(DraftId.make("saved")));
+    expect(group()).toHaveLength(0);
     expect(count()).toBe("0");
-    act(() =>
+    await act(() =>
       seed(source([["replacement", session("replacement"), composer("Replacement draft")]])),
     );
-    expect(toggle().props["aria-expanded"]).toBe(false);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
     expect(rows()).toHaveLength(0);
     expect(count()).toBe("1");
     const storage = usePhaseSidebarGroupingStore.persist.getOptions().storage!;
@@ -364,44 +392,47 @@ describe("Drafts group interactions", () => {
       state: { grouping: { collapsedSectionKeys: [PHASE_SIDEBAR_DRAFTS_SECTION_KEY] } },
     });
     if (!saved) throw new Error("The collapse preference was not persisted");
-    act(() => renderer!.unmount());
-    renderer = null;
+    await unmount();
     usePhaseSidebarGroupingStore.setState({ grouping: DEFAULT_PHASE_SIDEBAR_GROUPING });
     await storage.setItem(PHASE_SIDEBAR_GROUPING_STORAGE_KEY, saved);
     await usePhaseSidebarGroupingStore.persist.rehydrate();
-    mount();
-    expect(toggle().props["aria-expanded"]).toBe(false);
-    act(() => toggle().props.onClick());
+    await mount();
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(toggle());
     expect(rows()).toHaveLength(1);
   });
 
-  it("holds the active preview without repainting the parent on prompt edits, then removes it on send", () => {
+  it("holds the active preview without repainting the parent on prompt edits, then removes it on send", async () => {
     seed(source([["active", session("active"), composer("Original preview")]]));
-    mount({ ...allScope, routeDraftId: "active" });
-    const rendersBeforeEdit = parentRenderCount;
-    act(() => useComposerDraftStore.getState().setPrompt(DraftId.make("active"), "Edited preview"));
-    expect(rows()[0]?.props["aria-label"]).toContain("Original preview");
-    expect(rows()[0]?.props["aria-label"]).not.toContain("Edited preview");
-    expect(parentRenderCount).toBe(rendersBeforeEdit);
-    act(() => useComposerDraftStore.getState().markDraftThreadPromoting(DraftId.make("active")));
+    await mount({ ...allScope, routeDraftId: "active" });
+    const rendersBeforeEdit = onParentCommit.mock.calls.length;
+    await act(() =>
+      useComposerDraftStore.getState().setPrompt(DraftId.make("active"), "Edited preview"),
+    );
+    expect(rows()[0]?.getAttribute("aria-label")).toContain("Original preview");
+    expect(rows()[0]?.getAttribute("aria-label")).not.toContain("Edited preview");
+    expect(onParentCommit).toHaveBeenCalledTimes(rendersBeforeEdit);
+    await act(() =>
+      useComposerDraftStore.getState().markDraftThreadPromoting(DraftId.make("active")),
+    );
     expect(rows()).toHaveLength(0);
     expect(count()).toBe("0");
   });
 
-  it("adds a fresh active draft only after the user leaves its composer", () => {
+  it("adds a fresh active draft only after the user leaves its composer", async () => {
     seed(source([["fresh", session("fresh"), composer()]]));
-    mount({ ...allScope, routeDraftId: "fresh" });
-    act(() =>
+    await mount({ ...allScope, routeDraftId: "fresh" });
+    await act(() =>
       useComposerDraftStore.getState().setPrompt(DraftId.make("fresh"), "Retain this draft"),
     );
     expect(rows()).toHaveLength(0);
     expect(count()).toBe("0");
-    mount();
-    expect(rows()[0]?.props["aria-label"]).toContain("Retain this draft");
+    await mount();
+    expect(rows()[0]?.getAttribute("aria-label")).toContain("Retain this draft");
     expect(count()).toBe("1");
   });
 
-  it("releases upload ownership before discard removes the row and its composer", () => {
+  it("releases upload ownership before discard removes the row and its composer", async () => {
     const image: ComposerImageAttachment = {
       id: "image",
       type: "image",
@@ -412,14 +443,14 @@ describe("Drafts group interactions", () => {
       file: new File(["abc"], "screen.png", { type: "image/png" }),
     };
     seed(source([["discard", session("discard"), composer("", { images: [image] })]]));
-    mount({ ...allScope, routeDraftId: "discard" });
+    await mount({ ...allScope, routeDraftId: "discard" });
     mocks.release.mockImplementation(() =>
       expect(
         useComposerDraftStore.getState().getDraftSession(DraftId.make("discard")),
       ).not.toBeNull(),
     );
-    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
-    act(() => rows()[0]!.findByProps({ "aria-label": "Discard draft" }).props.onClick(event));
+    // A real click bubbles, so the row must not also open the draft it discards.
+    await userEvent.click(rows()[0]!.querySelector('button[aria-label="Discard draft"]')!);
     expect(mocks.release).toHaveBeenCalledWith([image]);
     expect(useComposerDraftStore.getState().getComposerDraft(DraftId.make("discard"))).toBeNull();
     expect(useComposerDraftStore.getState().getDraftSession(DraftId.make("discard"))).toBeNull();
@@ -430,18 +461,17 @@ describe("Drafts group interactions", () => {
 
   it.each(["Enter", " "])(
     "opens a saved draft with %s while preserving all execution choices",
-    (key) => {
+    async (key) => {
       const saved = session("open");
       seed(source([["open", saved, composer("Saved work")]]));
       useThreadSelectionStore.getState().toggleThread("local:other-thread");
-      mount();
-      act(() =>
-        rows()[0]!.props.onKeyDown({
-          key,
-          target: { closest: () => null },
-          preventDefault: vi.fn(),
-        }),
-      );
+      await mount();
+      const row = rows()[0]!;
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      await act(() => {
+        row.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(true);
       expect(mocks.navigate).toHaveBeenCalledWith({
         to: "/draft/$draftId",
         params: { draftId: "open" },

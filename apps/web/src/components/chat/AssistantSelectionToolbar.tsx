@@ -20,6 +20,7 @@ import {
 import { Button } from "../ui/button";
 // T3-CUSTOM(expbkt3): fork actions (review comments) share the selection toolbar.
 import type { AssistantSelectionToolbarExtras } from "~/fork/threadComments/selectionToolbarExtras";
+import { observeResize } from "~/lib/observeResize";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -54,9 +55,7 @@ export function AssistantSelectionToolbar({
       toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
     };
     place();
-    const observer = new ResizeObserver(place);
-    observer.observe(toolbar);
-    return () => observer.disconnect();
+    return observeResize(toolbar, place);
     // T3-CUSTOM(expbkt3): END
   }, [selection]);
 

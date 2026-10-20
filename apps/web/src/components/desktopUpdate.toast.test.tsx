@@ -11,6 +11,12 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
+// T3-CUSTOM(expbkt3): BEGIN — the release repository is baked from the build's
+// GITHUB_REPOSITORY, which is the fork in fork CI, so expect whichever one this build has.
+import { getDesktopUpdateReleaseHistoryUrl } from "./desktopUpdate.logic";
+
+const releasesUrl = getDesktopUpdateReleaseHistoryUrl();
+// T3-CUSTOM(expbkt3): END
 
 type ClickableElement = ReactElement<{ readonly onClick?: () => void }>;
 
@@ -89,9 +95,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     const link = findReleaseNotesLink(getDescription());
     link?.props.onClick?.();
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
-      );
+      expect(openExternal).toHaveBeenCalledWith(`${releasesUrl}/tag/v0.0.30`);
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
   });
@@ -107,9 +111,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
-      );
+      expect(openExternal).toHaveBeenCalledWith(`${releasesUrl}/tag/v0.0.30`);
     });
   });
 

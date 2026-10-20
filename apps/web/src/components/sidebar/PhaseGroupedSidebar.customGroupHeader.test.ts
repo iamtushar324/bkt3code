@@ -38,10 +38,10 @@ describe("custom group header actions", () => {
     expect(open).not.toContain("hidden");
   });
 
-  it("shows a keyboard focus ring on each action", () => {
-    expect(classes(PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME)).toContain(
-      "focus-visible:ring-1",
-    );
+  it("shows a keyboard focus ring inside each action", () => {
+    const actionClasses = classes(PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME);
+    expect(actionClasses).toContain("focus-visible:ring-ring");
+    expect(actionClasses).toContain("focus-visible:ring-inset");
   });
 });
 

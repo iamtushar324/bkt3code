@@ -228,11 +228,11 @@ function SessionWebhookSettingsContent({
         ...value,
         [webhook.id]: sessionWebhookChangeFailureMessage(null),
       }));
-    } finally {
-      setBusy(null);
-      setConfirmOpen(false);
-      appAtomRegistry.refresh(atom);
     }
+    // Not a `finally`: the React Compiler cannot lower one, and the catch above takes every error.
+    setBusy(null);
+    setConfirmOpen(false);
+    appAtomRegistry.refresh(atom);
   };
   const requestChange = (next: PendingChange) => {
     setFocusList(false);
