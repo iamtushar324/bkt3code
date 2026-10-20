@@ -9,6 +9,8 @@ import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
+// T3-CUSTOM(expbkt3): fork nightlies bump the package patch without changing source.
+import { isBkDesktopNightlyEquivalentToServer } from "./fork/bkDesktopVersionSkew";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 export interface VersionMismatch {
@@ -63,6 +65,10 @@ export function resolveVersionMismatch(
   const normalizedClientVersion = normalizeVersion(APP_VERSION);
   const normalizedServerVersion = normalizeVersion(serverVersion);
   if (!normalizedClientVersion || !normalizedServerVersion) {
+    return null;
+  }
+  // T3-CUSTOM(expbkt3): suppress the fork's release-only patch skew.
+  if (isBkDesktopNightlyEquivalentToServer(normalizedClientVersion, normalizedServerVersion)) {
     return null;
   }
 
