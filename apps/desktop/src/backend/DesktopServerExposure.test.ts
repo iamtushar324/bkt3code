@@ -502,6 +502,8 @@ describe("DesktopServerExposure", () => {
               [
                 "http://127.0.0.1:4173/",
                 "http://192.168.1.20:4173/",
+                // T3-CUSTOM(expbkt3): The fork advertises direct MagicDNS before tailnet IPs.
+                `http://${dnsName}:4173/`,
                 `http://${address}:4173/`,
                 `https://${dnsName}/`,
               ],

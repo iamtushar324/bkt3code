@@ -115,6 +115,7 @@ import * as ProjectionSnapshotQuery from "./orchestration-v2/Services/Projection
 import { PlanReviewService } from "./planreview/PlanReviewService.ts";
 import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
 import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
+import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
 import { ThreadCommentsService } from "./threadcomments/ThreadCommentsService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 // T3-CUSTOM(expbkt3): END
@@ -539,6 +540,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(HttpClient.HttpClient)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SourceControlProfileService.SourceControlProfileService)({}),
+  Layer.mock(ThreadSourceControlActionLock.ThreadSourceControlActionLock)({}),
   Layer.mock(SessionArchiveService.SessionArchiveService)({}),
   Layer.mock(EnvironmentUserService.EnvironmentUserService)({}),
   Layer.mock(PlanReviewService)({}),

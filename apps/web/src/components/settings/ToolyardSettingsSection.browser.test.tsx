@@ -1,11 +1,11 @@
 /** T3-CUSTOM(expbkt3): Paired clients request browser trust only after the exact server refusal. */
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { PersonalMcpSettingsError } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { createToolyardSettingsContinuation } from "@t3tools/client-runtime/toolyard-trust-setup";
-import { act, render as renderUi, type Screen } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 const mocks = vi.hoisted(() => ({
   status: {
     mode: "team" as "team" | "api-key" | "host",
@@ -310,8 +310,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 }));
 import { EnvironmentToolyardSettings, ToolyardSettingsSection } from "./ToolyardSettingsSection";
 import { readToolyardSettingsDraft, toolyardDraftKey } from "../../fork/toolyardSettingsDraft";
-let screen: Screen | undefined;
-let initialUrl = "";
 const key = toolyardDraftKey("env_stage", "user_admin");
 const failure = (code: string) =>
   AsyncResult.failure(
@@ -331,8 +329,8 @@ const setNativeInputValue = Object.getOwnPropertyDescriptor(
   "value",
 )!.set!;
 /** Like the renderer's findBy*: exactly one match. */
-function only<T extends Element = HTMLElement>(selector: string, scope?: ParentNode): T {
-  const matches = (scope ?? screen!.container).querySelectorAll<T>(selector);
+function onlyIn<T extends Element = HTMLElement>(scope: ParentNode, selector: string): T {
+  const matches = scope.querySelectorAll<T>(selector);
   expect(matches).toHaveLength(1);
   return matches[0]!;
 }
@@ -344,75 +342,31 @@ const hasOwnText = (node: Element, name: string) =>
 function buttonIn(scope: ParentNode, name: string) {
   return [...scope.querySelectorAll("button")].find((node) => hasOwnText(node, name));
 }
-function button(name: string) {
-  return buttonIn(screen!.container, name);
-}
-function method(value: "team" | "api-key" | "host") {
-  return (
-    screen!.container.querySelector<HTMLButtonElement>(`button[role="radio"][value="${value}"]`) ??
-    undefined
-  );
-}
-function dialog() {
-  return screen!.container.querySelector('[role="alertdialog"]') ?? undefined;
-}
-function dialogButton(name: string) {
-  return buttonIn(dialog()!, name);
-}
-function fold(name: string) {
-  return [...screen!.container.querySelectorAll<HTMLElement>("button[aria-expanded]")].find(
-    (node) => hasOwnText(node, name),
-  );
-}
 const expanded = (node: Element | undefined) => node!.getAttribute("aria-expanded");
-const input = (label: string, scope?: ParentNode) =>
-  only<HTMLInputElement>(`input[aria-label="${label}"]`, scope);
-const inputs = (label: string) =>
-  screen!.container.querySelectorAll(`input[aria-label="${label}"]`);
-const alertText = () => only('[role="alert"]').textContent;
-const alerts = () => screen!.container.querySelectorAll('[role="alert"]');
-// Markup, not just text, so attributes count too, as the rendered tree's JSON did.
-const text = () => screen!.container.innerHTML;
 async function click(node: HTMLElement | undefined) {
   expect(node).toBeDefined();
   await act(async () => {
     node!.click();
   });
 }
-async function type(label: string, value: string) {
-  const target = input(label);
-  // React tracks the last value it saw on the element, so set it through the native setter.
-  setNativeInputValue.call(target, value);
-  await act(async () => {
-    target.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-async function render() {
-  screen = await renderUi(<ToolyardSettingsSection />, { router: false });
-}
-async function rerender() {
-  await screen!.rerender(<ToolyardSettingsSection />);
-}
-async function unmount() {
-  await screen?.[Symbol.asyncDispose]();
-  screen = undefined;
-}
-async function edit() {
-  await type("Toolyard base URL", "https://toolyard.test");
-  await click(only('[data-testid="switch"]'));
-}
 function setHash(hash: string) {
   window.history.replaceState(window.history.state, "", hash);
 }
-beforeEach(() => {
-  initialUrl = window.location.href;
+/** Resets the shared mock state and stubs the globals the section reads, for one test. */
+function setup(): Disposable {
+  vi.clearAllMocks();
+  const stack = new DisposableStack();
+  const initialUrl = window.location.href;
+  stack.defer(() => window.history.replaceState(window.history.state, "", initialUrl));
   const store = new Map<string, string>();
-  vi.stubGlobal("desktopBridge", {});
-  vi.stubGlobal("sessionStorage", {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => store.set(key, value),
-    removeItem: (key: string) => store.delete(key),
-  });
+  stack.use(stubGlobal("desktopBridge", {}));
+  stack.use(
+    stubGlobal("sessionStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+      removeItem: (key: string) => store.delete(key),
+    }),
+  );
   mocks.pageOrigin = "https://stage.test";
   mocks.status = {
     ...mocks.status,
@@ -440,17 +394,66 @@ beforeEach(() => {
   mocks.token.mockResolvedValue(null);
   mocks.open.mockResolvedValue(undefined);
   mocks.configure.mockResolvedValue(failure("admin_trust_registration_required"));
-});
-afterEach(async () => {
-  await unmount();
-  window.history.replaceState(window.history.state, "", initialUrl);
-  vi.unstubAllGlobals();
-  vi.clearAllMocks();
-});
+  return stack;
+}
+/** Renders the section with queries scoped to its container. */
+async function mount(ui: ReactNode = <ToolyardSettingsSection />) {
+  // The section uses no links or router hooks; it reads the continuation from window.location.
+  const screen = await render(ui, { router: false });
+  const { container } = screen;
+  function only<T extends Element = HTMLElement>(selector: string, scope: ParentNode = container) {
+    return onlyIn<T>(scope, selector);
+  }
+  const button = (name: string) => buttonIn(container, name);
+  const method = (value: "team" | "api-key" | "host") =>
+    container.querySelector<HTMLButtonElement>(`button[role="radio"][value="${value}"]`) ??
+    undefined;
+  const dialog = () => container.querySelector('[role="alertdialog"]') ?? undefined;
+  const dialogButton = (name: string) => buttonIn(dialog()!, name);
+  const fold = (name: string) =>
+    [...container.querySelectorAll<HTMLElement>("button[aria-expanded]")].find((node) =>
+      hasOwnText(node, name),
+    );
+  const input = (label: string, scope?: ParentNode) =>
+    only<HTMLInputElement>(`input[aria-label="${label}"]`, scope);
+  const inputs = (label: string) => container.querySelectorAll(`input[aria-label="${label}"]`);
+  const alertText = () => only('[role="alert"]').textContent;
+  const alerts = () => container.querySelectorAll('[role="alert"]');
+  // Markup, not just text, so attributes count too, as the rendered tree's JSON did.
+  const text = () => container.innerHTML;
+  async function type(label: string, value: string) {
+    const target = input(label);
+    // React tracks the last value it saw on the element, so set it through the native setter.
+    setNativeInputValue.call(target, value);
+    await act(async () => {
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  async function edit() {
+    await type("Toolyard base URL", "https://toolyard.test");
+    await click(only('[data-testid="switch"]'));
+  }
+  return Object.assign(screen, {
+    only,
+    button,
+    method,
+    dialog,
+    dialogButton,
+    fold,
+    input,
+    inputs,
+    alertText,
+    alerts,
+    text,
+    type,
+    edit,
+  });
+}
 it("first calls configure without a token, opens only the exact refused setup in the default browser, and retains edited drafts", async () => {
-  await render();
-  await edit();
-  await click(button("Save and verify trust"));
+  using _setup = setup();
+  await using view = await mount();
+  await view.edit();
+  await click(view.button("Save and verify trust"));
   expect(mocks.configure).toHaveBeenCalledOnce();
   expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("adminToken");
   const url = new URL(mocks.open.mock.calls[0]![0]);
@@ -461,47 +464,51 @@ it("first calls configure without a token, opens only the exact refused setup in
     enabled: true,
     revision: 0,
   });
-  await type("Toolyard base URL", "https://new-draft.test");
+  await view.type("Toolyard base URL", "https://new-draft.test");
   mocks.status = { ...mocks.status, revision: 1, enabled: true, baseUrl: "https://toolyard.test" };
-  await rerender();
+  await view.rerender(<ToolyardSettingsSection />);
   expect(readToolyardSettingsDraft(key)?.baseUrl).toBe("https://new-draft.test");
 });
 it("clears only an unchanged draft after a matching advanced server result", async () => {
-  await render();
-  await edit();
-  await click(button("Save and verify trust"));
+  using _setup = setup();
+  await using view = await mount();
+  await view.edit();
+  await click(view.button("Save and verify trust"));
   mocks.status = {
     ...mocks.status,
     revision: 1,
     enabled: false,
     baseUrl: "https://different.test",
   };
-  await rerender();
+  await view.rerender(<ToolyardSettingsSection />);
   expect(readToolyardSettingsDraft(key)).not.toBeNull();
   mocks.status = { ...mocks.status, revision: 2, enabled: true, baseUrl: "https://toolyard.test" };
-  await rerender();
+  await view.rerender(<ToolyardSettingsSection />);
   expect(readToolyardSettingsDraft(key)).toBeNull();
 });
 it.each(["settings_revision_conflict", "administrator_required", "unknown secret"])(
   "does not open a browser for %s",
   async (code) => {
+    using _setup = setup();
     mocks.configure.mockResolvedValue(failure(code));
-    await render();
-    await edit();
-    await click(button("Save and verify trust"));
+    await using view = await mount();
+    await view.edit();
+    await click(view.button("Save and verify trust"));
     expect(mocks.open).not.toHaveBeenCalled();
     expect(readToolyardSettingsDraft(key)).not.toBeNull();
   },
 );
 it("does not open a browser after a successful token-free setting change", async () => {
+  using _setup = setup();
   mocks.configure.mockResolvedValue(AsyncResult.success({ ...mocks.status, revision: 1 }));
-  await render();
-  await edit();
-  await click(button("Save and verify trust"));
+  await using view = await mount();
+  await view.edit();
+  await click(view.button("Save and verify trust"));
   expect(mocks.open).not.toHaveBeenCalled();
   expect(readToolyardSettingsDraft(key)).toBeNull();
 });
 it("prefills an authenticated browser draft without any configure call until explicit Save", async () => {
+  using _setup = setup();
   setHash(
     new URL(
       createToolyardSettingsContinuation(
@@ -515,35 +522,37 @@ it("prefills an authenticated browser draft without any configure call until exp
   );
   mocks.token.mockResolvedValue("fresh-browser-token");
   mocks.configure.mockResolvedValue(AsyncResult.success({ ...mocks.status, revision: 1 }));
-  await render();
+  await using view = await mount();
   expect(mocks.configure).not.toHaveBeenCalled();
-  expect(input("Toolyard base URL").value).toBe("https://toolyard.test");
-  await click(button("Save and verify trust"));
+  expect(view.input("Toolyard base URL").value).toBe("https://toolyard.test");
+  await click(view.button("Save and verify trust"));
   expect(mocks.configure.mock.calls[0]![0].input.adminToken).toBe("fresh-browser-token");
   expect(mocks.open).not.toHaveBeenCalled();
 });
 
 it("does not attempt an asynchronous popup when a browser lacks fresh Clerk identity", async () => {
+  using _setup = setup();
   Reflect.deleteProperty(window, "desktopBridge");
-  await render();
-  await edit();
-  await click(button("Save and verify trust"));
+  await using view = await mount();
+  await view.edit();
+  await click(view.button("Save and verify trust"));
   expect(mocks.open).not.toHaveBeenCalled();
   expect(readToolyardSettingsDraft(key)).not.toBeNull();
-  expect(alertText()).toContain("signed-in browser administrator");
+  expect(view.alertText()).toContain("signed-in browser administrator");
 });
 
 it("submits a local API key once without Clerk or browser trust and clears the secret after success", async () => {
+  using _setup = setup();
   mocks.configure.mockImplementation(async () => {
     mocks.status = { ...mocks.status, revision: 1, mode: "api-key" };
     return AsyncResult.success(mocks.status);
   });
-  await render();
-  await click(method("api-key"));
-  await type("Toolyard base URL", "https://toolyard.test");
-  await type("Toolyard API key", "ag_test.local-secret");
+  await using view = await mount();
+  await click(view.method("api-key"));
+  await view.type("Toolyard base URL", "https://toolyard.test");
+  await view.type("Toolyard API key", "ag_test.local-secret");
   expect(JSON.stringify(readToolyardSettingsDraft(key))).not.toContain("local-secret");
-  await click(button("Save and connect"));
+  await click(view.button("Save and connect"));
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     mode: "api-key",
     apiKey: "ag_test.local-secret",
@@ -551,45 +560,51 @@ it("submits a local API key once without Clerk or browser trust and clears the s
   });
   expect(mocks.token).not.toHaveBeenCalled();
   expect(mocks.open).not.toHaveBeenCalled();
-  expect(input("Toolyard API key").value).toBe("");
+  expect(view.input("Toolyard API key").value).toBe("");
   expect(readToolyardSettingsDraft(key)).toBeNull();
 });
 it.each(["invalid_api_key", "invalid_assertion"])(
   "retains public drafts and a retryable key after %s, then Discard clears both",
   async (code) => {
+    using _setup = setup();
     mocks.configure.mockResolvedValue(failure(code));
-    await render();
-    await click(method("api-key"));
-    await type("Toolyard API key", "ag_test.secret");
-    await click(button("Save and connect"));
+    await using view = await mount();
+    await click(view.method("api-key"));
+    await view.type("Toolyard API key", "ag_test.secret");
+    await click(view.button("Save and connect"));
     expect(readToolyardSettingsDraft(key)?.mode).toBe("api-key");
-    expect(alertText()).toContain("Toolyard refused this API key");
-    expect(input("Toolyard API key").value).toBe("ag_test.secret");
+    expect(view.alertText()).toContain("Toolyard refused this API key");
+    expect(view.input("Toolyard API key").value).toBe("ag_test.secret");
     expect(mocks.open).not.toHaveBeenCalled();
-    await click(button("Discard"));
+    await click(view.button("Discard"));
     expect(readToolyardSettingsDraft(key)).toBeNull();
-    expect(inputs("Toolyard API key")).toHaveLength(0);
+    expect(view.inputs("Toolyard API key")).toHaveLength(0);
   },
 );
 it("restores the public API mode after reload without recovering the secret", async () => {
-  await render();
-  await click(method("api-key"));
-  await type("Toolyard API key", "ag_test.secret");
-  await unmount();
-  await render();
-  expect(input("Toolyard API key").value).toBe("");
+  using _setup = setup();
+  {
+    // Disposing the first mount stands in for leaving the page before the reload.
+    await using beforeReload = await mount();
+    await click(beforeReload.method("api-key"));
+    await beforeReload.type("Toolyard API key", "ag_test.secret");
+  }
+  await using view = await mount();
+  expect(view.input("Toolyard API key").value).toBe("");
   expect(readToolyardSettingsDraft(key)?.mode).toBe("api-key");
 });
 it("clears a secret when the authenticated user changes", async () => {
-  await render();
-  await click(method("api-key"));
-  await type("Toolyard API key", "ag_test.secret");
+  using _setup = setup();
+  await using view = await mount();
+  await click(view.method("api-key"));
+  await view.type("Toolyard API key", "ag_test.secret");
   mocks.userId = "user_other";
-  await rerender();
-  await click(method("api-key"));
-  expect(input("Toolyard API key").value).toBe("");
+  await view.rerender(<ToolyardSettingsSection />);
+  await click(view.method("api-key"));
+  expect(view.input("Toolyard API key").value).toBe("");
 });
 it("disconnects only the current account after confirmation", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -599,19 +614,20 @@ it("disconnects only the current account after confirmation", async () => {
     connection: "connected",
   };
   mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
-  await render();
-  await click(button("Disconnect my account"));
+  await using view = await mount();
+  await click(view.button("Disconnect my account"));
   expect(mocks.configure).not.toHaveBeenCalled();
-  await click(dialogButton("Disconnect"));
+  await click(view.dialogButton("Disconnect"));
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     disconnect: true,
     mode: "api-key",
     remove: false,
   });
   expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
-  expect(button("Remove instance")).toBeUndefined();
+  expect(view.button("Remove instance")).toBeUndefined();
 });
 it("sends no disconnect when the confirmation is cancelled, and keeps a refused disconnect visible", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -622,23 +638,24 @@ it("sends no disconnect when the confirmation is cancelled, and keeps a refused 
     connection: "connected",
   };
   mocks.configure.mockResolvedValue(failure("settings_revision_conflict"));
-  await render();
-  await click(button("Disconnect my account"));
-  expect(dialog()).toBeDefined();
-  await click(dialogButton("Cancel"));
-  expect(dialog()).toBeUndefined();
+  await using view = await mount();
+  await click(view.button("Disconnect my account"));
+  expect(view.dialog()).toBeDefined();
+  await click(view.dialogButton("Cancel"));
+  expect(view.dialog()).toBeUndefined();
   expect(mocks.configure).not.toHaveBeenCalled();
-  await click(button("Disconnect my account"));
-  await click(dialogButton("Disconnect"));
+  await click(view.button("Disconnect my account"));
+  await click(view.dialogButton("Disconnect"));
   expect(mocks.configure).toHaveBeenCalledOnce();
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     disconnect: true,
     expectedRevision: 5,
   });
-  expect(alertText()).toContain("The server settings changed");
-  expect(text()).toContain("Connected");
+  expect(view.alertText()).toContain("The server settings changed");
+  expect(view.text()).toContain("Connected");
 });
 it("removes the instance only after the administrator confirms, with the expected revision", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     revision: 4,
@@ -649,22 +666,23 @@ it("removes the instance only after the administrator confirms, with the expecte
   mocks.configure.mockResolvedValue(
     AsyncResult.success({ ...mocks.status, removed: true, enabled: false, revision: 5 }),
   );
-  await render();
+  await using view = await mount();
   // A team connection has no personal disconnect until another method is chosen.
-  expect(button("Disconnect my account")).toBeUndefined();
-  await click(button("Remove instance"));
-  await click(dialogButton("Cancel"));
+  expect(view.button("Disconnect my account")).toBeUndefined();
+  await click(view.button("Remove instance"));
+  await click(view.dialogButton("Cancel"));
   expect(mocks.configure).not.toHaveBeenCalled();
-  await click(button("Remove instance"));
-  await click(dialogButton("Remove instance"));
+  await click(view.button("Remove instance"));
+  await click(view.dialogButton("Remove instance"));
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     remove: true,
     expectedRevision: 4,
   });
   expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("disconnect");
-  expect(dialog()).toBeUndefined();
+  expect(view.dialog()).toBeUndefined();
 });
 it("shows an approved request on a connected account as history, with Open Toolyard and no Connect action", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -680,11 +698,11 @@ it("shows an approved request on a connected account as history, with Open Tooly
   mocks.handoff.mockResolvedValue(
     AsyncResult.success({ url: "https://toolyard.test/handoff?code=x", expiresAt: "2099" }),
   );
-  await render();
-  expect(text()).toContain("Connected");
-  expect(text()).toContain("dev@beknown.work");
-  expect(text()).not.toContain("Awaiting");
-  expect(text()).not.toContain("Connection request:");
+  await using view = await mount();
+  expect(view.text()).toContain("Connected");
+  expect(view.text()).toContain("dev@beknown.work");
+  expect(view.text()).not.toContain("Awaiting");
+  expect(view.text()).not.toContain("Connection request:");
   for (const label of [
     "Connect my Toolyard account",
     "Start a new request",
@@ -692,18 +710,19 @@ it("shows an approved request on a connected account as history, with Open Tooly
     "Save and verify trust",
     "Discard",
   ])
-    expect(button(label)).toBeUndefined();
+    expect(view.button(label)).toBeUndefined();
   // Summaries abbreviate identifiers; details keep the full values and the finished request.
-  expect(text()).toContain("agent_01…");
-  expect(text()).toContain("agent_0123456789abcdef");
-  expect(text()).toContain("owner_0123456789abcdef");
-  expect(text()).toContain("Approved");
-  expect(expanded(fold("Connection details"))).toBe("false");
-  await click(button("Open Toolyard"));
+  expect(view.text()).toContain("agent_01…");
+  expect(view.text()).toContain("agent_0123456789abcdef");
+  expect(view.text()).toContain("owner_0123456789abcdef");
+  expect(view.text()).toContain("Approved");
+  expect(expanded(view.fold("Connection details"))).toBe("false");
+  await click(view.button("Open Toolyard"));
   expect(mocks.open).toHaveBeenCalledWith("https://toolyard.test/handoff?code=x");
   expect(mocks.configure).not.toHaveBeenCalled();
 });
 it("offers account consent while a request is pending and no routine save without a draft", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -712,15 +731,16 @@ it("offers account consent while a request is pending and no routine save withou
     enabled: true,
     pendingConnection: pendingRequest(),
   };
-  await render();
-  expect(text()).toContain("Awaiting your decision");
-  expect(button("Connect my Toolyard account")).toBeUndefined();
-  await click(button("Open account consent"));
+  await using view = await mount();
+  expect(view.text()).toContain("Awaiting your decision");
+  expect(view.button("Connect my Toolyard account")).toBeUndefined();
+  await click(view.button("Open account consent"));
   expect(mocks.open).toHaveBeenCalledWith(
     "https://toolyard.test/connections/authorize?request=reference",
   );
 });
 it("starts a new consent request after a rejected one", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -730,15 +750,16 @@ it("starts a new consent request after a rejected one", async () => {
     pendingConnection: pendingRequest("rejected"),
   };
   mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
-  await render();
-  expect(text()).toContain("Request rejected");
-  await click(button("Start a new request"));
+  await using view = await mount();
+  expect(view.text()).toContain("Request rejected");
+  await click(view.button("Start a new request"));
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     mode: "host",
     hostAction: "begin",
   });
 });
 it("shows an outage as unavailable with Retry, never as revoked access", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -748,15 +769,16 @@ it("shows an outage as unavailable with Retry, never as revoked access", async (
     connection: "unavailable",
     email: "dev@beknown.work",
   };
-  await render();
-  expect(text()).toContain("Status unavailable");
-  expect(text()).not.toContain("Access revoked");
-  expect(button("Save and connect")).toBeUndefined();
-  expect(button("Open Toolyard")).toBeUndefined();
-  await click(button("Retry"));
+  await using view = await mount();
+  expect(view.text()).toContain("Status unavailable");
+  expect(view.text()).not.toContain("Access revoked");
+  expect(view.button("Save and connect")).toBeUndefined();
+  expect(view.button("Open Toolyard")).toBeUndefined();
+  await click(view.button("Retry"));
   expect(mocks.refresh).toHaveBeenCalledOnce();
 });
 it("opens server setup for a draft, keeps the draft when the fold closes, and shows conflicts outside it", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     revision: 2,
@@ -764,30 +786,31 @@ it("opens server setup for a draft, keeps the draft when the fold closes, and sh
     enabled: true,
     connection: "connected",
   };
-  await render();
-  expect(expanded(fold("Server setup — administrator"))).toBe("false");
-  expect(button("Save and verify trust")).toBeUndefined();
-  await type("Toolyard base URL", "https://next.test");
-  expect(expanded(fold("Server setup — administrator"))).toBe("true");
-  await click(fold("Server setup — administrator"));
-  expect(expanded(fold("Server setup — administrator"))).toBe("false");
-  expect(input("Toolyard base URL").value).toBe("https://next.test");
-  expect(button("Save and verify trust")!.disabled).toBe(false);
+  await using view = await mount();
+  expect(expanded(view.fold("Server setup — administrator"))).toBe("false");
+  expect(view.button("Save and verify trust")).toBeUndefined();
+  await view.type("Toolyard base URL", "https://next.test");
+  expect(expanded(view.fold("Server setup — administrator"))).toBe("true");
+  await click(view.fold("Server setup — administrator"));
+  expect(expanded(view.fold("Server setup — administrator"))).toBe("false");
+  expect(view.input("Toolyard base URL").value).toBe("https://next.test");
+  expect(view.button("Save and verify trust")!.disabled).toBe(false);
   mocks.status = { ...mocks.status, revision: 3 };
-  await rerender();
-  expect(only("p", only('[role="alert"]')).textContent).toContain("revision 2");
-  await click(button("Use current revision"));
+  await view.rerender(<ToolyardSettingsSection />);
+  expect(view.only("p", view.only('[role="alert"]')).textContent).toContain("revision 2");
+  await click(view.button("Use current revision"));
   expect(readToolyardSettingsDraft(key)).toMatchObject({
     baseUrl: "https://next.test",
     revision: 3,
   });
 });
 it("disables team access when the server has no verified team identity", async () => {
+  using _setup = setup();
   mocks.status = { ...mocks.status, mode: "api-key", teamAvailable: false };
-  await render();
-  expect(method("team")!.disabled).toBe(true);
-  expect(method("api-key")!.disabled).toBe(false);
-  expect(text()).toContain("no verified team identity");
+  await using view = await mount();
+  expect(view.method("team")!.disabled).toBe(true);
+  expect(view.method("api-key")!.disabled).toBe(false);
+  expect(view.text()).toContain("no verified team identity");
   expect(mocks.token).not.toHaveBeenCalled();
 });
 it.each([
@@ -796,6 +819,7 @@ it.each([
 ] as const)(
   "keeps the %s disconnect action after the draft selects %s",
   async (savedMode, nextMode, saveLabel) => {
+    using _setup = setup();
     mocks.status = {
       ...mocks.status,
       mode: savedMode,
@@ -808,27 +832,28 @@ it.each([
       mocks.status = { ...mocks.status, connection: "revoked" };
       return AsyncResult.success(mocks.status);
     });
-    await render();
-    expect(expanded(fold("Manage connection"))).toBe("false");
-    await click(method(nextMode));
+    await using view = await mount();
+    expect(expanded(view.fold("Manage connection"))).toBe("false");
+    await click(view.method(nextMode));
     // The method change needs a disconnect first, so its fold opens and the warning stays outside.
-    expect(expanded(fold("Manage connection"))).toBe("true");
-    expect(button(saveLabel)!.disabled).toBe(true);
-    expect(button("Disconnect my account")!.disabled).toBe(false);
-    expect(alertText()).toContain("Disconnect my account");
-    await click(button("Disconnect my account"));
-    await click(dialogButton("Disconnect"));
+    expect(expanded(view.fold("Manage connection"))).toBe("true");
+    expect(view.button(saveLabel)!.disabled).toBe(true);
+    expect(view.button("Disconnect my account")!.disabled).toBe(false);
+    expect(view.alertText()).toContain("Disconnect my account");
+    await click(view.button("Disconnect my account"));
+    await click(view.dialogButton("Disconnect"));
     expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
       disconnect: true,
       remove: false,
     });
     expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("apiKey");
     expect(readToolyardSettingsDraft(key)?.mode).toBe(nextMode);
-    expect(button("Remove instance")).toBeUndefined();
+    expect(view.button("Remove instance")).toBeUndefined();
   },
 );
 
 it("targets the selected server and isolates its public draft, API key, and user identity", async () => {
+  using _setup = setup();
   mocks.statusByEnvironment.set("env_mac", {
     ...mocks.status,
     mode: "api-key",
@@ -837,22 +862,22 @@ it("targets the selected server and isolates its public draft, API key, and user
     enabled: true,
   });
   mocks.sessionUsers.set("env_mac", null);
-  await render();
-  await click(method("api-key"));
-  await type("Toolyard base URL", "https://stage-draft.test");
-  await type("Toolyard API key", "ag_stage.stage-secret");
+  await using view = await mount();
+  await click(view.method("api-key"));
+  await view.type("Toolyard base URL", "https://stage-draft.test");
+  await view.type("Toolyard API key", "ag_stage.stage-secret");
   mocks.selectedIds = ["env_mac"];
-  await rerender();
-  expect(input("Toolyard API key").value).toBe("");
-  expect(input("Toolyard base URL").value).toBe("https://toolyard.test");
+  await view.rerender(<ToolyardSettingsSection />);
+  expect(view.input("Toolyard API key").value).toBe("");
+  expect(view.input("Toolyard base URL").value).toBe("https://toolyard.test");
   expect(mocks.statusQueries.mock.calls.at(-1)![0]).toMatchObject({
     environmentId: "env_mac",
     input: { userScope: "local-user" },
   });
-  expect(text()).toContain("All clients authorized for this local profile");
-  await type("Toolyard API key", "ag_mac.mac-secret");
+  expect(view.text()).toContain("All clients authorized for this local profile");
+  await view.type("Toolyard API key", "ag_mac.mac-secret");
   mocks.configure.mockResolvedValue(failure("invalid_api_key"));
-  await click(button("Save and connect"));
+  await click(view.button("Save and connect"));
   expect(mocks.configure.mock.calls.at(-1)![0]).toMatchObject({
     environmentId: "env_mac",
     input: { apiKey: "ag_mac.mac-secret", mode: "api-key" },
@@ -860,30 +885,33 @@ it("targets the selected server and isolates its public draft, API key, and user
   expect(mocks.configure.mock.calls.at(-1)![0].input).not.toHaveProperty("adminToken");
   expect(mocks.token).not.toHaveBeenCalled();
   mocks.selectedIds = ["env_stage"];
-  await rerender();
-  expect(input("Toolyard base URL").value).toBe("https://stage-draft.test");
-  expect(input("Toolyard API key").value).toBe("");
+  await view.rerender(<ToolyardSettingsSection />);
+  expect(view.input("Toolyard base URL").value).toBe("https://stage-draft.test");
+  expect(view.input("Toolyard API key").value).toBe("");
   expect(readToolyardSettingsDraft(key)?.baseUrl).toBe("https://stage-draft.test");
 });
 it("does not send the primary Clerk token to a server with a different authenticated user", async () => {
+  using _setup = setup();
   mocks.sessionUsers.set("env_stage", "user_other");
   mocks.token.mockResolvedValue("primary-user-secret");
-  await render();
-  await edit();
-  await click(button("Save and verify trust"));
+  await using view = await mount();
+  await view.edit();
+  await click(view.button("Save and verify trust"));
   expect(mocks.token).not.toHaveBeenCalled();
   expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("adminToken");
   const url = new URL(mocks.open.mock.calls[0]![0]);
   expect(JSON.parse(decodeURIComponent(url.hash.split("=")[1]!)).userId).toBe("user_other");
 });
 it("does not inspect Toolyard credentials before the selected server authenticates the client", async () => {
+  using _setup = setup();
   mocks.sessionAuthenticated.set("env_stage", false);
-  await render();
+  await using view = await mount();
   expect(mocks.statusQueries).not.toHaveBeenCalled();
   expect(mocks.configure).not.toHaveBeenCalled();
 });
 
 it("applies a browser continuation only to its selected server when two servers are visible", async () => {
+  using _setup = setup();
   mocks.selectedIds = ["env_stage", "env_other"];
   mocks.pageOrigin = "https://other.test";
   setHash(
@@ -901,11 +929,11 @@ it("applies a browser continuation only to its selected server when two servers 
       ),
     ).hash,
   );
-  await render();
-  const sections = screen!.container.querySelectorAll("section");
+  await using view = await mount();
+  const sections = view.container.querySelectorAll("section");
   expect(sections).toHaveLength(2);
-  expect(input("Toolyard base URL", sections[0]).value).toBe("");
-  expect(input("Toolyard base URL", sections[1]).value).toBe("https://other-toolyard.test");
+  expect(view.input("Toolyard base URL", sections[0]).value).toBe("");
+  expect(view.input("Toolyard base URL", sections[1]).value).toBe("https://other-toolyard.test");
   expect(readToolyardSettingsDraft(toolyardDraftKey("env_other", "user_admin"))?.baseUrl).toBe(
     "https://other-toolyard.test",
   );
@@ -914,6 +942,7 @@ it("applies a browser continuation only to its selected server when two servers 
 });
 
 it("uses the grouped title and Refresh, and re-reads status when the group refreshes", async () => {
+  using _setup = setup();
   const environment = {
     environmentId: "env_stage",
     label: "Stage",
@@ -922,23 +951,23 @@ it("uses the grouped title and Refresh, and re-reads status when the group refre
       settings: { experimental: { externalMcp: { publicUrl: null } } },
     },
   } as unknown as Parameters<typeof EnvironmentToolyardSettings>[0]["environment"];
-  screen = await renderUi(
+  await using view = await mount(
     <EnvironmentToolyardSettings environment={environment} compact refreshVersion={0} />,
-    { router: false },
   );
-  expect(only("section").getAttribute("data-title")).toBe("Toolyard");
-  expect(button("Refresh")).toBeUndefined();
+  expect(view.only("section").getAttribute("data-title")).toBe("Toolyard");
+  expect(view.button("Refresh")).toBeUndefined();
   expect(mocks.refresh).not.toHaveBeenCalled();
-  await screen.rerender(
+  await view.rerender(
     <EnvironmentToolyardSettings environment={environment} compact refreshVersion={1} />,
   );
   expect(mocks.refresh).toHaveBeenCalledOnce();
-  await screen.rerender(<EnvironmentToolyardSettings environment={environment} />);
-  expect(only("section").getAttribute("data-title")).toBe("Toolyard — Stage");
-  expect(button("Refresh")).toBeDefined();
+  await view.rerender(<EnvironmentToolyardSettings environment={environment} />);
+  expect(view.only("section").getAttribute("data-title")).toBe("Toolyard — Stage");
+  expect(view.button("Refresh")).toBeDefined();
 });
 
 it("opens host account consent with no copied API key or Clerk token", async () => {
+  using _setup = setup();
   mocks.selectedIds = ["env_mac"];
   mocks.sessionUsers.set("env_mac", null);
   mocks.status = {
@@ -960,8 +989,8 @@ it("opens host account consent with no copied API key or Clerk token", async () 
       },
     }),
   );
-  await render();
-  await click(button("Connect my Toolyard account"));
+  await using view = await mount();
+  await click(view.button("Connect my Toolyard account"));
   expect(mocks.configure.mock.calls[0]![0]).toMatchObject({
     environmentId: "env_mac",
     input: { mode: "host", hostAction: "begin", enabled: true },
@@ -974,23 +1003,27 @@ it("opens host account consent with no copied API key or Clerk token", async () 
   );
 });
 it("retains a failed host draft through navigation and reload", async () => {
-  await render();
-  await edit();
-  await click(method("host"));
-  mocks.configure.mockResolvedValue(failure("instance_unavailable"));
-  await click(button("Connect my Toolyard account"));
-  expect(readToolyardSettingsDraft(key)).toEqual({
-    baseUrl: "https://toolyard.test",
-    enabled: true,
-    revision: 0,
-    mode: "host",
-  });
-  await unmount();
-  await render();
-  expect(method("host")!.getAttribute("aria-checked")).toBe("true");
-  expect(alerts()).toHaveLength(0);
+  using _setup = setup();
+  {
+    // Disposing the first mount stands in for navigating away before the reload.
+    await using beforeReload = await mount();
+    await beforeReload.edit();
+    await click(beforeReload.method("host"));
+    mocks.configure.mockResolvedValue(failure("instance_unavailable"));
+    await click(beforeReload.button("Connect my Toolyard account"));
+    expect(readToolyardSettingsDraft(key)).toEqual({
+      baseUrl: "https://toolyard.test",
+      enabled: true,
+      revision: 0,
+      mode: "host",
+    });
+  }
+  await using view = await mount();
+  expect(view.method("host")!.getAttribute("aria-checked")).toBe("true");
+  expect(view.alerts()).toHaveLength(0);
 });
 it("refuses a consent destination from another Toolyard instance", async () => {
+  using _setup = setup();
   mocks.status = { ...mocks.status, mode: "host", baseUrl: "https://toolyard.test", enabled: true };
   mocks.configure.mockResolvedValue(
     AsyncResult.success({
@@ -1004,12 +1037,13 @@ it("refuses a consent destination from another Toolyard instance", async () => {
       },
     }),
   );
-  await render();
-  await click(button("Connect my Toolyard account"));
+  await using view = await mount();
+  await click(view.button("Connect my Toolyard account"));
   expect(mocks.open).not.toHaveBeenCalled();
-  expect(alerts().length).toBeGreaterThan(0);
+  expect(view.alerts().length).toBeGreaterThan(0);
 });
 it("cancels only the committed request and preserves a newer settings draft", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     mode: "host",
@@ -1019,10 +1053,10 @@ it("cancels only the committed request and preserves a newer settings draft", as
     pendingConnection: pendingRequest(),
   };
   mocks.configure.mockResolvedValue(AsyncResult.success(mocks.status));
-  await render();
-  await type("Toolyard base URL", "https://new-draft.test");
-  await click(method("api-key"));
-  await click(button("Cancel connection request"));
+  await using view = await mount();
+  await view.type("Toolyard base URL", "https://new-draft.test");
+  await click(view.method("api-key"));
+  await click(view.button("Cancel connection request"));
   expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
     expectedRevision: 3,
     baseUrl: "https://toolyard.test",
@@ -1036,6 +1070,7 @@ it("cancels only the committed request and preserves a newer settings draft", as
 });
 
 it("clears the consent instruction after a pending request becomes connected", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     administrator: false,
@@ -1046,23 +1081,24 @@ it("clears the consent instruction after a pending request becomes connected", a
   mocks.configure.mockResolvedValue(
     AsyncResult.success({ ...mocks.status, pendingConnection: pendingRequest() }),
   );
-  await render();
-  await click(button("Connect my Toolyard account"));
+  await using view = await mount();
+  await click(view.button("Connect my Toolyard account"));
   mocks.status = { ...mocks.status, pendingConnection: pendingRequest() };
-  await rerender();
-  expect(text()).toContain("Awaiting your Toolyard account decision");
+  await view.rerender(<ToolyardSettingsSection />);
+  expect(view.text()).toContain("Awaiting your Toolyard account decision");
   mocks.status = {
     ...mocks.status,
     connection: "connected",
     pendingConnection: pendingRequest("approved"),
   };
-  await rerender();
-  expect(text()).toContain("Connected");
-  expect(text()).not.toContain("Awaiting your Toolyard account decision");
-  expect(text()).not.toContain("Review the account and host");
-  expect(button("Connect my Toolyard account")).toBeUndefined();
+  await view.rerender(<ToolyardSettingsSection />);
+  expect(view.text()).toContain("Connected");
+  expect(view.text()).not.toContain("Awaiting your Toolyard account decision");
+  expect(view.text()).not.toContain("Review the account and host");
+  expect(view.button("Connect my Toolyard account")).toBeUndefined();
 });
 it("does not offer an ineffective team reconnect through a settings save", async () => {
+  using _setup = setup();
   mocks.status = {
     ...mocks.status,
     mode: "team",
@@ -1071,9 +1107,9 @@ it("does not offer an ineffective team reconnect through a settings save", async
     connection: "revoked",
     revision: 4,
   };
-  await render();
-  expect(button("Save and verify trust")).toBeUndefined();
-  expect(text()).toContain("A settings save does not restore revoked access");
-  expect(method("host")).toBeDefined();
+  await using view = await mount();
+  expect(view.button("Save and verify trust")).toBeUndefined();
+  expect(view.text()).toContain("A settings save does not restore revoked access");
+  expect(view.method("host")).toBeDefined();
   expect(mocks.configure).not.toHaveBeenCalled();
 });

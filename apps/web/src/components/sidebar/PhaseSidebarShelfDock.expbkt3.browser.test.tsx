@@ -1,6 +1,6 @@
 // T3-CUSTOM(expbkt3): the docked parked shelves — headers always there, no rows
 // while collapsed (the open thread included), paging inside an open shelf.
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render, type Screen } from "../../../test/render";
@@ -30,11 +30,10 @@ function shelf(
   };
 }
 
-const onToggle = vi.fn();
-const onShowMoreSettled = vi.fn();
-
-function mount(props: Pick<PhaseSidebarShelfDockProps, "running" | "snoozed" | "settled">) {
-  return render(
+async function mount(props: Pick<PhaseSidebarShelfDockProps, "running" | "snoozed" | "settled">) {
+  const onToggle = vi.fn();
+  const onShowMoreSettled = vi.fn();
+  const screen = await render(
     <PhaseSidebarShelfDock
       {...props}
       onToggle={onToggle}
@@ -46,17 +45,14 @@ function mount(props: Pick<PhaseSidebarShelfDockProps, "running" | "snoozed" | "
         </li>
       )}
     />,
+    // The dock has no links or router hooks, and the empty case counts the container's own nodes.
     { router: false },
   );
+  return Object.assign(screen, { onToggle, onShowMoreSettled });
 }
 const byTestId = (screen: Screen, testId: string) => [
   ...screen.container.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`),
 ];
-
-beforeEach(() => {
-  onToggle.mockReset();
-  onShowMoreSettled.mockReset();
-});
 
 describe("PhaseSidebarShelfDock", () => {
   it("renders nothing when both shelves are empty", async () => {
@@ -91,7 +87,7 @@ describe("PhaseSidebarShelfDock", () => {
 
     await userEvent.click(byTestId(screen, "phase-sidebar-snoozed-shelf-toggle")[0]!);
 
-    expect(onToggle).toHaveBeenCalledWith("snoozed");
+    expect(screen.onToggle).toHaveBeenCalledWith("snoozed");
   });
 
   it("pages an open settled shelf inside its own scroll box", async () => {
@@ -104,7 +100,7 @@ describe("PhaseSidebarShelfDock", () => {
     expect(byTestId(screen, "phase-sidebar-settled-shelf-open-thread")).toHaveLength(0);
     const showMore = byTestId(screen, "phase-sidebar-settled-shelf-show-more")[0]!;
     await userEvent.click(showMore);
-    expect(onShowMoreSettled).toHaveBeenCalledTimes(1);
+    expect(screen.onShowMoreSettled).toHaveBeenCalledTimes(1);
   });
 
   it("shows the Running shelf on top, open with its rows, and toggles it on its own", async () => {
@@ -124,7 +120,7 @@ describe("PhaseSidebarShelfDock", () => {
     expect(byTestId(screen, "row-running")).toHaveLength(1);
     await userEvent.click(byTestId(screen, "phase-sidebar-running-shelf-toggle")[0]!);
     expect(onToggleRunning).toHaveBeenCalledTimes(1);
-    expect(onToggle).not.toHaveBeenCalled();
+    expect(screen.onToggle).not.toHaveBeenCalled();
   });
 
   it("keeps a collapsed Running shelf to its header and marks the open thread", async () => {

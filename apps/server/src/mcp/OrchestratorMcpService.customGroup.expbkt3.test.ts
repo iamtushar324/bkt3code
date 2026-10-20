@@ -130,6 +130,8 @@ describe("OrchestratorMcpService custom groups", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
             ),
+          // A first request: no create was accepted before, so each thread is new.
+          hasReceipt: () => Effect.succeed(false),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([codexProvider]),

@@ -13,10 +13,10 @@ import {
   togglePhaseSidebarSectionCollapsed,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { useEffect } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { act, render, type Screen } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 
 import {
   DraftId,
@@ -277,10 +277,8 @@ describe("unstarted draft selection", () => {
   });
 });
 
-let screen: Screen | null = null;
 // Counts the parent's commits from an effect with no dependencies, which runs after every
 // render of it that React commits.
-const onParentCommit = vi.fn();
 function Host({
   scope,
   onCommit,
@@ -300,29 +298,22 @@ function Host({
   );
 }
 async function mount(scope = allScope) {
-  const host = <Host scope={scope} onCommit={onParentCommit} />;
-  if (screen) await screen.rerender(host);
-  else screen = await render(host, { router: false });
-}
-async function unmount() {
-  await screen?.[Symbol.asyncDispose]();
-  screen = null;
-}
-function rows() {
-  return [
-    ...screen!.container.querySelectorAll<HTMLElement>('[data-testid="phase-sidebar-draft-row"]'),
-  ];
-}
-function count() {
-  return screen!.container.querySelector('[data-testid="draft-count"]')!.textContent;
-}
-function group() {
-  return screen!.container.querySelectorAll('[data-testid="phase-sidebar-drafts"]');
-}
-function toggle() {
-  return screen!.container.querySelector<HTMLElement>(
-    '[data-testid="phase-sidebar-drafts-toggle"]',
-  )!;
+  const onParentCommit = vi.fn();
+  const host = (value: PhaseSidebarDraftScope) => <Host scope={value} onCommit={onParentCommit} />;
+  // useRouter is mocked above to observe navigation, so the group needs no real router.
+  const screen = await render(host(scope), { router: false });
+  const container = screen.container;
+  return Object.assign(screen, {
+    onParentCommit,
+    rerenderScope: (value = allScope) => screen.rerender(host(value)),
+    rows: () => [
+      ...container.querySelectorAll<HTMLElement>('[data-testid="phase-sidebar-draft-row"]'),
+    ],
+    count: () => container.querySelector('[data-testid="draft-count"]')!.textContent,
+    group: () => container.querySelectorAll('[data-testid="phase-sidebar-drafts"]'),
+    toggle: () =>
+      container.querySelector<HTMLElement>('[data-testid="phase-sidebar-drafts-toggle"]')!,
+  });
 }
 function seed(value: PhaseSidebarDraftSource) {
   useComposerDraftStore.setState({
@@ -330,9 +321,11 @@ function seed(value: PhaseSidebarDraftSource) {
     draftsByThreadKey: { ...value.draftsByThreadKey },
   });
 }
-beforeEach(() => {
+function setup(): Disposable {
+  const stack = new DisposableStack();
   // The composer store debounces its persistence on setTimeout.
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  stack.use(fakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+  stack.defer(() => usePhaseSidebarGroupingStore.persist.clearStorage());
   mocks.navigate.mockReset();
   mocks.closeMobile.mockReset();
   mocks.release.mockReset();
@@ -343,16 +336,12 @@ beforeEach(() => {
   });
   usePhaseSidebarGroupingStore.setState({ grouping: DEFAULT_PHASE_SIDEBAR_GROUPING });
   useThreadSelectionStore.getState().clearSelection();
-  onParentCommit.mockReset();
-});
-afterEach(async () => {
-  await unmount();
-  usePhaseSidebarGroupingStore.persist.clearStorage();
-  vi.useRealTimers();
-});
+  return stack;
+}
 
 describe("Drafts group interactions", () => {
   it("hides the entire group when no eligible draft exists", async () => {
+    using _setup = setup();
     seed(
       source([
         ["empty", session("empty"), composer()],
@@ -363,76 +352,80 @@ describe("Drafts group interactions", () => {
         ],
       ]),
     );
-    await mount();
-    expect(group()).toHaveLength(0);
-    expect(count()).toBe("0");
+    await using view = await mount();
+    expect(view.group()).toHaveLength(0);
+    expect(view.count()).toBe("0");
   });
 
   it("starts expanded, persists collapse through reload, and retains the count while closed", async () => {
+    using _setup = setup();
     seed(source([["saved", session("saved"), composer("Saved work")]]));
-    await mount();
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    expect(rows()).toHaveLength(1);
-    await userEvent.click(toggle());
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    expect(rows()).toHaveLength(0);
-    expect(count()).toBe("1");
+    await using view = await mount();
+    expect(view.toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(view.rows()).toHaveLength(1);
+    await userEvent.click(view.toggle());
+    expect(view.toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(view.rows()).toHaveLength(0);
+    expect(view.count()).toBe("1");
     await act(() => useComposerDraftStore.getState().clearDraftThread(DraftId.make("saved")));
-    expect(group()).toHaveLength(0);
-    expect(count()).toBe("0");
+    expect(view.group()).toHaveLength(0);
+    expect(view.count()).toBe("0");
     await act(() =>
       seed(source([["replacement", session("replacement"), composer("Replacement draft")]])),
     );
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    expect(rows()).toHaveLength(0);
-    expect(count()).toBe("1");
+    expect(view.toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(view.rows()).toHaveLength(0);
+    expect(view.count()).toBe("1");
     const storage = usePhaseSidebarGroupingStore.persist.getOptions().storage!;
     const saved = await storage.getItem(PHASE_SIDEBAR_GROUPING_STORAGE_KEY);
     expect(saved).toMatchObject({
       state: { grouping: { collapsedSectionKeys: [PHASE_SIDEBAR_DRAFTS_SECTION_KEY] } },
     });
     if (!saved) throw new Error("The collapse preference was not persisted");
-    await unmount();
+    await view.unmount();
     usePhaseSidebarGroupingStore.setState({ grouping: DEFAULT_PHASE_SIDEBAR_GROUPING });
     await storage.setItem(PHASE_SIDEBAR_GROUPING_STORAGE_KEY, saved);
     await usePhaseSidebarGroupingStore.persist.rehydrate();
-    await mount();
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(toggle());
-    expect(rows()).toHaveLength(1);
+    await using reloaded = await mount();
+    expect(reloaded.toggle().getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(reloaded.toggle());
+    expect(reloaded.rows()).toHaveLength(1);
   });
 
   it("holds the active preview without repainting the parent on prompt edits, then removes it on send", async () => {
+    using _setup = setup();
     seed(source([["active", session("active"), composer("Original preview")]]));
-    await mount({ ...allScope, routeDraftId: "active" });
-    const rendersBeforeEdit = onParentCommit.mock.calls.length;
+    await using view = await mount({ ...allScope, routeDraftId: "active" });
+    const rendersBeforeEdit = view.onParentCommit.mock.calls.length;
     await act(() =>
       useComposerDraftStore.getState().setPrompt(DraftId.make("active"), "Edited preview"),
     );
-    expect(rows()[0]?.getAttribute("aria-label")).toContain("Original preview");
-    expect(rows()[0]?.getAttribute("aria-label")).not.toContain("Edited preview");
-    expect(onParentCommit).toHaveBeenCalledTimes(rendersBeforeEdit);
+    expect(view.rows()[0]?.getAttribute("aria-label")).toContain("Original preview");
+    expect(view.rows()[0]?.getAttribute("aria-label")).not.toContain("Edited preview");
+    expect(view.onParentCommit).toHaveBeenCalledTimes(rendersBeforeEdit);
     await act(() =>
       useComposerDraftStore.getState().markDraftThreadPromoting(DraftId.make("active")),
     );
-    expect(rows()).toHaveLength(0);
-    expect(count()).toBe("0");
+    expect(view.rows()).toHaveLength(0);
+    expect(view.count()).toBe("0");
   });
 
   it("adds a fresh active draft only after the user leaves its composer", async () => {
+    using _setup = setup();
     seed(source([["fresh", session("fresh"), composer()]]));
-    await mount({ ...allScope, routeDraftId: "fresh" });
+    await using view = await mount({ ...allScope, routeDraftId: "fresh" });
     await act(() =>
       useComposerDraftStore.getState().setPrompt(DraftId.make("fresh"), "Retain this draft"),
     );
-    expect(rows()).toHaveLength(0);
-    expect(count()).toBe("0");
-    await mount();
-    expect(rows()[0]?.getAttribute("aria-label")).toContain("Retain this draft");
-    expect(count()).toBe("1");
+    expect(view.rows()).toHaveLength(0);
+    expect(view.count()).toBe("0");
+    await view.rerenderScope(allScope);
+    expect(view.rows()[0]?.getAttribute("aria-label")).toContain("Retain this draft");
+    expect(view.count()).toBe("1");
   });
 
   it("releases upload ownership before discard removes the row and its composer", async () => {
+    using _setup = setup();
     const image: ComposerImageAttachment = {
       id: "image",
       type: "image",
@@ -443,30 +436,31 @@ describe("Drafts group interactions", () => {
       file: new File(["abc"], "screen.png", { type: "image/png" }),
     };
     seed(source([["discard", session("discard"), composer("", { images: [image] })]]));
-    await mount({ ...allScope, routeDraftId: "discard" });
+    await using view = await mount({ ...allScope, routeDraftId: "discard" });
     mocks.release.mockImplementation(() =>
       expect(
         useComposerDraftStore.getState().getDraftSession(DraftId.make("discard")),
       ).not.toBeNull(),
     );
     // A real click bubbles, so the row must not also open the draft it discards.
-    await userEvent.click(rows()[0]!.querySelector('button[aria-label="Discard draft"]')!);
+    await userEvent.click(view.rows()[0]!.querySelector('button[aria-label="Discard draft"]')!);
     expect(mocks.release).toHaveBeenCalledWith([image]);
     expect(useComposerDraftStore.getState().getComposerDraft(DraftId.make("discard"))).toBeNull();
     expect(useComposerDraftStore.getState().getDraftSession(DraftId.make("discard"))).toBeNull();
-    expect(count()).toBe("0");
-    expect(rows()).toHaveLength(0);
+    expect(view.count()).toBe("0");
+    expect(view.rows()).toHaveLength(0);
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
   it.each(["Enter", " "])(
     "opens a saved draft with %s while preserving all execution choices",
     async (key) => {
+      using _setup = setup();
       const saved = session("open");
       seed(source([["open", saved, composer("Saved work")]]));
       useThreadSelectionStore.getState().toggleThread("local:other-thread");
-      await mount();
-      const row = rows()[0]!;
+      await using view = await mount();
+      const row = view.rows()[0]!;
       const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
       await act(() => {
         row.dispatchEvent(event);

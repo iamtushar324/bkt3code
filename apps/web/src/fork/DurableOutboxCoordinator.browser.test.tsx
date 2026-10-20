@@ -20,8 +20,8 @@ import type { DurableStartThreadTurnInput } from "@t3tools/client-runtime/state/
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { act, render, type Screen } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
+import { act, fakeTimers, render } from "../../test/render";
 import { DurableOutboxCoordinator } from "./DurableOutboxCoordinator";
 import { useDurableThreadOutbox } from "./useDurableThreadOutbox";
 import { startAttachmentUpload } from "../lib/attachmentUploadQueue";
@@ -104,11 +104,6 @@ const queued = (id: string, overrides: Partial<QueuedThreadMessage> = {}): Queue
   createdAt: "2026-10-03T10:00:00.000Z",
   ...overrides,
 });
-let screen: Screen | null = null;
-let visibleItems: ReadonlyArray<QueuedThreadMessage> = [];
-const reportVisibleItems = (items: ReadonlyArray<QueuedThreadMessage>) => {
-  visibleItems = items;
-};
 function Host({
   selectedRef,
   onItems,
@@ -122,16 +117,32 @@ function Host({
   }, [items, onItems]);
   return <DurableOutboxCoordinator />;
 }
-async function navigate(threadId: ThreadId | null) {
-  const selectedRef = threadId === null ? null : { environmentId, threadId };
-  const host = <Host selectedRef={selectedRef} onItems={reportVisibleItems} />;
-  if (screen === null) screen = await render(host, { router: false });
-  else await screen.rerender(host);
-  await act(() => vi.advanceTimersByTimeAsync(0));
+async function mountRoute(threadId: ThreadId | null) {
+  let visibleItems: ReadonlyArray<QueuedThreadMessage> = [];
+  const onItems = (items: ReadonlyArray<QueuedThreadMessage>) => {
+    visibleItems = items;
+  };
+  const host = (id: ThreadId | null) => (
+    <Host selectedRef={id === null ? null : { environmentId, threadId: id }} onItems={onItems} />
+  );
+  const settle = () => act(() => vi.advanceTimersByTimeAsync(0));
+  await using stack = new AsyncDisposableStack();
+  // The coordinator has no links, and the test router would load on the fake clock.
+  const screen = stack.use(await render(host(threadId), { router: false }));
+  await settle();
+  stack.move();
+  return Object.assign(screen, {
+    visibleItems: () => visibleItems,
+    async navigate(id: ThreadId | null) {
+      await screen.rerender(host(id));
+      await settle();
+    },
+  });
 }
-beforeEach(() => {
-  vi.useFakeTimers();
-  visibleItems = [];
+function setup(): Disposable {
+  const stack = new DisposableStack();
+  // The replay loop can schedule its retry while the first render mounts, so fake the clock first.
+  stack.use(fakeTimers());
   resetThreadOutboxDeliveries();
   state.connected = false;
   state.identityKey = "user-1";
@@ -150,16 +161,13 @@ beforeEach(() => {
     );
     return AsyncResult.success(undefined);
   });
-});
-afterEach(async () => {
-  await screen?.[Symbol.asyncDispose]();
-  screen = null;
-  vi.useRealTimers();
-});
+  return stack;
+}
 
 it.each(["another thread", "a draft"])(
   "delivers a queued turn after navigation to %s and reconnect",
   async (route) => {
+    using _setup = setup();
     const a = queued("a");
     const b = queued("b");
     state.items = [a];
@@ -167,13 +175,13 @@ it.each(["another thread", "a draft"])(
       [a.threadId, settings],
       [b.threadId, settings],
     ]);
-    await navigate(a.threadId);
-    expect(visibleItems).toEqual([a]);
-    await navigate(route === "a draft" ? null : b.threadId);
-    expect(visibleItems).toEqual([]);
+    await using view = await mountRoute(a.threadId);
+    expect(view.visibleItems()).toEqual([a]);
+    await view.navigate(route === "a draft" ? null : b.threadId);
+    expect(view.visibleItems()).toEqual([]);
     expect(state.send).not.toHaveBeenCalled();
     state.connected = true;
-    await navigate(route === "a draft" ? null : b.threadId);
+    await view.navigate(route === "a draft" ? null : b.threadId);
     expect(state.send).toHaveBeenCalledTimes(1);
     expect(state.send.mock.calls[0]?.[0]).toMatchObject({
       environmentId,
@@ -189,6 +197,7 @@ it.each(["another thread", "a draft"])(
 );
 
 it("sends a saved first-turn bootstrap from a draft without a thread shell", async () => {
+  using _setup = setup();
   const message = queued("new", {
     bootstrap: {
       createThread: {
@@ -203,7 +212,7 @@ it("sends a saved first-turn bootstrap from a draft without a thread shell", asy
   });
   state.items = [message];
   state.connected = true;
-  await navigate(null);
+  await using _view = await mountRoute(null);
   expect(state.send).toHaveBeenCalledTimes(1);
   expect(state.send.mock.calls[0]?.[0]).toMatchObject({
     environmentId,
@@ -219,6 +228,7 @@ it("sends a saved first-turn bootstrap from a draft without a thread shell", asy
 });
 
 it("retries a fulfilled transport Failure with the saved IDs after navigation", async () => {
+  using _setup = setup();
   const message = queued("a");
   state.items = [message];
   state.threads = new Map([[message.threadId, settings]]);
@@ -228,8 +238,8 @@ it("retries a fulfilled transport Failure with the saved IDs after navigation", 
       Cause.fail({ _tag: "RpcClientError", message: "An error occurred during Read" }),
     ),
   );
-  await navigate(message.threadId);
-  await navigate(null);
+  await using view = await mountRoute(message.threadId);
+  await view.navigate(null);
   expect(state.send).toHaveBeenCalledTimes(1);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1_000);
@@ -240,18 +250,20 @@ it("retries a fulfilled transport Failure with the saved IDs after navigation", 
 });
 
 it("does not send the previous account's saved payload after an identity change", async () => {
+  using _setup = setup();
   const message = queued("a");
   state.items = [message];
   state.threads = new Map([[message.threadId, settings]]);
-  await navigate(message.threadId);
+  await using view = await mountRoute(message.threadId);
   state.identityKey = "user-2";
   state.connected = true;
-  await navigate(null);
+  await view.navigate(null);
   expect(state.send).not.toHaveBeenCalled();
   expect(state.items).toEqual([message]);
 });
 
 it("keeps image context bound to its saved ID through inline replay", async () => {
+  using _setup = setup();
   const image = {
     id: "composer-image",
     type: "image" as const,
@@ -281,7 +293,7 @@ it("keeps image context bound to its saved ID through inline replay", async () =
   state.items = [message];
   state.threads = new Map([[message.threadId, settings]]);
   state.connected = true;
-  await navigate(null);
+  await using _view = await mountRoute(null);
   const sent = state.send.mock.calls[0]?.[0].input.message;
   expect(sent?.attachments[0]).toMatchObject({ id: image.id, dataUrl: image.dataUrl });
   expect(sent?.context?.records[0]).toMatchObject({ attachmentId: sent?.attachments[0]?.id });
@@ -289,6 +301,7 @@ it("keeps image context bound to its saved ID through inline replay", async () =
 });
 
 it("reuploads saved file bytes and remaps its context to the new server asset", async () => {
+  using _setup = setup();
   const file = {
     id: "composer-file",
     type: "file" as const,
@@ -327,7 +340,7 @@ it("reuploads saved file bytes and remaps its context to the new server asset", 
     },
   ];
   state.connected = true;
-  await navigate(null);
+  await using _view = await mountRoute(null);
   const uploaded = vi.mocked(startAttachmentUpload).mock.calls[0]?.[0].image;
   expect(await uploaded?.file?.text()).toBe("test");
   const sent = state.send.mock.calls[0]?.[0].input.message;

@@ -1,7 +1,7 @@
 /** T3-CUSTOM(expbkt3): webhook changes are confirmed, revision-guarded and scoped per server user. */
 import { cloneElement, type ReactElement, type ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { act, render as renderUi, type Screen } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../test/render";
 import * as Cause from "effect/Cause";
 import { PersonalMcpSettingsError, ThreadId, type SessionWebhookView } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -144,7 +144,6 @@ vi.mock(import("../components/settings/settingsLayout"), async (original) => ({
 }));
 import { EnvironmentSessionWebhookSettings } from "./SessionWebhookSettingsSection";
 
-let screen: Screen | undefined;
 const webhook = (overrides: Partial<SessionWebhookView> = {}): SessionWebhookView => ({
   id: "swh_00000000000000000000000000000001",
   threadId: ThreadId.make("thread-titled-1"),
@@ -175,24 +174,28 @@ function server(environmentId: string, clerk = true) {
     />
   );
 }
-async function render(node: ReactNode = server("env_stage")) {
-  screen = await renderUi(<>{node}</>, { router: false });
-}
-// Markup, not just text, so attributes count too, as the rendered tree's JSON did.
-const text = () => screen!.container.innerHTML;
 const textOf = (node: Element): string => node.textContent ?? "";
-const buttons = (name: string) =>
-  [...screen!.container.querySelectorAll("button")].filter((node) => textOf(node).includes(name));
-const dialog = () => screen!.container.querySelector('[role="alertdialog"]') ?? undefined;
-async function press(name: string, scope: Element = screen!.container) {
+async function press(scope: Element, name: string) {
   const target = [...scope.querySelectorAll("button")].find((node) => textOf(node) === name)!;
   await act(async () => {
     target.click();
   });
 }
-const alerts = () => [...screen!.container.querySelectorAll('p[role="alert"]')].map(textOf);
-
-beforeEach(() => {
+async function mount(ui: ReactNode = server("env_stage")) {
+  // The section has no links or router hooks.
+  const screen = await render(<>{ui}</>, { router: false });
+  const container = screen.container;
+  return Object.assign(screen, {
+    // Markup, not just text, so attributes count too, as the rendered tree's JSON did.
+    text: () => container.innerHTML,
+    buttons: (name: string) =>
+      [...container.querySelectorAll("button")].filter((button) => textOf(button).includes(name)),
+    dialog: () => container.querySelector('[role="alertdialog"]') ?? undefined,
+    press: (name: string, scope: Element = container) => press(scope, name),
+    alerts: () => [...container.querySelectorAll('p[role="alert"]')].map(textOf),
+  });
+}
+function setup() {
   mocks.webhooks.clear();
   mocks.sessionUsers.clear();
   mocks.sessionAuthenticated.clear();
@@ -200,54 +203,54 @@ beforeEach(() => {
   mocks.update.mockReset();
   mocks.refresh.mockClear();
   mocks.webhooks.set("env_stage", [webhook()]);
-});
-afterEach(async () => {
-  await screen?.[Symbol.asyncDispose]();
-  screen = undefined;
-});
+}
 
 it("cancelling a confirmation sends no change", async () => {
-  await render();
-  await press("Disable");
-  expect(textOf(dialog()!)).toContain("Disable callbacks for Fix login?");
-  await press("Cancel", dialog()!);
-  expect(dialog()).toBeUndefined();
+  setup();
+  await using view = await mount();
+  await view.press("Disable");
+  expect(textOf(view.dialog()!)).toContain("Disable callbacks for Fix login?");
+  await view.press("Cancel", view.dialog()!);
+  expect(view.dialog()).toBeUndefined();
   expect(mocks.update).not.toHaveBeenCalled();
 });
 
 it("confirming sends the exact server, webhook and revision the user saw", async () => {
+  setup();
   mocks.update.mockResolvedValue(AsyncResult.success({}));
-  await render();
-  await press("Remove");
-  await press("Remove", dialog()!);
+  await using view = await mount();
+  await view.press("Remove");
+  await view.press("Remove", view.dialog()!);
   expect(mocks.update).toHaveBeenCalledTimes(1);
   expect(mocks.update).toHaveBeenCalledWith({
     environmentId: "env_stage",
     input: { id: "swh_00000000000000000000000000000001", action: "remove", expectedRevision: 3 },
   });
-  expect(dialog()).toBeUndefined();
+  expect(view.dialog()).toBeUndefined();
   expect(mocks.refresh).toHaveBeenCalled();
 });
 
 it("shows a failed change inline on its card without leaking unknown text", async () => {
+  setup();
   mocks.update.mockResolvedValueOnce(failure("webhook-revision-conflict"));
-  await render();
-  await press("Rotate secret");
-  await press("Rotate secret", dialog()!);
-  expect(dialog()).toBeUndefined();
-  expect(alerts().join()).toContain("The webhook changed since this view loaded.");
+  await using view = await mount();
+  await view.press("Rotate secret");
+  await view.press("Rotate secret", view.dialog()!);
+  expect(view.dialog()).toBeUndefined();
+  expect(view.alerts().join()).toContain("The webhook changed since this view loaded.");
   mocks.update.mockResolvedValueOnce(failure("secret token abc"));
-  await press("Rotate secret");
-  await press("Rotate secret", dialog()!);
-  expect(text()).not.toContain("secret token abc");
-  expect(alerts().join()).toContain("The change did not apply.");
+  await view.press("Rotate secret");
+  await view.press("Rotate secret", view.dialog()!);
+  expect(view.text()).not.toContain("secret token abc");
+  expect(view.alerts().join()).toContain("The change did not apply.");
 });
 
 it("keys each server's list by its authenticated user and resets state on a user switch", async () => {
+  setup();
   mocks.sessionUsers.set("env_mac", null);
   mocks.sessionUsers.set("env_clerk_pending", null);
   mocks.sessionAuthenticated.set("env_signed_out", false);
-  await render(
+  await using view = await mount(
     <>
       {server("env_stage")}
       {server("env_mac", false)}
@@ -259,23 +262,24 @@ it("keys each server's list by its authenticated user and resets state on a user
     { environmentId: "env_stage", input: { userScope: "user_a" } },
     { environmentId: "env_mac", input: { userScope: "local-user" } },
   ]);
-  expect(text().match(/Authenticate with this server/g)).toHaveLength(2);
+  expect(view.text().match(/Authenticate with this server/g)).toHaveLength(2);
 
   mocks.update.mockResolvedValueOnce(failure("webhook-not-found"));
-  await press("Disable");
-  await press("Disable", dialog()!);
-  expect(alerts().join()).toContain("This webhook no longer exists for your account.");
+  await view.press("Disable");
+  await view.press("Disable", view.dialog()!);
+  expect(view.alerts().join()).toContain("This webhook no longer exists for your account.");
   mocks.sessionUsers.set("env_stage", "user_b");
-  await screen!.rerender(<>{server("env_stage")}</>);
+  await view.rerender(<>{server("env_stage")}</>);
   expect(mocks.listQueries).toHaveBeenLastCalledWith({
     environmentId: "env_stage",
     input: { userScope: "user_b" },
   });
   // Another user's error must not survive into this user's view.
-  expect(text()).not.toContain("no longer exists");
+  expect(view.text()).not.toContain("no longer exists");
 });
 
 it("keeps sync failures visible, including removed webhooks outside their closed section", async () => {
+  setup();
   mocks.webhooks.set("env_stage", [
     webhook({ status: "disabled", terminalReason: "disable-server-sync-failed" }),
     webhook({
@@ -295,23 +299,24 @@ it("keeps sync failures visible, including removed webhooks outside their closed
       ],
     }),
   ]);
-  await render();
-  const visible = alerts().join();
+  await using view = await mount();
+  const visible = view.alerts().join();
   expect(visible).toContain(
     "Disable could not sync with Toolyard, and the server stopped retrying",
   );
   expect(visible).toContain("Removed webhook for Session thread-u…");
   expect(visible).toContain("Removal could not sync with Toolyard");
-  expect(text()).toContain("Its history has 1 failed or stopped event.");
-  expect(text()).not.toMatch(/server keeps retrying|try again shortly/);
+  expect(view.text()).toContain("Its history has 1 failed or stopped event.");
+  expect(view.text()).not.toMatch(/server keeps retrying|try again shortly/);
   // The removed card stays collapsed and out of the attention badge.
-  expect(text()).not.toContain("swh_00000000000000000000000000000002");
-  expect(text()).not.toMatch(/\d+ events? needs? attention/);
-  await press("Removed webhooks (1)");
-  expect(text()).toContain("Stopped · The session rejected the notification");
+  expect(view.text()).not.toContain("swh_00000000000000000000000000000002");
+  expect(view.text()).not.toMatch(/\d+ events? needs? attention/);
+  await view.press("Removed webhooks (1)");
+  expect(view.text()).toContain("Stopped · The session rejected the notification");
 });
 
 it("leaves a deliberate Disable as history without an attention badge", async () => {
+  setup();
   mocks.webhooks.set("env_stage", [
     webhook({
       status: "disabled",
@@ -328,9 +333,9 @@ it("leaves a deliberate Disable as history without an attention badge", async ()
       ],
     }),
   ]);
-  await render();
-  expect(text()).not.toMatch(/\d+ events? needs? attention/);
-  expect(alerts()).toEqual([]);
-  expect(text()).toContain("No callbacks need attention.");
-  expect(buttons("Earlier callbacks (1)")).toHaveLength(1);
+  await using view = await mount();
+  expect(view.text()).not.toMatch(/\d+ events? needs? attention/);
+  expect(view.alerts()).toEqual([]);
+  expect(view.text()).toContain("No callbacks need attention.");
+  expect(view.buttons("Earlier callbacks (1)")).toHaveLength(1);
 });

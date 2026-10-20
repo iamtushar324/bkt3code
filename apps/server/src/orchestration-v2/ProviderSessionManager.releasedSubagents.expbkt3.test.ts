@@ -21,8 +21,10 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -278,49 +280,57 @@ function fixture(
     configureMcp: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(
-        IdAllocator.layer,
-        FileSystem.layerNoop({}),
-        ProviderAdapterRegistry.layerSingle(adapter),
-        Layer.mock(EventSink.EventSinkV2)({
-          write: (input) =>
-            Effect.sync(() => {
-              written.push(...input.events);
-              return [];
+      // The manager forwards command output through the hub, fed by the same mocks.
+      CommandOutputHub.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            FileSystem.layerNoop({}),
+            ProviderAdapterRegistry.layerSingle(adapter),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: (input) =>
+                Effect.sync(() => {
+                  written.push(...input.events);
+                  return [];
+                }),
             }),
-        }),
-        Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadRecords: (threadId) =>
-            Effect.succeed({
-              thread: { id: threadId },
-              messages: [],
-              runtimeRequests: [],
-              nodes: [],
-              turnItems: [],
-              providerThreads: [],
-              providerTurns: [],
-              subagents: projections.get(threadId)?.subagents ?? [],
-            } as unknown as OrchestrationV2ThreadProjection),
-          getRuntimeRecoveryProjection: (threadId) => {
-            recoveryReads.push(threadId);
-            if (options.failRecoveryRead === true) {
-              return Effect.fail(
-                new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "boom" }),
-              );
-            }
-            const found = projections.get(threadId);
-            return found === undefined
-              ? Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }))
-              : Effect.succeed(found);
-          },
-        }),
-        Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-          revokeThread: () => Effect.void,
-          revokeProviderSession: () => Effect.void,
-        }),
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadRecords: (threadId) =>
+                Effect.succeed({
+                  thread: { id: threadId },
+                  messages: [],
+                  runtimeRequests: [],
+                  nodes: [],
+                  turnItems: [],
+                  providerThreads: [],
+                  providerTurns: [],
+                  subagents: projections.get(threadId)?.subagents ?? [],
+                } as unknown as OrchestrationV2ThreadProjection),
+              getRuntimeRecoveryProjection: (threadId) => {
+                recoveryReads.push(threadId);
+                if (options.failRecoveryRead === true) {
+                  return Effect.fail(
+                    new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "boom" }),
+                  );
+                }
+                const found = projections.get(threadId);
+                return found === undefined
+                  ? Effect.fail(
+                      new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }),
+                    )
+                  : Effect.succeed(found);
+              },
+            }),
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              revokeThread: () => Effect.void,
+              revokeProviderSession: () => Effect.void,
+            }),
+          ),
+        ),
       ),
     ),
+    Layer.provide(McpProviderSessions.layer),
   );
   const open = (threadId: ThreadId, providerSessionId = releasedSessionId) => ({
     threadId,

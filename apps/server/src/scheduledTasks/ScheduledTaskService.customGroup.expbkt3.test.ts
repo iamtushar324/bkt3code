@@ -26,6 +26,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import {
   readScheduledTaskCustomGroup,
@@ -56,6 +58,14 @@ const countLabels = (sql: SqlClient.SqlClient) =>
 it.effect("stores a task's custom group, applies it to each fresh thread, and drops it", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+    // The scheduled run launches through this; the MCP service also reads it at construction.
+    const threadLaunch = Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+      launch: (input) =>
+        Effect.sync(() => {
+          launched.push(input);
+          return {} as ThreadLaunchService.ThreadLaunchResult;
+        }),
+    });
     const scheduledTasks = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -65,13 +75,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: (input) =>
-              Effect.sync(() => {
-                launched.push(input);
-                return {} as ThreadLaunchService.ThreadLaunchResult;
-              }),
-          }),
+          threadLaunch,
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
         ),
@@ -94,6 +98,10 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
             getById: () => Effect.succeed(Option.some(project)),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
+          // Upstream's MCP service now also reads these; the schedule tools use neither.
+          threadLaunch,
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          ServerSettings.layerTest(),
         ),
       ),
       Layer.provideMerge(scheduledTasks),

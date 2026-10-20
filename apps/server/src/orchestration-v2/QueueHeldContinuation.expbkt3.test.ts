@@ -305,7 +305,11 @@ it.effect("a thread whose only queued runs are held starts nothing until the use
       commandId: CommandId.make(`resume:${threadId}`),
       threadId,
     });
-    assert.deepEqual(yield* runStates(threadId), ["interrupted", "starting", "completed"]);
+    // Upstream #17773: the resumed run takes a new ordinal after the run that ran ahead of it.
+    assert.deepEqual(yield* runStates(threadId), ["interrupted", "completed", "starting"]);
+    const resumed = yield* runFor(threadId, "queued before stop");
+    assert.equal(resumed.status, "starting");
+    assert.isTrue(resumed.ordinal > active.ordinal);
   }).pipe(Effect.provide(layerTest)),
 );
 
