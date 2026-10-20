@@ -6,6 +6,7 @@ import {
   type ProviderSession,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,19 @@ export class ForkProviderSessions extends Context.Service<
   ForkProviderSessions,
   {
     readonly stopSession: (input: { readonly threadId: ThreadId }) => Effect.Effect<void>;
+    /**
+     * Whether a live session of the thread still runs background work between
+     * turns: a subagent, a background command or monitor, or a wake not yet
+     * delivered. Stopping that session ends the work. A failed check answers
+     * true, as the session manager's own configuration refresh does: a restart
+     * can wait, but killed work does not come back.
+     *
+     * Each check counts as activity on the thread's own sessions (their idle
+     * release starts again), so poll it only for threads that wait on it.
+     */
+    readonly hasLiveBackgroundWork: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<boolean>;
     readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
     readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
   }
@@ -70,6 +84,26 @@ export const layer = Layer.effect(
             yield* sessions.release({ providerSessionId, reason: "manual_shutdown" });
           }
         }).pipe(Effect.orDie),
+      hasLiveBackgroundWork: ({ threadId }) =>
+        Effect.gen(function* () {
+          const { providerThreads } = yield* projection.getThreadRecords(threadId, [
+            "providerThreads",
+          ]);
+          for (const providerSessionId of new Set(
+            providerThreads.flatMap((thread) =>
+              thread.providerSessionId === null ? [] : [thread.providerSessionId],
+            ),
+          )) {
+            const live = yield* sessions.get(providerSessionId);
+            if (live._tag === "None" || live.value.hasPendingBackgroundWork === undefined) continue;
+            if (yield* live.value.hasPendingBackgroundWork) return true;
+          }
+          return false;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(true),
+          ),
+        ),
       listSessions: () =>
         Effect.gen(function* () {
           const shell = yield* projection.getShellSnapshot();

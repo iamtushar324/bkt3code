@@ -65,6 +65,8 @@ import {
 import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
 import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/server/sessionExecutionOptions.expbkt3";
 import { makeBackgroundTurnGuard } from "./backgroundTurnGrant.expbkt3.ts";
+// T3-CUSTOM(expbkt3): a released session settles the subagents it leaves open.
+import { settleReleasedSessionSubagents } from "./releasedSessionSubagents.expbkt3.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -988,6 +990,28 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            // T3-CUSTOM(expbkt3): BEGIN the released process can no longer end its subagents.
+            // Never fails, so it never fails or retries the release.
+            Effect.exit(
+              settleReleasedSessionSubagents({
+                projectionStore,
+                idAllocator,
+                eventSink,
+                providerSessionId: input.entry.runtime.providerSessionId,
+                reason: input.reason,
+                driver: input.entry.runtime.driver,
+                providerInstanceId: input.entry.runtime.instanceId,
+                threadIds: input.entry.attachedThreadIds,
+                liveThreadIds: Ref.get(sessions).pipe(
+                  Effect.map(
+                    (current) =>
+                      new Set([...current.values()].flatMap((live) => [...live.attachedThreadIds])),
+                  ),
+                ),
+                releasedAt: input.releasedAt,
+              }),
+            ),
+            // T3-CUSTOM(expbkt3): END
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
