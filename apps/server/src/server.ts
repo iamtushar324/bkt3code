@@ -43,6 +43,7 @@ import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.t
 import * as ThreadWorkspaceGroups from "./persistence/ThreadWorkspaceGroups.ts";
 import { ArchiveExportReactorLive } from "./orchestration-v2/Layers/ArchiveExportReactor.ts";
 import { ArchiveExportReactor } from "./orchestration-v2/Services/ArchiveExportReactor.ts";
+import * as SubagentArchiveCascade from "./orchestration-v2/SubagentArchiveCascade.expbkt3.ts";
 import { ProjectionSnapshotQueryLive } from "./orchestration-v2/Layers/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineLive } from "./orchestration-v2/Layers/OrchestrationEngine.ts";
 import * as TurnStartBootstrap from "./orchestration-v2/turnStartBootstrap.expbkt3.ts";
@@ -658,6 +659,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   SessionActivityReactor.layer, // T3-CUSTOM(expbkt3): session time-in-state metrics (TEC-1631).
+  SubagentArchiveCascade.layer, // T3-CUSTOM(expbkt3): provider subagents follow their parent's archive.
 ).pipe(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
