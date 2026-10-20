@@ -8,7 +8,11 @@ import {
 import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { RightPanelTabs } from "./RightPanelTabs";
 
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/hooks/useTheme", () => ({
+  useTheme: () => ({ resolvedTheme: "light" }),
+  // T3-CUSTOM(expbkt3): the fork's comments tab imports ChatMarkdown, which links this export.
+  useRenderedAppearance: () => "light",
+}));
 // T3-CUSTOM(expbkt3): the fork's comments tab pulls in ChatMarkdown, which uses other exports.
 vi.mock("~/browser/browserDefaults", async (original) => ({
   ...(await original<typeof import("~/browser/browserDefaults")>()),

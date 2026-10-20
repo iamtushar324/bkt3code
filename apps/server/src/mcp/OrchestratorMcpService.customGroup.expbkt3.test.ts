@@ -132,6 +132,8 @@ describe("OrchestratorMcpService custom groups", () => {
             ),
           // A first request: no create was accepted before, so each thread is new.
           hasReceipt: () => Effect.succeed(false),
+          // The test's Codex instance is enabled for every project.
+          assertProviderInstanceEnabled: () => Effect.void,
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([codexProvider]),

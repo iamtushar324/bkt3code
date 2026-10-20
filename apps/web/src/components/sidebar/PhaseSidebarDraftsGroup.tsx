@@ -36,12 +36,18 @@ import {
   type PhaseSidebarFrozenDraft,
 } from "./PhaseSidebarDrafts.logic";
 
+// A one-shot read, not a subscription: the count hook runs in the sidebar parent,
+// which must not repaint on every keystroke.
+function readFrozenActiveDraft(routeDraftId: string | null): PhaseSidebarFrozenDraft {
+  return capturePhaseSidebarDraft(useComposerDraftStore.getState(), routeDraftId);
+}
+
 function useFrozenActiveDraft(routeDraftId: string | null): PhaseSidebarFrozenDraft {
   const [frozen, setFrozen] = useState<PhaseSidebarFrozenDraft>({ routeDraftId: null, row: null });
   if (frozen.routeDraftId !== routeDraftId) {
     // Like SidebarDraftBlock, capture synchronously on route change. A fresh active
     // composer stays absent until navigation away leaves an invested draft behind.
-    setFrozen(capturePhaseSidebarDraft(useComposerDraftStore.getState(), routeDraftId));
+    setFrozen(readFrozenActiveDraft(routeDraftId));
   }
   return frozen;
 }

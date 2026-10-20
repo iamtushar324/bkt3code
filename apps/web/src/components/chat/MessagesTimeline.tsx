@@ -4736,8 +4736,15 @@ function UserMessagePlanReviewCommentCard({ comment }: { comment: ReviewCommentC
         </blockquote>
       )}
       {comment.text.length > 0 && (
-        <div className="whitespace-pre-wrap wrap-break-word text-sm">
-          <SkillInlineText text={comment.text} skills={ctx.skills} />
+        // T3-CUSTOM(expbkt3): upstream retired SkillInlineText; render like its review comments.
+        <div className="wrap-break-word text-sm">
+          <ChatMarkdown
+            text={comment.text}
+            cwd={ctx.markdownCwd}
+            skills={ctx.skills}
+            parseRawHtml={false}
+            lineBreaks
+          />
         </div>
       )}
       {comment.author ? (

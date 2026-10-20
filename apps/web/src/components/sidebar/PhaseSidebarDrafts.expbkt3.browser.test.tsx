@@ -53,7 +53,7 @@ vi.mock(import("../ui/sidebar"), async (original) => ({
 }));
 vi.mock(import("../ProjectFavicon"), async (original) => ({
   ...(await original()),
-  ProjectFavicon: () => null,
+  ProjectFavicon: (() => null) as never,
 }));
 vi.mock(import("../../lib/attachmentUploadQueue"), async (original) => ({
   ...(await original()),

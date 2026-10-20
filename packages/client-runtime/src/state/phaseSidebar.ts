@@ -19,6 +19,7 @@
 // the method from Array.prototype.
 import type {
   ServerConfig,
+  ServerProvider,
   // T3-CUSTOM(expbkt3): the thread's auto-detected branch review.
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -1827,7 +1828,16 @@ export function isThreadUnread(input: {
 export interface BuildPhaseSidebarRowsInput {
   readonly threads: ReadonlyArray<ThreadShell>;
   readonly projects: ReadonlyArray<Project>;
-  readonly serverConfigs: ReadonlyMap<string, ServerConfig>;
+  /**
+   * Web passes provider-less configs (provider pushes would otherwise rebuild every
+   * capability read) plus `providersByEnvironment`; mobile still passes full configs.
+   */
+  readonly serverConfigs: ReadonlyMap<
+    string,
+    Omit<ServerConfig, "providers"> & { readonly providers?: ServerConfig["providers"] }
+  >;
+  /** Keyed by environment id. Wins over `serverConfigs[…].providers` when present. */
+  readonly providersByEnvironment?: ReadonlyMap<string, ReadonlyArray<ServerProvider>>;
   /** Keyed by `scopedThreadKey`. Absent entries simply have no VCS facts yet. */
   readonly vcsStatusByThreadKey: ReadonlyMap<string, VcsStatusResult | null>;
   /** Keyed by `scopedThreadKey`. */
@@ -1876,9 +1886,9 @@ export function buildPhaseSidebarRows(
       : scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
     const serverConfig = input.serverConfigs.get(thread.environmentId);
     const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-    const provider = serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === instanceId,
-    );
+    const provider = (
+      input.providersByEnvironment?.get(thread.environmentId) ?? serverConfig?.providers
+    )?.find((candidate) => candidate.instanceId === instanceId);
     const providerKind = String(provider?.driver ?? instanceId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const vcsStatus = input.vcsStatusByThreadKey.get(threadKey);

@@ -1010,7 +1010,7 @@ describe("default model settings and new-thread composer parity", () => {
           model,
           models,
           modelOptions,
-          planModeEnabled: settings.planModeEnabled,
+          planModeAvailable: settings.planModeAvailable,
         });
       const composerTraits = traits(composer.selectedModel, composer.modelOptions?.[instanceId]);
 

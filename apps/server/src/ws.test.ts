@@ -106,6 +106,7 @@ import * as Option from "effect/Option";
 import { HttpClient } from "effect/http";
 import { ClerkDirectory } from "./auth/ClerkDirectory.ts";
 import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { AgentUiService } from "./agentui/AgentUiService.ts";
 import { ClaudeAccountsService } from "./claudeAccounts/ClaudeAccountsService.ts";
 import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
@@ -653,7 +654,11 @@ it.effect(
               sessionId: AuthSessionId.make("config-test"),
               subject: "config-test",
               method: "browser-session-cookie",
-              scopes: [],
+              // T3-CUSTOM(expbkt3): the fork re-checks scopes inside the handler map, and a
+              // session without the config RPC's scope gets a failed stream before discovery.
+              scopes: [
+                RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.subscribeServerConfig),
+              ],
             },
             {},
             {},

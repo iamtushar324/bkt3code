@@ -29,6 +29,10 @@ vi.mock(import("../state/session"), () => ({
     },
   })) as never,
 }));
+// Only the list-wide section reads the scope, and its real module builds the settings state.
+vi.mock(import("../components/settings/SettingsScopeContext"), () => ({
+  useSettingsScope: (() => ({ connectedEnvironments: [] })) as never,
+}));
 vi.mock(import("../state/entities"), () => ({
   useThreadShell: ((ref: { threadId: string }) =>
     ref.threadId.startsWith("thread-titled") ? { title: "Fix login" } : null) as never,
@@ -48,29 +52,29 @@ vi.mock(import("../state/use-atom-command"), () => ({
 vi.mock(import("../rpc/atomRegistry"), () => ({
   appAtomRegistry: { refresh: mocks.refresh } as never,
 }));
-// The UI stand-ins render every menu, fold and dialog inline, so the tests query one tree.
-vi.mock(import("../components/ui/button"), async (original) => ({
-  ...(await original()),
-  Button: (({ children, ...props }: { children: ReactNode }) => (
-    <button {...props}>{children}</button>
-  )) as never,
-}));
-vi.mock(import("../components/ui/badge"), async (original) => ({
-  ...(await original()),
-  Badge: (({ children }: { children: ReactNode }) => <span>{children}</span>) as never,
-}));
-vi.mock(import("../components/ui/menu"), async (original) => ({
-  ...(await original()),
-  Menu: (({ children }: { children: ReactNode }) => <>{children}</>) as never,
-  MenuTrigger: (({ render, children }: { render: ReactElement; children: ReactNode }) =>
-    cloneElement(render, {}, children)) as never,
-  MenuPopup: (({ children }: { children: ReactNode }) => <>{children}</>) as never,
-  MenuItem: (({ children, ...props }: { children: ReactNode }) => (
-    <button role="menuitem" {...props}>
-      {children}
-    </button>
-  )) as never,
-}));
+// The menu stand-in renders every item inline, so the tests query one tree. It replaces the
+// module outright: the real menu imports lib/utils, whose graph imports the menu again
+// (through TraitsPicker), so a factory that awaits the original waits on itself and the file
+// never loads. Button and Badge stay real for the same reason. TraitsPicker still links
+// against the other members it imports.
+vi.mock(import("../components/ui/menu"), () => {
+  const Pass = (({ children }: { children?: ReactNode }) => <>{children}</>) as never;
+  return {
+    Menu: Pass,
+    MenuTrigger: (({ render, children }: { render: ReactElement; children: ReactNode }) =>
+      cloneElement(render, {}, children)) as never,
+    MenuPopup: Pass,
+    MenuItem: (({ children, ...props }: { children: ReactNode }) => (
+      <button role="menuitem" {...props}>
+        {children}
+      </button>
+    )) as never,
+    MenuGroup: Pass,
+    MenuRadioGroup: Pass,
+    MenuRadioItem: Pass,
+    MenuSeparator: Pass,
+  };
+});
 // These folds are uncontrolled and unmount closed panels, as the component requests.
 vi.mock(import("../components/ui/collapsible"), async (original) => {
   const { createContext, useContext, useMemo, useState } = await import("react");
@@ -125,8 +129,8 @@ vi.mock(import("../components/ui/alert-dialog"), async (original) => {
     }) as never,
   };
 });
-vi.mock(import("../components/settings/settingsLayout"), async (original) => ({
-  ...(await original()),
+// The real layout pulls in the settings state modules that the state mocks above replace.
+vi.mock(import("../components/settings/settingsLayout"), () => ({
   SettingsSection: (({
     children,
     title,

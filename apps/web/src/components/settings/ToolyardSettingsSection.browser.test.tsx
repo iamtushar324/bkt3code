@@ -61,8 +61,9 @@ vi.mock(import("@effect/atom-react"), () => ({
   }) as never,
 }));
 vi.mock(import("../../state/identity"), () => ({ currentClerkUserAtom: "clerk-user" as never }));
-vi.mock(import("./SettingsScopeContext"), async (original) => ({
-  ...(await original()),
+// The scope and layout modules are replaced outright as well: their real modules import the
+// settings state that the mocks above replace with only the members this section reads.
+vi.mock(import("./SettingsScopeContext"), () => ({
   useSettingsScope: (() => ({
     connectedEnvironments: mocks.selectedIds.map((environmentId) => ({
       environmentId,
@@ -149,16 +150,9 @@ vi.mock(import("@t3tools/client-runtime/toolyard-trust-setup"), async (original)
   };
 });
 // The UI stand-ins render every fold and dialog inline, so the tests query one tree.
-vi.mock(import("../ui/button"), async (original) => ({
-  ...(await original()),
-  Button: (({ children, ...props }: { children: ReactNode }) => (
-    <button {...props}>{children}</button>
-  )) as never,
-}));
-vi.mock(import("../ui/badge"), async (original) => ({
-  ...(await original()),
-  Badge: (({ children }: { children: ReactNode }) => <span>{children}</span>) as never,
-}));
+// Button and Badge stay real: their modules import lib/utils, whose graph imports them again
+// (through TraitsPicker), so a stand-in factory that awaits the original waits on itself and
+// the file never loads.
 vi.mock(import("../ui/input"), async (original) => ({
   ...(await original()),
   Input: ((props: object) => <input {...props} />) as never,
@@ -285,8 +279,7 @@ vi.mock(import("../ui/alert-dialog"), async (original) => {
     }) as never,
   };
 });
-vi.mock(import("./settingsLayout"), async (original) => ({
-  ...(await original()),
+vi.mock(import("./settingsLayout"), () => ({
   SettingsSection: (({
     children,
     title,

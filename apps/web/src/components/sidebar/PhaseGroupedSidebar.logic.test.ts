@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   RunId,
+  SourceControlProviderKind,
   UserId,
   type OrchestrationSessionStatus,
   type VcsStatusResult,
@@ -376,7 +377,11 @@ describe("resolvePhaseSidebarChangeRequestBadge", () => {
     expect(
       resolvePhaseSidebarChangeRequestBadge({
         pr: { ...pr, state: "merged" },
-        sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.com" },
+        sourceControlProvider: {
+          kind: SourceControlProviderKind.make("gitlab"),
+          name: "GitLab",
+          baseUrl: "https://gitlab.com",
+        },
       })?.tooltip,
     ).toContain("MR #76");
   });

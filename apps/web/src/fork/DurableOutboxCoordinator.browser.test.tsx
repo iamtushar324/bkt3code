@@ -115,15 +115,21 @@ function Host({
   useEffect(() => {
     onItems(items);
   }, [items, onItems]);
-  return <DurableOutboxCoordinator />;
+  return null;
 }
 async function mountRoute(threadId: ThreadId | null) {
   let visibleItems: ReadonlyArray<QueuedThreadMessage> = [];
   const onItems = (items: ReadonlyArray<QueuedThreadMessage>) => {
     visibleItems = items;
   };
+  // The mocked hooks have no subscriptions, so each route change hands the coordinator a fresh
+  // element to make it read them again. Rendered inside Host, the React Compiler would cache
+  // that element, and a reconnect or identity change would never reach the runner.
   const host = (id: ThreadId | null) => (
-    <Host selectedRef={id === null ? null : { environmentId, threadId: id }} onItems={onItems} />
+    <>
+      <Host selectedRef={id === null ? null : { environmentId, threadId: id }} onItems={onItems} />
+      <DurableOutboxCoordinator />
+    </>
   );
   const settle = () => act(() => vi.advanceTimersByTimeAsync(0));
   await using stack = new AsyncDisposableStack();

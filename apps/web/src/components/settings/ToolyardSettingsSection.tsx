@@ -1,6 +1,7 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -128,7 +129,7 @@ function FoldTrigger({
 export interface ToolyardSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly serverConfig: ServerConfig;
+  readonly serverConfig: EnvironmentServerConfig;
 }
 export function ToolyardSettingsSection() {
   const { connectedEnvironments } = useSettingsScope();

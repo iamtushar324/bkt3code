@@ -1,11 +1,11 @@
 // T3-CUSTOM(expbkt3): when the host appearance editor is inert. Same order as
 // upstream's icon picker (resolveEnvironmentIconPickerLock), keyed on the
 // appearance capability instead of the icon one.
-import type { ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 
 /** Why the editor is inert, or null when it can be changed. */
 export function resolveEnvironmentAppearanceLock(input: {
-  readonly serverConfig: ServerConfig | null;
+  readonly serverConfig: EnvironmentServerConfig | null;
   readonly operateAccess: "granted" | "denied" | "pending";
 }): string | null {
   if (input.serverConfig === null) {

@@ -457,8 +457,6 @@ export default defineConfig({
         rules: {
           "react/exhaustive-effect-dependencies": "off",
           "react/memo-dependencies": "off",
-          "react/preserve-manual-memoization": "off",
-          "react/refs": "off",
           "react/set-state-in-effect": "off",
         },
       },
@@ -470,11 +468,6 @@ export default defineConfig({
           "apps/web/src/fork/MemberDevicesSection.tsx",
         ],
         rules: { "react/set-state-in-effect": "off" },
-      },
-      {
-        // Reads the draft store imperatively so typing never re-renders the sidebar.
-        files: ["apps/web/src/components/sidebar/PhaseSidebarDraftsGroup.tsx"],
-        rules: { "react/hooks": "off" },
       },
       // T3-CUSTOM(expbkt3): END
       {
