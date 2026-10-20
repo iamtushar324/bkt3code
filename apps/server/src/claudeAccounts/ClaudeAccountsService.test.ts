@@ -201,6 +201,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const place = options.place ?? spreadPlace(status);
     const enabled = yield* Ref.make(options.enabled ?? true);
     const sessions = yield* Ref.make<ReadonlyArray<ProviderSession>>([]);
+    /** Threads whose live session still runs background work (a subagent) between turns. */
+    const backgroundWork = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
     const shellSession = yield* Ref.make<OrchestrationSession | null>(null);
     /** The thread shell's owner; `undefined` means no shell (a draft). */
     const shellOwner = yield* Ref.make<UserId | null | undefined>(owner);
@@ -285,6 +287,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
             Effect.sync(() => {
               stoppedThreads.push(input.threadId);
             }),
+          hasLiveBackgroundWork: ({ threadId }) =>
+            Ref.get(backgroundWork).pipe(Effect.map((threads) => threads.has(threadId))),
           listSessions: () => Ref.get(sessions),
           streamEvents: Stream.fromSubscription(providerSubscription),
         }),
@@ -329,6 +333,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       dispatched,
       enabled,
       sessions,
+      backgroundWork,
       shellSession,
       shellOwner,
       shellFails,
@@ -982,6 +987,63 @@ describe("ClaudeAccountsService mode changes on a live session", () => {
         const restarted = yield* Queue.take(seen);
         assert.notEqual(restarted.pendingRestart, true);
         assert.deepEqual(harness.stoppedThreads, [threadId]);
+      }),
+  );
+
+  scenario(
+    "waits for a running subagent between turns and restarts on the status poll once it ends",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-background-switch");
+        yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+        yield* Ref.set(harness.backgroundWork, new Set([threadId]));
+        yield* service.refreshStatus();
+        yield* service.resolveForSession(threadId);
+        const view = yield* service.setThreadMode({
+          threadId,
+          mode: { kind: "profile", profile: "agent" },
+        });
+        // No turn runs, but a stop now would kill the subagent.
+        assert.equal(view.pendingRestart, true);
+        assert.deepEqual(harness.stoppedThreads, []);
+
+        yield* service.refreshStatus();
+        assert.deepEqual(harness.stoppedThreads, []);
+
+        // The subagent ends between turns: no turn end follows, the poll restarts.
+        yield* Ref.set(harness.backgroundWork, new Set());
+        yield* service.refreshStatus();
+        assert.deepEqual(harness.stoppedThreads, [threadId]);
+        assert.notEqual((yield* service.getThread(threadId)).pendingRestart, true);
+      }),
+  );
+
+  scenario(
+    "restarts anyway once background work has held a deferred restart for an hour",
+    {},
+    (harness, service) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-background-cap");
+        yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+        yield* Ref.set(harness.backgroundWork, new Set([threadId]));
+        yield* service.refreshStatus();
+        yield* service.resolveForSession(threadId);
+        yield* service.setThreadMode({ threadId, mode: { kind: "profile", profile: "agent" } });
+        assert.deepEqual(harness.stoppedThreads, []);
+        // The background poll stays idle while the clock moves; each status
+        // read below is the one the poll would make.
+        yield* Ref.set(harness.enabled, false);
+
+        yield* TestClock.adjust("59 minutes");
+        yield* service.refreshStatus();
+        assert.deepEqual(harness.stoppedThreads, []);
+        assert.equal((yield* service.getThread(threadId)).pendingRestart, true);
+
+        yield* TestClock.adjust("2 minutes");
+        yield* service.refreshStatus();
+        assert.deepEqual(harness.stoppedThreads, [threadId]);
+        assert.notEqual((yield* service.getThread(threadId)).pendingRestart, true);
       }),
   );
 
@@ -2052,6 +2114,8 @@ describe("ClaudeAccountsService access per user: owners, probing, hard limits, r
           liveSession(busy, "running"),
           liveSession(untouched, "ready"),
         ]);
+        // Background work never holds a session on an account its owner lost.
+        yield* Ref.set(harness.backgroundWork, new Set([idle]));
 
         yield* service.setAccess({ profile: "tushar", userIds: [colleague], actorUserId: null });
         assert.deepEqual(harness.stoppedThreads, [idle]);
@@ -2657,6 +2721,40 @@ describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
           assert.deepEqual(harness.stoppedThreads, []);
           assert.equal((yield* service.getThread(pinned)).resolvedProfile, "tushar");
           assert.equal((yield* service.getThread(busy)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    scenario(
+      "leaves an idle thread alone while its session still runs a background subagent",
+      { place: gate.place, status: sharedStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-rebalance-background");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = ["agent"];
+          yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+          yield* Ref.set(harness.backgroundWork, new Set([threadId]));
+          const placements = harness.placeCalls.length;
+
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.equal(harness.placeCalls.length, placements);
+          assert.deepEqual(harness.stoppedThreads, []);
+          const view = yield* service.getThread(threadId);
+          assert.equal(view.resolvedProfile, "tushar");
+          assert.notEqual(view.pendingRestart, true);
+
+          // Once the work ended, the next turn boundary moves the thread as usual.
+          yield* Ref.set(harness.backgroundWork, new Set());
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.deepEqual(harness.stoppedThreads, [threadId]);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
         }),
     );
   }
