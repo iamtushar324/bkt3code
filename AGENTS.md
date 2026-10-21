@@ -72,6 +72,17 @@ Rules that apply regardless of approach:
 - **`git rerere` is enabled in this repo** (`rerere.enabled=true`), so a conflict resolved once is replayed automatically the next time the same hunk collides. Never resolve a conflict by discarding one side wholesale just to make it go away — a bad resolution gets replayed too. Verify what rerere auto-resolved before committing a merge.
 - **Test upstream merges on `expbkmain` first**, never directly on `bkmain`. Reset `expbkmain` from `bkmain` so its conflicts are exactly the ones `bkmain` will see, verify at expbkt3.dev, then promote.
 
+## Server code must scale with bkt3's database
+
+bkt3 is far bigger than a typical install: a 16 GB `statev2.sqlite`, about 1,800 threads (half of them archived), 20+ live provider sessions and several Claude accounts that are often full. The server runs on one event loop with synchronous `node:sqlite`, so every query, decode and subprocess spawn on the main thread pauses every client. Code that is instant on a dev database froze bkt3 for 2-13 s at a time (#164 in September 2026, then #325/#326, #328 and #338 in October). Before merging server code, check it against these rules:
+
+1. **No all-threads reads on a hot path.** A full shell snapshot (`getShellSnapshot`, `readShellSnapshot`) or a loop over every thread costs about 2 s on bkt3. Never run one per event, per turn end, per connection, per account change, or on a timer. Read the narrowest thing that answers the question: one thread (`getThreadShell`), live sessions from memory (`ProviderSessionManager.listLive`), or an indexed query that selects the few rows you need. Full snapshots are for rare, user-triggered requests only.
+2. **Cheap checks first.** Run in-memory guards (is there room elsewhere, is the feature on, has anything changed) before any database read, so the common no-op case costs nothing. `ClaudeAccountsService.maybeRebalance` read every session twice per turn end before it checked whether another account had room (#338).
+3. **Every query seeks an index.** `run_id IN (...) OR (? = 1 AND run_id IS NULL)` silently scans (#326; use `INDEXED BY` or split the query). `orchestration_events` lookups need `aggregate_kind` with the stream id (#164). Check new queries with `EXPLAIN QUERY PLAN` against a copy of real data (see Test data).
+4. **No subprocess per thread.** Linux `fork()` of the ~1.5 GB server costs about 30 ms of main thread, even for a cached git call. A sweep that spawns per thread is a freeze: rotate idle threads, cache results, and spawn only for threads that changed (#325).
+5. **Count calls in tests.** A focused test for a hot-path change asserts how many reads a trigger costs (for example, a turn end on a full account makes zero `listSessions` calls), not only the result. Wall-clock checks belong on a real-data copy, not in CI.
+6. **Check production after the deploy.** Count `event loop stalled` warnings with `journalctl -u t3-nextbkt3.service`, probe `/api/t3-connect/health` every 250 ms, and compare with the hours before the deploy. The server trace keeps only a few minutes, so capture a stall while it happens.
+
 ## What makes T3 Code special?
 
 We have over 500,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
