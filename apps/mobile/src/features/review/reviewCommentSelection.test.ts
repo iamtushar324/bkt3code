@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  // T3-CUSTOM(expbkt3): used by the fork's rangeless plan-comment test below.
+  countReviewCommentContexts,
   formatReviewCommentContext,
   parseReviewCommentMessageSegments,
   parseReviewInlineComments,
