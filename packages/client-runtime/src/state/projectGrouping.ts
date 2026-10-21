@@ -90,7 +90,7 @@ export function getProjectOrderKey(
   return derivePhysicalProjectKey(project);
 }
 
-export function resolveProjectGroupingMode(
+function resolveProjectGroupingMode(
   project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
@@ -126,6 +126,7 @@ function deriveRepositoryScopedKey(
     : `${canonicalKey}::${relativeProjectPath}`;
 }
 
+// T3-CUSTOM(expbkt3): exported for the fork phase sidebar.
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,

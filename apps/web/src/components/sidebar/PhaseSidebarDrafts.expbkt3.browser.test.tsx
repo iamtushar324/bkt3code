@@ -323,8 +323,9 @@ function seed(value: PhaseSidebarDraftSource) {
 }
 function setup(): Disposable {
   const stack = new DisposableStack();
-  // The composer store debounces its persistence on setTimeout.
-  stack.use(fakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+  // The composer store debounces its persistence on setTimeout; the full fake set keeps
+  // that write from landing in a later test.
+  stack.use(fakeTimers());
   stack.defer(() => usePhaseSidebarGroupingStore.persist.clearStorage());
   mocks.navigate.mockReset();
   mocks.closeMobile.mockReset();

@@ -3,7 +3,8 @@
 import { ProviderInstanceId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatWorkingDurationLabel, resolveSidebarThreadStatus } from "../Sidebar.logic";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import {
   formatPhaseSidebarWorkingDuration,
   resolvePhaseSidebarShelfRows,

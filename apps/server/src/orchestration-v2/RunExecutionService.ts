@@ -325,7 +325,7 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   return events;
 });
 
-export function finalProviderThreadStatus(
+function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
 ): OrchestrationV2ProviderThread["status"] {
   return disposition === "broken" ? "error" : "idle";

@@ -38,6 +38,8 @@ const mocks = vi.hoisted(() => ({
   // The page origin the component compares a continuation against. A browser test cannot
   // change its real origin, so the continuation reader sees this one instead.
   pageOrigin: "https://stage.test",
+  // The clock the continuation reader sees, when a test issues a continuation at a fixed epoch.
+  continuationReadAt: null as number | null,
   userId: "user_admin",
   clerkUserId: "user_admin" as string | null,
   selectedIds: ["env_stage"],
@@ -144,7 +146,7 @@ vi.mock(import("@t3tools/client-runtime/toolyard-trust-setup"), async (original)
         userScope,
         mocks.pageOrigin,
         draft,
-        now,
+        mocks.continuationReadAt ?? now,
       );
     }) as never,
   };
@@ -304,6 +306,8 @@ vi.mock(import("./settingsLayout"), () => ({
 import { EnvironmentToolyardSettings, ToolyardSettingsSection } from "./ToolyardSettingsSection";
 import { readToolyardSettingsDraft, toolyardDraftKey } from "../../fork/toolyardSettingsDraft";
 const key = toolyardDraftKey("env_stage", "user_admin");
+/** A fixed issue time for continuations the tests build; the reader is pinned to it. */
+const CONTINUATION_ISSUED_AT = 1_790_000_000_000;
 const failure = (code: string) =>
   AsyncResult.failure(
     Cause.fail(new PersonalMcpSettingsError({ operation: "Toolyard integration", message: code })),
@@ -361,6 +365,7 @@ function setup(): Disposable {
     }),
   );
   mocks.pageOrigin = "https://stage.test";
+  mocks.continuationReadAt = null;
   mocks.status = {
     ...mocks.status,
     mode: "team",
@@ -502,6 +507,7 @@ it("does not open a browser after a successful token-free setting change", async
 });
 it("prefills an authenticated browser draft without any configure call until explicit Save", async () => {
   using _setup = setup();
+  mocks.continuationReadAt = CONTINUATION_ISSUED_AT;
   setHash(
     new URL(
       createToolyardSettingsContinuation(
@@ -509,7 +515,7 @@ it("prefills an authenticated browser draft without any configure call until exp
         "env_stage",
         "user_admin",
         { baseUrl: "https://toolyard.test", enabled: true, revision: 0 },
-        Date.now(),
+        CONTINUATION_ISSUED_AT,
       ),
     ).hash,
   );
@@ -907,6 +913,7 @@ it("applies a browser continuation only to its selected server when two servers 
   using _setup = setup();
   mocks.selectedIds = ["env_stage", "env_other"];
   mocks.pageOrigin = "https://other.test";
+  mocks.continuationReadAt = CONTINUATION_ISSUED_AT;
   setHash(
     new URL(
       createToolyardSettingsContinuation(
@@ -918,7 +925,7 @@ it("applies a browser continuation only to its selected server when two servers 
           enabled: true,
           revision: 0,
         },
-        Date.now(),
+        CONTINUATION_ISSUED_AT,
       ),
     ).hash,
   );
