@@ -6518,8 +6518,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(readShellSnapshotRows(options))
+        // T3-CUSTOM(expbkt3): full shell reads run on the SQLite reader worker; inside an open write transaction they stay on the writer.
         .pipe(
-          // T3-CUSTOM(expbkt3): full shell reads run on the SQLite reader worker; inside an open write transaction they stay on the writer.
           NodeSqliteClient.readOnly,
           Effect.mapError(shellSnapshotReadError),
           Effect.flatMap(decodeShellSnapshot),
