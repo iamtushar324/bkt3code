@@ -2314,7 +2314,12 @@ describe("PiAdapterV2", () => {
             return yield* Effect.die("Expected a screenshot tool item");
           assert.equal(event.turnItem.toolName, tool.name);
           assert.equal(event.turnItem.status, "completed");
-          assert.deepEqual(event.turnItem.output, { content, structuredContent: metadata });
+          // T3-CUSTOM(expbkt3): the fork keeps the raw MCP result for McpAppFrame (output.result).
+          assert.deepEqual(event.turnItem.output, {
+            content,
+            structuredContent: metadata,
+            result: { content, structuredContent: metadata },
+          });
           assert.equal(turnItemOutputText(event.turnItem), "Screenshot captured");
           const image = toolOutputImages(event.turnItem.output)[0];
           assert.equal(image?.mimeType, "image/png");

@@ -410,6 +410,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   const client = createMcpClient(endpoint, token);
   let started: Promise<void> | undefined;
+  // T3-CUSTOM(expbkt3): set once T3's own tools are registered.
+  let t3Registered = false;
 
   const registerTools = () => {
     // Preserve public names for saved loadouts and tool selectors. Hidden
@@ -457,9 +459,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const signal = AbortSignal.timeout(10_000);
       // T3-CUSTOM(expbkt3): personal servers register even when T3's own server fails.
       const personalFailure = registerPersonalIntegrations(signal);
-      await client.connect(signal);
-      catalog = await client.listTools(signal);
-      registerTools();
+      // T3-CUSTOM(expbkt3): BEGIN a retry for a failed personal server keeps T3's registered tools.
+      if (!t3Registered) {
+        await client.connect(signal);
+        catalog = await client.listTools(signal);
+        registerTools();
+        t3Registered = true;
+      }
+      // T3-CUSTOM(expbkt3): END
       // T3-CUSTOM(expbkt3): a personal failure fails the attempt so session_start retries it.
       const failure = await personalFailure;
       if (failure !== undefined) throw failure;
