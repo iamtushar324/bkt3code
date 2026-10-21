@@ -2,7 +2,7 @@
 // same label as upstream's sidebar. PhaseRowWorkingStatus places it.
 import { useEffect, useState } from "react";
 
-import { formatWorkingDurationLabel } from "../Sidebar.logic";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 
 /** Self-ticking, so only this span re-renders each second, not the whole row. */
 export function PhaseRowWorkingDuration(props: { readonly startedAt: string }) {

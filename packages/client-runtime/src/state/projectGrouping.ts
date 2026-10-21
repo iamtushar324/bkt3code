@@ -126,7 +126,8 @@ function deriveRepositoryScopedKey(
     : `${canonicalKey}::${relativeProjectPath}`;
 }
 
-function deriveLogicalProjectKey(
+// T3-CUSTOM(expbkt3): exported for the fork phase sidebar.
+export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
     "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"

@@ -163,12 +163,8 @@ import {
   useRetainedValue,
   useSidebarRowSubscriptionLease,
 } from "./Sidebar.logic";
-import {
-  resolveSnoozePresets,
-  snoozeWakeDescription,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
+import { snoozeWakeDescription } from "../fork/snoozeWakeDescription";
 import {
   PHASE_SIDEBAR_PHASES,
   buildPhaseSidebarFilterChips,

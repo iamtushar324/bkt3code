@@ -448,6 +448,9 @@ describe("OrchestratorMcpService", () => {
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
         const scope: McpInvocationScope = {
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          principal: "provider-session",
+          actorUserId: null,
           environmentId: EnvironmentId.make("environment:mcp-orphan"),
           requestNamespace: "provider-session:mcp-orphan",
           thread: {

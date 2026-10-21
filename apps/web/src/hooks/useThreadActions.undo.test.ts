@@ -122,7 +122,8 @@ describe("concurrent thread action Undo", () => {
           ? actions.snoozeThread(target, "2099-01-01T09:00:00.000Z")
           : actions[handler](target);
       await Promise.all([run(), run()]);
-      expect(commands[action]).toHaveBeenCalledTimes(2);
+      // T3-CUSTOM(expbkt3): the fork's archive guard joins a duplicate archive of the same thread.
+      expect(commands[action]).toHaveBeenCalledTimes(handler === "archiveThread" ? 1 : 2);
       expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: notice, count: 1 });
       await currentUndo()();
       expect(commands[inverse]).toHaveBeenCalledOnce();

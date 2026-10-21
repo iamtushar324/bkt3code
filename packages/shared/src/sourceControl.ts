@@ -99,7 +99,8 @@ const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "#42",
 };
 
-function resolveChangeRequestPresentation(
+// T3-CUSTOM(expbkt3): exported for the fork smart-git button and phase sidebar.
+export function resolveChangeRequestPresentation(
   provider: SourceControlProviderInfo | null | undefined,
 ): ChangeRequestPresentation {
   switch (provider?.kind) {
