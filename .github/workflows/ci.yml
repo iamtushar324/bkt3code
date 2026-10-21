@@ -250,7 +250,7 @@ jobs:
           fi
           # T3-CUSTOM(expbkt3): TEMPORARY diagnosis — fail (and keep the log) instead of
           # hitting the job timeout, to find the package test that hangs.
-          timeout --signal=INT 1200 vp run --parallel --concurrency-limit 4 "${filters[@]}" test
+          timeout --signal=INT 900 vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
