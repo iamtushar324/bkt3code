@@ -76,6 +76,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
+// T3-CUSTOM(expbkt3): multi-line to add the fork toolbar controls below.
 import {
   ComposerActionButton,
   // T3-CUSTOM(expbkt3): compose model and Plan/Build controls in the compact toolbar.
