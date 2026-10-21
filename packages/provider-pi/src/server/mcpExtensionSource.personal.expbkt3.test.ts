@@ -1,4 +1,5 @@
 /** T3-CUSTOM(expbkt3): exercise the shipped Pi bridge with actor-bound personal MCP servers. */
+// @effect-diagnostics nodeBuiltinImport:off -- Pi extensions run outside Effect; the stubs stand in for their native imports.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
