@@ -155,6 +155,9 @@ export const layer = Layer.effect(
           }
           return result;
         }
+        // Only a session manager without `listLive` gets here; this read
+        // blocks the event loop for seconds on a large database.
+        yield* Effect.logWarning("fork-provider-sessions.list-sessions-full-shell-fallback");
         const shell = yield* projection.getShellSnapshot();
         for (const thread of [...shell.threads, ...shell.archivedThreads]) {
           const records = yield* projection.getThreadRecords(thread.id, ["providerSessions"]);
