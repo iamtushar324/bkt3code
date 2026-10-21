@@ -97,6 +97,8 @@ import {
 } from "./activeSubagentCount.expbkt3.ts";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+// T3-CUSTOM(expbkt3): full shell reads use the reader worker.
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
@@ -6516,7 +6518,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(readShellSnapshotRows(options))
-        .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+        // T3-CUSTOM(expbkt3): full shell reads run on the SQLite reader worker; inside an open write transaction they stay on the writer.
+        .pipe(
+          NodeSqliteClient.readOnly,
+          Effect.mapError(shellSnapshotReadError),
+          Effect.flatMap(decodeShellSnapshot),
+        );
 
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
       sql

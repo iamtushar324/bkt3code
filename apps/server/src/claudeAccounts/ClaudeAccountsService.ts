@@ -2088,11 +2088,9 @@ export const make = Effect.gen(function* () {
       if (!(yield* readSettings).enabled) return;
       const row = yield* repository.get(threadId);
       if (row.mode.kind !== "auto" || row.resolvedProfile !== current) return;
-      const live = (yield* providers.listSessions()).some(
-        (session) => session.threadId === threadId && session.status !== "closed",
-      );
-      if (!live || !(yield* threadIsIdle(threadId, settled))) return;
-      // Without a subprocess: is there anywhere better at all?
+      // Without a subprocess or a session read: is there anywhere better at
+      // all? While every account is full, each turn end on a full one would
+      // otherwise read the sessions for nothing.
       yield* pruneExhausted;
       const { disallowed } = yield* disallowedFor(threadId);
       const pending = yield* pendingCounts;
@@ -2108,6 +2106,10 @@ export const make = Effect.gen(function* () {
               (pending[profile.name] ?? 0),
       );
       if (!roomElsewhere) return;
+      const live = (yield* providers.listSessions()).some(
+        (session) => session.threadId === threadId && session.status !== "closed",
+      );
+      if (!live || !(yield* threadIsIdle(threadId, settled))) return;
 
       const target = yield* Semaphore.withPermit(placementLock)(
         Effect.gen(function* () {

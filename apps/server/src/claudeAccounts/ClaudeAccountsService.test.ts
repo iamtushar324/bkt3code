@@ -201,6 +201,8 @@ const makeHarness = (options: HarnessOptions = {}) =>
     const place = options.place ?? spreadPlace(status);
     const enabled = yield* Ref.make(options.enabled ?? true);
     const sessions = yield* Ref.make<ReadonlyArray<ProviderSession>>([]);
+    /** How often the service listed the provider sessions, each a projection read in production. */
+    const listSessionsCalls = yield* Ref.make(0);
     /** Threads whose live session still runs background work (a subagent) between turns. */
     const backgroundWork = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
     const shellSession = yield* Ref.make<OrchestrationSession | null>(null);
@@ -289,7 +291,10 @@ const makeHarness = (options: HarnessOptions = {}) =>
             }),
           hasLiveBackgroundWork: ({ threadId }) =>
             Ref.get(backgroundWork).pipe(Effect.map((threads) => threads.has(threadId))),
-          listSessions: () => Ref.get(sessions),
+          listSessions: () =>
+            Ref.update(listSessionsCalls, (count) => count + 1).pipe(
+              Effect.andThen(Ref.get(sessions)),
+            ),
           streamEvents: Stream.fromSubscription(providerSubscription),
         }),
       ),
@@ -333,6 +338,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
       dispatched,
       enabled,
       sessions,
+      listSessionsCalls,
       backgroundWork,
       shellSession,
       shellOwner,
@@ -2788,6 +2794,68 @@ describe("ClaudeAccountsService rebalancing at turn boundaries", () => {
           yield* drainDomainEvents(harness, service);
           assert.equal(harness.placeCalls.length, before + 2);
           assert.equal((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+        }),
+    );
+  }
+
+  {
+    const gate = gatedPlace();
+    // tushar takes no new session, and every other account is at its fair share.
+    const fullStatus = (dir: DirFor) => ({
+      ...switcherStatus([
+        switcherProfile(dir, "tushar", { sessions: 3, fair_share: null, guard_ok: false, load: 3 }),
+        switcherProfile(dir, "agent", {
+          rank: 2,
+          elected: false,
+          sessions: 2,
+          fair_share: 2,
+          load: 2,
+        }),
+        switcherProfile(dir, "barsha", {
+          rank: 3,
+          elected: false,
+          sessions: 2,
+          fair_share: 2,
+          load: 2,
+        }),
+      ]),
+      place_rule: "space-share-v2",
+    });
+    scenario(
+      "reads no sessions at a turn end on a full account while no other account has room",
+      { place: gate.place, status: fullStatus },
+      (harness, service) =>
+        Effect.gen(function* () {
+          yield* service.refreshStatus();
+          const threadId = ThreadId.make("thread-rebalance-no-room");
+          gate.state.open = ["tushar"];
+          yield* service.resolveForSession(threadId);
+          gate.state.open = ["agent"];
+          yield* Ref.set(harness.sessions, [liveSession(threadId, "ready")]);
+          const reads = yield* Ref.get(harness.listSessionsCalls);
+          const placements = harness.placeCalls.length;
+
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.equal(yield* Ref.get(harness.listSessionsCalls), reads);
+          assert.equal(harness.placeCalls.length, placements);
+          assert.deepEqual(harness.stoppedThreads, []);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "tushar");
+
+          // Once agent has room, the next turn end moves the thread as before.
+          yield* Ref.update(harness.status, (current) => ({
+            ...current,
+            profiles: current.profiles.map((profile) =>
+              profile.name === "agent" ? { ...profile, sessions: 0, load: 0 } : profile,
+            ),
+          }));
+          yield* service.refreshStatus();
+          yield* endTurn(harness, threadId);
+          yield* drainDomainEvents(harness, service);
+          assert.isAbove(yield* Ref.get(harness.listSessionsCalls), reads);
+          assert.include(harness.placeCalls.at(-1)!.avoid, "tushar");
+          assert.deepEqual(harness.stoppedThreads, [threadId]);
+          assert.equal((yield* service.getThread(threadId)).resolvedProfile, "agent");
         }),
     );
   }

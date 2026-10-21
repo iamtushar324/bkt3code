@@ -444,7 +444,9 @@ export const makeForkWsHandlers = ({
     // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): BEGIN per-thread API-level cost. Thread-scoped read:
     // the figures go only to someone who can already read that thread. The
-    // provider session behind the thread comes from the shell projection.
+    // provider session behind the thread comes from that thread's shell row
+    // alone: a full shell snapshot here cost every open thread view a read of
+    // all threads each minute.
     [WS_METHODS.threadUsageGet]: (input) =>
       observeRpcEffect(
         WS_METHODS.threadUsageGet,
@@ -458,7 +460,7 @@ export const makeForkWsHandlers = ({
               }),
           ),
           Effect.andThen(
-            projectionSnapshotQuery.getShellSnapshot().pipe(
+            projectionSnapshotQuery.getThreadShellById(input.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new UsageReadError({
@@ -469,8 +471,11 @@ export const makeForkWsHandlers = ({
               ),
             ),
           ),
-          Effect.flatMap((snapshot) => {
-            const thread = snapshot.threads.find((candidate) => candidate.id === input.threadId);
+          Effect.flatMap((shell) => {
+            // Archived threads keep the old full-snapshot result: no session, no start time.
+            const thread = Option.getOrUndefined(
+              Option.filter(shell, (candidate) => candidate.archivedAt === null),
+            );
             const providerThreadId = thread?.session?.providerThreadId ?? null;
             return usage.readThreadUsage({
               threadId: input.threadId,

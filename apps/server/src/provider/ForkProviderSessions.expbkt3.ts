@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): account policies observe and stop native V2 sessions.
 // This facade owns no execution state; V2 remains the source of truth.
 import {
+  type OrchestrationV2ProviderSession,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -15,6 +16,31 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+
+/** One live provider session, as the thread it serves sees it. */
+const toProviderSession = (
+  thread: { readonly id: ThreadId; readonly runtimeMode: ProviderSession["runtimeMode"] },
+  session: OrchestrationV2ProviderSession,
+): ProviderSession => ({
+  threadId: thread.id,
+  provider: ProviderDriverKind.make(
+    String(session.driver) === "claude" ? "claudeAgent" : String(session.driver),
+  ),
+  providerInstanceId: session.providerInstanceId,
+  status:
+    session.status === "stopped"
+      ? "closed"
+      : session.status === "starting"
+        ? "connecting"
+        : session.status === "waiting"
+          ? "running"
+          : session.status,
+  runtimeMode: thread.runtimeMode,
+  cwd: session.cwd,
+  ...(session.model === null ? {} : { model: session.model }),
+  createdAt: DateTime.formatIso(session.createdAt),
+  updatedAt: DateTime.formatIso(session.updatedAt),
+});
 
 const listeners = new Set<(event: ProviderRuntimeEvent) => Effect.Effect<void>>();
 export const emitForkProviderEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
@@ -60,6 +86,7 @@ export const layer = Layer.effect(
   ForkProviderSessions,
   Effect.gen(function* () {
     const sessions = yield* ProviderSessionManagerV2;
+    const listLive = sessions.listLive;
     const projection = yield* ProjectionStoreV2;
     const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const listener = (event: ProviderRuntimeEvent) =>
@@ -104,33 +131,40 @@ export const layer = Layer.effect(
         ),
       ),
       listSessions: Effect.fn("ForkProviderSessions.listSessions")(function* () {
-        const shell = yield* projection.getShellSnapshot();
         const result: ProviderSession[] = [];
+        if (listLive !== undefined) {
+          // Only the threads a live session serves are read. The full shell
+          // (every active and archived thread) blocked the event loop for
+          // seconds, and account policies list sessions at every turn end.
+          for (const live of yield* listLive()) {
+            for (const threadId of live.threadIds) {
+              const records = yield* projection
+                .getThreadRecords(threadId, ["providerSessions"])
+                .pipe(
+                  Effect.catchTags({
+                    ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                  }),
+                );
+              // The shell never lists a deleted thread.
+              if (records === null || records.thread.deletedAt !== null) continue;
+              const session = records.providerSessions.find(
+                (candidate) => candidate.id === live.providerSessionId,
+              );
+              if (session !== undefined) result.push(toProviderSession(records.thread, session));
+            }
+          }
+          return result;
+        }
+        // Only a session manager without `listLive` gets here; this read
+        // blocks the event loop for seconds on a large database.
+        yield* Effect.logWarning("fork-provider-sessions.list-sessions-full-shell-fallback");
+        const shell = yield* projection.getShellSnapshot();
         for (const thread of [...shell.threads, ...shell.archivedThreads]) {
           const records = yield* projection.getThreadRecords(thread.id, ["providerSessions"]);
           for (const session of records.providerSessions) {
             const live = yield* sessions.get(session.id);
             if (live._tag === "None") continue;
-            result.push({
-              threadId: thread.id,
-              provider: ProviderDriverKind.make(
-                String(session.driver) === "claude" ? "claudeAgent" : String(session.driver),
-              ),
-              providerInstanceId: session.providerInstanceId,
-              status:
-                session.status === "stopped"
-                  ? "closed"
-                  : session.status === "starting"
-                    ? "connecting"
-                    : session.status === "waiting"
-                      ? "running"
-                      : session.status,
-              runtimeMode: thread.runtimeMode,
-              cwd: session.cwd,
-              ...(session.model === null ? {} : { model: session.model }),
-              createdAt: DateTime.formatIso(session.createdAt),
-              updatedAt: DateTime.formatIso(session.updatedAt),
-            });
+            result.push(toProviderSession(thread, session));
           }
         }
         return result;
