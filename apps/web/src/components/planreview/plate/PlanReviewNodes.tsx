@@ -115,7 +115,7 @@ export function CodeBlockElement(props: PlateElementProps) {
         <div contentEditable={false} className="select-none">
           <PlanReviewMermaid
             code={codeBlockText(props.element)}
-            isDark={resolvedTheme === "dark"}
+            theme={resolvedTheme}
           />
         </div>
         <div className="sr-only">{props.children}</div>

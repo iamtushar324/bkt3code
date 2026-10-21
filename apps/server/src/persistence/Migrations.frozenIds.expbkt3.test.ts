@@ -37,6 +37,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("fork migration ledge
         // Upstream 65-66, remapped into the 1000+ lane.
         [1057, "CodexUsageNativeTurnIndex"],
         [1058, "RepairClientSettlementTimestamps"],
+        // Upstream 67, remapped into the 1000+ lane.
+        [1059, "WebhookDedupe"],
       ]);
       const after = yield* sql<{
         migration_id: number;

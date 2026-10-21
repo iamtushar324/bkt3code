@@ -629,13 +629,6 @@ const make = Effect.acquireRelease(
 
 export const layer = Layer.effect(McpSessionRegistry, make);
 
-// T3-CUSTOM(expbkt3): issuing already strands the thread's previous credential, so a
-// handoff to a different user cannot leave the old holder authorized.
-export const issueActiveMcpCredential = (
-  request: McpCredentialRequest,
-): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.issue(request) : Effect.undefined;
-
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 

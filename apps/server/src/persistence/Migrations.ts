@@ -209,6 +209,8 @@ import Migration1056 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.t
 // next free IDs in the 1000+ lane; the files keep upstream names.
 import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+// T3-CUSTOM(expbkt3): upstream ships this as migration 67; it registers at the next free 1000+ id.
+import Migration1059 from "./Migrations/067_WebhookDedupe.ts";
 // T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
 // deliberately NOT registered. It drops the V1 activity, turn, proposed-plan,
 // pending-approval and state projections and checkpoint diff blobs, but the fork still reads the V1
@@ -356,6 +358,8 @@ export const migrationEntries = [
   // T3-CUSTOM(expbkt3): upstream 65-66 remapped above the shipped 1056 migration.
   [1057, "CodexUsageNativeTurnIndex", Migration1057],
   [1058, "RepairClientSettlementTimestamps", Migration1058],
+  // T3-CUSTOM(expbkt3): upstream 67 remapped above the shipped 1058 migration.
+  [1059, "WebhookDedupe", Migration1059],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
