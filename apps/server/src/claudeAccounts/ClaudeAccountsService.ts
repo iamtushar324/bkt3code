@@ -2149,7 +2149,8 @@ export const make = Effect.gen(function* () {
       yield* announce(threadId);
       yield* announceSnapshot;
     },
-    (effect, threadId) =>
+    // Annotated in full: an arrow with fewer parameters narrows Effect.fn's inferred arguments.
+    (effect, threadId: ThreadId, _settled?: OrchestrationSession) =>
       effect.pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("claude.account.rebalance-failed", { threadId, cause }),

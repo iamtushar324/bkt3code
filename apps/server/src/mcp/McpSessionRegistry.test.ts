@@ -617,6 +617,7 @@ const makeStubSessionStore = (input: {
         })),
       ),
     streamChanges: Stream.fromPubSub(input.changes),
+    awaitInvalidation: () => Effect.die("unused"),
     revoke: () => Effect.die("unused"),
     revokeAllExcept: () => Effect.die("unused"),
     revokeByUserId: () => Effect.die("unused"),

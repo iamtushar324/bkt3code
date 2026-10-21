@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   SourceControlProfileId,
+  SourceControlProviderKind,
   ThreadId,
   UserId,
   type OrchestrationProjectShell,
@@ -89,7 +90,7 @@ it.effect(
             Effect.tap((current) => Effect.sync(() => hostReads.push({ operation, ...current }))),
           );
         const provider: PullRequestProviderApi = {
-          kind: "github",
+          kind: SourceControlProviderKind.make("github"),
           capabilities: {
             diff: true,
             comment: true,

@@ -22,7 +22,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -107,7 +107,14 @@ describe("OrchestratorMcpService custom groups", () => {
 
   const createdProjection = (threadId: ThreadId) =>
     ({
-      thread: { id: threadId, title: "Created", createdBy: "agent", creationSource: "mcp" },
+      // createThreads reports the committed thread's model selection back to the caller.
+      thread: {
+        id: threadId,
+        title: "Created",
+        createdBy: "agent",
+        creationSource: "mcp",
+        modelSelection,
+      },
       runs: [],
       contextTransfers: [],
       messages: [],
@@ -144,7 +151,7 @@ describe("OrchestratorMcpService custom groups", () => {
           ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
             list: () => Effect.succeed([codexInstanceId]),
             get: (instanceId) =>
-              Effect.succeed({ instanceId } as unknown as ProviderAdapterV2Shape),
+              Effect.succeed({ instanceId } as unknown as ProviderAdapterV2["Service"]),
           }),
         ),
         Layer.mock(ProjectService.ProjectService)({}),
@@ -165,6 +172,10 @@ describe("OrchestratorMcpService custom groups", () => {
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
 
       assert.equal(result.threads.length, 2);
+      assert.deepEqual(
+        result.threads.map((thread) => thread.providerInstanceId),
+        [codexInstanceId, codexInstanceId],
+      );
       const creates = (
         (yield* Ref.get(dispatched)) as ReadonlyArray<{
           readonly type: string;

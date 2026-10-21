@@ -49,6 +49,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 // T3-CUSTOM(expbkt3): startup starts the fork archive sweeper.
 import * as SessionArchiveSweeper from "./sessionArchive/SessionArchiveSweeper.ts";
+import * as SqlClient from "effect/sql/SqlClient";
 
 it("uses the canonical Codex model for auto-bootstrap", () => {
   assert.deepEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
@@ -113,6 +114,7 @@ it.effect.each([
           noBrowser: true,
           startupPresentation: "browser",
           autoBootstrapProjectFromCwd: true,
+          clerkAuth: undefined, // T3-CUSTOM(expbkt3): team mode off.
         }),
         Layer.mock(Keybindings.Keybindings)({ start: Effect.void }),
         Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
@@ -230,6 +232,9 @@ it.effect.each([
         }),
         // T3-CUSTOM(expbkt3): archive sweeps stay off, as they do unless configured.
         Layer.mock(SessionArchiveSweeper.SessionArchiveSweeper)({ start: () => Effect.void }),
+        // T3-CUSTOM(expbkt3): the ownership backfill returns before any query when
+        // clerkAuth is undefined, so this client is never read.
+        Layer.succeed(SqlClient.SqlClient, {} as unknown as SqlClient.SqlClient),
       );
       yield* Effect.gen(function* () {
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;

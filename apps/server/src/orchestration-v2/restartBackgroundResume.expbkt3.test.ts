@@ -195,7 +195,7 @@ it.effect("leaves awaited work to upstream's unmarked wake, even with the fork s
       ...base,
       providerThreads: [{ ...base.providerThreads[0]!, pendingBackgroundTasks: [monitorTask] }],
     } as unknown as OrchestrationV2ThreadProjection;
-    const unmarked = [{ type: "provider-runtime.continue", sourceRunId: runId }];
+    const unmarked = [{ type: "provider-runtime.continue" as const, sourceRunId: runId }];
     assert.deepEqual(
       (yield* startupEffects(projection)).map((effect) => effect.request),
       unmarked,

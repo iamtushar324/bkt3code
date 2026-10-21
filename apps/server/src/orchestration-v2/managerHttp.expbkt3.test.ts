@@ -40,7 +40,7 @@ import { planProjectCommand } from "./ProjectCommands.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Recovery from "./ProviderRuntimeRecoveryService.ts";
 import { layerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { managerRouteLayer } from "./managerHttp.expbkt3.ts";
@@ -99,7 +99,7 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("HTTP contract tests must not start provider processes"),
-} as ProviderAdapterV2Shape;
+} as ProviderAdapterV2["Service"];
 const database = SqlitePersistenceMemory;
 const native = layerWithRegistry(
   { name: "manager-http" },

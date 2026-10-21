@@ -234,29 +234,34 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const appendActivity = Effect.fn("PlanReviewService.appendActivity")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly summary: string;
-    readonly tone: "info" | "approval" | "error";
-    readonly payload: unknown;
-  }) {
-    const [commandUuid, eventUuid, createdAt] = yield* Effect.all([uuid, uuid, nowIso]);
-    return yield* dispatcher.dispatch({
-      type: "thread.activity.append",
-      commandId: CommandId.make(`plan-review:activity:${commandUuid}`),
-      threadId: input.threadId,
-      activity: {
-        id: EventId.make(`plan-review:${eventUuid}`),
-        tone: input.tone,
-        kind: "plan-review",
-        summary: input.summary,
-        payload: input.payload,
-        turnId: null,
+  // Effect.ignore is wrapped below: passed bare, its options parameter is
+  // checked against the handler's input argument.
+  const appendActivity = Effect.fn("PlanReviewService.appendActivity")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly summary: string;
+      readonly tone: "info" | "approval" | "error";
+      readonly payload: unknown;
+    }) {
+      const [commandUuid, eventUuid, createdAt] = yield* Effect.all([uuid, uuid, nowIso]);
+      return yield* dispatcher.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(`plan-review:activity:${commandUuid}`),
+        threadId: input.threadId,
+        activity: {
+          id: EventId.make(`plan-review:${eventUuid}`),
+          tone: input.tone,
+          kind: "plan-review",
+          summary: input.summary,
+          payload: input.payload,
+          turnId: null,
+          createdAt,
+        },
         createdAt,
-      },
-      createdAt,
-    });
-  }, Effect.ignore);
+      });
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   /**
    * Close the proposed-plan records a decided review came from.
@@ -319,7 +324,7 @@ export const make = Effect.gen(function* () {
         { discard: true },
       );
     },
-    Effect.ignore,
+    (effect) => Effect.ignore(effect),
   );
 
   const capturePlan: PlanReviewService["Service"]["capturePlan"] = Effect.fn(

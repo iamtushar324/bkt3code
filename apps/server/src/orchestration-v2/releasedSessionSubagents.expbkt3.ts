@@ -14,7 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { EventSinkV2Shape } from "./EventSink.ts";
-import type { IdAllocatorV2Shape } from "@t3tools/provider-core/server/IdAllocator";
+import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import type { ProjectionRuntimeRecoveryState, ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 import type { ProviderSessionReleaseReason } from "./ProviderSessionManager.ts";
 
@@ -23,7 +23,7 @@ type ExecutionNode = OrchestrationV2ThreadProjection["nodes"][number];
 
 export interface ReleasedSessionSubagentsInput {
   readonly projectionStore: ProjectionStoreV2Shape;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocatorV2["Service"];
   readonly eventSink: EventSinkV2Shape;
   readonly providerSessionId: ProviderSessionId;
   readonly reason: ProviderSessionReleaseReason;

@@ -231,7 +231,7 @@ const boundApproval = (approval: PendingApproval): PendingApproval => ({
 const STALE_REQUEST =
   /is (resolved|expired|cancelled)|was not found|already been answered|no longer pending|already (approved|changes-requested|discarded)/i;
 
-const dispatchError = (error: OrchestratorV2Error) => {
+const dispatchError = (error: Parameters<typeof dispatchFailure>[0]) => {
   const { message } = dispatchFailure(error);
   return STALE_REQUEST.test(message)
     ? fail("request_stale", `${message} Read what waits now with t3_inbox.`)

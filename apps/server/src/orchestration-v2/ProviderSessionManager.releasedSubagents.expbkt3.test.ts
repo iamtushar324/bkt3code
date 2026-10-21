@@ -31,7 +31,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
+  type ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -235,7 +235,7 @@ function fixture(
   const written: Array<OrchestrationV2DomainEvent> = [];
   /** Threads whose full recovery read ran, in order. */
   const recoveryReads: Array<ThreadId> = [];
-  const adapter: ProviderAdapterV2Shape = {
+  const adapter: ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),

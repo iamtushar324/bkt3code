@@ -227,6 +227,9 @@ describe("HtmlRender", () => {
         threadId,
         providerSessionId: "first-credential",
         providerInstanceId: ProviderInstanceId.make("claude"),
+        // T3-CUSTOM(expbkt3): fork session fields.
+        actorUserId: null,
+        upstreamServers: [],
         endpoint: "http://localhost:8311/mcp",
         authorizationHeader: "Bearer first-token",
         browserToolsAvailable: false,

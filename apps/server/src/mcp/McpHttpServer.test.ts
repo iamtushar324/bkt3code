@@ -35,6 +35,9 @@ import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+// T3-CUSTOM(expbkt3): the pull request toolkit authorizes external targets.
+import * as Option from "effect/Option";
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
@@ -86,6 +89,8 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+      // T3-CUSTOM(expbkt3): unrestricted fixture for the fork target-access dependency.
+      Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
       NodeServices.layer,
     ),
   ),
@@ -841,6 +846,9 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
     Effect.gen(function* () {
       const token = "providerTokenWithoutDots";
       const scope: McpInvocationContext.McpInvocationScope = {
+        // T3-CUSTOM(expbkt3): control-plane principal and actor identity.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId,
         requestNamespace: "provider-session",
         thread: {

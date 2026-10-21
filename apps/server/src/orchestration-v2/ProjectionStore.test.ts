@@ -4960,7 +4960,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         // pendingRuntimeRequest in the fork; hasPendingAsyncUserInput carries it instead.
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.id, memoryShell.pendingRuntimeRequest?.id],
-          terminal ? [undefined, undefined] : ["secret:b", "secret:b"],
+          terminal
+            ? [undefined, undefined]
+            : [RuntimeRequestId.make("secret:b"), RuntimeRequestId.make("secret:b")],
         );
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.blocking, memoryShell.pendingRuntimeRequest?.blocking],

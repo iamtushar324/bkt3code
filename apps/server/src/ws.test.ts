@@ -117,6 +117,7 @@ import { PlanReviewService } from "./planreview/PlanReviewService.ts";
 import * as SessionArchiveService from "./sessionArchive/SessionArchiveService.ts";
 import * as SourceControlProfileService from "./sourceControl/SourceControlProfileService.ts";
 import * as ThreadSourceControlActionLock from "./sourceControl/ThreadSourceControlActionLock.ts";
+import { SessionWebhookService } from "./session-webhooks/SessionWebhookService.ts";
 import { ThreadCommentsService } from "./threadcomments/ThreadCommentsService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 // T3-CUSTOM(expbkt3): END
@@ -538,10 +539,15 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(OrchestrationEngine.OrchestrationEngineService)({}),
   Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({}),
   Layer.mock(UserMcpProfileStore.UserMcpProfileStore)({}),
-  Layer.mock(HttpClient.HttpClient)({}),
+  // HttpClient carries non-effect members, so it needs a real client that is never called.
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die("unused HttpClient")),
+  ),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SourceControlProfileService.SourceControlProfileService)({}),
   Layer.mock(ThreadSourceControlActionLock.ThreadSourceControlActionLock)({}),
+  Layer.mock(SessionWebhookService)({}),
   Layer.mock(SessionArchiveService.SessionArchiveService)({}),
   Layer.mock(EnvironmentUserService.EnvironmentUserService)({}),
   Layer.mock(PlanReviewService)({}),
@@ -652,6 +658,7 @@ it.effect(
           layerWsRpc(
             {
               sessionId: AuthSessionId.make("config-test"),
+              userId: null, // T3-CUSTOM(expbkt3): an unbound session.
               subject: "config-test",
               method: "browser-session-cookie",
               // T3-CUSTOM(expbkt3): the fork re-checks scopes inside the handler map, and a

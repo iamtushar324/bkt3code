@@ -49,6 +49,8 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import { TurnStartBootstrap } from "./turnStartBootstrap.expbkt3.ts";
+import * as ServerConfig from "../config.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 // T3-CUSTOM(expbkt3): END
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
@@ -151,6 +153,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
             effect.pipe(
               Effect.provideService(EnvironmentAuthenticatedPrincipal, {
                 sessionId: AuthSessionId.make("test-session"),
+                userId: null, // T3-CUSTOM(expbkt3): an unbound session.
                 subject: "test",
                 method: "bearer-access-token",
                 scopes: new Set<AuthEnvironmentScope>(allowed ? ["orchestration:read"] : []),
@@ -172,6 +175,11 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
           Layer.mock(ProjectionSnapshotQuery)({}),
           Layer.mock(TurnStartBootstrap)({}),
           Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+          // The automation dispatch route normalizes payloads against server paths.
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-orchestration-http-test-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+          Layer.mock(WorkspacePaths.WorkspacePaths)({}),
         ),
       ),
       // T3-CUSTOM(expbkt3): END

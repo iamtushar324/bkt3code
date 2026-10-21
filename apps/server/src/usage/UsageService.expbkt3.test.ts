@@ -22,6 +22,15 @@ import {
 } from "./threadTranscriptFiles.expbkt3.ts";
 import * as UsageService from "./UsageService.ts";
 import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
+import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 
 const claudeLine = (id: number, sessionId: string, outputTokens: number) =>
   `${JSON.stringify({
@@ -68,8 +77,7 @@ const seedHome = Effect.gen(function* () {
   return { home, projects, main };
 });
 
-/** The service's dependencies; the test builds the service with `make` to await its writes. */
-const dependencyLayer = (home: string, prefix: string) =>
+const baseDependencyLayer = (home: string, prefix: string) =>
   ServerConfig.layerTest(process.cwd(), { prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
@@ -101,6 +109,20 @@ const dependencyLayer = (home: string, prefix: string) =>
         PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
       }),
     ),
+  );
+
+/** The service's dependencies; the test builds the service with `make` to await its writes. */
+const dependencyLayer = (home: string, prefix: string) =>
+  // The built-in usage readers' services, wired as upstream's UsageService.test.ts does.
+  Layer.fresh(CursorUsageAccounts.layer).pipe(
+    Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
+    Layer.provideMerge(AntigravityUsage.layer),
+    Layer.provideMerge(ProviderHostLive.layer),
+    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+    Layer.provideMerge(baseDependencyLayer(home, prefix)),
   );
 
 const scanCacheText = Effect.gen(function* () {

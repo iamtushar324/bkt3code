@@ -3499,10 +3499,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         threadId: child,
         providerSessionId: "mcp:opencode2-adapter",
         providerInstanceId: instanceId,
-        actorUserId: null,
         endpoint: "http://127.0.0.1:3773/mcp",
         authorizationHeader: "Bearer thread-credential",
-        upstreamServers: [],
         browserToolsAvailable: false,
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(child));

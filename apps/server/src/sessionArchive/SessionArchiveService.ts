@@ -10,8 +10,11 @@
  * a failed export aborts that session's reclaim rather than proceeding.
  */
 import {
+  ClaudeSettings,
+  CodexSettings,
   CommandId,
   OrchestrationV2AppThreadJson,
+  ProviderInstanceId,
   type ProviderDriverKind,
   SessionArchiveError,
   type ModelSelection,
@@ -95,6 +98,9 @@ import {
   isWorktreeProtected,
 } from "./reclaimEligibility.ts";
 import { scanWorktree, slimWorktree } from "./worktreeScan.ts";
+
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
 /**
  * Worktrees sized per scan before the rest report a null size.
@@ -530,10 +536,16 @@ export const make = Effect.gen(function* () {
 
     const settings = yield* settingsService.getSettings;
     const osHome = NodeOS.homedir();
+    // The driver's default instance, whose id is the driver kind.
+    const defaultInstanceConfig = (driver: "claudeAgent" | "codex"): unknown =>
+      settings.providerInstances[ProviderInstanceId.make(driver)]?.config ?? {};
 
     const sourcePaths: Array<string> = [];
     if (runtime.providerName === "claudeAgent") {
-      const claudeSettings = settings.providers.claudeAgent;
+      const claudeSettings = Option.getOrElse(
+        decodeClaudeSettings(defaultInstanceConfig("claudeAgent")),
+        () => ({ homePath: "" }),
+      );
       const configuredHome =
         claudeSettings.homePath.trim().length > 0
           ? yield* resolveClaudeHomePath(claudeSettings)
@@ -549,9 +561,12 @@ export const make = Effect.gen(function* () {
         );
       }
     } else if (runtime.providerName === "codex") {
-      const codexHomePath = settings.providers.codex.homePath.trim();
+      const codexHomePath = Option.match(decodeCodexSettings(defaultInstanceConfig("codex")), {
+        onNone: () => "",
+        onSome: (codex) => codex.homePath.trim(),
+      });
       const configuredHome =
-        codexHomePath.length > 0 ? path.resolve(expandHomePath(codexHomePath)) : null;
+        codexHomePath.length > 0 ? path.resolve(expandHomePath(codexHomePath, osHome)) : null;
       const sessionsDir = codexSessionsDir(configuredHome, osHome);
       const found = yield* findCodexRolloutFiles({ sessionsDir, sessionId });
       if (found.length === 0) {

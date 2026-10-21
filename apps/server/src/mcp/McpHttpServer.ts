@@ -1121,15 +1121,25 @@ export const layerPreviewToolkit = Layer.mergeAll(
 // T3-CUSTOM(expbkt3): BEGIN — the fork's toolkits. Their handlers are McpToolAccess
 // declarations like every other toolkit's; the control and web UI toolkits
 // register by hand only because their tool lists are dynamic.
-export const T3ControlToolkitRegistrationLive = Layer.effectDiscard(
+const t3ControlToolkitRegistration = Layer.effectDiscard(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const control = yield* makeT3ControlToolkit;
     yield* McpServer.registerToolkit(withCallerToolLists(control.toolkit));
     yield* control.watchPolicy(server.notifications["notifications/tools/list_changed"]({}));
   }),
-).pipe(
-  Layer.provide(McpServer.McpServer.layer),
+).pipe(Layer.provide(McpServer.McpServer.layer));
+// As in `toolkitRegistration`, registration must not capture a caller.
+// @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
+const t3ControlToolkitRegistered = t3ControlToolkitRegistration as Layer.Layer<
+  never,
+  never,
+  Exclude<
+    Layer.Services<typeof t3ControlToolkitRegistration>,
+    McpInvocationContext.McpInvocationContext
+  >
+>;
+export const T3ControlToolkitRegistrationLive = t3ControlToolkitRegistered.pipe(
   Layer.provide(McpToolAccess.HandlersLayer.layer(T3ControlToolkitHandlers)),
 );
 

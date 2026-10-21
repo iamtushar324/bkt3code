@@ -1121,6 +1121,8 @@ const layerMcpSessionRegistryTest = McpSessionRegistry.layer.pipe(
       ServerSettings.layerTest(),
       // T3-CUSTOM(expbkt3)
       Layer.mock(SessionStore.SessionStore)({
+        cookieName: "t3-session",
+        legacyCookieName: undefined,
         listActive: () => Effect.succeed([]),
         streamChanges: Stream.never,
       }),
@@ -1185,7 +1187,8 @@ it.effect.each([
       }
       yield* TestClock.adjust("42 hours");
       assert.equal(
-        (yield* registry.resolve(token))?.thread.threadId,
+        // T3-CUSTOM(expbkt3): external principals carry no thread.
+        (yield* registry.resolve(token))?.thread?.threadId,
         endEarly ? undefined : threadId,
       );
     }).pipe(
