@@ -310,7 +310,15 @@ it.each(["decode", "read", "write"] as const)(
     const message = queuedMessage();
     expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
     await enqueueThreadOutboxMessage(message);
-    const prepared = await prepareQueuedMessageAttachments(message, true);
+    // T3-CUSTOM(expbkt3): the fork's enqueue stores an identity-stamped copy and
+    // preparation confirms by reference, so prepare the stored entry as the drain does.
+    const storedMessage = Object.values(
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    )
+      .flat()
+      .find((candidate) => candidate.messageId === message.messageId);
+    if (storedMessage === undefined) throw new Error("Outbox did not store the message");
+    const prepared = await prepareQueuedMessageAttachments(storedMessage, true);
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
     expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);

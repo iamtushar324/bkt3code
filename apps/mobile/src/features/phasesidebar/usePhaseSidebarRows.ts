@@ -9,12 +9,11 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, UserId } from "@t3tools/contracts";
 import {
   buildPhaseSidebarRows,
-  type PhaseSidebarPhaseId,
   type PhaseSidebarRow,
 } from "@t3tools/client-runtime/state/phase-sidebar";
 import { phaseSidebarLocalCustomGroupForThread } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { operatorUserIdFromSessionState } from "@t3tools/client-runtime/state/session";
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import { environmentSession } from "../../state/session";
@@ -62,9 +61,6 @@ export function usePhaseSidebarRows(input: {
   // Custom groups live on the thread; this device's pre-label placements only
   // fill in for threads that have none yet.
   const grouping = usePhaseSidebarGrouping();
-  // Mirrors the web sidebar: this component's own anti-flap memory, not state
-  // the row model owns.
-  const lastKnownPhaseByThreadKey = useRef(new Map<string, PhaseSidebarPhaseId>());
 
   return useMemo(
     () =>
@@ -78,8 +74,10 @@ export function usePhaseSidebarRows(input: {
         vcsStatusByThreadKey: EMPTY_VCS_STATUS,
         lastVisitedAtByThreadKey: visitTimestamps,
         currentUserId,
+        // Every shell counts as live here, so the builder never falls back to a
+        // last known phase and mobile keeps no phase history.
         allEnvironmentShellsLive: true,
-        lastKnownPhaseByThreadKey: lastKnownPhaseByThreadKey.current,
+        lastKnownPhaseByThreadKey: null,
         localCustomGroupForKey: (threadKey) =>
           phaseSidebarLocalCustomGroupForThread(grouping, threadKey),
       }).map((row) => {

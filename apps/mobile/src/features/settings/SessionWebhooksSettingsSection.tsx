@@ -129,9 +129,9 @@ function EnvironmentWebhooks({ target, userScope, refreshToken }: SessionCallbac
         ...value,
         [webhook.id]: sessionWebhookChangeFailureMessage(null),
       }));
-    } finally {
-      setBusy(false);
     }
+    // After the catch-all, not in `finally`: the React Compiler cannot lower a finalizer.
+    setBusy(false);
   };
   const card = (group: (typeof groups)[number]) => (
     <SessionCallbackCard

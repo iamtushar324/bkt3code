@@ -155,6 +155,43 @@ function openLinearTag(tag: PhaseSidebarLinearTag) {
   });
 }
 
+// T3-CUSTOM(expbkt3): one native action sheet per menu level. Module-level so
+// it can recurse into a submenu; a component callback cannot name itself.
+function presentIosActionSheet(
+  actions: ReadonlyArray<IdentifiedMenuAction>,
+  title: string,
+  threadTitle: string,
+  onSelect: (actionId: string) => void,
+) {
+  ActionSheetIOS.showActionSheetWithOptions(
+    {
+      cancelButtonIndex: actions.length,
+      destructiveButtonIndex: actions.flatMap((action, index) =>
+        action.attributes?.destructive === true ? [index] : [],
+      ),
+      options: [...actions.map((action) => action.title), "Cancel"],
+      title,
+    },
+    (selectedIndex) => {
+      const action = actions[selectedIndex];
+      if (action === undefined) return;
+      const subactions = action.subactions?.filter(
+        (candidate): candidate is IdentifiedMenuAction => typeof candidate.id === "string",
+      );
+      if (subactions && subactions.length > 0) {
+        presentIosActionSheet(
+          subactions,
+          threadTitle + " · " + action.title,
+          threadTitle,
+          onSelect,
+        );
+        return;
+      }
+      onSelect(action.id);
+    },
+  );
+}
+
 export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   props: PhaseSidebarRowViewProps,
 ) {
@@ -267,31 +304,10 @@ export const PhaseSidebarRowView = memo(function PhaseSidebarRowView(
   // T3-CUSTOM(expbkt3): iOS has no accessible MenuView child, so retain nested
   // lifecycle groups in successive native action sheets instead of flattening them.
   const presentIosActions = useCallback(
-    (actions: ReadonlyArray<IdentifiedMenuAction>, title: string) => {
-      const cancelButtonIndex = actions.length;
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          cancelButtonIndex,
-          destructiveButtonIndex: actions.flatMap((action, index) =>
-            action.attributes?.destructive === true ? [index] : [],
-          ),
-          options: [...actions.map((action) => action.title), "Cancel"],
-          title,
-        },
-        (selectedIndex) => {
-          const action = actions[selectedIndex];
-          if (action === undefined) return;
-          const subactions = action.subactions?.filter(
-            (candidate): candidate is IdentifiedMenuAction => typeof candidate.id === "string",
-          );
-          if (subactions && subactions.length > 0) {
-            presentIosActions(subactions, thread.title + " · " + action.title);
-            return;
-          }
-          onPressAction(row, action.id);
-        },
-      );
-    },
+    (actions: ReadonlyArray<IdentifiedMenuAction>, title: string) =>
+      presentIosActionSheet(actions, title, thread.title, (actionId) =>
+        onPressAction(row, actionId),
+      ),
     [onPressAction, row, thread.title],
   );
   const iosTopLevelActions = useMemo<ReadonlyArray<IdentifiedMenuAction>>(() => {
@@ -611,7 +627,9 @@ function LinearTagChip(props: {
   readonly onPress: () => void;
   readonly onPressMenuAction: (event: NativeActionEvent) => void;
 }) {
-  const { tags } = props;
+  // Destructured: reading other fields off a props object that holds a ref
+  // reads as ref access during render to the React Compiler.
+  const { tags, menuActions, menuRef, onPress, onPressMenuAction } = props;
   const label = phaseSidebarLinearChipLabel(tags);
   const chip = (
     <Pressable
@@ -620,7 +638,7 @@ function LinearTagChip(props: {
       accessibilityRole="button"
       className="shrink flex-row items-center gap-0.5"
       hitSlop={6}
-      onPress={props.onPress}
+      onPress={onPress}
     >
       {phaseSidebarLinearTagKinds(tags).map((kind) => (
         <SymbolView
@@ -639,9 +657,9 @@ function LinearTagChip(props: {
   if (Platform.OS === "ios" || tags.length < 2) return chip;
   return (
     <MenuView
-      actions={props.menuActions}
-      onPressAction={props.onPressMenuAction}
-      ref={props.menuRef}
+      actions={menuActions}
+      onPressAction={onPressMenuAction}
+      ref={menuRef}
       title="Open in Linear"
     >
       {chip}

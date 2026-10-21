@@ -883,6 +883,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsnooze,
       setCustomSnoozeOpen,
       snoozePresets,
+      // T3-CUSTOM(expbkt3): member tagging navigates from the row menu.
+      threadRowNavigation,
     ],
   );
   const primaryAction = useMemo(() => {

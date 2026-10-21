@@ -325,87 +325,91 @@ function EnvironmentToolyardContent({
       })
     : null;
   const refresh = () => appAtomRegistry.refresh(atom);
+  // The request runs outside the try: the React Compiler cannot lower a conditional inside one.
+  const submitSave = async (remove: boolean, disconnect: boolean) => {
+    const submittedKey = apiKey;
+    const submittedDraft = draft;
+    const adminToken = mode === "team" && !disconnect ? await readAdminToken() : null;
+    const publicUrl = target.serverConfig.settings.experimental.externalMcp.publicUrl;
+    const origin =
+      status?.origin ??
+      toolyardSettingsOrigin(prepared?.httpBaseUrl ?? "") ??
+      toolyardSettingsOrigin(publicUrl ?? "") ??
+      "";
+    const saved = await configure({
+      environmentId: target.environmentId,
+      input: {
+        expectedRevision: current.revision,
+        baseUrl: current.baseUrl,
+        origin,
+        enabled: current.enabled,
+        remove,
+        mode,
+        ...(disconnect ? { disconnect: true } : {}),
+        ...(mode === "host" && current.enabled && !remove && !disconnect
+          ? { hostAction: "begin" as const }
+          : {}),
+        ...(mode === "api-key" && submittedKey && !remove && !disconnect
+          ? { apiKey: submittedKey }
+          : {}),
+        ...(adminToken ? { adminToken } : {}),
+      },
+    });
+    appAtomRegistry.refresh(atom);
+    if (AsyncResult.isSuccess(saved)) {
+      if (
+        mode === "host" &&
+        saved.value.pendingConnection?.status === "pending" &&
+        saved.value.pendingConnection.authorizationUrl &&
+        !remove &&
+        !disconnect
+      )
+        await Linking.openURL(
+          checkedConsentUrl(saved.value.pendingConnection.authorizationUrl, saved.value.baseUrl),
+        );
+      // A newer edit remains a draft after this request completes.
+      if (!disconnect) {
+        setDraft((value) => (value === submittedDraft ? null : value));
+        setApiKey((value) => (value === submittedKey ? "" : value));
+      }
+    } else {
+      const code = toolyardSettingsFailureCode(saved.cause);
+      if (
+        mode === "team" &&
+        !remove &&
+        !adminToken &&
+        code === "admin_trust_registration_required"
+      ) {
+        const url = createToolyardSettingsContinuation(
+          prepared?.httpBaseUrl ?? "",
+          target.environmentId,
+          userScope,
+          current,
+          Date.now(),
+        );
+        await Linking.openURL(url);
+        setBrowserDraft(current);
+        setError(
+          "Complete the administrator trust setup in your browser. Then select Refresh. Your draft remains.",
+        );
+      } else
+        setError(
+          toolyardSettingsFailureMessage(
+            mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
+          ),
+        );
+    }
+  };
   const save = async (remove = false, disconnect = false) => {
     setBusy(true);
     setError(null);
     try {
-      const submittedKey = apiKey;
-      const submittedDraft = draft;
-      const adminToken = mode === "team" && !disconnect ? await readAdminToken() : null;
-      const publicUrl = target.serverConfig.settings.experimental.externalMcp.publicUrl;
-      const origin =
-        status?.origin ??
-        toolyardSettingsOrigin(prepared?.httpBaseUrl ?? "") ??
-        toolyardSettingsOrigin(publicUrl ?? "") ??
-        "";
-      const saved = await configure({
-        environmentId: target.environmentId,
-        input: {
-          expectedRevision: current.revision,
-          baseUrl: current.baseUrl,
-          origin,
-          enabled: current.enabled,
-          remove,
-          mode,
-          ...(disconnect ? { disconnect: true } : {}),
-          ...(mode === "host" && current.enabled && !remove && !disconnect
-            ? { hostAction: "begin" as const }
-            : {}),
-          ...(mode === "api-key" && submittedKey && !remove && !disconnect
-            ? { apiKey: submittedKey }
-            : {}),
-          ...(adminToken ? { adminToken } : {}),
-        },
-      });
-      appAtomRegistry.refresh(atom);
-      if (AsyncResult.isSuccess(saved)) {
-        if (
-          mode === "host" &&
-          saved.value.pendingConnection?.status === "pending" &&
-          saved.value.pendingConnection.authorizationUrl &&
-          !remove &&
-          !disconnect
-        )
-          await Linking.openURL(
-            checkedConsentUrl(saved.value.pendingConnection.authorizationUrl, saved.value.baseUrl),
-          );
-        // A newer edit remains a draft after this request completes.
-        if (!disconnect) {
-          setDraft((value) => (value === submittedDraft ? null : value));
-          setApiKey((value) => (value === submittedKey ? "" : value));
-        }
-      } else {
-        const code = toolyardSettingsFailureCode(saved.cause);
-        if (
-          mode === "team" &&
-          !remove &&
-          !adminToken &&
-          code === "admin_trust_registration_required"
-        ) {
-          const url = createToolyardSettingsContinuation(
-            prepared?.httpBaseUrl ?? "",
-            target.environmentId,
-            userScope,
-            current,
-            Date.now(),
-          );
-          await Linking.openURL(url);
-          setBrowserDraft(current);
-          setError(
-            "Complete the administrator trust setup in your browser. Then select Refresh. Your draft remains.",
-          );
-        } else
-          setError(
-            toolyardSettingsFailureMessage(
-              mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
-            ),
-          );
-      }
+      await submitSave(remove, disconnect);
     } catch {
       setError("The server trust registration failed. Your draft remains.");
-    } finally {
-      setBusy(false);
     }
+    // After the catch-all, not in `finally`: the React Compiler cannot lower a finalizer.
+    setBusy(false);
   };
   useEffect(() => {
     if (status?.pendingConnection?.status !== "pending") return;
@@ -416,6 +420,8 @@ function EnvironmentToolyardContent({
     if (!status?.pendingConnection || !status.baseUrl) return;
     setError(null);
     setBusy(true);
+    // Read before the try: the React Compiler cannot lower `??` inside one.
+    const origin = status.origin ?? "";
     try {
       if (cancel) {
         const result = await configure({
@@ -423,7 +429,7 @@ function EnvironmentToolyardContent({
           input: {
             expectedRevision: status.revision,
             baseUrl: status.baseUrl,
-            origin: status.origin ?? "",
+            origin,
             enabled: true,
             mode: "host",
             hostAction: "cancel",
@@ -440,25 +446,21 @@ function EnvironmentToolyardContent({
         );
     } catch {
       setError("The account consent request failed. Select Refresh, then try again.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
   const open = async () => {
     setBusy(true);
     setError(null);
     try {
       const response = await handoff({ environmentId: target.environmentId, input: {} });
-      if (!AsyncResult.isSuccess(response)) {
+      if (!AsyncResult.isSuccess(response))
         setError("Toolyard could not create a browser handoff.");
-        return;
-      }
-      await Linking.openURL(response.value.url);
+      else await Linking.openURL(response.value.url);
     } catch {
       setError("The default browser did not open. Try again.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
   const discard = () => {
     setDraft(null);

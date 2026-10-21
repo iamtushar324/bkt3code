@@ -248,26 +248,7 @@ jobs:
             filters=()
             for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
           fi
-          # T3-CUSTOM(expbkt3): TEMPORARY diagnosis — run each package with a hard
-          # per-package limit that kills its whole process group, so the log names the
-          # package whose tests hang instead of the job timing out with no log.
-          cat > "$RUNNER_TEMP/pkg-test.sh" <<'SCRIPT'
-          dir="$1"
-          [ -f "$dir/package.json" ] || exit 0
-          name=$(node -p "require('./$dir/package.json').name")
-          has=$(node -p "Boolean(require('./$dir/package.json').scripts?.test)")
-          case "$name" in t3|@t3tools/monorepo|@t3tools/web) exit 0;; esac
-          [ "$has" = "true" ] || exit 0
-          start=$(date +%s)
-          setsid bash -c "vp run --filter '$name' test > '$RUNNER_TEMP/pkg-${name//\//_}.log' 2>&1" & pid=$!
-          ( sleep 420; kill -KILL -- -$pid 2>/dev/null && echo "PKG-TIMEOUT $name" ) & watcher=$!
-          wait $pid; rc=$?
-          pkill -P $watcher 2>/dev/null; kill $watcher 2>/dev/null
-          echo "PKG-RESULT $name rc=$rc seconds=$(( $(date +%s) - start ))"
-          if [ $rc -ne 0 ]; then echo "::group::log $name"; tail -c 60000 "$RUNNER_TEMP/pkg-${name//\//_}.log"; echo "::endgroup::"; fi
-          exit $rc
-          SCRIPT
-          ls -d apps/* packages/* infra/* | xargs -P 4 -I{} bash "$RUNNER_TEMP/pkg-test.sh" {}
+          vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.

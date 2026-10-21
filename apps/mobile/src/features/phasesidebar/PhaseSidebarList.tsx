@@ -222,6 +222,21 @@ function LinearIssueStatusProbe(props: {
   return null;
 }
 
+// T3-CUSTOM(expbkt3): one row's Linear summaries per thread, reusing each
+// previous array while its statuses are unchanged.
+function rowLinearStatusesFor(
+  statuses: PhaseSidebarLinearStatusMap,
+  rows: ReadonlyArray<PhaseSidebarRow>,
+  previous: ReadonlyMap<string, ReadonlyArray<LinearIssueStatusSummary>> | undefined,
+) {
+  const value = new Map<string, ReadonlyArray<LinearIssueStatusSummary>>();
+  for (const row of rows) {
+    const key = `${row.thread.environmentId}:${row.thread.id}`;
+    value.set(key, pickPhaseSidebarLinearStatuses(statuses, row.thread, previous?.get(key)));
+  }
+  return { statuses, rows, value };
+}
+
 export function PhaseSidebarList(props: PhaseSidebarListProps) {
   const filters = props.filters ?? EMPTY_PHASE_SIDEBAR_FILTERS;
   const sort = props.sort ?? DEFAULT_PHASE_SIDEBAR_SORT;
@@ -274,17 +289,21 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
   );
   // Each row gets only its own summaries, with the same array identity until
   // one of them changes, so a status update re-renders only the rows it touches.
-  const rowLinearStatusesRef = useRef(new Map<string, ReadonlyArray<LinearIssueStatusSummary>>());
-  const rowLinearStatuses = useMemo(() => {
-    const previous = rowLinearStatusesRef.current;
-    const next = new Map<string, ReadonlyArray<LinearIssueStatusSummary>>();
-    for (const row of props.rows) {
-      const key = `${row.thread.environmentId}:${row.thread.id}`;
-      next.set(key, pickPhaseSidebarLinearStatuses(linearStatuses, row.thread, previous.get(key)));
-    }
-    rowLinearStatusesRef.current = next;
-    return next;
-  }, [linearStatuses, props.rows]);
+  // The previous picks live in state, not a ref, so the React Compiler can
+  // compile this component; they are recomputed during render when an input
+  // changes, the same way React documents adjusting state to props.
+  const [rowLinearStatusesCache, setRowLinearStatusesCache] = useState(() =>
+    rowLinearStatusesFor(linearStatuses, props.rows, undefined),
+  );
+  let rowLinearStatuses = rowLinearStatusesCache.value;
+  if (
+    rowLinearStatusesCache.statuses !== linearStatuses ||
+    rowLinearStatusesCache.rows !== props.rows
+  ) {
+    const next = rowLinearStatusesFor(linearStatuses, props.rows, rowLinearStatuses);
+    setRowLinearStatusesCache(next);
+    rowLinearStatuses = next.value;
+  }
   // T3-CUSTOM(expbkt3): END
 
   const worktreeView = useMemo(

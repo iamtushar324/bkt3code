@@ -1,5 +1,7 @@
 /** T3-CUSTOM(expbkt3): exercise the shipped Pi bridge with actor-bound personal MCP servers. */
+import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import * as Schema from "effect/Schema";
 import { expect, it } from "vite-plus/test";
@@ -62,7 +64,7 @@ it("keeps working servers, retries only failed profiles, and retains structured 
     );
   };
   const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
+    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
       "async function",
     ),
@@ -79,8 +81,14 @@ it("keeps working servers, retries only failed profiles, and retains structured 
     pi: {
       on: (name: string, hook: SessionHook) => hooks.set(name, hook),
       registerTool: (tool: Tool) => registered.push(tool),
+      getCommands: () => [],
     },
-    Type: { Unsafe: (schema: unknown) => schema },
+    // The extension's imports are stripped above; these stand in for them.
+    Type: { Unsafe: (schema: unknown) => schema, Object: (schema: unknown) => schema },
+    T3_CODE_ORCHESTRATION_INSTRUCTIONS: "",
+    NodeFSP,
+    NodePath,
+    stripFrontmatter: (content: string) => content,
     fetch: fetchStub,
     AbortSignal,
   });
