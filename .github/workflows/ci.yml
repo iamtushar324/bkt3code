@@ -253,9 +253,9 @@ jobs:
           # group, so a hang leaves a readable log instead of a job timeout.
           setsid bash -c "vp run --parallel --concurrency-limit 4 $(printf '%q ' "${filters[@]}") test > \"$RUNNER_TEMP/test.log\" 2>&1" & pid=$!
           ( sleep 900; echo "GUARD: still running after 900s"; ps -eo pid,pgid,etime,args --forest | grep -v ' ps ' | cut -c1-260; kill -KILL -- -$pid ) & guard=$!
-          wait $pid; rc=$?
+          rc=0; wait $pid || rc=$?
           pkill -P $guard 2>/dev/null; kill $guard 2>/dev/null
-          grep -E 'Test Files|Tests |FAIL|failed|passed|~/' "$RUNNER_TEMP/test.log" | cut -c1-300 | tail -200
+          grep -E 'Test Files|Tests |FAIL|failed|passed|~/|ERR|error' "$RUNNER_TEMP/test.log" | cut -c1-300 | tail -300 || true
           echo "rc=$rc"
           exit $rc
 
