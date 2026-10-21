@@ -34,7 +34,7 @@ function makeHandlers(shell: Option.Option<OrchestrationThreadShell>) {
           shellReads.push(id);
           return shell;
         }),
-    },
+    } as unknown as ForkWsHandlerDeps["projectionSnapshotQuery"],
     usage: {
       readThreadUsage: (input: {
         readonly sessionIds: ReadonlyArray<string>;
@@ -44,9 +44,13 @@ function makeHandlers(shell: Option.Option<OrchestrationThreadShell>) {
           usageReads.push({ sessionIds: input.sessionIds, sinceMs: input.sinceMs });
           return {} as ThreadUsage;
         }),
-    },
-  } as unknown as ForkWsHandlerDeps;
-  return { handlers: makeForkWsHandlers(deps), shellReads, usageReads };
+    } as unknown as ForkWsHandlerDeps["usage"],
+  } satisfies Partial<ForkWsHandlerDeps>;
+  return {
+    handlers: makeForkWsHandlers(deps as unknown as ForkWsHandlerDeps),
+    shellReads,
+    usageReads,
+  };
 }
 
 const shellFor = (archivedAt: string | null) =>
