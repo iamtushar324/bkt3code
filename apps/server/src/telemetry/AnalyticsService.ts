@@ -1,14 +1,9 @@
 /**
- * Anonymous PostHog telemetry service.
- *
- * Persists an installation-scoped anonymous identifier, buffers events in
- * memory, and flushes batches over Effect's HTTP client. A failed batch is
- * retried with backoff and dropped after a few tries. Each event carries a
- * uuid, so PostHog can tell a retried copy from a new event.
- *
- * @module AnalyticsService
+ * Events go to the T3 Code ingest endpoint, which keeps a copy and forwards
+ * them to PostHog. Each event carries a uuid, so PostHog can tell a retried
+ * copy from a new event.
  */
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -30,7 +25,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import { getTelemetryIdentifier } from "./Identify.ts";
+import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 // T3-CUSTOM(expbkt3): BEGIN — property allowlist and per-user identity (TEC-1631).
 import { filterAnalyticsProperties } from "./analyticsProperties.ts";
 import {
@@ -50,28 +45,38 @@ interface BufferedAnalyticsEvent {
 }
 
 interface DeliveryState {
-  /** Batch that failed last. It is sent again before newer events. */
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
-  /** Failed sends of `failedBatch`. */
   readonly batchAttempts: number;
-  /** Failed sends since the last success. Sets the backoff delay. */
   readonly failures: number;
-  /** The background flush does not send before this time (epoch ms). */
   readonly retryAt: number;
 }
 
-const FLUSH_INTERVAL_MS = 1_000;
+// The background flush checks for work at this interval, so a retry delay
+// shorter than it waits for the next check.
+const FLUSH_INTERVAL_MS = 10_000;
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
 const MAX_BATCH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 2_000;
+// Clients can report any number of owner ids; past this many per observer, new ones
+// are not sent. Each observer has its own cap, so client reports never crowd out the
+// server's own.
+const MAX_RECORDED_OWNERS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+// The endpoint answers these when the batch itself is wrong (bad body, wrong
+// api_key, too large), so sending it again cannot help. 408 and 429 are not
+// here because a later send can succeed.
+const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
 
 /**
- * Delay before the next send after `failures` consecutive failed sends. The
- * ceiling doubles from 2s up to 5 minutes, and the delay is a random point in
- * its upper half. `random` is in [0, 1).
+ * Release channel of this build. Release workflows set it for
+ * pingdotgg/t3code builds (see apps/server/vite.config.ts); every other build
+ * reports "dev". It is separate from `__T3CODE_BUILD_CHANNEL__`, which names
+ * stable "latest" and preview "nightly" for the sign-in page.
  */
+declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
+
+/** `random` is in [0, 1). */
 export function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
@@ -84,7 +89,7 @@ const TelemetryEnvConfig = Config.all({
   // T3-CUSTOM(expbkt3): the PostHog `instance` group every event belongs to.
   instance: Config.String("T3CODE_ANALYTICS_INSTANCE").pipe(Config.withDefault("unknown")),
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://us.i.posthog.com"),
+    Config.withDefault("https://ingest.t3.codes"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
@@ -108,23 +113,32 @@ export interface AnalyticsRecordOptions {
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** Record an event for best-effort buffered delivery. T3-CUSTOM(expbkt3): may identify a user. */
+    /** T3-CUSTOM(expbkt3): may identify a user. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
       options?: AnalyticsRecordOptions, // T3-CUSTOM(expbkt3): identity and backfill options.
     ) => Effect.Effect<void>;
 
-    /** Flush all currently queued telemetry events. */
     readonly flush: Effect.Effect<void>;
+
+    /**
+     * Records `install.owner_observed` for each owner of this install that the
+     * server read itself or a connecting client reported. Each owner is sent once
+     * per server process, so reconnects and repeated reads are free.
+     */
+    readonly recordOwners: (
+      owners: ReadonlyArray<TelemetryOwner>,
+      observedBy: "server" | "client",
+    ) => Effect.Effect<void>;
   }
 >()("t3/telemetry/AnalyticsService") {
-  /** No-op layer for callers that intentionally disable telemetry. */
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
       record: () => Effect.void,
       flush: Effect.void,
+      recordOwners: () => Effect.void,
     }),
   );
 }
@@ -144,12 +158,13 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const identifier = yield* getTelemetryIdentifier;
+  const { distinctId, installId } = yield* getTelemetryIdentity;
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const deliveryRef = yield* Ref.make<DeliveryState>({
@@ -158,11 +173,16 @@ export const make = Effect.gen(function* () {
     failures: 0,
     retryAt: 0,
   });
+  const recordedOwnersRef = yield* Ref.make<
+    Readonly<Record<"server" | "client", ReadonlySet<string>>>
+  >({ server: new Set(), client: new Set() });
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
+  const telemetryChannel =
+    typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArchitecture = yield* HostProcess.Architecture;
   // T3-CUSTOM(expbkt3): BEGIN — key-gated telemetry, identity and instance group.
   const telemetryEnabled = telemetryConfig.enabled && telemetryConfig.posthogKey.trim() !== "";
   const userDirectory = yield* makeAnalyticsUserDirectory;
@@ -202,16 +222,17 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryEnabled || !identifier) return; // T3-CUSTOM(expbkt3): key-gated.
+    if (!telemetryEnabled || !distinctId) return; // T3-CUSTOM(expbkt3): key-gated.
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
-        distinct_id: event.distinctId ?? identifier, // T3-CUSTOM(expbkt3): identified person.
+        distinct_id: event.distinctId ?? distinctId, // T3-CUSTOM(expbkt3): identified person.
         properties: {
           ...event.properties,
+          ...(installId === null ? {} : { installId }),
           // T3-CUSTOM(expbkt3): only identified events build a person profile.
           $process_person_profile: event.distinctId !== undefined,
           $groups: { instance: telemetryConfig.instance },
@@ -220,6 +241,7 @@ export const make = Effect.gen(function* () {
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
+          telemetryChannel,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
@@ -244,8 +266,8 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
-  // Sends batches until the buffer is empty or a send fails. A failed batch is
-  // kept for the next flush, and dropped after MAX_BATCH_ATTEMPTS failed sends.
+  // A rejected batch is dropped at once, but the next batch still waits for the
+  // backoff, so a wrong api_key does not send every batch as fast as it can.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);
@@ -263,20 +285,26 @@ export const make = Effect.gen(function* () {
       const failures = delivery.failures + 1;
       const batchAttempts = delivery.batchAttempts + 1;
       const retryAt = (yield* Clock.currentTimeMillis) + retryDelayMs(failures, yield* Random.next);
-      if (batchAttempts < MAX_BATCH_ATTEMPTS) {
+      const error = sent.failure;
+      const rejected =
+        error._tag === "HttpClientError" &&
+        error.reason._tag === "StatusCodeError" &&
+        REJECTED_BATCH_STATUSES.has(error.reason.response.status);
+      if (!rejected && batchAttempts < MAX_BATCH_ATTEMPTS) {
         yield* Ref.set(deliveryRef, { failedBatch: batch, batchAttempts, failures, retryAt });
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
-          cause: sent.failure,
+          cause: error,
         });
         return;
       }
       yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures, retryAt });
-      yield* Effect.logWarning("Dropped telemetry batch after repeated send failures", {
-        events: batch.length,
-        attempts: batchAttempts,
-        cause: sent.failure,
-      });
+      yield* Effect.logWarning(
+        rejected
+          ? "Dropped telemetry batch the endpoint rejected"
+          : "Dropped telemetry batch after repeated send failures",
+        { events: batch.length, attempts: batchAttempts, cause: error },
+      );
       return;
     }
   }).pipe(flushLock.withPermit);
@@ -289,64 +317,69 @@ export const make = Effect.gen(function* () {
   });
 
   // T3-CUSTOM(expbkt3): BEGIN — allowlist, identity, insert ids (TEC-1631).
-  const logDroppedKeys = (event: string, dropped: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (dropped.length === 0) return;
-      const fresh = yield* Ref.modify(
-        droppedKeysLogged,
-        (logged): readonly [ReadonlyArray<string>, ReadonlySet<string>] => {
-          const unseen = dropped.filter((key) => !logged.has(key));
-          return [unseen, unseen.length === 0 ? logged : new Set([...logged, ...unseen])];
-        },
-      );
-      for (const key of fresh) {
-        yield* Effect.logDebug("analytics property key not allowlisted; dropping it", {
-          event,
-          key,
-        });
-      }
-    });
+  const logDroppedKeys = Effect.fn("AnalyticsService.logDroppedKeys")(function* (
+    event: string,
+    dropped: ReadonlyArray<string>,
+  ) {
+    if (dropped.length === 0) return;
+    const fresh = yield* Ref.modify(
+      droppedKeysLogged,
+      (logged): readonly [ReadonlyArray<string>, ReadonlySet<string>] => {
+        const unseen = dropped.filter((key) => !logged.has(key));
+        return [unseen, unseen.length === 0 ? logged : new Set([...logged, ...unseen])];
+      },
+    );
+    for (const key of fresh) {
+      yield* Effect.logDebug("analytics property key not allowlisted; dropping it", {
+        event,
+        key,
+      });
+    }
+  });
 
-  const eventUuid = (insertId: string | undefined) =>
-    Effect.gen(function* () {
-      if (insertId !== undefined) {
-        const digest = yield* Effect.exit(
-          crypto.digest("SHA-256", new TextEncoder().encode(insertId)),
-        );
-        if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
-      }
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
-      return Exit.isSuccess(uuid) ? uuid.value : undefined;
-    });
+  const eventUuid = Effect.fn("AnalyticsService.eventUuid")(function* (
+    insertId: string | undefined,
+  ) {
+    if (insertId !== undefined) {
+      const digest = yield* Effect.exit(
+        crypto.digest("SHA-256", new TextEncoder().encode(insertId)),
+      );
+      if (Exit.isSuccess(digest)) return uuidFromSha256Hex(Hex.encode(digest.value));
+    }
+    const uuid = yield* Effect.exit(crypto.randomUUIDv7());
+    return Exit.isSuccess(uuid) ? uuid.value : undefined;
+  });
 
   /** Sends the person's profile once per user per process start. */
-  const identifyOnce = (userId: string, person: AnalyticsPerson) =>
-    Effect.gen(function* () {
-      const first = yield* Ref.modify(
-        identifiedUsers,
-        (seen): readonly [boolean, ReadonlySet<string>] =>
-          seen.has(userId) ? [false, seen] : [true, new Set([...seen, userId])],
-      );
-      if (!first) return;
-      const uuid = yield* eventUuid(undefined);
-      if (uuid === undefined) return;
-      yield* enqueueBufferedEvent({
-        uuid,
-        event: "$identify",
-        distinctId: person.email,
-        properties: {
-          $set: {
-            email: person.email,
-            role: person.role,
-            ...(person.name === undefined ? {} : { name: person.name }),
-          },
+  const identifyOnce = Effect.fn("AnalyticsService.identifyOnce")(function* (
+    userId: string,
+    person: AnalyticsPerson,
+  ) {
+    const first = yield* Ref.modify(
+      identifiedUsers,
+      (seen): readonly [boolean, ReadonlySet<string>] =>
+        seen.has(userId) ? [false, seen] : [true, new Set([...seen, userId])],
+    );
+    if (!first) return;
+    const uuid = yield* eventUuid(undefined);
+    if (uuid === undefined) return;
+    yield* enqueueBufferedEvent({
+      uuid,
+      event: "$identify",
+      distinctId: person.email,
+      properties: {
+        $set: {
+          email: person.email,
+          role: person.role,
+          ...(person.name === undefined ? {} : { name: person.name }),
         },
-      });
+      },
     });
+  });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties, options) {
-      if (!telemetryEnabled || !identifier) return;
+      if (!telemetryEnabled || !distinctId) return;
 
       const { kept, dropped } = filterAnalyticsProperties(properties);
       yield* logDroppedKeys(event, dropped);
@@ -359,6 +392,7 @@ export const make = Effect.gen(function* () {
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
+      // T3-CUSTOM(expbkt3): an insert id yields a stable uuid, so a backfill never duplicates.
       const uuid = yield* eventUuid(options?.insertId);
       if (uuid === undefined) return;
 
@@ -385,7 +419,7 @@ export const make = Effect.gen(function* () {
 
   // One group profile per boot, named after the instance. An unnamed instance
   // has nothing worth a profile.
-  if (telemetryEnabled && identifier && telemetryConfig.instance !== "unknown") {
+  if (telemetryEnabled && distinctId && telemetryConfig.instance !== "unknown") {
     const uuid = yield* eventUuid(undefined);
     if (uuid !== undefined) {
       yield* enqueueBufferedEvent({
@@ -401,13 +435,36 @@ export const make = Effect.gen(function* () {
   }
   // T3-CUSTOM(expbkt3): END
 
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
+    "AnalyticsService.recordOwners",
+  )((owners, observedBy) =>
+    Effect.forEach(
+      owners,
+      ({ source, ownerId }) =>
+        Ref.modify(recordedOwnersRef, (recorded) => {
+          const key = `${source}:${ownerId}`;
+          const seen = recorded[observedBy];
+          return seen.has(key) || seen.size >= MAX_RECORDED_OWNERS
+            ? [false, recorded]
+            : [true, { ...recorded, [observedBy]: new Set(seen).add(key) }];
+        }).pipe(
+          Effect.flatMap((isNew) =>
+            isNew
+              ? record("install.owner_observed", { ownerSource: source, ownerId, observedBy })
+              : Effect.void,
+          ),
+        ),
+      { discard: true },
+    ),
+  );
+
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush });
+  return AnalyticsService.of({ record, flush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

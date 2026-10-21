@@ -5,7 +5,7 @@
  * `ProposedPlanCard` read it, so the card itself takes no new props.
  */
 import type { LegendListRef } from "@legendapp/list/react";
-import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { createContext, type RefObject } from "react";
 

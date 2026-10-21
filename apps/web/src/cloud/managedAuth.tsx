@@ -25,6 +25,7 @@ export function ManagedClerkIdentityAuthProvider({ children }: { readonly childr
 
   useEffect(() => {
     if (!isLoaded) {
+      // oxlint-disable-next-line react/set-state-in-effect -- children render only once the external token provider is registered, which happens in this commit.
       setReady(false);
       return;
     }
@@ -72,6 +73,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => {
     if (!isLoaded) {
+      // T3-CUSTOM(expbkt3): readiness mirrors the external relay session this effect activates.
+      // oxlint-disable-next-line react/set-state-in-effect -- children stay hidden until the relay session settles outside React.
       setReady(false); // T3-CUSTOM(expbkt3): keep children hidden until Clerk auth state is loaded.
       return;
     }

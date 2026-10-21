@@ -21,6 +21,7 @@ import { MessageSquareTextIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { observeResize } from "../../lib/observeResize";
 import { resolveAssistantCitationRange } from "../../lib/assistantTextSelection";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { highlightFor, removeRangeFromHighlights } from "./highlights";
@@ -189,14 +190,13 @@ const ThreadCommentPins = memo(function ThreadCommentPins({
       frame = requestAnimationFrame(apply);
     };
     apply();
-    const resizeObserver = new ResizeObserver(schedule);
-    resizeObserver.observe(container);
+    const stopObservingResize = observeResize(container, schedule);
     // Streaming or a re-render replaces text nodes; the live ranges must follow.
     const mutationObserver = new MutationObserver(schedule);
     mutationObserver.observe(source, { childList: true, characterData: true, subtree: true });
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
+      stopObservingResize();
       mutationObserver.disconnect();
       clearRanges();
     };

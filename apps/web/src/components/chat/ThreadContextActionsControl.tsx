@@ -157,11 +157,8 @@ export function ThreadContextActionsControl({
   const runGuarded = async (action: () => Promise<void>) => {
     if (isBusy) return;
     setIsBusy(true);
-    try {
-      await action();
-    } finally {
-      setIsBusy(false);
-    }
+    // `.finally()` rather than try/finally, which the React Compiler cannot lower.
+    await action().finally(() => setIsBusy(false));
   };
 
   const copyContext = () =>

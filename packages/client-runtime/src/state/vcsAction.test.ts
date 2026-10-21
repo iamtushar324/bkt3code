@@ -1,6 +1,7 @@
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   ThreadId,
   ProjectId,
@@ -681,7 +682,6 @@ describe("vcsActionState", () => {
         expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
-        // The server links a created pull request to this thread, so the id must ride along.
         expect(rpcInputs).toEqual([
           { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
         ]);
@@ -722,8 +722,6 @@ describe("vcsActionState", () => {
   );
 });
 
-// Transport fixtures have a source-control-only session; authorization edge cases
-// are exercised by commandPermissions.test.ts.
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
 }));
@@ -737,7 +735,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope],
+      scopes: [AuthOrchestrationReadScope, AuthSourceControlWriteScope],
     }),
   ),
 );

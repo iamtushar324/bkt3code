@@ -2,7 +2,8 @@ import {
   authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthStandardClientScopes,
+  // T3-CUSTOM(expbkt3): administrator-minted pairing links default to member scopes.
+  AuthMemberClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
@@ -80,8 +81,9 @@ const appendDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request,
   Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", "DPoP")),
 );
 
-const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =>
-  Effect.gen(function* () {
+const appendDpopChallengeOnUnauthorized =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (error: EnvironmentAuthInvalidError) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const usesDpop =
       (request.originalUrl.startsWith("/oauth/token") && request.headers.dpop !== undefined) ||
@@ -97,8 +99,9 @@ const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.orElseSucceed(() => "unavailable"),
 );
 
-export function annotateEnvironmentRequest(endpoint: string) {
-  return Effect.gen(function* () {
+export const annotateEnvironmentRequest =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (endpoint: string) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     const traceId = yield* currentEnvironmentTraceId;
@@ -120,7 +123,6 @@ export function annotateEnvironmentRequest(endpoint: string) {
       "url.path": url._tag === "Some" ? url.value.pathname : "unknown",
     });
   });
-}
 
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
@@ -207,14 +209,13 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
 }
 
 /**
- * `<img>` and WebSocket cannot set headers, so media routes (device hub,
- * preview stream) authenticate the way the `/ws` upgrade does: a cookie for browser
- * sessions, or a short-lived `wsTicket` minted over authenticated HTTP for
- * bearer and DPoP clients. The upgrade authenticator already implements that
- * fallback order, so it is used for plain requests as well.
+ * `<img>` and WebSocket cannot set headers, so media routes (device hub, preview stream)
+ * authenticate the way the `/ws` upgrade does: a cookie for browser sessions, or a short-lived
+ * `wsTicket` minted over authenticated HTTP for bearer and DPoP clients.
  */
-export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
-  Effect.gen(function* () {
+export const authenticateMediaRequest =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (requiredScope: AuthEnvironmentScope) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
@@ -236,8 +237,9 @@ export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
     return session;
   });
 
-export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, error?: unknown) {
-  return Effect.gen(function* () {
+export const failEnvironmentInternal =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (reason: EnvironmentInternalErrorReason, error?: unknown) {
     const traceId = yield* currentEnvironmentTraceId;
     if (error !== undefined) {
       yield* Effect.logError("environment api operation failed", {
@@ -248,7 +250,6 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
     }
     return yield* new EnvironmentInternalError({ code: "internal_error", reason, traceId });
   });
-}
 
 const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
   Effect.fromResult(
@@ -323,45 +324,45 @@ export const layer = HttpApiBuilder.group(
     const users = yield* EnvironmentUserService.EnvironmentUserService;
     const settings = yield* ServerSettings.ServerSettingsService;
 
-    const resolveIdentity = (
+    // T3-CUSTOM(expbkt3): team-mode identity from a relay-audience Clerk token.
+    const resolveIdentity = Effect.fn("environment.auth.resolveIdentity")(function* (
       token: string | undefined,
-    ): Effect.Effect<
+    ): Effect.fn.Return<
       ClerkIdentityVerifier.VerifiedClerkIdentity | null,
       EnvironmentAuthInvalidError | EnvironmentInternalError
-    > =>
-      Effect.gen(function* () {
-        const identityMode = yield* settings.getSettings.pipe(
-          Effect.map((current) => current.environmentUserIdentityMode),
-          Effect.catch((error) => failEnvironmentInternal("identity_management_failed", error)),
-        );
-        if (!token) {
-          // T3-CUSTOM(expbkt3): one rule for pairing exchanges and MCP agent approvals.
-          return isEnvironmentIdentityRequired(identityMode)
-            ? yield* failEnvironmentAuthInvalid("missing_identity")
-            : null;
-        }
-        const identity = yield* clerkIdentity.verify(token).pipe(
-          Effect.catchTags({
-            EnvironmentUserManagementError: (error) =>
-              Effect.gen(function* () {
-                return error.reason === "identity-not-configured"
-                  ? yield* failEnvironmentInternal("identity_management_failed", error)
-                  : yield* failEnvironmentAuthInvalid("invalid_identity");
-              }),
-          }),
-        );
-        yield* users.assertAllowed(identity.userId).pipe(
-          Effect.catchTags({
-            EnvironmentUserManagementError: (error) =>
-              Effect.gen(function* () {
-                return error.reason === "identity-blocked"
-                  ? yield* failEnvironmentAuthInvalid("blocked_identity")
-                  : yield* failEnvironmentInternal("identity_management_failed", error);
-              }),
-          }),
-        );
-        return identity;
-      }).pipe(Effect.withSpan("environment.auth.resolveIdentity"));
+    > {
+      const identityMode = yield* settings.getSettings.pipe(
+        Effect.map((current) => current.environmentUserIdentityMode),
+        Effect.catch((error) => failEnvironmentInternal("identity_management_failed", error)),
+      );
+      if (!token) {
+        // T3-CUSTOM(expbkt3): one rule for pairing exchanges and MCP agent approvals.
+        return isEnvironmentIdentityRequired(identityMode)
+          ? yield* failEnvironmentAuthInvalid("missing_identity")
+          : null;
+      }
+      const identity = yield* clerkIdentity.verify(token).pipe(
+        Effect.catchTags({
+          EnvironmentUserManagementError: (error) =>
+            Effect.gen(function* () {
+              return error.reason === "identity-not-configured"
+                ? yield* failEnvironmentInternal("identity_management_failed", error)
+                : yield* failEnvironmentAuthInvalid("invalid_identity");
+            }),
+        }),
+      );
+      yield* users.assertAllowed(identity.userId).pipe(
+        Effect.catchTags({
+          EnvironmentUserManagementError: (error) =>
+            Effect.gen(function* () {
+              return error.reason === "identity-blocked"
+                ? yield* failEnvironmentAuthInvalid("blocked_identity")
+                : yield* failEnvironmentInternal("identity_management_failed", error);
+            }),
+        }),
+      );
+      return identity;
+    });
 
     const persistIdentity = Effect.fn("environment.auth.persistIdentity")(function* (
       identity: ClerkIdentityVerifier.VerifiedClerkIdentity | null,
@@ -413,38 +414,39 @@ export const layer = HttpApiBuilder.group(
     // it here, without consuming the grant, is what lets such a client satisfy
     // `environmentUserIdentityMode: "required"`. An anonymous grant still resolves to
     // nothing and is refused exactly as before.
-    const resolveGrantIdentity = (credential: string) =>
-      Effect.gen(function* () {
-        const subject = yield* pairingGrants
-          .peekSubject(credential)
-          .pipe(
-            Effect.catchIf(PairingGrantStore.isBootstrapCredentialInternalError, (error) =>
-              failEnvironmentInternal("identity_management_failed", error),
-            ),
-          );
-        const userId = subject === null ? null : userIdFromSubject(subject);
-        if (userId === null) {
-          return null;
-        }
-        // A member who has since been blocked must not be able to pair, even with a
-        // credential minted while they were allowed.
-        yield* users.assertAllowed(EnvironmentUserId.make(userId)).pipe(
-          Effect.catchTags({
-            EnvironmentUserManagementError: (error) =>
-              Effect.gen(function* () {
-                return error.reason === "identity-blocked"
-                  ? yield* failEnvironmentAuthInvalid("blocked_identity")
-                  : yield* failEnvironmentInternal("identity_management_failed", error);
-              }),
-          }),
+    const resolveGrantIdentity = Effect.fn("environment.auth.resolveGrantIdentity")(function* (
+      credential: string,
+    ) {
+      const subject = yield* pairingGrants
+        .peekSubject(credential)
+        .pipe(
+          Effect.catchIf(PairingGrantStore.isBootstrapCredentialInternalError, (error) =>
+            failEnvironmentInternal("identity_management_failed", error),
+          ),
         );
-        return {
-          userId: EnvironmentUserId.make(userId),
-          displayName: null,
-          primaryEmail: null,
-          avatarUrl: null,
-        } satisfies ClerkIdentityVerifier.VerifiedClerkIdentity;
-      });
+      const userId = subject === null ? null : userIdFromSubject(subject);
+      if (userId === null) {
+        return null;
+      }
+      // A member who has since been blocked must not be able to pair, even with a
+      // credential minted while they were allowed.
+      yield* users.assertAllowed(EnvironmentUserId.make(userId)).pipe(
+        Effect.catchTags({
+          EnvironmentUserManagementError: (error) =>
+            Effect.gen(function* () {
+              return error.reason === "identity-blocked"
+                ? yield* failEnvironmentAuthInvalid("blocked_identity")
+                : yield* failEnvironmentInternal("identity_management_failed", error);
+            }),
+        }),
+      );
+      return {
+        userId: EnvironmentUserId.make(userId),
+        displayName: null,
+        primaryEmail: null,
+        avatarUrl: null,
+      } satisfies ClerkIdentityVerifier.VerifiedClerkIdentity;
+    });
 
     const resolveTokenExchangeIdentity = (input: {
       readonly token: string | undefined;
@@ -535,8 +537,8 @@ export const layer = HttpApiBuilder.group(
                   ? { presented: { appVersion: args.payload.client_version } }
                   : {}),
               }),
-              previousCredential?.source === "cookie" ||
-                previousCredential?.source === "legacy-cookie"
+              previousCredential &&
+                EnvironmentAuth.isBrowserCookieCredential(previousCredential.source)
                 ? previousCredential.token
                 : undefined,
               identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
@@ -789,10 +791,10 @@ export const layer = HttpApiBuilder.group(
               yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
             const delegatedScopes =
               args.payload.scopes ??
-              // T3-CUSTOM(expbkt3): a member's default is their own standard scopes.
-              (administrative
-                ? AuthStandardClientScopes
-                : selfServicePairingScopes(session.scopes));
+              // T3-CUSTOM(expbkt3): a member's default is their own standard scopes; an
+              // administrator's default stays the member set, since upstream's standard
+              // set now carries access and relay management (#20432).
+              (administrative ? AuthMemberClientScopes : selfServicePairingScopes(session.scopes));
             if (
               delegatedScopes.length === 0 ||
               new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length

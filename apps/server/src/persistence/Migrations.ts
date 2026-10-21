@@ -1,20 +1,9 @@
-/**
- * Migration runner with an inline loader.
- *
- * Uses Migrator.make with fromRecord to define migrations inline.
- * All migrations are statically imported - no dynamic file system loading.
- *
- * `runMigrations` is called by the SQLite persistence layer at startup, so the
- * schema is always up to date before the application starts.
- */
-
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 // T3-CUSTOM(expbkt3): compatibility for fork service test layers.
 import * as Layer from "effect/Layer";
 
-// Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
 import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
@@ -210,7 +199,24 @@ import Migration1051 from "./Migrations/1051_ScheduledTaskCustomGroups.ts";
 import Migration1052 from "./Migrations/1052_ScheduledTaskForkOptions.ts";
 // T3-CUSTOM(expbkt3): durable revive queue for Claude account placement.
 import Migration1053 from "./Migrations/1053_ThreadClaudeAccountWait.ts";
-const migrationEntries = [
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 61, 62 and 64. The legacy
+// fork block (33-42) and the shipped 1000+ lane already occupy those slots, so they
+// register at the next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1054 from "./Migrations/061_PullRequestReviewGuides.ts";
+import Migration1055 from "./Migrations/062_ThreadFailureLookupIndex.ts";
+import Migration1056 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 65-66. They register at the
+// next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+// T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
+// deliberately NOT registered. It drops the V1 activity, turn, proposed-plan,
+// pending-approval and state projections and checkpoint diff blobs, but the fork still reads the V1
+// projections for old-thread history (ForkLegacyHistory.expbkt3.ts,
+// legacyProjection.expbkt3.ts). Running it on bkt3 would lose that history
+// irreversibly. Leave the file in the tree; register it only once no fork code
+// reads those tables, at the next free 1000+ id.
+export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -341,6 +347,15 @@ const migrationEntries = [
   [1052, "ScheduledTaskForkOptions", Migration1052],
   // T3-CUSTOM(expbkt3): durable revive queue for Claude account placement.
   [1053, "ThreadClaudeAccountWait", Migration1053],
+  // T3-CUSTOM(expbkt3): upstream 61, 62 and 64 remapped above the shipped 1053
+  // migration. Upstream 63 (DropUnusedV1Projections) stays unregistered; see the
+  // import block above.
+  [1054, "PullRequestReviewGuides", Migration1054],
+  [1055, "ThreadFailureLookupIndex", Migration1055],
+  [1056, "CanonicalizeThreadPullRequestLinks", Migration1056],
+  // T3-CUSTOM(expbkt3): upstream 65-66 remapped above the shipped 1056 migration.
+  [1057, "CodexUsageNativeTurnIndex", Migration1057],
+  [1058, "RepairClientSettlementTimestamps", Migration1058],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -354,29 +369,62 @@ const makeMigrationLoader = (throughId?: number) =>
     ),
   );
 
+// T3-CUSTOM(expbkt3): V2 is fork id 1043 (upstream 55). Fork 1000-1042 are pre-V2
+// and stay unguarded, like upstream's ids below 55.
+const FIRST_V2_MIGRATION_ID = 1043;
+
 /**
- * Migrator run function - no schema dumping needed
- * Uses the base Migrator.make without platform dependencies
+ * Fail before migrating when the migrator would skip one of V2's own
+ * migrations. It skips every id up to the highest recorded one, whatever name
+ * was recorded, so a database that took a V2 id for another migration would
+ * start without V2's schema and fail on first use.
  */
+const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return;
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations`;
+  const latestRecordedId = Math.max(0, ...recorded.map((row) => row.migration_id));
+  const recordedNames = new Map(recorded.map((row) => [row.migration_id, row.name]));
+  const skipped = migrationEntries.flatMap(([id, name]) => {
+    if (
+      id < FIRST_V2_MIGRATION_ID ||
+      id > latestRecordedId ||
+      (throughId !== undefined && id > throughId)
+    )
+      return [];
+    const recordedName = recordedNames.get(id);
+    if (recordedName === name) return [];
+    return [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
+  });
+  if (skipped.length === 0) return;
+  return yield* new Migrator.MigrationError({
+    kind: "BadState",
+    message: `This database's migration history would skip required schema migrations: ${skipped.join(", ")}. The migrator skips every id up to the highest recorded id (${latestRecordedId}), regardless of name. It was probably written by a different build. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+  });
+});
+
 const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
-/**
- * Run all pending migrations.
- *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
- *
- * Returns array of [id, name] tuples for migrations that were run.
- *
- * @returns Effect containing array of executed migrations
- */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  const includesV2 =
+    toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
+  if (includesV2) {
+    yield* assertV2MigrationsCanRun(toMigrationInclusive);
+  }
   // T3-CUSTOM(expbkt3): fork V1 ids are frozen; upstream preview ledger rewrites do not apply.
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
@@ -384,10 +432,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
 
-  // The migrator keys on migration_id: a database that recorded a different
-  // migration under a shared id (local or fork builds) keeps that id and
-  // silently skips this build's migration at it. Surface the divergence so the
-  // skipped schema change is diagnosable.
   const sql = yield* SqlClient.SqlClient;
   const recorded = yield* sql<{
     readonly migration_id: number;

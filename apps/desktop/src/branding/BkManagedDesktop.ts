@@ -50,8 +50,8 @@ export const BK_BUNDLED_BACKEND_INSTANCE_ID: DesktopBackendPool.BackendInstanceI
  * install). The renderer shows the instance through the desktop bootstrap
  * topology once it reports a config, exactly like a WSL secondary.
  */
-const startBkBundledBackend = (channel: "staging" | "production") =>
-  Effect.gen(function* () {
+const startBkBundledBackend = Effect.fn("desktop.bootstrap.bkBundledBackend")(
+  function* (channel: "staging" | "production") {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
       yield* logInfo("skipping bundled backend in development without a configured port");
@@ -82,69 +82,67 @@ const startBkBundledBackend = (channel: "staging" | "production") =>
       port: selection.port,
       selectedByScan: selection.selectedByScan,
     });
-  }).pipe(
-    Effect.catchCause((cause) =>
-      logWarning("bundled local backend failed to start; continuing as client-only", {
-        cause: Cause.pretty(cause),
-      }),
-    ),
-    Effect.withSpan("desktop.bootstrap.bkBundledBackend"),
-  );
+  },
+  Effect.catchCause((cause) =>
+    logWarning("bundled local backend failed to start; continuing as client-only", {
+      cause: Cause.pretty(cause),
+    }),
+  ),
+);
 
 /** Returns true when this managed bootstrap handled desktop startup. */
-export const bootstrapBkManagedDesktop = () =>
-  Effect.gen(function* () {
-    const managedEnvironment = readBkManagedEnvironment();
-    if (managedEnvironment === null) return false;
+export const bootstrapBkManagedDesktop = Effect.fn("desktop.bootstrap.bkManaged")(function* () {
+  const managedEnvironment = readBkManagedEnvironment();
+  if (managedEnvironment === null) return false;
 
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
-    const state = yield* DesktopState.DesktopState;
-    const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    const renderer = resolveBkClientRendererSource({
-      managedHttpBaseUrl: managedEnvironment.httpBaseUrl,
-      isDevelopment: environment.isDevelopment,
-      devServerUrl: Option.getOrNull(environment.devServerUrl),
-      clientAssetsDirectory: environment.clientAssetsDirectory,
-    });
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const state = yield* DesktopState.DesktopState;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const renderer = resolveBkClientRendererSource({
+    managedHttpBaseUrl: managedEnvironment.httpBaseUrl,
+    isDevelopment: environment.isDevelopment,
+    devServerUrl: Option.getOrNull(environment.devServerUrl),
+    clientAssetsDirectory: environment.clientAssetsDirectory,
+  });
 
-    // Upstream's protocol either serves the packaged client from disk or proxies a
-    // dev server; the managed build picks the same way. The backend origin is not
-    // the protocol's concern — handleBackendReady below receives it.
-    const protocolScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
-    yield* electronProtocol.registerDesktopProtocol(
-      renderer.clientAssetsDirectory
-        ? {
-            scheme: protocolScheme,
-            clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
-            assetDirectory: renderer.clientAssetsDirectory,
-          }
-        : {
-            scheme: protocolScheme,
-            clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
-            targetOrigin: renderer.targetOrigin,
-          },
+  // Upstream's protocol either serves the packaged client from disk or proxies a
+  // dev server; the managed build picks the same way. The backend origin is not
+  // the protocol's concern — handleBackendReady below receives it.
+  const protocolScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+  yield* electronProtocol.registerDesktopProtocol(
+    renderer.clientAssetsDirectory
+      ? {
+          scheme: protocolScheme,
+          clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+          assetDirectory: renderer.clientAssetsDirectory,
+        }
+      : {
+          scheme: protocolScheme,
+          clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+          targetOrigin: renderer.targetOrigin,
+        },
+  );
+  yield* installDesktopIpcHandlers();
+  yield* logInfo("managed desktop ready", {
+    channel: managedEnvironment.channel,
+    primaryEnvironment: managedEnvironment.httpBaseUrl,
+    renderer: renderer.clientAssetsDirectory ? "packaged-client" : "development-server",
+  });
+
+  if (!(yield* Ref.get(state.quitting))) {
+    yield* desktopWindow.handleBackendReady(renderer.backendOrigin);
+    // T3-CUSTOM(expbkt3): upstream starts activation in its bootstrap, which this
+    // managed path replaces. Its socket belongs to the app, not a backend.
+    const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+    yield* appActivation.start.pipe(
+      Effect.tap(() => logInfo("desktop app control socket ready")),
+      Effect.catch((error) => logWarning("desktop app control socket unavailable", { error })),
     );
-    yield* installDesktopIpcHandlers();
-    yield* logInfo("managed desktop ready", {
-      channel: managedEnvironment.channel,
-      primaryEnvironment: managedEnvironment.httpBaseUrl,
-      renderer: renderer.clientAssetsDirectory ? "packaged-client" : "development-server",
-    });
+  }
 
-    if (!(yield* Ref.get(state.quitting))) {
-      yield* desktopWindow.handleBackendReady(renderer.backendOrigin);
-      // T3-CUSTOM(expbkt3): upstream starts activation in its bootstrap, which this
-      // managed path replaces. Its socket belongs to the app, not a backend.
-      const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
-      yield* appActivation.start.pipe(
-        Effect.tap(() => logInfo("desktop app control socket ready")),
-        Effect.catch((error) => logWarning("desktop app control socket unavailable", { error })),
-      );
-    }
-
-    // After the window: a slow or failed local backend must never delay or
-    // block the managed client, so it comes up on a forked fiber.
-    yield* Effect.forkScoped(startBkBundledBackend(managedEnvironment.channel));
-    return true;
-  }).pipe(Effect.withSpan("desktop.bootstrap.bkManaged"));
+  // After the window: a slow or failed local backend must never delay or
+  // block the managed client, so it comes up on a forked fiber.
+  yield* Effect.forkScoped(startBkBundledBackend(managedEnvironment.channel));
+  return true;
+});

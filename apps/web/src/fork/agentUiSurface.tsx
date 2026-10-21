@@ -98,10 +98,8 @@ export const AgentUiRenderFrame = memo(function AgentUiRenderFrame(props: {
   // An unmodified sandbox gives the document an opaque origin: its scripts run,
   // so charts and interactions work, but it cannot reach this page, our cookies,
   // or the network as the signed-in user.
-  const srcDoc = useMemo(
-    () => (render?.kind === "html" && render.html ? toSrcDoc(render.html) : null),
-    [render?.kind, render?.html],
-  );
+  const renderHtml = render?.kind === "html" ? render.html : undefined;
+  const srcDoc = useMemo(() => (renderHtml ? toSrcDoc(renderHtml) : null), [renderHtml]);
 
   const onTitle = props.onTitle;
   const title = render?.title;

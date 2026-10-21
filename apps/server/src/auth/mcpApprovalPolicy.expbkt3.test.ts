@@ -6,7 +6,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
-  AuthStandardClientScopes,
+  AuthMemberClientScopes,
   clerkSubjectForUser,
   type EnvironmentUserIdentityMode,
   UserId,
@@ -109,7 +109,7 @@ it.effect("approves a code minted for a team user when identity is required", ()
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const pairing = yield* auth.createPairingLink({
-      scopes: [...AuthStandardClientScopes],
+      scopes: [...AuthMemberClientScopes],
       subject: clerkSubjectForUser(ALICE),
     });
     const redirect = yield* approveWithCode(pairing.credential);
@@ -117,10 +117,10 @@ it.effect("approves a code minted for a team user when identity is required", ()
   }).pipe(Effect.provide(layerFor("required"))),
 );
 
-it.effect("makes an anonymous standard-scope approval an unbound non-operator", () =>
+it.effect("makes an anonymous member-scope approval an unbound non-operator", () =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    const pairing = yield* auth.issuePairingCredential({ scopes: [...AuthStandardClientScopes] });
+    const pairing = yield* auth.issuePairingCredential({ scopes: [...AuthMemberClientScopes] });
     expect(yield* clientFromCode(pairing.credential)).toMatchObject({
       principal: "external-user",
       actorUserId: null,

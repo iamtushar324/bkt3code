@@ -111,161 +111,162 @@ const makeDisabledDirectory: ClerkDirectoryShape = {
   findUserIdByEmail: () => Effect.succeed(null),
 };
 
-const makeEnabledDirectory = (
+const makeEnabledDirectory = Effect.fn("ClerkDirectory.makeEnabledDirectory")(function* (
   config: NonNullable<ServerConfig["Service"]["clerkAuth"]>,
-): Effect.Effect<ClerkDirectoryShape> =>
-  Effect.gen(function* () {
-    const client: ClerkClient = createClerkClient({ secretKey: config.secretKey });
-    const organizationId = config.organizationId ?? null;
-    const descriptor: ServerAuthClerkDescriptor | null =
-      config.publishableKey !== undefined
-        ? { publishableKey: config.publishableKey, organizationId }
-        : null;
+): Effect.fn.Return<ClerkDirectoryShape> {
+  const client: ClerkClient = createClerkClient({ secretKey: config.secretKey });
+  const organizationId = config.organizationId ?? null;
+  const descriptor: ServerAuthClerkDescriptor | null =
+    config.publishableKey !== undefined
+      ? { publishableKey: config.publishableKey, organizationId }
+      : null;
 
-    const cacheRef = yield* Ref.make<OrgMemberCache | null>(null);
+  const cacheRef = yield* Ref.make<OrgMemberCache | null>(null);
 
-    const fetchOrgMembers = (): Effect.Effect<
-      ReadonlyArray<OrchestrationUser>,
-      ClerkDirectoryError
-    > =>
-      organizationId === null
-        ? Effect.succeed([])
-        : Effect.tryPromise({
-            try: async () => {
-              const users: OrchestrationUser[] = [];
-              let offset = 0;
-              // Page through the org's memberships. A 4-person org is one page,
-              // but paginate defensively.
-              for (;;) {
-                const page = await client.organizations.getOrganizationMembershipList({
-                  organizationId,
-                  limit: ORG_MEMBER_PAGE_SIZE,
-                  offset,
+  const fetchOrgMembers = (): Effect.Effect<
+    ReadonlyArray<OrchestrationUser>,
+    ClerkDirectoryError
+  > =>
+    organizationId === null
+      ? Effect.succeed([])
+      : Effect.tryPromise({
+          try: async () => {
+            const users: OrchestrationUser[] = [];
+            let offset = 0;
+            // Page through the org's memberships. A 4-person org is one page,
+            // but paginate defensively.
+            for (;;) {
+              const page = await client.organizations.getOrganizationMembershipList({
+                organizationId,
+                limit: ORG_MEMBER_PAGE_SIZE,
+                offset,
+              });
+              for (const membership of page.data) {
+                const publicUserData = membership.publicUserData;
+                if (!publicUserData) continue;
+                users.push({
+                  id: publicUserData.userId as UserId,
+                  name: memberDisplayName(publicUserData.firstName, publicUserData.lastName),
+                  email: nonEmpty(publicUserData.identifier),
+                  imageUrl: nonEmpty(publicUserData.imageUrl),
+                  isAdmin: isAdminRole(membership.role),
                 });
-                for (const membership of page.data) {
-                  const publicUserData = membership.publicUserData;
-                  if (!publicUserData) continue;
-                  users.push({
-                    id: publicUserData.userId as UserId,
-                    name: memberDisplayName(publicUserData.firstName, publicUserData.lastName),
-                    email: nonEmpty(publicUserData.identifier),
-                    imageUrl: nonEmpty(publicUserData.imageUrl),
-                    isAdmin: isAdminRole(membership.role),
-                  });
-                }
-                offset += ORG_MEMBER_PAGE_SIZE;
-                if (page.data.length < ORG_MEMBER_PAGE_SIZE || offset >= page.totalCount) {
-                  break;
-                }
               }
-              return users;
-            },
-            catch: (cause) =>
-              new ClerkDirectoryError({ message: "Failed to list Clerk org members.", cause }),
-          });
-
-    const verifySessionToken: ClerkDirectoryShape["verifySessionToken"] = (token) =>
-      Effect.gen(function* () {
-        const payload = yield* Effect.tryPromise({
-          try: () => verifyToken(token, { secretKey: config.secretKey }),
+              offset += ORG_MEMBER_PAGE_SIZE;
+              if (page.data.length < ORG_MEMBER_PAGE_SIZE || offset >= page.totalCount) {
+                break;
+              }
+            }
+            return users;
+          },
           catch: (cause) =>
-            new ClerkAuthError({
-              reason: "invalid_token",
-              message: `Clerk token verification failed: ${String(cause)}`,
-            }),
+            new ClerkDirectoryError({ message: "Failed to list Clerk org members.", cause }),
         });
-        const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
-        if (subject.length === 0) {
-          return yield* new ClerkAuthError({
-            reason: "invalid_token",
-            message: "Clerk token is missing a subject.",
-          });
-        }
-        const userId = subject as UserId;
 
-        if (organizationId !== null) {
-          // Hard-gate on org membership. Prefer the token's org claim when
-          // present; otherwise confirm via the Backend API.
-          const claimedOrgId =
-            typeof (payload as { org_id?: unknown }).org_id === "string"
-              ? (payload as { org_id: string }).org_id
-              : null;
-          const isMember =
-            claimedOrgId === organizationId
-              ? true
-              : yield* Effect.tryPromise({
-                  try: async () => {
-                    const memberships = await client.users.getOrganizationMembershipList({
-                      userId,
-                    });
-                    return memberships.data.some(
-                      (membership) => membership.organization.id === organizationId,
-                    );
-                  },
-                  catch: (cause) =>
-                    new ClerkAuthError({
-                      reason: "invalid_token",
-                      message: `Failed to verify Clerk org membership: ${String(cause)}`,
-                    }),
+  const verifySessionToken: ClerkDirectoryShape["verifySessionToken"] = Effect.fn(
+    "ClerkDirectory.verifySessionToken",
+  )(function* (token) {
+    const payload = yield* Effect.tryPromise({
+      try: () => verifyToken(token, { secretKey: config.secretKey }),
+      catch: (cause) =>
+        new ClerkAuthError({
+          reason: "invalid_token",
+          message: `Clerk token verification failed: ${String(cause)}`,
+        }),
+    });
+    const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
+    if (subject.length === 0) {
+      return yield* new ClerkAuthError({
+        reason: "invalid_token",
+        message: "Clerk token is missing a subject.",
+      });
+    }
+    const userId = subject as UserId;
+
+    if (organizationId !== null) {
+      // Hard-gate on org membership. Prefer the token's org claim when
+      // present; otherwise confirm via the Backend API.
+      const claimedOrgId =
+        typeof (payload as { org_id?: unknown }).org_id === "string"
+          ? (payload as { org_id: string }).org_id
+          : null;
+      const isMember =
+        claimedOrgId === organizationId
+          ? true
+          : yield* Effect.tryPromise({
+              try: async () => {
+                const memberships = await client.users.getOrganizationMembershipList({
+                  userId,
                 });
-          if (!isMember) {
-            return yield* new ClerkAuthError({
-              reason: "not_org_member",
-              message: "This account is not a member of the workspace organization.",
+                return memberships.data.some(
+                  (membership) => membership.organization.id === organizationId,
+                );
+              },
+              catch: (cause) =>
+                new ClerkAuthError({
+                  reason: "invalid_token",
+                  message: `Failed to verify Clerk org membership: ${String(cause)}`,
+                }),
             });
-          }
-        }
+      if (!isMember) {
+        return yield* new ClerkAuthError({
+          reason: "not_org_member",
+          message: "This account is not a member of the workspace organization.",
+        });
+      }
+    }
 
-        return { userId, subject: clerkSubjectForUser(userId) } satisfies VerifiedClerkSession;
-      });
-
-    const listOrgMembers: ClerkDirectoryShape["listOrgMembers"] = () =>
-      Effect.gen(function* () {
-        const nowMs = yield* Clock.currentTimeMillis;
-        const cached = yield* Ref.get(cacheRef);
-        if (cached !== null && nowMs - cached.fetchedAtMs < ORG_MEMBER_CACHE_TTL_MS) {
-          return cached.users;
-        }
-        return yield* fetchOrgMembers().pipe(
-          Effect.tap((users) => Ref.set(cacheRef, { users, fetchedAtMs: nowMs })),
-          // On a Clerk outage serve the stale cache rather than failing the
-          // users endpoint; only propagate the error when we have nothing.
-          Effect.catch((error) =>
-            cached !== null ? Effect.succeed(cached.users) : Effect.fail(error),
-          ),
-        );
-      });
-
-    const isOrgAdmin: ClerkDirectoryShape["isOrgAdmin"] = (userId) =>
-      listOrgMembers().pipe(
-        Effect.map((users) => users.find((user) => user.id === userId)?.isAdmin ?? false),
-        // Fail-closed: never grant admin on a Clerk directory error.
-        Effect.orElseSucceed(() => false),
-      );
-
-    const findUserIdByEmail: ClerkDirectoryShape["findUserIdByEmail"] = (email) =>
-      Effect.tryPromise({
-        try: async () => {
-          const page = await client.users.getUserList({ emailAddress: [email], limit: 1 });
-          const user = page.data[0];
-          return user ? (user.id as UserId) : null;
-        },
-        catch: (cause) =>
-          new ClerkDirectoryError({
-            message: `Failed to resolve Clerk user by email '${email}'.`,
-            cause,
-          }),
-      });
-
-    return {
-      enabled: true,
-      descriptor,
-      verifySessionToken,
-      listOrgMembers,
-      isOrgAdmin,
-      findUserIdByEmail,
-    } satisfies ClerkDirectoryShape;
+    return { userId, subject: clerkSubjectForUser(userId) } satisfies VerifiedClerkSession;
   });
+
+  const listOrgMembers: ClerkDirectoryShape["listOrgMembers"] = Effect.fn(
+    "ClerkDirectory.listOrgMembers",
+  )(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const cached = yield* Ref.get(cacheRef);
+    if (cached !== null && nowMs - cached.fetchedAtMs < ORG_MEMBER_CACHE_TTL_MS) {
+      return cached.users;
+    }
+    return yield* fetchOrgMembers().pipe(
+      Effect.tap((users) => Ref.set(cacheRef, { users, fetchedAtMs: nowMs })),
+      // On a Clerk outage serve the stale cache rather than failing the
+      // users endpoint; only propagate the error when we have nothing.
+      Effect.catch((error) =>
+        cached !== null ? Effect.succeed(cached.users) : Effect.fail(error),
+      ),
+    );
+  });
+
+  const isOrgAdmin: ClerkDirectoryShape["isOrgAdmin"] = (userId) =>
+    listOrgMembers().pipe(
+      Effect.map((users) => users.find((user) => user.id === userId)?.isAdmin ?? false),
+      // Fail-closed: never grant admin on a Clerk directory error.
+      Effect.orElseSucceed(() => false),
+    );
+
+  const findUserIdByEmail: ClerkDirectoryShape["findUserIdByEmail"] = (email) =>
+    Effect.tryPromise({
+      try: async () => {
+        const page = await client.users.getUserList({ emailAddress: [email], limit: 1 });
+        const user = page.data[0];
+        return user ? (user.id as UserId) : null;
+      },
+      catch: (cause) =>
+        new ClerkDirectoryError({
+          message: `Failed to resolve Clerk user by email '${email}'.`,
+          cause,
+        }),
+    });
+
+  return {
+    enabled: true,
+    descriptor,
+    verifySessionToken,
+    listOrgMembers,
+    isOrgAdmin,
+    findUserIdByEmail,
+  } satisfies ClerkDirectoryShape;
+});
 
 export const ClerkDirectoryLive = Layer.effect(
   ClerkDirectory,

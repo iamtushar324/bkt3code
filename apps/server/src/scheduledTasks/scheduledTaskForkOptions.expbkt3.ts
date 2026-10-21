@@ -241,21 +241,21 @@ export const scheduledTaskPauseReason = (
  * and pause a task that ran once or whose session is gone. Never fails: the
  * run itself already happened and was recorded.
  */
-export const afterScheduledTaskRun = (input: {
-  readonly sql: SqlClient.SqlClient;
-  readonly threadManagement: ThreadManagementService.ThreadManagementServiceShape;
-  readonly taskId: ScheduledTaskId;
-  readonly options: ScheduledTaskForkOptions;
-  readonly owner: UserId | undefined;
-  readonly trigger: "scheduled" | "manual" | "webhook";
-  /** The run's start, so a task deleted and made again under the same id is left alone. */
-  readonly startedAtIso: string;
-  readonly exit: Exit.Exit<unknown, unknown>;
-  readonly launchedThreadId: ThreadId | null;
-  readonly nextRunAtIso: string | null;
-  readonly now: DateTime.DateTime;
-}) =>
-  Effect.gen(function* () {
+export const afterScheduledTaskRun = Effect.fn("ScheduledTaskForkOptions.afterRun")(
+  function* (input: {
+    readonly sql: SqlClient.SqlClient;
+    readonly threadManagement: ThreadManagementService.ThreadManagementServiceShape;
+    readonly taskId: ScheduledTaskId;
+    readonly options: ScheduledTaskForkOptions;
+    readonly owner: UserId | undefined;
+    readonly trigger: "scheduled" | "manual" | "webhook";
+    /** The run's start, so a task deleted and made again under the same id is left alone. */
+    readonly startedAtIso: string;
+    readonly exit: Exit.Exit<unknown, unknown>;
+    readonly launchedThreadId: ThreadId | null;
+    readonly nextRunAtIso: string | null;
+    readonly now: DateTime.DateTime;
+  }) {
     let changed = false;
     if (input.options.quiet === true && input.launchedThreadId !== null) {
       const pauses = scheduledTaskPauseReason(input.options, input.exit) !== null;
@@ -292,11 +292,14 @@ export const afterScheduledTaskRun = (input: {
       changed = true;
     }
     return changed;
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("Could not finish a scheduled task run's options", {
-        taskId: input.taskId,
-        cause,
-      }).pipe(Effect.as(false)),
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not finish a scheduled task run's options", {
+          taskId: input.taskId,
+          cause,
+        }).pipe(Effect.as(false)),
+      ),
     ),
-  );
+);

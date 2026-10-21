@@ -21,24 +21,32 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { SessionIdentityEnvironmentService } from "../identity/SessionIdentityEnvironment.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { isActiveExternalGrant } from "../mcp/UserMcpProfileStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   ProviderAdapterProtocolError,
+  type ProviderAdapterV2,
   type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 vi.mock("../mcp/UserMcpProfileStore.ts", () => ({ isActiveExternalGrant: vi.fn() }));
+
+/** The thread's MCP session as the manager stored it in the shared `McpProviderSessions`. */
+const readMcpSession = Effect.fn(function* (threadId: ThreadId) {
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
+  return yield* sessions.read(threadId);
+});
 
 function fixture(provider = "codex") {
   const now = DateTime.makeUnsafe("2026-10-03T00:00:00Z");
@@ -91,8 +99,7 @@ function fixture(provider = "codex") {
   vi.mocked(isActiveExternalGrant).mockImplementation((user, hash) =>
     Effect.succeed(state.grantActive && user === actor && hash === "original-grant"),
   );
-  McpProviderSession.clearMcpProviderSession(threadId);
-  const adapter: ProviderAdapterV2Shape = {
+  const adapter: ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -143,34 +150,38 @@ function fixture(provider = "codex") {
         };
       }),
   };
+  const eventSink = Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) });
+  const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
+    getThread: () => Effect.succeed(thread as never),
+    getThreadRecords: () =>
+      Effect.succeed({
+        thread,
+        messages,
+        runtimeRequests: [],
+        nodes: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection),
+    getThreadShell: () =>
+      Effect.succeed({
+        ...thread,
+        activeRunId: state.stopped ? null : runId,
+        status: state.stopped ? "interrupted" : "starting",
+        pendingRuntimeRequest: state.pendingPrompt ? { id: "human-question" } : null,
+        hasActionableProposedPlan: false,
+        pendingBackgroundTasks: [],
+      } as never),
+  });
   const layer = ProviderSessionManager.layerWithOptions({ idleTimeoutMs: 60_000 }).pipe(
     Layer.provide(
       Layer.mergeAll(
         IdAllocator.layer,
         FileSystem.layerNoop({}),
         ProviderAdapterRegistry.layerSingle(adapter),
-        Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
+        eventSink,
         Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({}),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThread: () => Effect.succeed(thread as never),
-          getThreadRecords: () =>
-            Effect.succeed({
-              thread,
-              messages,
-              runtimeRequests: [],
-              nodes: [],
-              turnItems: [],
-            } as unknown as OrchestrationV2ThreadProjection),
-          getThreadShell: () =>
-            Effect.succeed({
-              ...thread,
-              activeRunId: state.stopped ? null : runId,
-              status: state.stopped ? "interrupted" : "starting",
-              pendingRuntimeRequest: state.pendingPrompt ? { id: "human-question" } : null,
-              hasActionableProposedPlan: false,
-              pendingBackgroundTasks: [],
-            } as never),
-        }),
+        projections,
+        // The manager forwards command output through the hub, as upstream's own fixture wires it.
+        CommandOutputHub.layer.pipe(Layer.provide(Layer.merge(eventSink, projections))),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed({
             experimental: { externalMcp: { enabled: true } },
@@ -226,6 +237,8 @@ function fixture(provider = "codex") {
         }),
       ),
     ),
+    // The manager writes the thread's MCP session here and the tests read it back.
+    Layer.provideMerge(McpProviderSessions.layer),
   );
   return {
     state,
@@ -254,7 +267,7 @@ it.effect.each(["grant", "stop"] as const)(
       expect(result._tag).toBe("Failure");
       expect(f.issued).toHaveLength(1);
       expect(f.state.opened).toBe(0);
-      expect(McpProviderSession.readMcpProviderSession(f.threadId)).toBeUndefined();
+      expect(yield* readMcpSession(f.threadId)).toBeUndefined();
     }).pipe(Effect.provide(f.layer));
   },
 );
@@ -339,9 +352,7 @@ it.effect.each(["codex", "claude-code", "cursor", "grok", "opencode", "antigravi
       expect(replacement).not.toBe(original);
       expect(f.state.opened).toBe(2);
       expect(f.state.closed).toBe(1);
-      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.upstreamServers).toEqual(
-        f.state.upstreamServers,
-      );
+      expect((yield* readMcpSession(f.threadId))?.upstreamServers).toEqual(f.state.upstreamServers);
       expect(yield* manager.open(f.open)).toBe(replacement);
       expect(f.state.opened).toBe(2);
     }).pipe(Effect.provide(f.layer));
@@ -380,15 +391,13 @@ it.effect.each(["prompt", "background"])(
     return Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const original = yield* manager.open(open);
-      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      const credential = (yield* readMcpSession(f.threadId))?.authorizationHeader;
       f.state.upstreamServers = [toolyardServer()];
       f.state.pendingPrompt = pending === "prompt";
       f.state.pendingWork = pending === "background";
       expect(yield* manager.open(open)).toBe(original);
       expect(f.state.closed).toBe(0);
-      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
-        credential,
-      );
+      expect((yield* readMcpSession(f.threadId))?.authorizationHeader).toBe(credential);
       f.state.pendingPrompt = false;
       f.state.pendingWork = false;
       expect(yield* manager.open(open)).not.toBe(original);
@@ -404,7 +413,7 @@ it.effect.each([false, true])(
     return Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const original = yield* manager.open(f.open);
-      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      const credential = (yield* readMcpSession(f.threadId))?.authorizationHeader;
       f.state.upstreamServers = [toolyardServer()];
       const start = original.startTurn({
         threadId: f.threadId,
@@ -417,9 +426,7 @@ it.effect.each([false, true])(
       else yield* start;
       expect(yield* manager.open(f.open)).toBe(original);
       expect(f.state.closed).toBe(0);
-      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
-        credential,
-      );
+      expect((yield* readMcpSession(f.threadId))?.authorizationHeader).toBe(credential);
       f.state.onInspect = Effect.void;
       yield* Queue.offer(f.state.events!, {
         type: "turn.terminal",
@@ -446,15 +453,13 @@ it.effect(
     return Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const original = yield* manager.open(f.open);
-      const credential = McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader;
+      const credential = (yield* readMcpSession(f.threadId))?.authorizationHeader;
       f.state.upstreamServers = [];
       f.state.inspectionUnavailable = true;
       expect(yield* manager.open(f.open)).toBe(original);
       expect(f.state.closed).toBe(0);
       expect(f.issued).toHaveLength(1);
-      expect(McpProviderSession.readMcpProviderSession(f.threadId)?.authorizationHeader).toBe(
-        credential,
-      );
+      expect((yield* readMcpSession(f.threadId))?.authorizationHeader).toBe(credential);
       f.state.inspectionUnavailable = false;
       expect(yield* manager.open(f.open)).not.toBe(original);
       expect(f.state.closed).toBe(1);

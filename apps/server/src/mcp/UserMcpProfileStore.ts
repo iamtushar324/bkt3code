@@ -659,12 +659,13 @@ export const layer = Layer.effect(
       revokeExternalToken: (userId) =>
         userLock.withLock(userId, revokeExternalTokenUnlocked(userId)),
       resolveExternalToken,
-      isExternalGrantActive: (userId, tokenHash) =>
-        Effect.gen(function* () {
+      isExternalGrantActive: Effect.fn("UserMcpProfileStore.isExternalGrantActive")(
+        function* (userId, tokenHash) {
           const row = yield* readRow(userId);
           if (!row?.externalTokenHash || row.externalTokenHash !== tokenHash) return false;
           return (yield* materialize(userId, row)).externalAccessEnabled;
-        }),
+        },
+      ),
       getIntegrationCredential,
       setIntegrationCredential: (userId, integrationId, credential, connection) =>
         userLock.withLock(

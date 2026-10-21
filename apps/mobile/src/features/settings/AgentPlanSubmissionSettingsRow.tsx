@@ -13,19 +13,18 @@ function AgentPlanSubmissionEnvironmentRow({ target }: { readonly target: Settin
   });
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
+  // `.finally()` instead of try/finally: the React Compiler cannot lower a try without a catch.
   const change = async (enabled: boolean) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setPending(true);
-    try {
-      await updateSettings({
-        environmentId: target.environmentId,
-        input: { patch: { experimental: { agentPlanSubmissionEnabled: enabled } } },
-      });
-    } finally {
+    await updateSettings({
+      environmentId: target.environmentId,
+      input: { patch: { experimental: { agentPlanSubmissionEnabled: enabled } } },
+    }).finally(() => {
       inFlight.current = false;
       setPending(false);
-    }
+    });
   };
   return (
     <SettingsSwitchRow

@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): Mattermost conversation link editor opened from a thread row. */
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -30,11 +30,15 @@ export function MattermostLinkDialog({
   const [url, setUrl] = useState(initialUrl);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setUrl(initialUrl);
-    setError(null);
-  }, [initialUrl, open]);
+  // Reset the form during render whenever the dialog opens or its link changes.
+  const [formSource, setFormSource] = useState({ open, initialUrl });
+  if (formSource.open !== open || formSource.initialUrl !== initialUrl) {
+    setFormSource({ open, initialUrl });
+    if (open) {
+      setUrl(initialUrl);
+      setError(null);
+    }
+  }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

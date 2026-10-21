@@ -76,6 +76,17 @@ export function usePlanReviewScrollSurfaceRef() {
   );
 }
 
+// The portal container is a DOM node React never renders, so it is moved and restyled outside it.
+function placePortalNode(portalNode: HTMLDivElement, destination: HTMLElement, docked: boolean) {
+  portalNode.className = docked ? "block min-w-0 w-full" : "contents";
+  if (docked) {
+    portalNode.dataset.planReviewComposerDocked = "true";
+  } else {
+    delete portalNode.dataset.planReviewComposerDocked;
+  }
+  destination.append(portalNode);
+}
+
 /** Keep one mounted composer while its portal container moves between homes. */
 export function PlanReviewComposerDock(props: ComponentProps<typeof ComposerSurface.Shell>) {
   const target = usePlanReviewComposerDockStore((state) => state.target);
@@ -87,13 +98,7 @@ export function PlanReviewComposerDock(props: ComponentProps<typeof ComposerSurf
     const destination = target ?? homeRef.current;
     if (destination === null) return;
 
-    portalNode.className = target === null ? "contents" : "block min-w-0 w-full";
-    if (target === null) {
-      delete portalNode.dataset.planReviewComposerDocked;
-    } else {
-      portalNode.dataset.planReviewComposerDocked = "true";
-    }
-    destination.append(portalNode);
+    placePortalNode(portalNode, destination, target !== null);
   }, [portalNode, target]);
 
   // Focus is tracked on the portal element rather than through the composer's
@@ -150,10 +155,6 @@ export function PlanReviewComposerDock(props: ComponentProps<typeof ComposerSurf
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Resting while docked
-// ---------------------------------------------------------------------------
 
 /**
  * Whether the composer's plan follow-up banner should be shown.
@@ -228,10 +229,6 @@ export function usePlanReviewDockedRest(input: {
     setIsComposerScrollCollapsed(true);
   }, [isComposerScrollCollapsed, setIsComposerScrollCollapsed, shouldRest]);
 }
-
-// ---------------------------------------------------------------------------
-// Scroll surface
-// ---------------------------------------------------------------------------
 
 const SCROLLABLE_RESOLUTION_TTL_MS = 500;
 

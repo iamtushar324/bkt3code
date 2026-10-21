@@ -2,7 +2,7 @@
  * T3-CUSTOM(expbkt3): members pair their own devices.
  *
  * Upstream gates the whole pairing surface behind `access:write`, which
- * `AuthStandardClientScopes` omits. On a team-mode server that means an ordinary
+ * `AuthMemberClientScopes` omits. On a team-mode server that means an ordinary
  * member — and a Clerk org admin whose session carries only standard scopes —
  * cannot generate a credential for their own laptop or phone, so pairing needs
  * an environment administrator every time.
@@ -20,7 +20,7 @@
  *
  * - the subject is derived from the session, never from the payload, so a
  *   credential can only ever act as its creator (see `OperatorIdentity.ts`);
- * - scopes are the caller's own, intersected with the standard client set, so a
+ * - scopes are the caller's own, intersected with the member client set, so a
  *   self-issued credential can never carry `access:*` or `relay:write` even if
  *   the caller somehow holds them;
  * - a member may hold only {@link SELF_SERVICE_PAIRING_LIMIT} pairings at once,
@@ -37,7 +37,7 @@ import type {
   AuthPairingLink,
   UserId,
 } from "@t3tools/contracts";
-import { AuthStandardClientScopes, clerkSubjectForUser } from "@t3tools/contracts";
+import { AuthMemberClientScopes, clerkSubjectForUser } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 
 import type * as PairingGrantStore from "./PairingGrantStore.ts";
@@ -67,13 +67,13 @@ export const PAIRED_SESSION_TTL = Duration.days(36_500);
 
 /**
  * Scopes a self-issued credential may carry: the caller's own, narrowed to the
- * standard client set. `access:read`, `access:write` and `relay:write` are
+ * member client set. `access:read`, `access:write` and `relay:write` are
  * absent from that set, so they can never be delegated this way.
  */
 export function selfServicePairingScopes(
   sessionScopes: ReadonlySet<AuthEnvironmentScope>,
 ): ReadonlyArray<AuthEnvironmentScope> {
-  return AuthStandardClientScopes.filter((scope) => sessionScopes.has(scope));
+  return AuthMemberClientScopes.filter((scope) => sessionScopes.has(scope));
 }
 
 /** Whether every requested scope is one this caller may self-delegate. */

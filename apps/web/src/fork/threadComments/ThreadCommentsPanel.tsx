@@ -195,11 +195,9 @@ export function ThreadCommentsPanel({ threadRef }: { threadRef: ScopedThreadRef 
   const run = async (operation: () => Promise<{ readonly _tag: string }>): Promise<boolean> => {
     if (busy) return false;
     setBusy(true);
-    try {
-      return (await operation())._tag === "Success";
-    } finally {
-      setBusy(false);
-    }
+    // `.finally()` rather than try/finally, which the React Compiler cannot lower.
+    const result = await operation().finally(() => setBusy(false));
+    return result._tag === "Success";
   };
 
   const environmentId = threadRef.environmentId;

@@ -1,9 +1,10 @@
 /**
  * T3-CUSTOM(expbkt3): adapter continuations under a held queue.
  *
- * Stop holds a thread's queued runs until the user resumes the queue, and a
- * message queued behind a held run copies the hold, so user messages keep
- * their order. An adapter continuation is different: ProviderContinuationService
+ * Stop holds a thread's queued runs until the user resumes the queue or sends a
+ * message from a client (upstream #21473), and any other message queued behind a
+ * held run copies the hold, so messages keep their order. An adapter
+ * continuation is different: ProviderContinuationService
  * dispatches it when the provider reported background work while no turn was
  * open. Claude, ACP and OpenCode buffer the output their CLI already produced
  * until the continuation run starts; holding it strands that output (and the

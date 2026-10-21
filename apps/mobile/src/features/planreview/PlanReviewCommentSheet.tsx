@@ -11,7 +11,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { planReviewEnvironment } from "../../state/planReview";
 import { useAtomCommand } from "../../state/use-atom-command";

@@ -14,7 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { EventSinkV2Shape } from "./EventSink.ts";
-import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
+import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import type { ProjectionRuntimeRecoveryState, ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 import type { ProviderSessionReleaseReason } from "./ProviderSessionManager.ts";
 
@@ -23,7 +23,7 @@ type ExecutionNode = OrchestrationV2ThreadProjection["nodes"][number];
 
 export interface ReleasedSessionSubagentsInput {
   readonly projectionStore: ProjectionStoreV2Shape;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocatorV2["Service"];
   readonly eventSink: EventSinkV2Shape;
   readonly providerSessionId: ProviderSessionId;
   readonly reason: ProviderSessionReleaseReason;
@@ -77,10 +77,10 @@ const cancelledItem = (item: TurnItem, now: DateTime.Utc): TurnItem =>
  * Never fails: the release must complete either way, and startup recovery is
  * the fallback for a write that did not land.
  */
-export const settleReleasedSessionSubagents = (
+export const settleReleasedSessionSubagents: (
   input: ReleasedSessionSubagentsInput,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
+) => Effect.Effect<void> = Effect.fn("ProviderSessionManager.settleReleasedSessionSubagents")(
+  function* (input: ReleasedSessionSubagentsInput) {
     if (input.reason === "server_shutdown") return;
     const liveThreadIds = yield* input.liveThreadIds;
     const now = yield* DateTime.now;
@@ -276,13 +276,16 @@ export const settleReleasedSessionSubagents = (
       providerSessionId: input.providerSessionId,
       subagentIds: settledSubagentIds,
     });
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Cause.hasInterruptsOnly(cause)
-        ? Effect.interrupt
-        : Effect.logWarning("orchestration-v2.provider-session-release-subagents-failed", {
-            providerSessionId: input.providerSessionId,
-            cause: Cause.pretty(cause),
-          }),
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("orchestration-v2.provider-session-release-subagents-failed", {
+              providerSessionId: input.providerSessionId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
     ),
-  );
+);

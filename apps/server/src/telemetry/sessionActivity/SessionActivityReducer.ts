@@ -177,9 +177,8 @@ export const SESSION_ACTIVITY_PROPERTY_KEYS = [
   "activeSubagents",
 ] as const;
 
-// ---------------------------------------------------------------------------
-// Payload readers. Payloads arrive decoded (live) or as parsed JSON (backfill),
-// so every read is defensive and typed `unknown` until checked.
+// Payloads arrive decoded (live) or as parsed JSON (backfill), so every read
+// is defensive and typed `unknown` until checked.
 
 type Rec = Readonly<Record<string, unknown>>;
 
@@ -334,9 +333,6 @@ function holdingRosterTaskCount(tasks: unknown): number {
   }
   return count;
 }
-
-// ---------------------------------------------------------------------------
-// Tracker state.
 
 interface RunInfo {
   readonly id: string;

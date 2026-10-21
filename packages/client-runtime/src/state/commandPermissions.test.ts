@@ -8,6 +8,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
+  AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -58,6 +61,82 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination preview grant to close a browser tab", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const close = createCommandPermissions(runtime, WS_METHODS.previewClose);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(close.permissionAtom(env))).toBe(false);
+        expect((yield* close.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthPreviewOperateScope],
+            permissions: [AuthPreviewOperateScope],
+          }),
+        );
+        expect(registry.get(close.permissionAtom(env))).toBe(true);
+        yield* close.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(close.permissionAtom(other))).toBe(false);
+        expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
+  it.effect("requires the destination settings grant to run storage cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cleanup = createCommandPermissions(runtime, WS_METHODS.serverRunStorageCleanup);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
+        expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
+        yield* cleanup.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(check.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(check.permissionAtom(env))).toBe(true);
+        yield* check.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -202,6 +281,46 @@ it.effect(
         );
         expect(registry.get(prepare.permissionAtom(env, input))).toBe(true);
         yield* prepare.authorize(registry, env, input);
+      }),
+    ),
+);
+
+it.effect.each(["commit", "push", "commit_push", "create_pr", "commit_push_pr"] as const)(
+  "%s needs thread read permission only when generating a PR from a thread",
+  (action) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, WS_METHODS.gitRunStackedAction);
+        const input = { actionId: "action", cwd: "/repo", action };
+        const withThread = { ...input, threadId: ThreadId.make("thread") };
+        const session = {
+          ...grant(false),
+          scopes: [AuthSourceControlWriteScope],
+          permissions: [AuthSourceControlWriteScope],
+        };
+        registry.set(sessions(env), AsyncResult.success(session));
+        expect(registry.get(command.permissionAtom(env, input))).toBe(true);
+        yield* command.authorize(registry, env, input);
+        const readsThread = action === "create_pr" || action === "commit_push_pr";
+        expect(registry.get(command.permissionAtom(env, withThread))).toBe(!readsThread);
+        if (readsThread) {
+          expect(
+            yield* command.authorize(registry, env, withThread).pipe(Effect.flip),
+          ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+        } else {
+          yield* command.authorize(registry, env, withThread);
+        }
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...session,
+            scopes: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
+            permissions: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
+          }),
+        );
+        expect(registry.get(command.permissionAtom(env, withThread))).toBe(true);
+        yield* command.authorize(registry, env, withThread);
       }),
     ),
 );

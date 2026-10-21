@@ -40,6 +40,8 @@ const UPSTREAM_REF = process.env.FORK_UPSTREAM_REF ?? "origin/main";
 const EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
   /\.test\.tsx?$/,
   /\.gen\.ts$/,
+  // Generated GraphQL clients cannot carry marker comments; the .graphql source does.
+  /\.graphql\.ts$/,
   /routeTree\.gen\.ts$/,
   /^docs\//,
   /^AGENTS\.md$/,

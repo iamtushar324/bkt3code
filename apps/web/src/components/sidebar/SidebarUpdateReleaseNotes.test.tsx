@@ -1,6 +1,6 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { isValidElement, type MouseEvent, type ReactElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   addToast: vi.fn(),
@@ -11,6 +11,12 @@ vi.mock("../ui/toast", () => ({
 }));
 
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
+// T3-CUSTOM(expbkt3): BEGIN — the release repository is baked from the build's
+// GITHUB_REPOSITORY, which is the fork in fork CI, so expect whichever one this build has.
+import { getDesktopUpdateReleaseHistoryUrl } from "../desktopUpdate.logic";
+
+const releasesUrl = getDesktopUpdateReleaseHistoryUrl();
+// T3-CUSTOM(expbkt3): END
 
 type AnchorElement = ReactElement<{
   readonly children?: ReactNode;
@@ -74,6 +80,26 @@ describe("SidebarUpdateReleaseNotes", () => {
     testState.addToast.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("uses the configured repository for release links", () => {
+    vi.stubEnv("T3CODE_DESKTOP_UPDATE_REPOSITORY", "JustYannicc/t3code");
+    const anchors = collectAnchors(
+      renderNotes({
+        ...baseState,
+        releaseNotes: [{ version: "0.0.36-nightly.3", items: ["Change 3"], totalItems: 1 }],
+        omittedReleaseCount: 1,
+      }),
+    );
+
+    expect(anchors.map(({ props }) => props.href)).toEqual([
+      "https://github.com/JustYannicc/t3code/releases/tag/v0.0.36-nightly.3",
+      "https://github.com/JustYannicc/t3code/releases",
+    ]);
+  });
+
   it("links each preview to its exact release and labels hidden changes", () => {
     const anchors = collectAnchors(
       renderNotes({
@@ -87,9 +113,9 @@ describe("SidebarUpdateReleaseNotes", () => {
     );
 
     expect(anchors.map(({ props }) => props.href)).toEqual([
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.3",
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.2",
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.1",
+      `${releasesUrl}/tag/v0.0.36-nightly.3`,
+      `${releasesUrl}/tag/v0.0.36-nightly.2`,
+      `${releasesUrl}/tag/v0.0.36-nightly.1`,
     ]);
     expect(anchors.map(({ props }) => textContent(props.children))).toEqual([
       "View release on GitHub",
@@ -107,7 +133,7 @@ describe("SidebarUpdateReleaseNotes", () => {
       }),
     );
 
-    expect(anchors.at(-1)?.props.href).toBe("https://github.com/pingdotgg/t3code/releases");
+    expect(anchors.at(-1)?.props.href).toBe(releasesUrl);
     expect(textContent(anchors.at(-1)?.props.children)).toBe("1 older release on GitHub");
   });
 
@@ -140,9 +166,7 @@ describe("SidebarUpdateReleaseNotes", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.36-nightly.3",
-      );
+      expect(openExternal).toHaveBeenCalledWith(`${releasesUrl}/tag/v0.0.36-nightly.3`);
       expect(testState.addToast).toHaveBeenCalledWith({
         type: "error",
         title: "Unable to open release notes",

@@ -53,8 +53,8 @@ const make = Effect.gen(function* () {
       Effect.flatMap((decoded) => orchestrator.dispatch(decoded, { actorUserId })),
       Effect.map(({ sequence }) => ({ sequence })),
     );
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command, options) =>
-    Effect.gen(function* () {
+  const dispatch: OrchestrationEngineShape["dispatch"] = Effect.fn("OrchestrationEngine.dispatch")(
+    function* (command, options) {
       const actorUserId =
         options?.actorUserId === undefined
           ? yield* CurrentOrchestrationActorUserId
@@ -294,16 +294,20 @@ const make = Effect.gen(function* () {
         default:
           return yield* dispatchNative(command, actorUserId);
       }
-    }).pipe(
-      Effect.mapError((cause) =>
-        Schema.is(OrchestrationCommandInvariantError)(cause)
-          ? cause
-          : invariant(command.type, "The V2 command could not complete.", cause),
+    },
+    (effect, command) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          Schema.is(OrchestrationCommandInvariantError)(cause)
+            ? cause
+            : invariant(command.type, "The V2 command could not complete.", cause),
+        ),
       ),
-    );
+  );
 
-  const eventView = (stored: ApplicationStoredEvent) =>
-    Effect.gen(function* () {
+  // Untraced: runs once per stored event while a stream replays history.
+  const eventView = Effect.fnUntraced(
+    function* (stored: ApplicationStoredEvent) {
       if (!("event" in stored)) {
         const payload =
           stored.type === "project.member-added"
@@ -444,7 +448,9 @@ const make = Effect.gen(function* () {
           return [];
       }
       return [yield* Schema.decodeUnknownEffect(OrchestrationEvent)({ ...base, type, payload })];
-    }).pipe(Effect.mapError(toPersistenceSqlError("V2 fork compatibility events")));
+    },
+    Effect.mapError(toPersistenceSqlError("V2 fork compatibility events")),
+  );
   const translate = (source: Stream.Stream<ApplicationStoredEvent, unknown>) =>
     source.pipe(
       Stream.mapEffect(eventView),

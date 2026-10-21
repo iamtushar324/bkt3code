@@ -19,10 +19,11 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 // T3-CUSTOM(expbkt3): profile validation reads GitHub through upstream's API transport.
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { make, sourceControlProfileSecretName } from "./SourceControlProfileService.ts";
 
-const output = (body: string): GitHubApi.GitHubRestResponse => ({
+const output = (body: string): GitHubRest.GitHubRestResponse => ({
   status: 200,
   headers: {},
   body,
@@ -53,22 +54,22 @@ const makeHarness = Effect.gen(function* () {
       remove: (name) => Effect.sync(() => void secrets.delete(name)),
     }),
   );
-  const githubLayer = Layer.mock(GitHubApi.GitHubApi)({
+  const githubLayer = Layer.mock(GitHubRest.GitHubRest)({
     rest: (input) =>
       Effect.gen(function* () {
         // The profile's token arrives pinned, never through the machine's credential.
-        const pinned = yield* GitHubApi.PinnedGitHubCredential;
+        const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
         const credential = pinned === null ? undefined : Redacted.value(pinned.token);
         validationCredentials.push({ host: pinned?.host ?? "", token: credential ?? "" });
         if (credential === "invalid-token") {
-          return yield* new GitHubApi.GitHubApiAuthenticationError({
+          return yield* new GitHubRequestPolicy.GitHubApiAuthenticationError({
             host: input.host,
             operation: input.operation,
           });
         }
         if (input.path === "user/emails") {
           if (credential === "email-private-token") {
-            return yield* new GitHubApi.GitHubApiResponseError({
+            return yield* new GitHubRequestPolicy.GitHubApiResponseError({
               host: input.host,
               operation: input.operation,
               status: 403,

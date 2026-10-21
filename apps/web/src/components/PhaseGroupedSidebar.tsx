@@ -71,6 +71,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -114,6 +115,7 @@ import { usePhaseSidebarFilterStore } from "../phaseSidebarFilterStore";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import {
   useEnvironmentAppearances,
+  useEnvironmentProviders,
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
@@ -337,6 +339,70 @@ const linearIssueStatusKey = (environmentId: string, identifier: string) =>
 // T3-CUSTOM(expbkt3): one shared empty list, so an untagged row's prop never changes.
 const NO_LINEAR_ISSUE_STATUSES: ReadonlyArray<LinearIssueStatusSummary> = [];
 
+// T3-CUSTOM(expbkt3): each thread's issue keys, parsed again only when its shell
+// changes. Shell events rebuild the row list constantly; the tags almost never move.
+// Keyed weakly by the immutable shell, so render can read it without a ref.
+const linearIdentifiersByThread = new WeakMap<PhaseSidebarRow["thread"], ReadonlyArray<string>>();
+function linearIdentifiersForRow(row: PhaseSidebarRow): ReadonlyArray<string> {
+  const cached = linearIdentifiersByThread.get(row.thread);
+  if (cached) return cached;
+  const identifiers = phaseSidebarLinearIssueIdentifiers(
+    phaseSidebarLinearTagRefs(row.thread.branch, row.thread.linearLinks),
+  );
+  linearIdentifiersByThread.set(row.thread, identifiers);
+  return identifiers;
+}
+
+// T3-CUSTOM(expbkt3): one list instance per sequence of summary objects. The status
+// map keeps unchanged summaries, so a row's list keeps its identity and the memo'd
+// row skips re-rendering. A trie of weak maps, so dropped summaries are collected.
+interface LinearStatusListNode {
+  list: ReadonlyArray<LinearIssueStatusSummary> | null;
+  readonly next: WeakMap<LinearIssueStatusSummary, LinearStatusListNode>;
+}
+const linearStatusListRoot = new WeakMap<LinearIssueStatusSummary, LinearStatusListNode>();
+function internLinearStatusList(
+  statuses: ReadonlyArray<LinearIssueStatusSummary>,
+): ReadonlyArray<LinearIssueStatusSummary> {
+  let level = linearStatusListRoot;
+  let node: LinearStatusListNode | undefined;
+  for (const status of statuses) {
+    node = level.get(status);
+    if (!node) {
+      node = { list: null, next: new WeakMap() };
+      level.set(status, node);
+    }
+    level = node.next;
+  }
+  if (!node) return NO_LINEAR_ISSUE_STATUSES;
+  node.list ??= statuses;
+  return node.list;
+}
+
+// T3-CUSTOM(expbkt3): the phase each row showed while every environment's shells
+// were live; rows fall back to it while shells are still arriving.
+function phaseSidebarPhasesByThreadKey(
+  rows: ReadonlyArray<PhaseSidebarRow>,
+): ReadonlyMap<string, PhaseSidebarPhaseId> {
+  return new Map(
+    rows.map((row) => [
+      scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)),
+      row.phaseId,
+    ]),
+  );
+}
+
+function samePhaseSidebarPhases(
+  left: ReadonlyMap<string, PhaseSidebarPhaseId>,
+  right: ReadonlyMap<string, PhaseSidebarPhaseId>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [threadKey, phaseId] of left) {
+    if (right.get(threadKey) !== phaseId) return false;
+  }
+  return true;
+}
+
 // The failed branch of a settle/snooze command — the four of them share one
 // error reporter, so it takes the widened failure shape.
 type ParkingCommandFailure = Extract<
@@ -347,7 +413,7 @@ type ParkingCommandFailure = Extract<
 // Row hover affordances live in a shared overlay pill, so they need one
 // shared button shape.
 const ROW_ACTION_CLASS =
-  "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 // T3-CUSTOM(expbkt3): one glyph per Linear tag kind, so a project, a main issue
 // and a sub-issue read apart at a glance.
@@ -1974,7 +2040,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-testid={`linear-issue-${row.thread.id}`}
                         data-linear-tag-kind={linearTags.primary.kind}
                         aria-label={`Open ${linearTags.primary.label} in Linear`}
-                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={openLinearIssue}
                         onDoubleClick={(event) => event.stopPropagation()}
                         onKeyDown={(event) => {
@@ -1999,7 +2065,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-testid={`linear-issue-${row.thread.id}`}
                         data-linear-tag-kind={linearTags.primary.kind}
                         aria-label={`${linearTags.entries.length} Linear tags`}
-                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
                           event.stopPropagation();
                         }}
@@ -2022,7 +2088,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         type="button"
                         aria-label={entry.tooltip}
                         data-linear-tag-kind={entry.kind}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event) => {
                           event.stopPropagation();
                           openRowLink(entry.url, event, `Failed to open ${entry.label}`);
@@ -2058,7 +2124,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         data-change-request-state={changeRequestBadge.state}
                         aria-label={`Open ${changeRequestBadge.label} (${changeRequestBadge.statusText})`}
                         className={cn(
-                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
                           changeRequestBadge.colorClassName,
                         )}
                         onClick={openChangeRequest}
@@ -2091,7 +2157,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                             : "linked pull requests"
                         }`}
                         className={cn(
-                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          "inline-flex max-w-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap font-medium hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
                           changeRequestBadge.colorClassName,
                         )}
                         onClick={(event: ReactMouseEvent<HTMLSpanElement>) => {
@@ -2121,7 +2187,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                         key={entry.url}
                         type="button"
                         data-change-request-state={entry.state}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={(event) => {
                           event.stopPropagation();
                           openChangeRequestUrl(entry.url, entry.label, event);
@@ -2536,6 +2602,7 @@ export function PhaseGroupedSidebar() {
   const projects = useProjects();
   const threads = useThreadShells();
   const serverConfigs = useServerConfigs();
+  const providersByEnvironment = useEnvironmentProviders();
   const { networkStatus, environments } = useEnvironments();
   const allEnvironmentShellsLive = useAtomValue(allEnvironmentShellsLiveAtom);
   const router = useRouter();
@@ -2611,7 +2678,9 @@ export function PhaseGroupedSidebar() {
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const renameCommitInFlightRef = useRef(false);
-  const lastKnownPhaseByThreadKeyRef = useRef(new Map<string, PhaseSidebarPhaseId>());
+  const [lastKnownPhaseByThreadKey, setLastKnownPhaseByThreadKey] = useState<
+    ReadonlyMap<string, PhaseSidebarPhaseId>
+  >(() => new Map());
   const shortcutModifiers = useShortcutModifierState();
   const routeRef = resolveThreadRouteRef(routeParams);
   const routeThreadKey = routeRef ? scopedThreadKey(routeRef) : null;
@@ -2642,8 +2711,10 @@ export function PhaseGroupedSidebar() {
   );
   const providerOptions = useMemo(() => {
     const options = new Map<string, ProviderOption>();
-    for (const config of serverConfigs.values()) {
-      for (const provider of config.providers) {
+    for (const [environmentId, providers] of providersByEnvironment) {
+      // The providers map spans every catalogued host; offer only enabled ones.
+      if (!serverConfigs.has(environmentId)) continue;
+      for (const provider of providers) {
         const kind = String(provider.driver);
         const name = provider.displayName ?? kind;
         const existing = options.get(kind);
@@ -2658,9 +2729,9 @@ export function PhaseGroupedSidebar() {
     }
     for (const thread of threads) {
       const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-      const provider = serverConfigs
+      const provider = providersByEnvironment
         .get(thread.environmentId)
-        ?.providers.find((candidate) => candidate.instanceId === instanceId);
+        ?.find((candidate) => candidate.instanceId === instanceId);
       const kind = String(provider?.driver ?? instanceId);
       if (!options.has(kind)) {
         options.set(kind, {
@@ -2671,7 +2742,7 @@ export function PhaseGroupedSidebar() {
       }
     }
     return [...options.values()].sort((left, right) => left.name.localeCompare(right.name));
-  }, [serverConfigs, threads]);
+  }, [providersByEnvironment, serverConfigs, threads]);
   const providerLabels = useMemo(
     () => new Map(providerOptions.map((option) => [option.kind, option.name])),
     [providerOptions],
@@ -2734,8 +2805,8 @@ export function PhaseGroupedSidebar() {
     [],
   );
   // T3-CUSTOM(expbkt3): row assembly lives in client-runtime so the mobile
-  // phase sidebar builds identical rows. Only the last-known-phase ref stays
-  // here, because it is this component's own anti-flap state.
+  // phase sidebar builds identical rows. Only the last-known phases stay
+  // here, because they are this component's own anti-flap state.
   // T3-CUSTOM(expbkt3): custom groups live on the thread; this device's
   // pre-label placements only fill in for threads that have none yet.
   const grouping = usePhaseSidebarGroupingStore((state) => state.grouping);
@@ -2743,30 +2814,44 @@ export function PhaseGroupedSidebar() {
     (threadKey: string) => phaseSidebarLocalCustomGroupForThread(grouping, threadKey),
     [grouping],
   );
+  // Null while live, so recording the live phases below never rebuilds the rows.
+  const fallbackPhaseByThreadKey = allEnvironmentShellsLive ? null : lastKnownPhaseByThreadKey;
   const allRows = useMemo<ReadonlyArray<PhaseSidebarRow>>(
     () =>
       buildPhaseSidebarRows({
         threads,
         projects,
         serverConfigs,
+        providersByEnvironment,
         vcsStatusByThreadKey,
         lastVisitedAtByThreadKey,
         currentUserId,
         allEnvironmentShellsLive,
-        lastKnownPhaseByThreadKey: lastKnownPhaseByThreadKeyRef.current,
+        lastKnownPhaseByThreadKey: fallbackPhaseByThreadKey,
         localCustomGroupForKey,
       }),
     [
       projects,
       serverConfigs,
+      providersByEnvironment,
       threads,
       allEnvironmentShellsLive,
       currentUserId,
+      fallbackPhaseByThreadKey,
       lastVisitedAtByThreadKey,
       localCustomGroupForKey,
       vcsStatusByThreadKey,
     ],
   );
+  // Remember the live phases, and only re-render for them when a phase moved.
+  const changedLivePhaseByThreadKey = useMemo(() => {
+    if (!allEnvironmentShellsLive) return null;
+    const next = phaseSidebarPhasesByThreadKey(allRows);
+    return samePhaseSidebarPhases(next, lastKnownPhaseByThreadKey) ? null : next;
+  }, [allEnvironmentShellsLive, allRows, lastKnownPhaseByThreadKey]);
+  if (changedLivePhaseByThreadKey !== null) {
+    setLastKnownPhaseByThreadKey(changedLivePhaseByThreadKey);
+  }
   // T3-CUSTOM(expbkt3): BEGIN — worktree codenames. Resolved across the whole
   // thread set rather than per row, because both answers are properties of the
   // set: codenames disambiguate against each other, and occupancy is a count.
@@ -3181,39 +3266,8 @@ export function PhaseGroupedSidebar() {
     return visibleRows.some((candidate) => candidate.thread.environmentId !== first);
   }, [visibleRows]);
   // T3-CUSTOM(expbkt3): END
-  // T3-CUSTOM(expbkt3): each row's issue keys, parsed again only when its tags
-  // or branch change. Shell events rebuild `visibleRows` constantly; the tags
-  // almost never move.
-  const linearIdentifiersCacheRef = useRef(
-    new Map<
-      string,
-      {
-        readonly branch: string | null;
-        readonly links: PhaseSidebarRow["thread"]["linearLinks"];
-        readonly identifiers: ReadonlyArray<string>;
-      }
-    >(),
-  );
-  const linearIdentifiersForRow = useCallback((row: PhaseSidebarRow): ReadonlyArray<string> => {
-    const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
-    const cached = linearIdentifiersCacheRef.current.get(key);
-    if (cached && cached.branch === row.thread.branch && cached.links === row.thread.linearLinks) {
-      return cached.identifiers;
-    }
-    const identifiers = phaseSidebarLinearIssueIdentifiers(
-      phaseSidebarLinearTagRefs(row.thread.branch, row.thread.linearLinks),
-    );
-    linearIdentifiersCacheRef.current.set(key, {
-      branch: row.thread.branch,
-      links: row.thread.linearLinks,
-      identifiers,
-    });
-    return identifiers;
-  }, []);
   // T3-CUSTOM(expbkt3): each row's own statuses, keeping the previous list while
-  // every summary in it is the same object (the status map preserves unchanged
-  // summaries), so the memo'd row skips re-rendering.
-  const linearStatusesCacheRef = useRef(new Map<string, ReadonlyArray<LinearIssueStatusSummary>>());
+  // every summary in it is the same object (see internLinearStatusList).
   const linearStatusesForRow = (row: PhaseSidebarRow): ReadonlyArray<LinearIssueStatusSummary> => {
     if (!row.linearIssueSupported) return NO_LINEAR_ISSUE_STATUSES;
     const identifiers = linearIdentifiersForRow(row);
@@ -3225,18 +3279,7 @@ export function PhaseGroupedSidebar() {
       );
       if (status) statuses.push(status);
     }
-    if (statuses.length === 0) return NO_LINEAR_ISSUE_STATUSES;
-    const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
-    const previous = linearStatusesCacheRef.current.get(key);
-    if (
-      previous &&
-      previous.length === statuses.length &&
-      previous.every((status, index) => status === statuses[index])
-    ) {
-      return previous;
-    }
-    linearStatusesCacheRef.current.set(key, statuses);
-    return statuses;
+    return internLinearStatusList(statuses);
   };
   const linearIssueStatusRequests = useMemo(() => {
     const identifiersByEnvironment = new Map<EnvironmentId, Set<string>>();
@@ -3253,31 +3296,9 @@ export function PhaseGroupedSidebar() {
       environmentId,
       identifiers: [...identifiers].sort(),
     }));
-  }, [linearIdentifiersForRow, visibleRows]);
+  }, [visibleRows]);
   // T3-CUSTOM(expbkt3): END
 
-  useEffect(() => {
-    const next = new Map(lastKnownPhaseByThreadKeyRef.current);
-    for (const row of allRows) {
-      if (allEnvironmentShellsLive) {
-        next.set(
-          scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)),
-          row.phaseId,
-        );
-      }
-    }
-    if (allEnvironmentShellsLive) {
-      const currentKeys = new Set(
-        allRows.map((row) =>
-          scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id)),
-        ),
-      );
-      for (const threadKey of next.keys()) {
-        if (!currentKeys.has(threadKey)) next.delete(threadKey);
-      }
-    }
-    lastKnownPhaseByThreadKeyRef.current = next;
-  }, [allEnvironmentShellsLive, allRows]);
   const visibleThreadKeys = useMemo(
     () =>
       visibleRows.map((row) =>
@@ -3888,9 +3909,11 @@ export function PhaseGroupedSidebar() {
   // row on each navigation. They also have to read the CURRENT route when a
   // command resolves, not the one captured when it started.
   const activeVisibleRowsRef = useRef(activeVisibleRows);
-  activeVisibleRowsRef.current = activeVisibleRows;
   const routeThreadKeyRef = useRef(routeThreadKey);
-  routeThreadKeyRef.current = routeThreadKey;
+  useLayoutEffect(() => {
+    activeVisibleRowsRef.current = activeVisibleRows;
+    routeThreadKeyRef.current = routeThreadKey;
+  });
   // One parking command per thread at a time: a double click must not
   // dispatch a second settle that fails and toasts a false error.
   const parkingThreadKeysRef = useRef(new Set<string>());
@@ -3950,7 +3973,7 @@ export function PhaseGroupedSidebar() {
         const threadKey = scopedThreadKey(threadRef);
         if (parkingThreadKeysRef.current.has(threadKey)) return;
         parkingThreadKeysRef.current.add(threadKey);
-        try {
+        await (async () => {
           const navigateAfterSettle = planForwardNavigation(threadKey);
           const result = await settleThread(threadRef);
           if (result._tag === "Failure") {
@@ -3962,9 +3985,9 @@ export function PhaseGroupedSidebar() {
           // Only move forward if the user is still on the settled thread — a
           // navigation made during the await wins over ours.
           if (routeThreadKeyRef.current === threadKey) navigateAfterSettle?.();
-        } finally {
+        })().finally(() => {
           parkingThreadKeysRef.current.delete(threadKey);
-        }
+        });
       })();
     },
     [planForwardNavigation, reportParkingFailure, settleThread],
@@ -3976,7 +3999,7 @@ export function PhaseGroupedSidebar() {
         const threadKey = scopedThreadKey(threadRef);
         if (parkingThreadKeysRef.current.has(threadKey)) return;
         parkingThreadKeysRef.current.add(threadKey);
-        try {
+        await (async () => {
           const navigateAfterSnooze = planForwardNavigation(threadKey);
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure") {
@@ -3998,12 +4021,12 @@ export function PhaseGroupedSidebar() {
             }),
           );
           if (routeThreadKeyRef.current === threadKey) navigateAfterSnooze?.();
-        } finally {
+        })().finally(() => {
           parkingThreadKeysRef.current.delete(threadKey);
-        }
+        });
       })();
     },
-    [attemptUnsnooze, planForwardNavigation, reportParkingFailure, snoozeThread],
+    [attemptUnsnooze, planForwardNavigation, reportParkingFailure, snoozeThread, timestampFormat],
   );
   // T3-CUSTOM(expbkt3): END
   const requestDelete = useCallback(

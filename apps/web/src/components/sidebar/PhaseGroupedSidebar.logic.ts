@@ -106,7 +106,7 @@ export function phaseSidebarSectionActionsClassName(isSurfaceOpen: boolean): str
 
 /** T3-CUSTOM(expbkt3): one icon button in the header actions overlay. */
 export const PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME =
-  "flex cursor-pointer items-center justify-center rounded p-0.5 text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  "flex cursor-pointer items-center justify-center rounded p-0.5 text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 /**
  * T3-CUSTOM(expbkt3): a custom group's colour as a tinted border and surface,

@@ -163,7 +163,7 @@ function PhaseSidebarShelf(props: {
         }${holdsOpenThread ? ", holds the open thread" : ""}`}
         data-testid={`phase-sidebar-${id}-shelf-toggle`}
         data-holds-open-thread={holdsOpenThread ? "" : undefined}
-        className="flex w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <Icon aria-hidden className={cn("size-2.5 shrink-0", tone.text)} />
         <span className={cn("text-[10px] font-semibold uppercase tracking-wider", tone.text)}>

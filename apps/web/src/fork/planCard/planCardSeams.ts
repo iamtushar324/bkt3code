@@ -1,11 +1,10 @@
 /**
  * T3-CUSTOM(expbkt3): the one-line seams upstream plan and citation code calls.
  */
-import type { RunId } from "@t3tools/contracts";
+import { stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { use, useEffect } from "react";
 
 import type { MessagesTimelineRow } from "../../components/chat/MessagesTimeline.logic";
-import { stripDisplayedPlanMarkdown } from "../../proposedPlan";
 import type { TimelineEntry } from "../../session-logic";
 import { PlanCardContext } from "./planCardContext";
 
@@ -48,11 +47,4 @@ export function isCitableSource(item: TimelineEntry): boolean {
   return (
     (item.kind === "message" && item.message.role === "assistant") || item.kind === "proposed-plan"
   );
-}
-
-/** The run whose turn must be unfolded to show the source. */
-export function citationSourceRunId(item: TimelineEntry): RunId | null {
-  if (item.kind === "message") return item.message.runId ?? null;
-  if (item.kind === "proposed-plan") return item.proposedPlan.runId;
-  return null;
 }
