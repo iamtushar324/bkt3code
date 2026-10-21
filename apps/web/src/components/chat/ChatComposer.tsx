@@ -7284,7 +7284,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : threadCommentsEmptySend // T3-CUSTOM(expbkt3): open comments can be sent alone.
                                     ? THREAD_COMMENT_PLACEHOLDER
-                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                    : isComposerResting // T3-CUSTOM(expbkt3): the compact composer keeps a short placeholder so its icons never sit on text.
+                                      ? "Ask anything..."
+                                      : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
                       isConnecting ||
