@@ -1,13 +1,13 @@
 // T3-CUSTOM(expbkt3): a released provider session settles the subagents it leaves open.
-import type {
-  NodeId,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2Subagent,
-  OrchestrationV2ThreadProjection,
+import {
+  type NodeId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadProjection,
   ProviderDriverKind,
-  ProviderInstanceId,
-  ProviderSessionId,
-  ThreadId,
+  type ProviderInstanceId,
+  type ProviderSessionId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -21,6 +21,9 @@ import type { ProviderSessionReleaseReason } from "./ProviderSessionManager.ts";
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
 type ExecutionNode = OrchestrationV2ThreadProjection["nodes"][number];
 
+/** Its subagents run inside the parent's process and carry no provider thread. */
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+
 export interface ReleasedSessionSubagentsInput {
   readonly projectionStore: ProjectionStoreV2Shape;
   readonly idAllocator: IdAllocatorV2["Service"];
@@ -31,7 +34,10 @@ export interface ReleasedSessionSubagentsInput {
   readonly providerInstanceId: ProviderInstanceId;
   /** The app threads the released process served. */
   readonly threadIds: Iterable<ThreadId>;
-  /** App threads a live session still serves. That session owns their subagents. */
+  /**
+   * App threads a live session still serves. That session owns their
+   * subagents, except the Claude subagents the released process ran.
+   */
   readonly liveThreadIds: Effect.Effect<ReadonlySet<ThreadId>>;
   /** Work that started after the release belongs to a later session. */
   readonly releasedAt: DateTime.Utc;
@@ -66,8 +72,14 @@ const cancelledItem = (item: TurnItem, now: DateTime.Utc): TurnItem =>
  *
  * Only open `provider_native` subagents of the released driver and instance,
  * started at or before the release, are settled. A delegate_task child has its
- * own runs and is never touched, and neither is a thread a live session still
- * serves. A later SendMessage resume reopens a settled subagent: its new events
+ * own runs and is never touched. A thread another live session still serves
+ * keeps its subagents, with one exception: a Claude subagent carries no
+ * provider thread and lives only in the process that started it, so a
+ * replacement session (placed on another account while this one was still
+ * releasing) cannot end it either. There only those process-bound subagents
+ * are settled; one bound to a provider thread may run in the live session.
+ * A later SendMessage resume reopens a settled subagent (it re-stamps
+ * `startedAt`, so it counts as started after the release): its new events
  * overwrite the cancelled status.
  *
  * A server shutdown is left to startup recovery, which also wakes a settled
@@ -92,9 +104,12 @@ export const settleReleasedSessionSubagents: (
       const at = startedAt ?? fallback;
       return at === null || DateTime.isLessThanOrEqualTo(at, input.releasedAt);
     };
+    /** Another live session serves the threads of a released Claude session too. */
+    const settlesServedThreads = input.driver === CLAUDE_DRIVER;
     const ranInReleasedSession = (
       subagent: OrchestrationV2Subagent,
       projection: ProjectionRuntimeRecoveryState,
+      servedElsewhere: boolean,
     ) => {
       if (
         subagent.origin !== "provider_native" ||
@@ -108,6 +123,8 @@ export const settleReleasedSessionSubagents: (
       // Claude subagents carry no provider thread; their parent thread's
       // attachment is the link. One that does must not name another session.
       if (subagent.providerThreadId === null) return true;
+      // The live session may run it on that provider thread.
+      if (servedElsewhere) return false;
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === subagent.providerThreadId,
       );
@@ -152,7 +169,11 @@ export const settleReleasedSessionSubagents: (
      * runless root turn and the items under it. Returns the child threads of the
      * subagents it settled, whose own work died with the same process.
      */
-    const settleThread = Effect.fnUntraced(function* (threadId: ThreadId, isChild: boolean) {
+    const settleThread = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      isChild: boolean,
+      servedElsewhere: boolean,
+    ) {
       // Most releases (idle ones) leave nothing open. The subagent rows alone
       // are cheap; the recovery read below can take seconds on a cold cache
       // for a thread with thousands of items, on the event loop. A failed
@@ -168,7 +189,11 @@ export const settleReleasedSessionSubagents: (
               subagent.origin === "provider_native" &&
               isOpenStatus(subagent.status) &&
               subagent.driver === input.driver &&
-              subagent.providerInstanceId === input.providerInstanceId,
+              subagent.providerInstanceId === input.providerInstanceId &&
+              // The live session's own subagents need no full read.
+              (!servedElsewhere ||
+                (subagent.providerThreadId === null &&
+                  startedByRelease(subagent.startedAt, subagent.updatedAt))),
           )
         ) {
           return [];
@@ -184,7 +209,7 @@ export const settleReleasedSessionSubagents: (
       const settledItemIds = new Set<string>();
       const childThreadIds: Array<ThreadId> = [];
       for (const subagent of projection.subagents) {
-        if (!ranInReleasedSession(subagent, projection)) continue;
+        if (!ranInReleasedSession(subagent, projection, servedElsewhere)) continue;
         settledSubagentIds.push(subagent.id);
         events.push({
           id: yield* allocateEventId(subagent.threadId),
@@ -252,19 +277,26 @@ export const settleReleasedSessionSubagents: (
     });
 
     const visited = new Set<ThreadId>();
-    let pending: Array<{ readonly threadId: ThreadId; readonly isChild: boolean }> = [];
+    let pending: Array<{
+      readonly threadId: ThreadId;
+      readonly isChild: boolean;
+      readonly servedElsewhere: boolean;
+    }> = [];
     for (const threadId of input.threadIds) {
-      if (!liveThreadIds.has(threadId)) pending.push({ threadId, isChild: false });
+      const servedElsewhere = liveThreadIds.has(threadId);
+      if (!servedElsewhere || settlesServedThreads) {
+        pending.push({ threadId, isChild: false, servedElsewhere });
+      }
     }
     while (pending.length > 0) {
       const next: typeof pending = [];
-      for (const { threadId, isChild } of pending) {
+      for (const { threadId, isChild, servedElsewhere } of pending) {
         if (visited.has(threadId)) continue;
         visited.add(threadId);
-        const childThreadIds = yield* settleThread(threadId, isChild);
+        const childThreadIds = yield* settleThread(threadId, isChild, servedElsewhere);
         for (const childThreadId of childThreadIds) {
           if (!liveThreadIds.has(childThreadId))
-            next.push({ threadId: childThreadId, isChild: true });
+            next.push({ threadId: childThreadId, isChild: true, servedElsewhere: false });
         }
       }
       pending = next;

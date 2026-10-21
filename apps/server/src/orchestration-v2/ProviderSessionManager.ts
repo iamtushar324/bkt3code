@@ -179,6 +179,18 @@ export interface ProviderSessionManagerV2Shape {
     ProviderSessionManagerV2Error
   >;
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  // T3-CUSTOM(expbkt3): BEGIN the live sessions and the threads each serves, from memory.
+  /**
+   * Reads no projection and counts as no activity. Optional so test layers
+   * that build the full shape need not supply it.
+   */
+  readonly listLive?: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly providerSessionId: ProviderSessionId;
+      readonly threadIds: ReadonlyArray<ThreadId>;
+    }>
+  >;
+  // T3-CUSTOM(expbkt3): END
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -2561,6 +2573,17 @@ export const layerWithOptions = (
           Ref.get(sessions).pipe(
             Effect.map((current) => current.has(sessionKey(providerSessionId))),
           ),
+        // T3-CUSTOM(expbkt3): BEGIN account policies list live sessions without a shell read.
+        listLive: () =>
+          Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              Array.from(current.values(), (entry) => ({
+                providerSessionId: entry.runtime.providerSessionId,
+                threadIds: [...entry.attachedThreadIds],
+              })),
+            ),
+          ),
+        // T3-CUSTOM(expbkt3): END
         get: Effect.fn("ProviderSessionManager.get")(
           function* (providerSessionId) {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));

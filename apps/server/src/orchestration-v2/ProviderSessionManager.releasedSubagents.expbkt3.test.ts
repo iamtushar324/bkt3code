@@ -229,29 +229,34 @@ function fixture(
   options: {
     readonly projections?: ReadonlyMap<ThreadId, Projection>;
     readonly failRecoveryRead?: boolean;
+    /** The released session's driver; Claude by default. */
+    readonly driver?: ProviderDriverKind;
   } = {},
 ) {
   const projections = options.projections ?? incidentProjections();
+  const sessionDriver = options.driver ?? driver;
   const written: Array<OrchestrationV2DomainEvent> = [];
   /** Threads whose full recovery read ran, in order. */
   const recoveryReads: Array<ThreadId> = [];
   const adapter: ProviderAdapterV2["Service"] = {
     instanceId,
-    driver,
+    driver: sessionDriver,
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
         const unused = () =>
-          Effect.fail(new ProviderAdapterProtocolError({ driver, detail: "unused" }));
+          Effect.fail(
+            new ProviderAdapterProtocolError({ driver: sessionDriver, detail: "unused" }),
+          );
         return {
           instanceId,
-          driver,
+          driver: sessionDriver,
           providerSessionId: input.providerSessionId,
           providerSession: {
             id: input.providerSessionId,
-            driver,
+            driver: sessionDriver,
             providerInstanceId: instanceId,
             status: "ready" as const,
             cwd: "/tmp",
@@ -413,19 +418,108 @@ it.effect("a detach that leaves the shared session open settles nothing", () => 
   }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("a thread another live session still serves keeps its subagents", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-    yield* manager.open(f.open(parentThreadId));
-    yield* manager.open(f.open(parentThreadId, otherSessionId));
-    yield* TestClock.adjust("10 minutes");
-    yield* manager.release({ providerSessionId: releasedSessionId, reason: "manual_shutdown" });
+it.effect(
+  "a replacement Claude session on the thread does not keep the released process's subagents open",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* manager.open(f.open(parentThreadId));
+      // The incident: a hard limit stopped the session, and the thread was
+      // placed on another account before that release finished.
+      yield* manager.open(f.open(parentThreadId, otherSessionId));
+      yield* TestClock.adjust("10 minutes");
+      yield* manager.release({ providerSessionId: releasedSessionId, reason: "manual_shutdown" });
 
-    assert.deepEqual(f.cancelled("subagent.updated"), []);
-    assert.deepEqual(f.cancelled("node.updated"), []);
-  }).pipe(Effect.provide(f.layer));
-});
+      assert.isTrue(Option.isSome(yield* manager.get(otherSessionId)));
+      // The process-bound subagent died with the released process.
+      assert.deepEqual(f.cancelled("subagent.updated"), ["subagent-running"]);
+      assert.sameMembers(f.cancelled("turn-item.updated"), [
+        "card-subagent-running",
+        "child-command",
+      ]);
+      assert.sameMembers(f.cancelled("node.updated"), ["subagent-running", "child-root-running"]);
+      // One bound by its provider thread may run in the live session, and one
+      // started after the release is the replacement's own.
+      const touched = f.written.flatMap((event) =>
+        event.type === "subagent.updated" ||
+        event.type === "turn-item.updated" ||
+        event.type === "node.updated"
+          ? [String(event.payload.id)]
+          : [],
+      );
+      for (const name of ["other-session", "unloaded-thread", "started-later"]) {
+        assert.notInclude(touched, `subagent-${name}`);
+        assert.notInclude(touched, `card-subagent-${name}`);
+        assert.notInclude(touched, `child-root-${name}`);
+      }
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "a subagent started after the release stays open while a replacement serves the thread",
+  () => {
+    const replacement = subagent("replacement", { startedAt: later, updatedAt: later });
+    const f = fixture({
+      projections: new Map([
+        [
+          parentThreadId,
+          projection(parentThreadId, {
+            subagents: [replacement],
+            turnItems: [subagentItem(replacement)] as never,
+            nodes: [node(replacement.id, parentThreadId, "subagent", later)],
+          }),
+        ],
+      ]),
+    });
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* manager.open(f.open(parentThreadId));
+      yield* manager.open(f.open(parentThreadId, otherSessionId));
+      yield* TestClock.adjust("10 minutes");
+      yield* manager.release({ providerSessionId: releasedSessionId, reason: "manual_shutdown" });
+
+      assert.deepEqual(f.cancelled("subagent.updated"), []);
+      assert.deepEqual(f.cancelled("turn-item.updated"), []);
+      assert.deepEqual(f.cancelled("node.updated"), []);
+      // The subagent rows alone showed nothing the released process ran.
+      assert.deepEqual(f.recoveryReads, []);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "a thread another live session still serves keeps its subagents for other drivers",
+  () => {
+    const codex = ProviderDriverKind.make("codex");
+    const running = subagent("codex-running", { driver: codex });
+    const f = fixture({
+      driver: codex,
+      projections: new Map([
+        [
+          parentThreadId,
+          projection(parentThreadId, {
+            subagents: [running],
+            turnItems: [subagentItem(running)] as never,
+            nodes: [node(running.id, parentThreadId, "subagent")],
+          }),
+        ],
+      ]),
+    });
+    return Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* manager.open(f.open(parentThreadId));
+      yield* manager.open(f.open(parentThreadId, otherSessionId));
+      yield* TestClock.adjust("10 minutes");
+      yield* manager.release({ providerSessionId: releasedSessionId, reason: "manual_shutdown" });
+
+      assert.deepEqual(f.recoveryReads, []);
+      assert.deepEqual(f.cancelled("subagent.updated"), []);
+      assert.deepEqual(f.cancelled("node.updated"), []);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
 
 it.effect("a server shutdown leaves the subagents to startup recovery and its wake", () => {
   const f = fixture();
