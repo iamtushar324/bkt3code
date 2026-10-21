@@ -195,6 +195,9 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
           new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript`, {
             headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
           }),
+          // T3-CUSTOM(expbkt3): the fork's dispatch route types carry services the transcript
+          // route never reads; every service it does read is provided above.
+          Context.empty() as never,
         ),
       );
 
