@@ -385,8 +385,6 @@ const renderSchedule = Effect.fn("agentToolkit.renderSchedule")(function* (
   };
 });
 
-// -- t3_schedules -------------------------------------------------------------
-
 export const listSchedules = Effect.fn("agentToolkit.listSchedules")(function* (
   input: Tool.Parameters<typeof SchedulesTool>,
 ) {
@@ -431,8 +429,6 @@ export const listSchedules = Effect.fn("agentToolkit.listSchedules")(function* (
         ].join("\n");
   return result(markdown, { schedules: rendered.map((entry) => entry.data) });
 });
-
-// -- t3_schedule --------------------------------------------------------------
 
 const NEW_SESSION_OPTIONS = [
   "model",
@@ -1018,8 +1014,6 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
     }
   }
 });
-
-// -- t3_notify_me -------------------------------------------------------------
 
 export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
   input: Tool.Parameters<typeof NotifyMeTool>,

@@ -53,7 +53,10 @@ function fakeLoader() {
   return { load, clients };
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+// The fake loader and the client's `.then` chain settle in a few microtasks; no timer runs.
+const flush = async () => {
+  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+};
 
 function context(config: ProductAnalyticsContext["config"]): ProductAnalyticsContext {
   return { config, surface: "web", appVersion: "1.2.3", connectionMode: "tailnet" };

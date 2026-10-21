@@ -95,11 +95,14 @@ export async function listThreadTranscriptFiles(input: {
     return found;
   }
 
-  return listTranscriptFiles(
+  // A thread read is best-effort like the walks above, so unreadable paths are
+  // dropped rather than surfaced; the window scan reports `failedPaths` itself.
+  const { files } = await listTranscriptFiles(
     input.dir,
     input.sinceMs,
     input.fileName === undefined ? undefined : { fileName: input.fileName },
   );
+  return files;
 }
 
 /** A thread read rewrites the whole scan cache file at most this often. */

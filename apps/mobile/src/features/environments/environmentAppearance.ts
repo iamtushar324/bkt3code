@@ -9,7 +9,7 @@ import {
   type ResolvedEnvironmentIdentity,
 } from "@t3tools/client-runtime/state/environment-appearance";
 
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 /** A named symbol that renders on both iOS and Android. */
 type EnvironmentSymbol = Extract<AppSymbolName, string>;

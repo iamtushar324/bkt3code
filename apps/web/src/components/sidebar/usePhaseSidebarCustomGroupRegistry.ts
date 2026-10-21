@@ -19,7 +19,8 @@ import {
   type PhaseSidebarCustomGroupRegistry,
   type PhaseSidebarCustomGroupWritePlan,
 } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
-import { AuthSettingsWriteScope, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -50,7 +51,7 @@ export interface PhaseSidebarCustomGroupRegistryControls {
 }
 
 export function usePhaseSidebarCustomGroupRegistry(input: {
-  readonly serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }): PhaseSidebarCustomGroupRegistryControls {
   const { serverConfigs, primaryEnvironmentId } = input;

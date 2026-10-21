@@ -64,6 +64,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
   sourceControlProfileId: Schema.optional(SourceControlProfileId),
+  pullRequestReference: Schema.optional(Schema.String),
 });
 
 export const QueuedThreadImageAttachmentSchema = Schema.Struct({
@@ -147,6 +148,7 @@ export interface QueuedThreadCreation {
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean | undefined;
   readonly sourceControlProfileId?: SourceControlProfileIdType | undefined;
+  readonly pullRequestReference?: string | undefined;
 }
 
 // T3-CUSTOM(expbkt3): mirrors QueuedThreadImageAttachmentSchema. Deliberately not
@@ -354,7 +356,8 @@ export function resolveThreadOutboxDispatchStep(input: {
 
 export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): boolean {
   if (!message.creation) return false;
-  if (message.text.trim().length === 0 || message.modelSelection === undefined) return false;
+  const hasContent = message.text.trim().length > 0 || message.attachments.length > 0;
+  if (!hasContent || message.modelSelection === undefined) return false;
   return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
 }
 

@@ -22,7 +22,8 @@ import {
   type SessionWebhookAction,
 } from "@t3tools/client-runtime/bk-session-callback-presentation";
 import { toolyardSettingsFailureCode } from "@t3tools/client-runtime/toolyard-trust-setup";
-import type { EnvironmentId, ServerConfig, SessionWebhookView } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId, SessionWebhookView } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -133,7 +134,7 @@ export function EnvironmentSessionWebhookSettings({
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly serverConfig: ServerConfig;
+  readonly serverConfig: EnvironmentServerConfig;
   readonly compact?: boolean;
   readonly refreshVersion?: number;
 }) {
@@ -228,11 +229,11 @@ function SessionWebhookSettingsContent({
         ...value,
         [webhook.id]: sessionWebhookChangeFailureMessage(null),
       }));
-    } finally {
-      setBusy(null);
-      setConfirmOpen(false);
-      appAtomRegistry.refresh(atom);
     }
+    // Not a `finally`: the React Compiler cannot lower one, and the catch above takes every error.
+    setBusy(null);
+    setConfirmOpen(false);
+    appAtomRegistry.refresh(atom);
   };
   const requestChange = (next: PendingChange) => {
     setFocusList(false);

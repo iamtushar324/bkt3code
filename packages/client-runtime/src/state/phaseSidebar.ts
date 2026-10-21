@@ -19,6 +19,7 @@
 // the method from Array.prototype.
 import type {
   ServerConfig,
+  ServerProvider,
   // T3-CUSTOM(expbkt3): the thread's auto-detected branch review.
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -1488,13 +1489,11 @@ export function resolvePhaseSidebarTraversalTarget(input: {
     : null;
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Lifecycle counters.
 //
 // Moved here from apps/web/src/components/sidebar/sidebarSessionCounters.ts so
 // the mobile home list can show the same running/idle summary the web sidebar
 // chrome does.
-// ---------------------------------------------------------------------------
 
 export interface SidebarSessionCounts {
   /** Unsettled sessions with no agent working: the ones waiting on a human. */
@@ -1600,13 +1599,11 @@ export function summarizeSidebarSessions(
   return { nonRunning, running, unread, nextSnoozeWakeAt };
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Running-session emphasis.
 //
 // Moved from apps/web/src/components/sidebar/RunningSessionGlint.logic.ts. Web
 // renders the emphasis as an animated glint; mobile renders it statically, so
 // only the decision is shared, never the presentation.
-// ---------------------------------------------------------------------------
 
 export function isRunningSessionPhase(phaseId: PhaseSidebarPhaseId): boolean {
   return phaseId === "planning" || phaseId === "implementing";
@@ -1628,13 +1625,11 @@ export function runningSessionDividerPhase(
   return phaseIds.find(isRunningSessionPhase) ?? null;
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): "Move under session" candidates.
 //
 // Moved from apps/web/src/components/sidebar/MoveUnderSessionDialog.logic.ts.
 // This is the client-side mirror of the server's cycle guard, and the two must
 // not drift — so both clients run the same copy.
-// ---------------------------------------------------------------------------
 
 export interface MoveUnderCandidate {
   readonly thread: ThreadShell;
@@ -1752,14 +1747,12 @@ export function resolveMoveUnderCandidates(input: {
     }));
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): Unread tracking.
 //
 // Moved from apps/web/src/threadVisitTimestamp.ts. Both clients compare a
 // thread's newest activity against the last time this device opened it; where
 // that "last visited" map is stored is platform-specific, but the rule that
 // decides what counts as newer is not.
-// ---------------------------------------------------------------------------
 
 export interface ThreadVisitTimestampInput {
   readonly threadUpdatedAt: string;
@@ -1835,7 +1828,16 @@ export function isThreadUnread(input: {
 export interface BuildPhaseSidebarRowsInput {
   readonly threads: ReadonlyArray<ThreadShell>;
   readonly projects: ReadonlyArray<Project>;
-  readonly serverConfigs: ReadonlyMap<string, ServerConfig>;
+  /**
+   * Web passes provider-less configs (provider pushes would otherwise rebuild every
+   * capability read) plus `providersByEnvironment`; mobile still passes full configs.
+   */
+  readonly serverConfigs: ReadonlyMap<
+    string,
+    Omit<ServerConfig, "providers"> & { readonly providers?: ServerConfig["providers"] }
+  >;
+  /** Keyed by environment id. Wins over `serverConfigs[…].providers` when present. */
+  readonly providersByEnvironment?: ReadonlyMap<string, ReadonlyArray<ServerProvider>>;
   /** Keyed by `scopedThreadKey`. Absent entries simply have no VCS facts yet. */
   readonly vcsStatusByThreadKey: ReadonlyMap<string, VcsStatusResult | null>;
   /** Keyed by `scopedThreadKey`. */
@@ -1884,9 +1886,9 @@ export function buildPhaseSidebarRows(
       : scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
     const serverConfig = input.serverConfigs.get(thread.environmentId);
     const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-    const provider = serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === instanceId,
-    );
+    const provider = (
+      input.providersByEnvironment?.get(thread.environmentId) ?? serverConfig?.providers
+    )?.find((candidate) => candidate.instanceId === instanceId);
     const providerKind = String(provider?.driver ?? instanceId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const vcsStatus = input.vcsStatusByThreadKey.get(threadKey);
@@ -1934,9 +1936,7 @@ export function buildPhaseSidebarRows(
   });
 }
 
-// ---------------------------------------------------------------------------
 // T3-CUSTOM(expbkt3): row status — elapsed working time and running subagents.
-// ---------------------------------------------------------------------------
 
 /**
  * Upstream's "working" rule, copied from `resolveSidebarThreadStatus` in

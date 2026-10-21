@@ -1,7 +1,11 @@
 /**
  * T3-CUSTOM(expbkt3): rules behind the member "Your devices" panel.
  */
-import { AuthAccessWriteScope, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthMemberClientScopes,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import type {
@@ -36,7 +40,8 @@ const session = (
 describe("who sees the member panel", () => {
   it("shows it to a member with an identity and no access:write", () => {
     expect(
-      shouldShowMemberDevices({ scopes: [...AuthStandardClientScopes], userId: "user_1" }),
+      // The standard set includes access:write; a member session carries the member set.
+      shouldShowMemberDevices({ scopes: [...AuthMemberClientScopes], userId: "user_1" }),
     ).toBe(true);
   });
 
@@ -50,7 +55,7 @@ describe("who sees the member panel", () => {
   });
 
   it("hides it from a session with no identity", () => {
-    expect(shouldShowMemberDevices({ scopes: [...AuthStandardClientScopes], userId: null })).toBe(
+    expect(shouldShowMemberDevices({ scopes: [...AuthMemberClientScopes], userId: null })).toBe(
       false,
     );
     expect(shouldShowMemberDevices({ scopes: null, userId: "user_1" })).toBe(false);

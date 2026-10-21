@@ -329,7 +329,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
 
   /** The account `~/.claude-active` points at today — the degraded answer when the switcher cannot place. */
   const currentProfileFromActiveLink: Effect.Effect<ClaudeAccountResolution | undefined> =
@@ -449,8 +449,6 @@ export const make = Effect.gen(function* () {
       detail: cause instanceof Error ? cause.message : String(cause),
     });
 
-  // ------------------------------------------------------------------ access
-
   /**
    * Allow lists by account, read once and kept until an admin changes them
    * (this server is the table's only writer). The generation stops a read
@@ -500,10 +498,8 @@ export const make = Effect.gen(function* () {
     restriction.owner !== null && restriction.disallowed.size > 0;
 
   /** Who the thread's sessions run for and what they may not use. Fails closed on any read error. */
-  const disallowedFor = (
-    threadId: ThreadId,
-  ): Effect.Effect<Restriction, ClaudeAccountPolicyError> =>
-    Effect.gen(function* () {
+  const disallowedFor = Effect.fn("ClaudeAccountsService.disallowedFor")(
+    function* (threadId: ThreadId) {
       const access = yield* accessMap;
       // Nothing is restricted until an admin assigns someone, so skip the owner read.
       if (access.size === 0) return UNRESTRICTED;
@@ -514,15 +510,18 @@ export const make = Effect.gen(function* () {
         if (!mayUse(access, owner, profile)) disallowed.add(profile);
       }
       return { owner, disallowed };
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ClaudeAccountPolicyError({
-            threadId,
-            detail: `Could not check Claude account access — try again shortly. (${cause.message})`,
-          }),
+    },
+    (effect, threadId): Effect.Effect<Restriction, ClaudeAccountPolicyError> =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ClaudeAccountPolicyError({
+              threadId,
+              detail: `Could not check Claude account access — try again shortly. (${cause.message})`,
+            }),
+        ),
       ),
-    );
+  );
 
   /** Whether every account the switcher lists is one the owner may not use. */
   const mayUseNone = (restriction: Restriction): boolean =>
@@ -548,8 +547,6 @@ export const make = Effect.gen(function* () {
     })),
     Effect.mapError(internal("listAccess")),
   );
-
-  // ---------------------------------------------------------------- snapshot
 
   const pruneExhausted = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -590,11 +587,12 @@ export const make = Effect.gen(function* () {
    * answered) and backed by a config directory. A stale name must never reach
    * `CLAUDE_CONFIG_DIR`, where the CLI would create an empty, signed-out home.
    */
-  const profileExists = (profile: string): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
-      if (lastStatus !== undefined && knownProfile(profile) === undefined) return false;
-      return yield* fileSystem.exists(profileDir(profile)).pipe(Effect.orElseSucceed(() => false));
-    });
+  const profileExists = Effect.fn("ClaudeAccountsService.profileExists")(function* (
+    profile: string,
+  ): Effect.fn.Return<boolean> {
+    if (lastStatus !== undefined && knownProfile(profile) === undefined) return false;
+    return yield* fileSystem.exists(profileDir(profile)).pipe(Effect.orElseSucceed(() => false));
+  });
 
   /** Whether an existing thread may keep running on this account. Unknown accounts are trusted. */
   const usable = (profile: string): boolean => {
@@ -668,47 +666,48 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const snapshot: ClaudeAccountsServiceShape["snapshot"] = () =>
-    Effect.gen(function* () {
-      const settings = yield* readSettings;
-      const generatedAt = yield* nowIso;
-      if (!settings.enabled) {
-        return { enabled: false, available: false, generatedAt, profiles: [] };
-      }
-      yield* pruneExhausted;
-      if (lastStatus === undefined) {
-        // Before the first answer the control is usable but empty; afterwards
-        // a missing status means the switcher could not be read.
-        return firstPollDone
-          ? {
-              enabled: true,
-              available: false,
-              ...(unavailableReason ? { unavailableReason } : {}),
-              generatedAt,
-              profiles: [],
-            }
-          : {
-              enabled: true,
-              available: true,
-              unavailableReason: LOADING_REASON,
-              generatedAt,
-              profiles: [],
-            };
-      }
-      const labels = computeShortLabels(
-        lastStatus.profiles.map((profile) => profile.name),
-        settings.shortLabels,
-      );
-      return {
-        enabled: true,
-        available: unavailableReason === undefined,
-        ...(unavailableReason ? { unavailableReason } : {}),
-        generatedAt,
-        profiles: lastStatus.profiles.map((profile) =>
-          toStatus(profile, labels[profile.name] ?? profile.name),
-        ),
-      };
-    });
+  const snapshot: ClaudeAccountsServiceShape["snapshot"] = Effect.fn(
+    "ClaudeAccountsService.snapshot",
+  )(function* () {
+    const settings = yield* readSettings;
+    const generatedAt = yield* nowIso;
+    if (!settings.enabled) {
+      return { enabled: false, available: false, generatedAt, profiles: [] };
+    }
+    yield* pruneExhausted;
+    if (lastStatus === undefined) {
+      // Before the first answer the control is usable but empty; afterwards
+      // a missing status means the switcher could not be read.
+      return firstPollDone
+        ? {
+            enabled: true,
+            available: false,
+            ...(unavailableReason ? { unavailableReason } : {}),
+            generatedAt,
+            profiles: [],
+          }
+        : {
+            enabled: true,
+            available: true,
+            unavailableReason: LOADING_REASON,
+            generatedAt,
+            profiles: [],
+          };
+    }
+    const labels = computeShortLabels(
+      lastStatus.profiles.map((profile) => profile.name),
+      settings.shortLabels,
+    );
+    return {
+      enabled: true,
+      available: unavailableReason === undefined,
+      ...(unavailableReason ? { unavailableReason } : {}),
+      generatedAt,
+      profiles: lastStatus.profiles.map((profile) =>
+        toStatus(profile, labels[profile.name] ?? profile.name),
+      ),
+    };
+  });
 
   /**
    * Narrows a snapshot to one viewer: admins get every account with an
@@ -716,33 +715,32 @@ export const make = Effect.gen(function* () {
    * may use. A composer pinned to a revoked account still renders its badge
    * from the thread's own row.
    */
-  const viewSnapshot = (
+  const viewSnapshot = Effect.fn("ClaudeAccountsService.viewSnapshot")(function* (
     current: ClaudeAccountsSnapshot,
     viewer: ClaudeAccountsViewer | undefined,
-  ): Effect.Effect<ClaudeAccountsSnapshot> =>
-    Effect.gen(function* () {
-      if (viewer === undefined || viewer.userId === null || current.profiles.length === 0) {
-        return current;
-      }
-      const userId = viewer.userId;
-      const accessResult = yield* accessMap.pipe(Effect.result);
-      if (accessResult._tag === "Failure") {
-        yield* Effect.logWarning("claude.account.access-read-failed", {
-          cause: accessResult.failure.message,
-        });
-        return { ...current, profiles: [] };
-      }
-      const access = accessResult.success;
-      return {
-        ...current,
-        profiles: viewer.isAdmin
-          ? current.profiles.map((status) => ({
-              ...status,
-              allowed: mayUse(access, userId, status.name),
-            }))
-          : current.profiles.filter((status) => mayUse(access, userId, status.name)),
-      };
-    });
+  ): Effect.fn.Return<ClaudeAccountsSnapshot> {
+    if (viewer === undefined || viewer.userId === null || current.profiles.length === 0) {
+      return current;
+    }
+    const userId = viewer.userId;
+    const accessResult = yield* accessMap.pipe(Effect.result);
+    if (accessResult._tag === "Failure") {
+      yield* Effect.logWarning("claude.account.access-read-failed", {
+        cause: accessResult.failure.message,
+      });
+      return { ...current, profiles: [] };
+    }
+    const access = accessResult.success;
+    return {
+      ...current,
+      profiles: viewer.isAdmin
+        ? current.profiles.map((status) => ({
+            ...status,
+            allowed: mayUse(access, userId, status.name),
+          }))
+        : current.profiles.filter((status) => mayUse(access, userId, status.name)),
+    };
+  });
 
   /** Field 22 (start time) of /proc/<pid>/stat, or undefined off Linux or when gone. */
   const procStartTime = (pid: number): Effect.Effect<string | undefined> =>
@@ -766,76 +764,79 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  const indexLiveSessions = (status: SwitcherStatus): Effect.Effect<Map<string, string>> =>
-    Effect.gen(function* () {
-      const index = new Map<string, string>();
-      const hasProc = yield* fileSystem
-        .exists("/proc/self/stat")
-        .pipe(Effect.orElseSucceed(() => false));
-      for (const profile of status.profiles) {
-        if (!profile.dir) continue;
-        const dir = path.join(profile.dir, "sessions");
-        const entries = yield* fileSystem.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-        for (const entry of entries) {
-          const match = /^(\d+)\.json$/.exec(entry);
-          if (!match) continue;
-          const pid = Number(match[1]);
-          if (!pidAlive(pid)) continue;
-          const raw = yield* fileSystem
-            .readFileString(path.join(dir, entry))
-            .pipe(Effect.orElseSucceed(() => ""));
-          const decoded = yield* decodeSessionFile(raw).pipe(Effect.option);
-          if (Option.isNone(decoded)) continue;
-          const parsed = decoded.value;
-          if (parsed.pid !== pid) continue;
-          // A reused pid belongs to another process: on Linux, the start time must match.
-          if (hasProc && String(parsed.procStart) !== (yield* procStartTime(pid))) continue;
-          index.set(parsed.sessionId, profile.name);
-        }
+  const indexLiveSessions = Effect.fn("ClaudeAccountsService.indexLiveSessions")(function* (
+    status: SwitcherStatus,
+  ): Effect.fn.Return<Map<string, string>> {
+    const index = new Map<string, string>();
+    const hasProc = yield* fileSystem
+      .exists("/proc/self/stat")
+      .pipe(Effect.orElseSucceed(() => false));
+    for (const profile of status.profiles) {
+      if (!profile.dir) continue;
+      const dir = path.join(profile.dir, "sessions");
+      const entries = yield* fileSystem.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+      for (const entry of entries) {
+        const match = /^(\d+)\.json$/.exec(entry);
+        if (!match) continue;
+        const pid = Number(match[1]);
+        if (!pidAlive(pid)) continue;
+        const raw = yield* fileSystem
+          .readFileString(path.join(dir, entry))
+          .pipe(Effect.orElseSucceed(() => ""));
+        const decoded = yield* decodeSessionFile(raw).pipe(Effect.option);
+        if (Option.isNone(decoded)) continue;
+        const parsed = decoded.value;
+        if (parsed.pid !== pid) continue;
+        // A reused pid belongs to another process: on Linux, the start time must match.
+        if (hasProc && String(parsed.procStart) !== (yield* procStartTime(pid))) continue;
+        index.set(parsed.sessionId, profile.name);
       }
-      return index;
-    });
+    }
+    return index;
+  });
 
-  const adoptStatus = (status: SwitcherStatus) =>
-    Effect.gen(function* () {
-      lastStatus = status;
-      lastStatusAtMs = yield* Clock.currentTimeMillis;
-      unavailableReason = undefined;
-      // One rebalance per source account per status read. A moved session
-      // whose restart was deferred is still counted in this read, so a second
-      // thread can leave the account one read early; the slack of 2 over the
-      // fair share absorbs that.
-      rebalancedFrom.clear();
-      const generatedMs =
-        typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
-      for (const profile of status.profiles) {
-        const used = profile.five_hour?.used;
-        const resetsAt = profile.five_hour?.resets_at;
-        if (typeof used !== "number" || !resetsAt) continue;
-        const ageMs = typeof profile.age_sec === "number" ? profile.age_sec * 1000 : 0;
-        recordFiveHour(
-          fiveHourHistory,
-          profile.name,
-          { atMs: generatedMs - ageMs, used, resetsAt },
-          lastStatusAtMs,
-        );
-      }
-      // A fresher reading from the switcher supersedes live overlays up to now.
-      for (const [profile, overlay] of overlays) {
-        if (overlay.atMs <= lastStatusAtMs) overlays.delete(profile);
-      }
-    });
-
-  const noteFailure = (failure: ClaudeAutoswitchFailure) =>
-    Effect.gen(function* () {
-      unavailableReason = shortUnavailableReason(failure);
-      yield* Effect.logWarning(
-        failure.kind === "unavailable"
-          ? "claude.account.switcher-unavailable"
-          : "claude.account.switcher-failed",
-        { detail: failure.detail },
+  const adoptStatus = Effect.fn("ClaudeAccountsService.adoptStatus")(function* (
+    status: SwitcherStatus,
+  ) {
+    lastStatus = status;
+    lastStatusAtMs = yield* Clock.currentTimeMillis;
+    unavailableReason = undefined;
+    // One rebalance per source account per status read. A moved session
+    // whose restart was deferred is still counted in this read, so a second
+    // thread can leave the account one read early; the slack of 2 over the
+    // fair share absorbs that.
+    rebalancedFrom.clear();
+    const generatedMs =
+      typeof status.generated_ms === "number" ? status.generated_ms : lastStatusAtMs;
+    for (const profile of status.profiles) {
+      const used = profile.five_hour?.used;
+      const resetsAt = profile.five_hour?.resets_at;
+      if (typeof used !== "number" || !resetsAt) continue;
+      const ageMs = typeof profile.age_sec === "number" ? profile.age_sec * 1000 : 0;
+      recordFiveHour(
+        fiveHourHistory,
+        profile.name,
+        { atMs: generatedMs - ageMs, used, resetsAt },
+        lastStatusAtMs,
       );
-    });
+    }
+    // A fresher reading from the switcher supersedes live overlays up to now.
+    for (const [profile, overlay] of overlays) {
+      if (overlay.atMs <= lastStatusAtMs) overlays.delete(profile);
+    }
+  });
+
+  const noteFailure = Effect.fn("ClaudeAccountsService.noteFailure")(function* (
+    failure: ClaudeAutoswitchFailure,
+  ) {
+    unavailableReason = shortUnavailableReason(failure);
+    yield* Effect.logWarning(
+      failure.kind === "unavailable"
+        ? "claude.account.switcher-unavailable"
+        : "claude.account.switcher-failed",
+      { detail: failure.detail },
+    );
+  });
 
   /** Drops notices whose time has passed and tells their threads. */
   const expireNotices = Effect.gen(function* () {
@@ -848,31 +849,32 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = () =>
-    Effect.gen(function* () {
-      const input = yield* rankInput;
-      let outcome = yield* client.status(input);
-      // A switcher swapped back to an older one rejects the ranking flags.
-      if (outcome.kind === "unavailable" && input !== undefined) outcome = yield* client.status();
-      if (outcome.kind === "ok") {
-        yield* adoptStatus(outcome.value);
-      } else {
-        yield* noteFailure(outcome);
-      }
-      firstPollDone = true;
-      yield* announceSnapshot;
-      // The live-session index reads files, so it runs after the snapshot is
-      // out and only tells thread views, which may now show an observed account.
-      if (outcome.kind === "ok") {
-        liveSessionProfiles = yield* indexLiveSessions(outcome.value);
-        yield* announce(LIVE_SESSIONS_CHANGE);
-      }
-      yield* expireNotices;
-      // Accounts may have room now: continue the threads waiting for one.
-      yield* revivePass;
-      // Restarts deferred for background work have no turn end to wake them.
-      yield* recheckBackgroundWaits;
-    });
+  const refreshStatus: ClaudeAccountsServiceShape["refreshStatus"] = Effect.fn(
+    "ClaudeAccountsService.refreshStatus",
+  )(function* () {
+    const input = yield* rankInput;
+    let outcome = yield* client.status(input);
+    // A switcher swapped back to an older one rejects the ranking flags.
+    if (outcome.kind === "unavailable" && input !== undefined) outcome = yield* client.status();
+    if (outcome.kind === "ok") {
+      yield* adoptStatus(outcome.value);
+    } else {
+      yield* noteFailure(outcome);
+    }
+    firstPollDone = true;
+    yield* announceSnapshot;
+    // The live-session index reads files, so it runs after the snapshot is
+    // out and only tells thread views, which may now show an observed account.
+    if (outcome.kind === "ok") {
+      liveSessionProfiles = yield* indexLiveSessions(outcome.value);
+      yield* announce(LIVE_SESSIONS_CHANGE);
+    }
+    yield* expireNotices;
+    // Accounts may have room now: continue the threads waiting for one.
+    yield* revivePass;
+    // Restarts deferred for background work have no turn end to wake them.
+    yield* recheckBackgroundWaits;
+  });
 
   // Poll only while the setting is on; a disabled feature costs nothing but
   // one settings read per interval, so toggling it needs no restart. The
@@ -900,8 +902,6 @@ export const make = Effect.gen(function* () {
     Stream.changes,
     Stream.runForEach((enabled) => (enabled ? refreshStatus() : announceSnapshot)),
   );
-
-  // ---------------------------------------------------------------- threads
 
   const setNotice = (threadId: ThreadId, text: string, until?: string) => {
     const untilMs = until === undefined ? Number.NaN : Date.parse(until);
@@ -990,36 +990,40 @@ export const make = Effect.gen(function* () {
   };
 
   /** The account a thread's live Claude session runs on, read from the session files. */
-  const observedProfile = (threadId: ThreadId): Effect.Effect<string | undefined> =>
-    Effect.gen(function* () {
-      if (liveSessionProfiles.size === 0) return undefined;
-      const shell = yield* query
-        .getThreadShellById(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      const sessionId = Option.isSome(shell) ? shell.value.session?.providerThreadId : undefined;
-      return sessionId ? liveSessionProfiles.get(sessionId) : undefined;
-    });
+  const observedProfile = Effect.fn("ClaudeAccountsService.observedProfile")(function* (
+    threadId: ThreadId,
+  ): Effect.fn.Return<string | undefined> {
+    if (liveSessionProfiles.size === 0) return undefined;
+    const shell = yield* query
+      .getThreadShellById(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const sessionId = Option.isSome(shell) ? shell.value.session?.providerThreadId : undefined;
+    return sessionId ? liveSessionProfiles.get(sessionId) : undefined;
+  });
 
-  const getThread: ClaudeAccountsServiceShape["getThread"] = (threadId) =>
-    Effect.gen(function* () {
-      const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("getThread")));
-      const nowMs = yield* Clock.currentTimeMillis;
-      if (row.resolvedProfile || row.mode.kind !== "auto") return threadView(row, nowMs);
-      // A session that started before placement (on the shared link) has no
-      // resolved account yet: show the one its live process really uses.
-      const observed = yield* observedProfile(threadId);
-      if (observed === undefined) return threadView(row, nowMs);
-      threadProfiles.set(threadId, observed);
-      return threadView({ ...row, resolvedProfile: observed }, nowMs);
-    });
+  const getThread: ClaudeAccountsServiceShape["getThread"] = Effect.fn(
+    "ClaudeAccountsService.getThread",
+  )(function* (threadId) {
+    const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("getThread")));
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (row.resolvedProfile || row.mode.kind !== "auto") return threadView(row, nowMs);
+    // A session that started before placement (on the shared link) has no
+    // resolved account yet: show the one its live process really uses.
+    const observed = yield* observedProfile(threadId);
+    if (observed === undefined) return threadView(row, nowMs);
+    threadProfiles.set(threadId, observed);
+    return threadView({ ...row, resolvedProfile: observed }, nowMs);
+  });
 
-  const persistResolved = (threadId: ThreadId, profile: string) =>
-    Effect.gen(function* () {
-      const resolvedAt = yield* nowIso;
-      threadProfiles.set(threadId, profile);
-      yield* repository.setResolved({ threadId, profile, resolvedAt });
-      yield* announce(threadId);
-    });
+  const persistResolved = Effect.fn("ClaudeAccountsService.persistResolved")(function* (
+    threadId: ThreadId,
+    profile: string,
+  ) {
+    const resolvedAt = yield* nowIso;
+    threadProfiles.set(threadId, profile);
+    yield* repository.setResolved({ threadId, profile, resolvedAt });
+    yield* announce(threadId);
+  });
 
   const pendingCounts = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -1070,19 +1074,18 @@ export const make = Effect.gen(function* () {
    * `~/.claude-active`). A restricted owner never does that blindly: the
    * active link is used only when it is an account they may use.
    */
-  const restrictedFallback = (
+  const restrictedFallback = Effect.fn("ClaudeAccountsService.restrictedFallback")(function* (
     threadId: ThreadId,
     restriction: Restriction,
-  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
-    Effect.gen(function* () {
-      if (!isRestricted(restriction)) return undefined;
-      const fallback = yield* currentProfileFromActiveLink;
-      if (fallback !== undefined && !restriction.disallowed.has(fallback.profile)) return fallback;
-      return yield* new ClaudeAccountPolicyError({
-        threadId,
-        detail: PLACEMENT_UNAVAILABLE_DETAIL,
-      });
+  ): Effect.fn.Return<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> {
+    if (!isRestricted(restriction)) return undefined;
+    const fallback = yield* currentProfileFromActiveLink;
+    if (fallback !== undefined && !restriction.disallowed.has(fallback.profile)) return fallback;
+    return yield* new ClaudeAccountPolicyError({
+      threadId,
+      detail: PLACEMENT_UNAVAILABLE_DETAIL,
     });
+  });
 
   interface PlaceOptions {
     /** Why the placement runs, for the log. */
@@ -1098,129 +1101,128 @@ export const make = Effect.gen(function* () {
   }
 
   /** Asks the switcher for an account. Must run under `placementLock`. */
-  const placeWith = (
+  const placeWith = Effect.fn("ClaudeAccountsService.placeWith")(function* (
     threadId: ThreadId,
     avoid: ReadonlyArray<string>,
     options: PlaceOptions,
-  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
-    Effect.gen(function* () {
-      const pending = yield* pendingCounts;
-      const restriction = yield* disallowedFor(threadId);
-      const { disallowed } = restriction;
-      if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
-      const exhaustedNow = yield* exhaustedNames;
-      const avoidSet = new Set([...exhaustedNow, ...avoid, ...disallowed]);
-      const rates = lastStatus?.place_rule
-        ? fiveHourRates(fiveHourHistory, yield* Clock.currentTimeMillis)
-        : undefined;
-      let outcome = yield* client.place({
-        pending,
-        avoid: [...avoidSet],
-        ...(rates ? { rates } : {}),
+  ): Effect.fn.Return<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> {
+    const pending = yield* pendingCounts;
+    const restriction = yield* disallowedFor(threadId);
+    const { disallowed } = restriction;
+    if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
+    const exhaustedNow = yield* exhaustedNames;
+    const avoidSet = new Set([...exhaustedNow, ...avoid, ...disallowed]);
+    const rates = lastStatus?.place_rule
+      ? fiveHourRates(fiveHourHistory, yield* Clock.currentTimeMillis)
+      : undefined;
+    let outcome = yield* client.place({
+      pending,
+      avoid: [...avoidSet],
+      ...(rates ? { rates } : {}),
+    });
+    // An older switcher knows `--pending` and `--avoid` but not `--rates`.
+    if (outcome.kind === "unavailable" && rates !== undefined) {
+      outcome = yield* client.place({ pending, avoid: [...avoidSet] });
+    }
+    if (outcome.kind !== "ok") {
+      // `available` tracks `--status` alone; a failed `--place` only logs.
+      yield* Effect.logWarning("claude.account.place-failed", {
+        threadId,
+        kind: outcome.kind,
+        detail: outcome.detail,
+        purpose: options.purpose,
       });
-      // An older switcher knows `--pending` and `--avoid` but not `--rates`.
-      if (outcome.kind === "unavailable" && rates !== undefined) {
-        outcome = yield* client.place({ pending, avoid: [...avoidSet] });
-      }
-      if (outcome.kind !== "ok") {
-        // `available` tracks `--status` alone; a failed `--place` only logs.
-        yield* Effect.logWarning("claude.account.place-failed", {
-          threadId,
-          kind: outcome.kind,
-          detail: outcome.detail,
-          purpose: options.purpose,
-        });
-        if (options.requirePlaced) {
-          return yield* new ClaudeAccountPolicyError({
-            threadId,
-            detail: "Claude account placement is unavailable right now — try again shortly.",
-          });
-        }
-        if (outcome.kind === "unavailable") {
-          const fallback = yield* currentProfileFromActiveLink;
-          if (fallback !== undefined && !avoidSet.has(fallback.profile)) return fallback;
-        }
-        // Leaving the environment alone runs `~/.claude-active`, which a
-        // restricted owner may not be allowed to use.
-        return yield* restrictedFallback(threadId, restriction);
-      }
-      const result = outcome.value;
-      if (result.snapshot) yield* adoptStatus(result.snapshot);
-      // The switcher is told what to avoid; never trust that it listened.
-      const chosen = result.chosen && !avoidSet.has(result.chosen) ? result.chosen : null;
-      if (result.chosen && chosen === null) {
-        yield* Effect.logWarning("claude.account.place-chose-avoided", {
-          threadId,
-          chosen: result.chosen,
-        });
-      }
-      if (
-        result.status === "no_eligible_profile" ||
-        chosen === null ||
-        (options.requirePlaced === true && result.status !== "placed")
-      ) {
-        yield* Effect.logInfo("claude.account.place-none", {
-          threadId,
-          status: result.status,
-          recoversAt: result.recovers_at ?? null,
-          recoveries: result.recoveries ?? [],
-          reason: result.reason ?? null,
-          purpose: options.purpose,
-        });
-        if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
-        // The first account this owner may use that is expected to have room.
-        // A switcher that lists recoveries speaks for every account; an older
-        // one only gives the first reset, which may be an account off limits.
-        let first: { readonly profile: string; readonly at: string } | undefined;
-        for (const recovery of result.recoveries ?? []) {
-          const at = isoOrUndefined(recovery.recovers_at);
-          if (at !== undefined && !disallowed.has(recovery.profile)) {
-            first = { profile: recovery.profile, at };
-            break;
-          }
-        }
-        const recoversAt =
-          first?.at ??
-          (result.recoveries ? undefined : isoOrUndefined(result.recovers_at)) ??
-          firstRecovery(disallowed);
-        // Nothing the owner may use is waiting on a reset, and whatever else
-        // is left is off limits: that is "no access", not "at its limit". The
-        // access list decides this; the host list, when known, only narrows it.
-        if (isRestricted(restriction) && recoversAt === undefined) {
-          const ownExhausted = exhaustedNow.some((profile) => !disallowed.has(profile));
-          const remaining = (lastStatus?.profiles ?? []).filter(
-            (profile) => !exhaustedNow.includes(profile.name),
-          );
-          if (!ownExhausted && remaining.every((profile) => disallowed.has(profile.name))) {
-            return yield* noAccountPolicyError(threadId);
-          }
-        }
-        const limitLine = isRestricted(restriction)
-          ? "Every Claude account you can use is at its limit"
-          : "All Claude accounts are at their limit";
+      if (options.requirePlaced) {
         return yield* new ClaudeAccountPolicyError({
           threadId,
-          detail:
-            first !== undefined
-              ? `${limitLine} — ${first.profile} is expected to have room at ${formatResetClock(first.at)}.`
-              : recoversAt === undefined
-                ? `${limitLine}.`
-                : `${limitLine} — first resets at ${formatResetClock(recoversAt)}.`,
-          ...(recoversAt !== undefined ? { expectedAt: recoversAt } : {}),
-          ...(first !== undefined ? { expectedProfile: first.profile } : {}),
+          detail: "Claude account placement is unavailable right now — try again shortly.",
         });
       }
-      if (options.commit !== false) {
-        const atMs = yield* Clock.currentTimeMillis;
-        pendingPlacements.push({ profile: chosen, atMs });
+      if (outcome.kind === "unavailable") {
+        const fallback = yield* currentProfileFromActiveLink;
+        if (fallback !== undefined && !avoidSet.has(fallback.profile)) return fallback;
       }
-      return {
-        profile: chosen,
-        dir: result.dir ? result.dir : profileDir(chosen),
-        mode: "auto",
-        reason: result.reason ?? result.status,
-      } as const;
-    });
+      // Leaving the environment alone runs `~/.claude-active`, which a
+      // restricted owner may not be allowed to use.
+      return yield* restrictedFallback(threadId, restriction);
+    }
+    const result = outcome.value;
+    if (result.snapshot) yield* adoptStatus(result.snapshot);
+    // The switcher is told what to avoid; never trust that it listened.
+    const chosen = result.chosen && !avoidSet.has(result.chosen) ? result.chosen : null;
+    if (result.chosen && chosen === null) {
+      yield* Effect.logWarning("claude.account.place-chose-avoided", {
+        threadId,
+        chosen: result.chosen,
+      });
+    }
+    if (
+      result.status === "no_eligible_profile" ||
+      chosen === null ||
+      (options.requirePlaced === true && result.status !== "placed")
+    ) {
+      yield* Effect.logInfo("claude.account.place-none", {
+        threadId,
+        status: result.status,
+        recoversAt: result.recovers_at ?? null,
+        recoveries: result.recoveries ?? [],
+        reason: result.reason ?? null,
+        purpose: options.purpose,
+      });
+      if (mayUseNone(restriction)) return yield* noAccountPolicyError(threadId);
+      // The first account this owner may use that is expected to have room.
+      // A switcher that lists recoveries speaks for every account; an older
+      // one only gives the first reset, which may be an account off limits.
+      let first: { readonly profile: string; readonly at: string } | undefined;
+      for (const recovery of result.recoveries ?? []) {
+        const at = isoOrUndefined(recovery.recovers_at);
+        if (at !== undefined && !disallowed.has(recovery.profile)) {
+          first = { profile: recovery.profile, at };
+          break;
+        }
+      }
+      const recoversAt =
+        first?.at ??
+        (result.recoveries ? undefined : isoOrUndefined(result.recovers_at)) ??
+        firstRecovery(disallowed);
+      // Nothing the owner may use is waiting on a reset, and whatever else
+      // is left is off limits: that is "no access", not "at its limit". The
+      // access list decides this; the host list, when known, only narrows it.
+      if (isRestricted(restriction) && recoversAt === undefined) {
+        const ownExhausted = exhaustedNow.some((profile) => !disallowed.has(profile));
+        const remaining = (lastStatus?.profiles ?? []).filter(
+          (profile) => !exhaustedNow.includes(profile.name),
+        );
+        if (!ownExhausted && remaining.every((profile) => disallowed.has(profile.name))) {
+          return yield* noAccountPolicyError(threadId);
+        }
+      }
+      const limitLine = isRestricted(restriction)
+        ? "Every Claude account you can use is at its limit"
+        : "All Claude accounts are at their limit";
+      return yield* new ClaudeAccountPolicyError({
+        threadId,
+        detail:
+          first !== undefined
+            ? `${limitLine} — ${first.profile} is expected to have room at ${formatResetClock(first.at)}.`
+            : recoversAt === undefined
+              ? `${limitLine}.`
+              : `${limitLine} — first resets at ${formatResetClock(recoversAt)}.`,
+        ...(recoversAt !== undefined ? { expectedAt: recoversAt } : {}),
+        ...(first !== undefined ? { expectedProfile: first.profile } : {}),
+      });
+    }
+    if (options.commit !== false) {
+      const atMs = yield* Clock.currentTimeMillis;
+      pendingPlacements.push({ profile: chosen, atMs });
+    }
+    return {
+      profile: chosen,
+      dir: result.dir ? result.dir : profileDir(chosen),
+      mode: "auto",
+      reason: result.reason ?? result.status,
+    } as const;
+  });
 
   const placeAndPersist = (
     threadId: ThreadId,
@@ -1242,86 +1244,85 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const resolveUnguarded = (
+  const resolveUnguarded = Effect.fn("ClaudeAccountsService.resolveUnguarded")(function* (
     threadId: ThreadId,
-  ): Effect.Effect<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> =>
-    Effect.gen(function* () {
-      const settings = yield* readSettings;
-      if (!settings.enabled) return undefined;
-      const restriction = yield* disallowedFor(threadId);
-      const { disallowed } = restriction;
-      const rowResult = yield* repository.get(threadId).pipe(Effect.result);
-      if (rowResult._tag === "Failure") {
-        yield* Effect.logWarning("claude.account.row-read-failed", {
-          threadId,
-          cause: rowResult.failure.message,
-        });
-        return yield* restrictedFallback(threadId, restriction);
-      }
-      const row = rowResult.success;
-      yield* pruneExhausted;
-      // A spawn is the restart a deferred mode change was waiting for.
-      if (forgetPendingRestart(threadId)) yield* announce(threadId);
-
-      if (row.mode.kind === "profile") {
-        const pinned = row.mode.profile;
-        if (disallowed.has(pinned)) {
-          return yield* new ClaudeAccountPolicyError({ threadId, detail: noAccessDetail(pinned) });
-        }
-        if (!(yield* profileExists(pinned))) {
-          return yield* new ClaudeAccountPolicyError({
-            threadId,
-            detail: `Claude account ${pinned} no longer exists — switch this thread to Auto or another account.`,
-          });
-        }
-        if (knownProfile(pinned)?.auth?.state === "logged_out") {
-          return yield* new ClaudeAccountPolicyError({
-            threadId,
-            detail: `Claude account ${pinned} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
-          });
-        }
-        if (row.resolvedProfile !== pinned) {
-          yield* persistResolved(threadId, pinned).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
-            ),
-          );
-        } else {
-          threadProfiles.set(threadId, pinned);
-        }
-        return {
-          profile: pinned,
-          dir: profileDir(pinned),
-          mode: "profile",
-          reason: "pinned",
-        } as const;
-      }
-
-      // Sticky: an account the thread already ran on is kept until a hard
-      // limit, a sign-out, an exhausted mark or its removal takes it out.
-      // Nearing a limit never moves a running thread here; only new
-      // placements avoid it, and the turn-boundary rebalance may move an idle
-      // thread off an over-loaded account (it writes the row this reads).
-      // Losing access to the account re-places it too.
-      if (
-        row.resolvedProfile !== null &&
-        !disallowed.has(row.resolvedProfile) &&
-        (yield* usableAndPresent(row.resolvedProfile))
-      ) {
-        threadProfiles.set(threadId, row.resolvedProfile);
-        return {
-          profile: row.resolvedProfile,
-          dir: profileDir(row.resolvedProfile),
-          mode: "auto",
-          reason: "sticky",
-        } as const;
-      }
-      return yield* placeAndPersist(
+  ): Effect.fn.Return<ClaudeAccountResolution | undefined, ClaudeAccountPolicyError> {
+    const settings = yield* readSettings;
+    if (!settings.enabled) return undefined;
+    const restriction = yield* disallowedFor(threadId);
+    const { disallowed } = restriction;
+    const rowResult = yield* repository.get(threadId).pipe(Effect.result);
+    if (rowResult._tag === "Failure") {
+      yield* Effect.logWarning("claude.account.row-read-failed", {
         threadId,
-        row.resolvedProfile ? [row.resolvedProfile] : [],
-        "spawn",
-      );
-    });
+        cause: rowResult.failure.message,
+      });
+      return yield* restrictedFallback(threadId, restriction);
+    }
+    const row = rowResult.success;
+    yield* pruneExhausted;
+    // A spawn is the restart a deferred mode change was waiting for.
+    if (forgetPendingRestart(threadId)) yield* announce(threadId);
+
+    if (row.mode.kind === "profile") {
+      const pinned = row.mode.profile;
+      if (disallowed.has(pinned)) {
+        return yield* new ClaudeAccountPolicyError({ threadId, detail: noAccessDetail(pinned) });
+      }
+      if (!(yield* profileExists(pinned))) {
+        return yield* new ClaudeAccountPolicyError({
+          threadId,
+          detail: `Claude account ${pinned} no longer exists — switch this thread to Auto or another account.`,
+        });
+      }
+      if (knownProfile(pinned)?.auth?.state === "logged_out") {
+        return yield* new ClaudeAccountPolicyError({
+          threadId,
+          detail: `Claude account ${pinned} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
+        });
+      }
+      if (row.resolvedProfile !== pinned) {
+        yield* persistResolved(threadId, pinned).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.account.persist-failed", { threadId, cause }),
+          ),
+        );
+      } else {
+        threadProfiles.set(threadId, pinned);
+      }
+      return {
+        profile: pinned,
+        dir: profileDir(pinned),
+        mode: "profile",
+        reason: "pinned",
+      } as const;
+    }
+
+    // Sticky: an account the thread already ran on is kept until a hard
+    // limit, a sign-out, an exhausted mark or its removal takes it out.
+    // Nearing a limit never moves a running thread here; only new
+    // placements avoid it, and the turn-boundary rebalance may move an idle
+    // thread off an over-loaded account (it writes the row this reads).
+    // Losing access to the account re-places it too.
+    if (
+      row.resolvedProfile !== null &&
+      !disallowed.has(row.resolvedProfile) &&
+      (yield* usableAndPresent(row.resolvedProfile))
+    ) {
+      threadProfiles.set(threadId, row.resolvedProfile);
+      return {
+        profile: row.resolvedProfile,
+        dir: profileDir(row.resolvedProfile),
+        mode: "auto",
+        reason: "sticky",
+      } as const;
+    }
+    return yield* placeAndPersist(
+      threadId,
+      row.resolvedProfile ? [row.resolvedProfile] : [],
+      "spawn",
+    );
+  });
 
   /**
    * A defect here would otherwise reach `applyClaudeAccountProfile`, which
@@ -1345,18 +1346,15 @@ export const make = Effect.gen(function* () {
   const reassign: ClaudeAccountsServiceShape["reassign"] = (threadId, input) =>
     placeAndPersist(threadId, input.avoid, "reassign");
 
-  const markExhausted: ClaudeAccountsServiceShape["markExhausted"] = (profile, resetsAt) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const resetMs = resetsAt ? Date.parse(resetsAt) : Number.NaN;
-      const untilMs = Number.isNaN(resetMs)
-        ? now + DEFAULT_EXHAUSTED_MS
-        : Math.max(now + 1, resetMs);
-      exhausted.set(profile, { untilMs, resetsAt: isoOrUndefined(resetsAt) });
-      yield* announceSnapshot;
-    });
-
-  // ---------------------------------------------------------------- restarts
+  const markExhausted: ClaudeAccountsServiceShape["markExhausted"] = Effect.fn(
+    "ClaudeAccountsService.markExhausted",
+  )(function* (profile, resetsAt) {
+    const now = yield* Clock.currentTimeMillis;
+    const resetMs = resetsAt ? Date.parse(resetsAt) : Number.NaN;
+    const untilMs = Number.isNaN(resetMs) ? now + DEFAULT_EXHAUSTED_MS : Math.max(now + 1, resetMs);
+    exhausted.set(profile, { untilMs, resetsAt: isoOrUndefined(resetsAt) });
+    yield* announceSnapshot;
+  });
 
   const stopSessionQuietly = (threadId: ThreadId, why: string) =>
     providers.stopSession({ threadId }).pipe(
@@ -1371,46 +1369,47 @@ export const make = Effect.gen(function* () {
    * shell (which marks a turn active as soon as its command is accepted, before
    * the provider has started it) and the provider session itself.
    */
-  const turnIsIdle = (threadId: ThreadId, settled?: OrchestrationSession): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
-      if (activeTurns.has(threadId)) return false;
-      // A `thread.session-set` event carries the session as just applied; the
-      // shell projection may not have caught up with it yet.
-      let session: OrchestrationSession | null = settled ?? null;
-      if (settled === undefined) {
-        const shell = yield* query
-          .getThreadShellById(threadId)
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        session = Option.isSome(shell) ? shell.value.session : null;
-      }
-      if (
-        session !== null &&
-        (session.activeTurnId !== null ||
-          session.status === "running" ||
-          session.status === "starting")
-      ) {
-        return false;
-      }
-      const sessions = yield* providers.listSessions();
-      const live = sessions.find(
-        (session) => session.threadId === threadId && session.status !== "closed",
-      );
-      return live === undefined || (live.status !== "running" && live.activeTurnId === undefined);
-    });
+  const turnIsIdle = Effect.fn("ClaudeAccountsService.turnIsIdle")(function* (
+    threadId: ThreadId,
+    settled?: OrchestrationSession,
+  ): Effect.fn.Return<boolean> {
+    if (activeTurns.has(threadId)) return false;
+    // A `thread.session-set` event carries the session as just applied; the
+    // shell projection may not have caught up with it yet.
+    let session: OrchestrationSession | null = settled ?? null;
+    if (settled === undefined) {
+      const shell = yield* query
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      session = Option.isSome(shell) ? shell.value.session : null;
+    }
+    if (
+      session !== null &&
+      (session.activeTurnId !== null ||
+        session.status === "running" ||
+        session.status === "starting")
+    ) {
+      return false;
+    }
+    const sessions = yield* providers.listSessions();
+    const live = sessions.find(
+      (session) => session.threadId === threadId && session.status !== "closed",
+    );
+    return live === undefined || (live.status !== "running" && live.activeTurnId === undefined);
+  });
 
   /**
    * Whether the thread can lose its provider session now: between turns, and
    * with no background work (a subagent, a background command) still running
    * in that session, which a stop would kill.
    */
-  const threadIsIdle = (
+  const threadIsIdle = Effect.fn("ClaudeAccountsService.threadIsIdle")(function* (
     threadId: ThreadId,
     settled?: OrchestrationSession,
-  ): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
-      if (!(yield* turnIsIdle(threadId, settled))) return false;
-      return !(yield* providers.hasLiveBackgroundWork({ threadId }));
-    });
+  ): Effect.fn.Return<boolean> {
+    if (!(yield* turnIsIdle(threadId, settled))) return false;
+    return !(yield* providers.hasLiveBackgroundWork({ threadId }));
+  });
 
   /**
    * Whether a deferred restart keeps waiting for the session's background
@@ -1418,8 +1417,8 @@ export const make = Effect.gen(function* () {
    * BACKGROUND_WORK_RESTART_CAP_MS the restart runs anyway, and the released
    * session marks the subagents it leaves open as cancelled.
    */
-  const waitsForBackgroundWork = (threadId: ThreadId): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
+  const waitsForBackgroundWork = Effect.fn("ClaudeAccountsService.waitsForBackgroundWork")(
+    function* (threadId: ThreadId): Effect.fn.Return<boolean> {
       if (restartIgnoresBackgroundWork.has(threadId)) return false;
       if (!(yield* providers.hasLiveBackgroundWork({ threadId }))) return false;
       const nowMs = yield* Clock.currentTimeMillis;
@@ -1434,48 +1433,48 @@ export const make = Effect.gen(function* () {
         waitedMs: nowMs - since,
       });
       return false;
-    });
+    },
+  );
 
   /**
    * Restarts the thread's provider session so its next turn spawns on the new
    * account. A running turn defers the restart to its end, and so does the
    * session's background work, unless `waitForBackgroundWork` is false.
    */
-  const restartForNewAccount = (
+  const restartForNewAccount = Effect.fn("ClaudeAccountsService.restartForNewAccount")(function* (
     threadId: ThreadId,
     why = "mode-changed",
     options: { readonly waitForBackgroundWork?: boolean } = {},
-  ) =>
-    Effect.gen(function* () {
-      const sessions = yield* providers.listSessions();
-      const live = sessions.find(
-        (session) => session.threadId === threadId && session.status !== "closed",
-      );
-      if (live === undefined) return;
-      const ignoresBackgroundWork = options.waitForBackgroundWork === false;
-      const turnIdle = yield* turnIsIdle(threadId);
-      const waitingForBackgroundWork =
-        turnIdle && !ignoresBackgroundWork && (yield* waitsForBackgroundWork(threadId));
-      if (!turnIdle || waitingForBackgroundWork) {
-        pendingRestart.add(threadId);
-        if (ignoresBackgroundWork) restartIgnoresBackgroundWork.add(threadId);
-        yield* Effect.logInfo("claude.account.restart-deferred", {
-          threadId,
-          waitingFor: turnIdle ? "background-work" : "turn",
-        });
-        return;
-      }
-      backgroundWaitSince.delete(threadId);
-      yield* stopSessionQuietly(threadId, why);
-    });
+  ) {
+    const sessions = yield* providers.listSessions();
+    const live = sessions.find(
+      (session) => session.threadId === threadId && session.status !== "closed",
+    );
+    if (live === undefined) return;
+    const ignoresBackgroundWork = options.waitForBackgroundWork === false;
+    const turnIdle = yield* turnIsIdle(threadId);
+    const waitingForBackgroundWork =
+      turnIdle && !ignoresBackgroundWork && (yield* waitsForBackgroundWork(threadId));
+    if (!turnIdle || waitingForBackgroundWork) {
+      pendingRestart.add(threadId);
+      if (ignoresBackgroundWork) restartIgnoresBackgroundWork.add(threadId);
+      yield* Effect.logInfo("claude.account.restart-deferred", {
+        threadId,
+        waitingFor: turnIdle ? "background-work" : "turn",
+      });
+      return;
+    }
+    backgroundWaitSince.delete(threadId);
+    yield* stopSessionQuietly(threadId, why);
+  });
 
   /**
    * The turn or the background work a mode change waited for has ended. Stop
    * only if nothing new has started since (a queued message may already be on
    * its way); otherwise keep waiting for the next completion.
    */
-  const completePendingRestart = (threadId: ThreadId, settled?: OrchestrationSession) =>
-    Effect.gen(function* () {
+  const completePendingRestart = Effect.fn("ClaudeAccountsService.completePendingRestart")(
+    function* (threadId: ThreadId, settled?: OrchestrationSession) {
       if (!pendingRestart.has(threadId)) return;
       if (!(yield* turnIsIdle(threadId, settled))) {
         yield* Effect.logInfo("claude.account.restart-still-deferred", {
@@ -1501,7 +1500,8 @@ export const make = Effect.gen(function* () {
       if (!forgetPendingRestart(threadId)) return;
       yield* stopSessionQuietly(threadId, "mode-changed-after-turn");
       yield* announce(threadId);
-    });
+    },
+  );
 
   /**
    * A restart deferred for background work has no turn end to wake it when
@@ -1538,8 +1538,6 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // ------------------------------------------------------------ revive queue
-
   /** Forgets the rejections already handled for a thread, so the next one is judged afresh. */
   const forgetConditions = (threadId: ThreadId) => {
     const prefix = `${threadId}\u0000`;
@@ -1557,14 +1555,14 @@ export const make = Effect.gen(function* () {
    * Puts the thread in the revive queue (keeping its place when it is already
    * there). `false` when the row could not be written: the caller falls back.
    */
-  const park = (
-    threadId: ThreadId,
-    input: Omit<WaitEntry, "queuedAt" | "preferProfile" | "notBefore"> & {
-      readonly preferProfile?: string;
-      readonly notBefore?: string;
-    },
-  ) =>
-    Effect.gen(function* () {
+  const park = Effect.fn("ClaudeAccountsService.park")(
+    function* (
+      threadId: ThreadId,
+      input: Omit<WaitEntry, "queuedAt" | "preferProfile" | "notBefore"> & {
+        readonly preferProfile?: string;
+        readonly notBefore?: string;
+      },
+    ) {
       const queuedAt = waits.get(threadId)?.queuedAt ?? (yield* nowIso);
       const entry: WaitEntry = {
         ...input,
@@ -1593,25 +1591,30 @@ export const make = Effect.gen(function* () {
       });
       yield* announceQueue;
       return true;
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.as(
-          Effect.logWarning("claude.account.queue-write-failed", { threadId, cause }),
-          false,
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.as(
+            Effect.logWarning("claude.account.queue-write-failed", { threadId, cause }),
+            false,
+          ),
         ),
       ),
-    );
+  );
 
   /** Takes the thread out of the revive queue; `true` when it was waiting. */
-  const dequeue = (threadId: ThreadId, why: string) =>
-    Effect.gen(function* () {
-      if (!waits.delete(threadId)) return false;
-      forgetConditions(threadId);
-      yield* Effect.logInfo("claude.account.dequeued", { threadId, why });
-      yield* announceQueue;
-      yield* repository.clearWait(threadId);
-      return true;
-    });
+  const dequeue = Effect.fn("ClaudeAccountsService.dequeue")(function* (
+    threadId: ThreadId,
+    why: string,
+  ) {
+    if (!waits.delete(threadId)) return false;
+    forgetConditions(threadId);
+    yield* Effect.logInfo("claude.account.dequeued", { threadId, why });
+    yield* announceQueue;
+    yield* repository.clearWait(threadId);
+    return true;
+  });
 
   /** `dequeue` for event handlers: a failed write is logged, never raised. */
   const dequeueQuietly = (threadId: ThreadId, why: string) =>
@@ -1624,87 +1627,83 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const leaveQueue: ClaudeAccountsServiceShape["leaveQueue"] = (threadId) =>
-    Effect.gen(function* () {
-      if (yield* dequeue(threadId, "left-queue").pipe(Effect.mapError(internal("leaveQueue")))) {
-        yield* announce(threadId);
-      }
-      return yield* getThread(threadId);
-    });
-
-  const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = ({
-    threadId,
-    mode,
-    actorUserId = null,
-  }) =>
-    Effect.gen(function* () {
-      const access = yield* accessMap.pipe(Effect.mapError(internal("setThreadMode")));
-      // A draft has no owner yet; its first send makes the caller the owner.
-      const owner =
-        (yield* threadOwner(threadId).pipe(Effect.mapError(internal("setThreadMode")))) ??
-        actorUserId;
-      if (mode.kind === "profile") {
-        // Access is checked before existence, and an identified caller gets the
-        // same answer for both, so a pin cannot probe for hidden accounts.
-        const exists = yield* profileExists(mode.profile);
-        const refusal =
-          !mayUse(access, actorUserId, mode.profile) || (!exists && actorUserId !== null)
-            ? noAccessDetail(mode.profile)
-            : !mayUse(access, owner, mode.profile)
-              ? `This thread's owner doesn't have access to Claude account ${mode.profile} — pick another account or Auto.`
-              : undefined;
-        if (refusal !== undefined) {
-          return yield* new ClaudeAccountsError({
-            operation: "setThreadMode",
-            reason: "forbidden",
-            detail: refusal,
-          });
-        }
-        if (!exists) {
-          return yield* new ClaudeAccountsError({
-            operation: "setThreadMode",
-            reason: "invalid",
-            detail: `Unknown Claude account '${mode.profile}'.`,
-          });
-        }
-      }
-      const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("setThreadMode")));
-      const updatedAt = yield* nowIso;
-      yield* repository
-        .setMode({ threadId, mode, updatedAt })
-        .pipe(Effect.mapError(internal("setThreadMode")));
-      const waiting = waits.get(threadId);
-      yield* dequeue(threadId, "mode-changed").pipe(Effect.mapError(internal("setThreadMode")));
-      forgetConditions(threadId);
-      notices.delete(threadId);
-      movedAwaitingTurn.delete(threadId);
-      yield* pruneExhausted;
-
-      const wouldChange =
-        mode.kind === "profile"
-          ? row.resolvedProfile !== mode.profile
-          : row.resolvedProfile !== null &&
-            (!mayUse(access, owner, row.resolvedProfile) ||
-              !(yield* usableAndPresent(row.resolvedProfile)));
-      if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
-        setNotice(
-          threadId,
-          `Claude account ${mode.profile} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
-        );
-      }
-      if (wouldChange) {
-        yield* restartForNewAccount(threadId);
-      } else {
-        forgetPendingRestart(threadId);
-      }
-      // Choosing an account for a thread that stopped mid-turn to wait is
-      // "continue now on that account": its session already stopped.
-      if (waiting?.wasActive) yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+  const leaveQueue: ClaudeAccountsServiceShape["leaveQueue"] = Effect.fn(
+    "ClaudeAccountsService.leaveQueue",
+  )(function* (threadId) {
+    if (yield* dequeue(threadId, "left-queue").pipe(Effect.mapError(internal("leaveQueue")))) {
       yield* announce(threadId);
-      return yield* getThread(threadId);
-    });
+    }
+    return yield* getThread(threadId);
+  });
 
-  // -------------------------------------------------------------- hard limit
+  const setThreadMode: ClaudeAccountsServiceShape["setThreadMode"] = Effect.fn(
+    "ClaudeAccountsService.setThreadMode",
+  )(function* ({ threadId, mode, actorUserId = null }) {
+    const access = yield* accessMap.pipe(Effect.mapError(internal("setThreadMode")));
+    // A draft has no owner yet; its first send makes the caller the owner.
+    const owner =
+      (yield* threadOwner(threadId).pipe(Effect.mapError(internal("setThreadMode")))) ??
+      actorUserId;
+    if (mode.kind === "profile") {
+      // Access is checked before existence, and an identified caller gets the
+      // same answer for both, so a pin cannot probe for hidden accounts.
+      const exists = yield* profileExists(mode.profile);
+      const refusal =
+        !mayUse(access, actorUserId, mode.profile) || (!exists && actorUserId !== null)
+          ? noAccessDetail(mode.profile)
+          : !mayUse(access, owner, mode.profile)
+            ? `This thread's owner doesn't have access to Claude account ${mode.profile} — pick another account or Auto.`
+            : undefined;
+      if (refusal !== undefined) {
+        return yield* new ClaudeAccountsError({
+          operation: "setThreadMode",
+          reason: "forbidden",
+          detail: refusal,
+        });
+      }
+      if (!exists) {
+        return yield* new ClaudeAccountsError({
+          operation: "setThreadMode",
+          reason: "invalid",
+          detail: `Unknown Claude account '${mode.profile}'.`,
+        });
+      }
+    }
+    const row = yield* repository.get(threadId).pipe(Effect.mapError(internal("setThreadMode")));
+    const updatedAt = yield* nowIso;
+    yield* repository
+      .setMode({ threadId, mode, updatedAt })
+      .pipe(Effect.mapError(internal("setThreadMode")));
+    const waiting = waits.get(threadId);
+    yield* dequeue(threadId, "mode-changed").pipe(Effect.mapError(internal("setThreadMode")));
+    forgetConditions(threadId);
+    notices.delete(threadId);
+    movedAwaitingTurn.delete(threadId);
+    yield* pruneExhausted;
+
+    const wouldChange =
+      mode.kind === "profile"
+        ? row.resolvedProfile !== mode.profile
+        : row.resolvedProfile !== null &&
+          (!mayUse(access, owner, row.resolvedProfile) ||
+            !(yield* usableAndPresent(row.resolvedProfile)));
+    if (mode.kind === "profile" && knownProfile(mode.profile)?.auth?.state === "logged_out") {
+      setNotice(
+        threadId,
+        `Claude account ${mode.profile} is logged out — sign it in on the Claude Accounts page or switch this thread to Auto.`,
+      );
+    }
+    if (wouldChange) {
+      yield* restartForNewAccount(threadId);
+    } else {
+      forgetPendingRestart(threadId);
+    }
+    // Choosing an account for a thread that stopped mid-turn to wait is
+    // "continue now on that account": its session already stopped.
+    if (waiting?.wasActive) yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+    yield* announce(threadId);
+    return yield* getThread(threadId);
+  });
 
   /**
    * The prompt that continues a thread after a limit move or reset. Only this
@@ -1728,8 +1727,8 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const dispatchContinueTurn = (threadId: ThreadId, text: string) =>
-    Effect.gen(function* () {
+  const dispatchContinueTurn = Effect.fn("ClaudeAccountsService.dispatchContinueTurn")(
+    function* (threadId: ThreadId, text: string) {
       const shell = yield* query.getThreadShellById(threadId);
       if (Option.isNone(shell)) return;
       const commandUuid = yield* uuid;
@@ -1755,11 +1754,14 @@ export const make = Effect.gen(function* () {
         },
         { actorUserId: shell.value.ownerUserId },
       );
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("claude.account.continue-turn-failed", { threadId, cause }),
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("claude.account.continue-turn-failed", { threadId, cause }),
+        ),
       ),
-    );
+  );
 
   const rememberCondition = (key: string): boolean => {
     if (handledConditions.has(key)) return false;
@@ -1771,162 +1773,163 @@ export const make = Effect.gen(function* () {
     return true;
   };
 
-  const handleHardLimit: ClaudeAccountsServiceShape["handleHardLimit"] = (condition) =>
-    Effect.gen(function* () {
-      // Read first: the turn this rejection ends may finish while this runs.
-      const wasActive = activeTurns.has(condition.threadId);
-      const settings = yield* readSettings;
-      if (!settings.enabled) return false;
-      const { threadId, rateLimitType } = condition;
+  const handleHardLimit: ClaudeAccountsServiceShape["handleHardLimit"] = Effect.fn(
+    "ClaudeAccountsService.handleHardLimit",
+  )(function* (condition) {
+    // Read first: the turn this rejection ends may finish while this runs.
+    const wasActive = activeTurns.has(condition.threadId);
+    const settings = yield* readSettings;
+    if (!settings.enabled) return false;
+    const { threadId, rateLimitType } = condition;
 
-      const rowResult = yield* repository.get(threadId).pipe(Effect.result);
-      if (rowResult._tag === "Failure") {
-        yield* Effect.logWarning("claude.account.hard-limit-row-read-failed", {
-          threadId,
-          cause: rowResult.failure.message,
-        });
-        return false;
-      }
-      const row = rowResult.success;
-      let profile = threadProfiles.get(threadId) ?? row.resolvedProfile ?? undefined;
-      if (profile === undefined) {
-        profile = (yield* currentProfileFromActiveLink)?.profile;
-      }
-      if (profile === undefined) {
-        yield* Effect.logWarning("claude.account.hard-limit-unattributed", {
-          threadId,
-          rateLimitType,
-        });
-        return false;
-      }
-      const resetsAt =
-        condition.resetAt !== undefined ? isoFromUnixSeconds(condition.resetAt) : undefined;
-
-      // A thread this service just moved has not asked its new account for
-      // anything until a turn starts there, so a rejection before that is a
-      // stale copy from the session that was stopped.
-      if (movedAwaitingTurn.has(threadId)) {
-        yield* Effect.logInfo("claude.account.hard-limit-stale", { threadId, rateLimitType });
-        return true;
-      }
-      // A waiting thread's session is stopped; its next turn takes it out of
-      // the queue first. A rejection now is a late copy from before the wait.
-      if (waits.has(threadId)) {
-        yield* Effect.logInfo("claude.account.hard-limit-queued", { threadId, rateLimitType });
-        return true;
-      }
-      // Repeated copies of one rejection against one account are consumed
-      // once. Accounts often share a reset instant (5-hour windows are
-      // hour-aligned), so the account is part of the key. Without a reset time
-      // nothing identifies the rejection, so every copy is judged on its own.
-      // The key stays only while the thread runs where this left it: a thread
-      // that waits forgets it, so a new turn's rejection is handled again.
-      const conditionKey = `${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`;
-      if (resetsAt !== undefined && !rememberCondition(conditionKey)) {
-        return true;
-      }
-
-      const accountWide = ACCOUNT_WIDE_LIMIT_TYPES.has(rateLimitType);
-      const scope = accountWide ? undefined : scopedLimitLabel(rateLimitType);
-
-      // Keep the host-wide symlink honest: the switcher moves it only when this
-      // account is the elected one, and answers `no-op` otherwise.
-      const election = yield* client.hardLimit({ type: rateLimitType, profile });
-      yield* Effect.logInfo("claude.account.hard-limit", {
+    const rowResult = yield* repository.get(threadId).pipe(Effect.result);
+    if (rowResult._tag === "Failure") {
+      yield* Effect.logWarning("claude.account.hard-limit-row-read-failed", {
         threadId,
-        profile,
+        cause: rowResult.failure.message,
+      });
+      return false;
+    }
+    const row = rowResult.success;
+    let profile = threadProfiles.get(threadId) ?? row.resolvedProfile ?? undefined;
+    if (profile === undefined) {
+      profile = (yield* currentProfileFromActiveLink)?.profile;
+    }
+    if (profile === undefined) {
+      yield* Effect.logWarning("claude.account.hard-limit-unattributed", {
+        threadId,
         rateLimitType,
-        resetsAt,
-        accountWide,
-        wasActive,
-        election: election.kind === "ok" ? election.value.status : election.kind,
       });
-      // Only an account-wide window takes the account out of rotation; a
-      // model-scoped one leaves other models, and other threads, alone.
-      if (accountWide) yield* markExhausted(profile, resetsAt);
+      return false;
+    }
+    const resetsAt =
+      condition.resetAt !== undefined ? isoFromUnixSeconds(condition.resetAt) : undefined;
 
-      if (row.mode.kind === "profile") {
-        setNotice(
-          threadId,
-          accountWide
-            ? `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`
-            : `${profile} has no ${scope} allowance left until ${formatResetClock(resetsAt)} — switch the model or account.`,
-          resetsAt,
-        );
-        yield* announce(threadId);
-        return true;
-      }
-
-      // A window that resets within the threshold is cheaper to wait out than
-      // to leave: the thread keeps its account and its cache, and continues
-      // there once the window resets. The wait is a queue entry, so it
-      // survives a restart; it always continues, as part of the stopped turn.
-      const nowMs = yield* Clock.currentTimeMillis;
-      const resetMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
-      // A reset already in the past while Claude still refuses is not worth
-      // another wait: the thread moves instead.
-      if (resetMs > nowMs && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
-        const continueAt = isoFromUnixSeconds((resetMs + RESET_WAIT_BUFFER_MS) / 1000);
-        const parked = yield* park(threadId, {
-          wasActive: true,
-          restricted: false,
-          preferProfile: profile,
-          ...(continueAt !== undefined ? { notBefore: continueAt } : {}),
-        });
-        if (parked) {
-          handledConditions.delete(conditionKey);
-          yield* stopSessionQuietly(threadId, "hard-limit-reset-wait");
-          yield* Effect.logInfo("claude.account.reset-wait", { threadId, profile, continueAt });
-          return true;
-        }
-      }
-
-      const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
-      if (moved._tag === "Success" && moved.success !== undefined) {
-        // Copies of this rejection are caught as stale until the first turn
-        // starts on the new account; past that, the key would only swallow a
-        // real rejection if the thread came back to this account.
-        handledConditions.delete(conditionKey);
-        notices.delete(threadId);
-        movedAwaitingTurn.add(threadId);
-        yield* stopSessionQuietly(threadId, "hard-limit");
-        yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
-        yield* announce(threadId);
-        return true;
-      }
-
-      // No account can take the thread now. It stops and waits in the queue;
-      // the revive pass after the next status poll continues it once an
-      // account has room.
-      const failure = moved._tag === "Failure" ? moved.failure : undefined;
-      const restriction = yield* disallowedFor(threadId).pipe(
-        Effect.orElseSucceed(() => UNRESTRICTED),
-      );
-      const parked = yield* park(threadId, {
-        wasActive,
-        restricted: isRestricted(restriction),
-        // A model-scoped limit leaves the account in rotation for others.
-        ...(accountWide ? {} : { avoid: profile }),
-        ...(failure?.expectedAt !== undefined ? { expectedAt: failure.expectedAt } : {}),
-        ...(failure?.expectedProfile !== undefined
-          ? { expectedProfile: failure.expectedProfile }
-          : {}),
-      });
-      if (!parked) {
-        setNotice(
-          threadId,
-          failure?.detail ??
-            `${profile} is at its usage limit until ${formatResetClock(resetsAt)} and no other account could be chosen.`,
-          failure?.expectedAt ?? resetsAt,
-        );
-        yield* announce(threadId);
-        return true;
-      }
-      // While it waits, copies are caught by the queue check above.
-      handledConditions.delete(conditionKey);
-      yield* stopSessionQuietly(threadId, "hard-limit-queued");
+    // A thread this service just moved has not asked its new account for
+    // anything until a turn starts there, so a rejection before that is a
+    // stale copy from the session that was stopped.
+    if (movedAwaitingTurn.has(threadId)) {
+      yield* Effect.logInfo("claude.account.hard-limit-stale", { threadId, rateLimitType });
       return true;
+    }
+    // A waiting thread's session is stopped; its next turn takes it out of
+    // the queue first. A rejection now is a late copy from before the wait.
+    if (waits.has(threadId)) {
+      yield* Effect.logInfo("claude.account.hard-limit-queued", { threadId, rateLimitType });
+      return true;
+    }
+    // Repeated copies of one rejection against one account are consumed
+    // once. Accounts often share a reset instant (5-hour windows are
+    // hour-aligned), so the account is part of the key. Without a reset time
+    // nothing identifies the rejection, so every copy is judged on its own.
+    // The key stays only while the thread runs where this left it: a thread
+    // that waits forgets it, so a new turn's rejection is handled again.
+    const conditionKey = `${threadId}\u0000${profile}\u0000${rateLimitType}\u0000${resetsAt}`;
+    if (resetsAt !== undefined && !rememberCondition(conditionKey)) {
+      return true;
+    }
+
+    const accountWide = ACCOUNT_WIDE_LIMIT_TYPES.has(rateLimitType);
+    const scope = accountWide ? undefined : scopedLimitLabel(rateLimitType);
+
+    // Keep the host-wide symlink honest: the switcher moves it only when this
+    // account is the elected one, and answers `no-op` otherwise.
+    const election = yield* client.hardLimit({ type: rateLimitType, profile });
+    yield* Effect.logInfo("claude.account.hard-limit", {
+      threadId,
+      profile,
+      rateLimitType,
+      resetsAt,
+      accountWide,
+      wasActive,
+      election: election.kind === "ok" ? election.value.status : election.kind,
     });
+    // Only an account-wide window takes the account out of rotation; a
+    // model-scoped one leaves other models, and other threads, alone.
+    if (accountWide) yield* markExhausted(profile, resetsAt);
+
+    if (row.mode.kind === "profile") {
+      setNotice(
+        threadId,
+        accountWide
+          ? `${profile} is at its usage limit until ${formatResetClock(resetsAt)} — switch to Auto or another account.`
+          : `${profile} has no ${scope} allowance left until ${formatResetClock(resetsAt)} — switch the model or account.`,
+        resetsAt,
+      );
+      yield* announce(threadId);
+      return true;
+    }
+
+    // A window that resets within the threshold is cheaper to wait out than
+    // to leave: the thread keeps its account and its cache, and continues
+    // there once the window resets. The wait is a queue entry, so it
+    // survives a restart; it always continues, as part of the stopped turn.
+    const nowMs = yield* Clock.currentTimeMillis;
+    const resetMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
+    // A reset already in the past while Claude still refuses is not worth
+    // another wait: the thread moves instead.
+    if (resetMs > nowMs && resetMs - nowMs <= RESET_WAIT_THRESHOLD_MS) {
+      const continueAt = isoFromUnixSeconds((resetMs + RESET_WAIT_BUFFER_MS) / 1000);
+      const parked = yield* park(threadId, {
+        wasActive: true,
+        restricted: false,
+        preferProfile: profile,
+        ...(continueAt !== undefined ? { notBefore: continueAt } : {}),
+      });
+      if (parked) {
+        handledConditions.delete(conditionKey);
+        yield* stopSessionQuietly(threadId, "hard-limit-reset-wait");
+        yield* Effect.logInfo("claude.account.reset-wait", { threadId, profile, continueAt });
+        return true;
+      }
+    }
+
+    const moved = yield* reassign(threadId, { avoid: [profile] }).pipe(Effect.result);
+    if (moved._tag === "Success" && moved.success !== undefined) {
+      // Copies of this rejection are caught as stale until the first turn
+      // starts on the new account; past that, the key would only swallow a
+      // real rejection if the thread came back to this account.
+      handledConditions.delete(conditionKey);
+      notices.delete(threadId);
+      movedAwaitingTurn.add(threadId);
+      yield* stopSessionQuietly(threadId, "hard-limit");
+      yield* dispatchContinueTurn(threadId, CONTINUE_TEXT);
+      yield* announce(threadId);
+      return true;
+    }
+
+    // No account can take the thread now. It stops and waits in the queue;
+    // the revive pass after the next status poll continues it once an
+    // account has room.
+    const failure = moved._tag === "Failure" ? moved.failure : undefined;
+    const restriction = yield* disallowedFor(threadId).pipe(
+      Effect.orElseSucceed(() => UNRESTRICTED),
+    );
+    const parked = yield* park(threadId, {
+      wasActive,
+      restricted: isRestricted(restriction),
+      // A model-scoped limit leaves the account in rotation for others.
+      ...(accountWide ? {} : { avoid: profile }),
+      ...(failure?.expectedAt !== undefined ? { expectedAt: failure.expectedAt } : {}),
+      ...(failure?.expectedProfile !== undefined
+        ? { expectedProfile: failure.expectedProfile }
+        : {}),
+    });
+    if (!parked) {
+      setNotice(
+        threadId,
+        failure?.detail ??
+          `${profile} is at its usage limit until ${formatResetClock(resetsAt)} and no other account could be chosen.`,
+        failure?.expectedAt ?? resetsAt,
+      );
+      yield* announce(threadId);
+      return true;
+    }
+    // While it waits, copies are caught by the queue check above.
+    handledConditions.delete(conditionKey);
+    yield* stopSessionQuietly(threadId, "hard-limit-queued");
+    return true;
+  });
 
   /**
    * Places one waiting thread if an account has room, under the placement
@@ -2051,8 +2054,6 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  // --------------------------------------------------------------- rebalance
-
   /**
    * At a turn boundary, moves an idle Auto thread off an account that carries
    * `REBALANCE_EXCESS` or more sessions above its fair share, or that can no
@@ -2064,8 +2065,8 @@ export const make = Effect.gen(function* () {
    * and not again for five minutes after it found nothing better. Never
    * fails: on any trouble the thread stays where it is.
    */
-  const maybeRebalance = (threadId: ThreadId, settled?: OrchestrationSession) =>
-    Effect.gen(function* () {
+  const maybeRebalance = Effect.fn("ClaudeAccountsService.maybeRebalance")(
+    function* (threadId: ThreadId, settled?: OrchestrationSession) {
       if (waits.has(threadId) || pendingRestart.has(threadId)) return;
       if (movedAwaitingTurn.has(threadId)) return;
       const current = threadProfiles.get(threadId);
@@ -2087,11 +2088,9 @@ export const make = Effect.gen(function* () {
       if (!(yield* readSettings).enabled) return;
       const row = yield* repository.get(threadId);
       if (row.mode.kind !== "auto" || row.resolvedProfile !== current) return;
-      const live = (yield* providers.listSessions()).some(
-        (session) => session.threadId === threadId && session.status !== "closed",
-      );
-      if (!live || !(yield* threadIsIdle(threadId, settled))) return;
-      // Without a subprocess: is there anywhere better at all?
+      // Without a subprocess or a session read: is there anywhere better at
+      // all? While every account is full, each turn end on a full one would
+      // otherwise read the sessions for nothing.
       yield* pruneExhausted;
       const { disallowed } = yield* disallowedFor(threadId);
       const pending = yield* pendingCounts;
@@ -2107,6 +2106,10 @@ export const make = Effect.gen(function* () {
               (pending[profile.name] ?? 0),
       );
       if (!roomElsewhere) return;
+      const live = (yield* providers.listSessions()).some(
+        (session) => session.threadId === threadId && session.status !== "closed",
+      );
+      if (!live || !(yield* threadIsIdle(threadId, settled))) return;
 
       const target = yield* Semaphore.withPermit(placementLock)(
         Effect.gen(function* () {
@@ -2147,146 +2150,146 @@ export const make = Effect.gen(function* () {
       yield* restartForNewAccount(threadId, "rebalance");
       yield* announce(threadId);
       yield* announceSnapshot;
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("claude.account.rebalance-failed", { threadId, cause }),
+    },
+    // Annotated in full: an arrow with fewer parameters narrows Effect.fn's inferred arguments.
+    (effect, threadId: ThreadId, _settled?: OrchestrationSession) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("claude.account.rebalance-failed", { threadId, cause }),
+        ),
       ),
-    );
+  );
 
-  // ------------------------------------------------------------------ events
-
-  const overlayFromEvent = (event: ProviderRuntimeEvent) =>
-    Effect.gen(function* () {
-      if (event.type !== "account.rate-limits.updated" || event.provider !== "claudeAgent") return;
-      const profile = threadProfiles.get(event.threadId);
-      if (profile === undefined) return;
-      const atMs = yield* Clock.currentTimeMillis;
-      const previous = overlays.get(profile);
-      let fiveHour = previous?.fiveHour;
-      let weekly = previous?.weekly;
-      for (const window of event.payload.limits.windows) {
-        const value: ClaudeAccountWindow = {
-          usedPercent: clampPercent(window.usedPercent),
-          ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
-        };
-        if (window.id === "five_hour") fiveHour = value;
-        else if (window.id === "seven_day") weekly = value;
-      }
-      const next: WindowOverlay = {
-        atMs,
-        ...(fiveHour ? { fiveHour } : {}),
-        ...(weekly ? { weekly } : {}),
+  // Untraced: runs for every provider runtime event, so a span each would flood traces.
+  const overlayFromEvent = Effect.fnUntraced(function* (event: ProviderRuntimeEvent) {
+    if (event.type !== "account.rate-limits.updated" || event.provider !== "claudeAgent") return;
+    const profile = threadProfiles.get(event.threadId);
+    if (profile === undefined) return;
+    const atMs = yield* Clock.currentTimeMillis;
+    const previous = overlays.get(profile);
+    let fiveHour = previous?.fiveHour;
+    let weekly = previous?.weekly;
+    for (const window of event.payload.limits.windows) {
+      const value: ClaudeAccountWindow = {
+        usedPercent: clampPercent(window.usedPercent),
+        ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
       };
-      overlays.set(profile, next);
-      yield* announceSnapshot;
-    });
+      if (window.id === "five_hour") fiveHour = value;
+      else if (window.id === "seven_day") weekly = value;
+    }
+    const next: WindowOverlay = {
+      atMs,
+      ...(fiveHour ? { fiveHour } : {}),
+      ...(weekly ? { weekly } : {}),
+    };
+    overlays.set(profile, next);
+    yield* announceSnapshot;
+  });
 
-  const onProviderEvent = (event: ProviderRuntimeEvent) =>
-    Effect.gen(function* () {
-      yield* overlayFromEvent(event);
-      switch (event.type) {
-        case "turn.started": {
-          activeTurns.add(event.threadId);
-          // Someone sent a message during the wait: their turn replaces the continue.
-          if (yield* dequeueQuietly(event.threadId, "turn-started")) {
-            yield* announce(event.threadId);
-          }
-          // Copies of one rejection all arrive before the next turn starts, so a
-          // new turn forgets them; a key kept after a failed park would
-          // otherwise swallow every later rejection with the same reset.
-          forgetConditions(event.threadId);
-          // The first turn on the new account: from here a rejection is real.
-          if (movedAwaitingTurn.delete(event.threadId)) {
-            yield* announce(event.threadId);
-          }
-          return;
+  // Untraced: the per-event handler for the whole provider event stream.
+  const onProviderEvent = Effect.fnUntraced(function* (event: ProviderRuntimeEvent) {
+    yield* overlayFromEvent(event);
+    switch (event.type) {
+      case "turn.started": {
+        activeTurns.add(event.threadId);
+        // Someone sent a message during the wait: their turn replaces the continue.
+        if (yield* dequeueQuietly(event.threadId, "turn-started")) {
+          yield* announce(event.threadId);
         }
-        case "turn.completed":
-        case "turn.aborted": {
-          activeTurns.delete(event.threadId);
-          yield* completePendingRestart(event.threadId);
-          return;
+        // Copies of one rejection all arrive before the next turn starts, so a
+        // new turn forgets them; a key kept after a failed park would
+        // otherwise swallow every later rejection with the same reset.
+        forgetConditions(event.threadId);
+        // The first turn on the new account: from here a rejection is real.
+        if (movedAwaitingTurn.delete(event.threadId)) {
+          yield* announce(event.threadId);
         }
-        case "session.exited": {
-          activeTurns.delete(event.threadId);
-          return;
-        }
-        default:
-          return;
+        return;
       }
-    });
+      case "turn.completed":
+      case "turn.aborted": {
+        activeTurns.delete(event.threadId);
+        yield* completePendingRestart(event.threadId);
+        return;
+      }
+      case "session.exited": {
+        activeTurns.delete(event.threadId);
+        return;
+      }
+      default:
+        return;
+    }
+  });
 
-  const onDomainEvent = (event: OrchestrationEvent) =>
-    Effect.gen(function* () {
-      // Runtime ingestion applies a provider turn completion to the thread
-      // asynchronously, so the provider's own `turn.completed` usually arrives
-      // while the shell still reads "running". The settled session is the
-      // reliable moment to finish a deferred account change.
-      // A message accepted during a wait replaces the continue, even before
-      // its turn reaches the provider.
-      if (event.type === "thread.turn-start-requested") {
-        if (yield* dequeueQuietly(event.payload.threadId, "message-sent")) {
+  // Untraced: the per-event handler for the whole orchestration domain event stream.
+  const onDomainEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
+    // Runtime ingestion applies a provider turn completion to the thread
+    // asynchronously, so the provider's own `turn.completed` usually arrives
+    // while the shell still reads "running". The settled session is the
+    // reliable moment to finish a deferred account change.
+    // A message accepted during a wait replaces the continue, even before
+    // its turn reaches the provider.
+    if (event.type === "thread.turn-start-requested") {
+      if (yield* dequeueQuietly(event.payload.threadId, "message-sent")) {
+        yield* announce(event.payload.threadId);
+      }
+      return;
+    }
+    if (event.type === "thread.session-set") {
+      const session = event.payload.session;
+      const running = session.status === "running" && session.activeTurnId !== null;
+      // T3-CUSTOM(expbkt3): native run/session projections drive account lifecycle.
+      if (running) {
+        activeTurns.add(event.payload.threadId);
+        projectedRunning.add(event.payload.threadId);
+        if (movedAwaitingTurn.delete(event.payload.threadId)) {
+          forgetConditions(event.payload.threadId);
           yield* announce(event.payload.threadId);
         }
-        return;
+      } else if (session.status !== "starting") {
+        activeTurns.delete(event.payload.threadId);
       }
-      if (event.type === "thread.session-set") {
-        const session = event.payload.session;
-        const running = session.status === "running" && session.activeTurnId !== null;
-        // T3-CUSTOM(expbkt3): native run/session projections drive account lifecycle.
-        if (running) {
-          activeTurns.add(event.payload.threadId);
-          projectedRunning.add(event.payload.threadId);
-          if (movedAwaitingTurn.delete(event.payload.threadId)) {
-            forgetConditions(event.payload.threadId);
-            yield* announce(event.payload.threadId);
-          }
-        } else if (session.status !== "starting") {
-          activeTurns.delete(event.payload.threadId);
-        }
-        const settled =
-          session.activeTurnId === null &&
-          session.status !== "running" &&
-          session.status !== "starting";
-        // Only the settle that ends a turn this projection saw running is a
-        // turn boundary; the many other session updates are not.
-        const turnEnded = settled && projectedRunning.delete(event.payload.threadId);
-        if (settled && pendingRestart.has(event.payload.threadId)) {
-          yield* completePendingRestart(event.payload.threadId, session);
-        } else if (turnEnded) {
-          yield* maybeRebalance(event.payload.threadId, session);
-        }
-        return;
+      const settled =
+        session.activeTurnId === null &&
+        session.status !== "running" &&
+        session.status !== "starting";
+      // Only the settle that ends a turn this projection saw running is a
+      // turn boundary; the many other session updates are not.
+      const turnEnded = settled && projectedRunning.delete(event.payload.threadId);
+      if (settled && pendingRestart.has(event.payload.threadId)) {
+        yield* completePendingRestart(event.payload.threadId, session);
+      } else if (turnEnded) {
+        yield* maybeRebalance(event.payload.threadId, session);
       }
-      if (event.type === "thread.archived") {
-        // An archived thread is not continued; its account row stays for an unarchive.
-        if (yield* dequeueQuietly(event.payload.threadId, "thread-archived")) {
-          yield* announce(event.payload.threadId);
-        }
-        return;
+      return;
+    }
+    if (event.type === "thread.archived") {
+      // An archived thread is not continued; its account row stays for an unarchive.
+      if (yield* dequeueQuietly(event.payload.threadId, "thread-archived")) {
+        yield* announce(event.payload.threadId);
       }
-      if (event.type !== "thread.deleted") return;
-      const threadId = event.payload.threadId;
-      yield* dequeueQuietly(threadId, "thread-deleted");
-      lastRebalancedAt.delete(threadId);
-      lastFailedProbeAt.delete(threadId);
-      projectedRunning.delete(threadId);
-      threadProfiles.delete(threadId);
-      notices.delete(threadId);
-      forgetPendingRestart(threadId);
-      activeTurns.delete(threadId);
-      movedAwaitingTurn.delete(threadId);
-      yield* repository
-        .delete(threadId)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("claude.account.row-delete-failed", { threadId, cause }),
-          ),
-        );
-      yield* announce(threadId);
-    });
-
-  // ----------------------------------------------------------------- streams
+      return;
+    }
+    if (event.type !== "thread.deleted") return;
+    const threadId = event.payload.threadId;
+    yield* dequeueQuietly(threadId, "thread-deleted");
+    lastRebalancedAt.delete(threadId);
+    lastFailedProbeAt.delete(threadId);
+    projectedRunning.delete(threadId);
+    threadProfiles.delete(threadId);
+    notices.delete(threadId);
+    forgetPendingRestart(threadId);
+    activeTurns.delete(threadId);
+    movedAwaitingTurn.delete(threadId);
+    yield* repository
+      .delete(threadId)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("claude.account.row-delete-failed", { threadId, cause }),
+        ),
+      );
+    yield* announce(threadId);
+  });
 
   const watchSnapshot: ClaudeAccountsServiceShape["watchSnapshot"] = (viewer) =>
     Stream.unwrap(
@@ -2303,8 +2306,6 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
-
-  // ------------------------------------------------------------------ access
 
   const listAccess: ClaudeAccountsServiceShape["listAccess"] = () => accessList;
 
@@ -2338,34 +2339,35 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const setAccess: ClaudeAccountsServiceShape["setAccess"] = ({ profile, userIds, actorUserId }) =>
-    Effect.gen(function* () {
-      // Clearing a list is allowed for an account that is gone, to tidy up.
-      if (userIds.length > 0 && !(yield* profileExists(profile))) {
-        return yield* new ClaudeAccountsError({
-          operation: "setAccess",
-          reason: "invalid",
-          detail: `Unknown Claude account '${profile}'.`,
-        });
-      }
-      const addedAt = yield* nowIso;
-      accessGeneration += 1;
-      accessCache = undefined;
-      yield* accessRepository
-        .setUsers({ profile, userIds, addedByUserId: actorUserId, addedAt })
-        .pipe(Effect.mapError(internal("setAccess")));
-      accessGeneration += 1;
-      accessCache = undefined;
-      yield* Effect.logInfo("claude.account.access-set", {
-        profile,
-        users: userIds.length,
-        actorUserId,
+  const setAccess: ClaudeAccountsServiceShape["setAccess"] = Effect.fn(
+    "ClaudeAccountsService.setAccess",
+  )(function* ({ profile, userIds, actorUserId }) {
+    // Clearing a list is allowed for an account that is gone, to tidy up.
+    if (userIds.length > 0 && !(yield* profileExists(profile))) {
+      return yield* new ClaudeAccountsError({
+        operation: "setAccess",
+        reason: "invalid",
+        detail: `Unknown Claude account '${profile}'.`,
       });
-      // Snapshots are filtered per viewer, so every connection re-reads its view.
-      yield* announceSnapshot;
-      yield* restartRevokedSessions;
-      return yield* accessList;
+    }
+    const addedAt = yield* nowIso;
+    accessGeneration += 1;
+    accessCache = undefined;
+    yield* accessRepository
+      .setUsers({ profile, userIds, addedByUserId: actorUserId, addedAt })
+      .pipe(Effect.mapError(internal("setAccess")));
+    accessGeneration += 1;
+    accessCache = undefined;
+    yield* Effect.logInfo("claude.account.access-set", {
+      profile,
+      users: userIds.length,
+      actorUserId,
     });
+    // Snapshots are filtered per viewer, so every connection re-reads its view.
+    yield* announceSnapshot;
+    yield* restartRevokedSessions;
+    return yield* accessList;
+  });
 
   const watchThread: ClaudeAccountsServiceShape["watchThread"] = (threadId) =>
     Stream.unwrap(
@@ -2396,8 +2398,6 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
-
-  // ------------------------------------------------------------------ wiring
 
   const unregisterResolver = registerClaudeAccountResolver(resolveForSession);
   const unregisterHook = registerClaudeHardLimitAccountsHook({ handle: handleHardLimit });

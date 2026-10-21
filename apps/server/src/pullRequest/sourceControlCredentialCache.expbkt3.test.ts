@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   SourceControlProfileId,
+  SourceControlProviderKind,
   ThreadId,
   UserId,
   type OrchestrationProjectShell,
@@ -23,8 +24,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { SourceControlProfileService } from "../sourceControl/SourceControlProfileService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
-import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestService from "./PullRequestService.ts";
@@ -89,7 +90,7 @@ it.effect(
             Effect.tap((current) => Effect.sync(() => hostReads.push({ operation, ...current }))),
           );
         const provider: PullRequestProviderApi = {
-          kind: "github",
+          kind: SourceControlProviderKind.make("github"),
           capabilities: {
             diff: true,
             comment: true,

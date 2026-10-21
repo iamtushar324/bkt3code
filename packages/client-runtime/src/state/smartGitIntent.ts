@@ -7,8 +7,7 @@
 // them (direct pull, open the PR, or a disabled hint).
 import type { VcsStatusResult } from "@t3tools/contracts";
 import {
-  DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
-  getChangeRequestTerminology,
+  resolveChangeRequestPresentation,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
 
@@ -41,10 +40,10 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+// A missing provider resolves to GitHub's "PR" / "pull request" terms.
 function terminologyFor(gitStatus: VcsStatusResult): ChangeRequestTerminology {
-  return gitStatus.sourceControlProvider
-    ? getChangeRequestTerminology(gitStatus.sourceControlProvider)
-    : DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
+  const presentation = resolveChangeRequestPresentation(gitStatus.sourceControlProvider);
+  return { shortLabel: presentation.shortName, singular: presentation.longName };
 }
 
 /**

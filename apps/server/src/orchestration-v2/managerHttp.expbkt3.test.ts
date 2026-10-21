@@ -34,13 +34,13 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { layer as OrchestrationCommandReceiptRepositoryLive } from "../persistence/OrchestrationCommandReceipts.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { planProjectCommand } from "./ProjectCommands.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Recovery from "./ProviderRuntimeRecoveryService.ts";
 import { layerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { managerRouteLayer } from "./managerHttp.expbkt3.ts";
@@ -99,7 +99,7 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("HTTP contract tests must not start provider processes"),
-} as ProviderAdapterV2Shape;
+} as ProviderAdapterV2["Service"];
 const database = SqlitePersistenceMemory;
 const native = layerWithRegistry(
   { name: "manager-http" },

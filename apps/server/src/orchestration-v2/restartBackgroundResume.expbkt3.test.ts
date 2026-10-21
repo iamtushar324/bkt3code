@@ -1,4 +1,6 @@
-// T3-CUSTOM(expbkt3): a restart wakes a settled run whose background work it cancelled.
+// T3-CUSTOM(expbkt3): a restart wakes a settled run whose background shell it cancelled.
+// Upstream (#19750) wakes a settled run for awaited work (a Monitor, a subagent)
+// itself, unmarked; the fork's marked wake covers the background shells it skips.
 import { assert, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
@@ -23,7 +25,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -40,10 +42,11 @@ const sessionId = ProviderSessionId.make("session:wake");
 const attemptId = RunAttemptId.make("attempt:wake");
 const projectId = ProjectId.make("project:wake");
 const monitorTask = { taskId: "monitor:ci", kind: "monitor", description: "Watch CI for PR 281" };
-const monitorWork = {
-  kind: "monitor" as const,
-  label: "Watch CI for PR 281 (id monitor:ci)",
-  id: "monitor:ci",
+const shellTask = { taskId: "shell:ci", kind: "command", description: "gh pr checks 281 --watch" };
+const shellWork = {
+  kind: "shell" as const,
+  label: "gh pr checks 281 --watch (id shell:ci)",
+  id: "shell:ci",
 };
 
 beforeEach(() => {
@@ -54,7 +57,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-/** A Claude thread whose turn completed while a Monitor it armed was still pending. */
+/** A Claude thread whose turn completed while a background shell it started was still running. */
 function settledProjection() {
   return {
     thread: {
@@ -75,6 +78,7 @@ function settledProjection() {
         providerThreadId,
         activeAttemptId: attemptId,
         status: "completed",
+        requestedAt: DateTime.makeUnsafe("2026-10-07T10:00:00Z"),
         completedAt: null,
       },
     ],
@@ -88,7 +92,7 @@ function settledProjection() {
         providerSessionId: sessionId,
         nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
         status: "idle",
-        pendingBackgroundTasks: [monitorTask],
+        pendingBackgroundTasks: [shellTask],
       },
     ],
     // Claude sessions stay "ready" between turns while the process lives.
@@ -120,6 +124,8 @@ const makeRecovery = (
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
             getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+            // Startup recovery reads queued runs' messages to spare buffered notifications.
+            getThreadRecords: () => Effect.succeed({ messages: [] } as never),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             writeWithEffects: (input) =>
@@ -154,14 +160,14 @@ const startupEffects = (projection: OrchestrationV2ThreadProjection, enabled = t
     return commits.flatMap((commit) => commit.effects);
   });
 
-it.effect("wakes a settled run whose pending Monitor a startup restart cancelled", () =>
+it.effect("wakes a settled run whose background shell a startup restart cancelled", () =>
   Effect.gen(function* () {
     const { recovery, commits } = yield* makeRecovery(settledProjection());
     yield* recovery.reconcile("startup");
     assert.lengthOf(commits, 1);
     const note = commits[0]!.events.find((event) => event.type === "run.background-work-cancelled");
     assert.equal(note?.runId, runId);
-    assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [monitorWork]);
+    assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [shellWork]);
     assert.deepEqual(
       commits[0]!.effects.map(({ id, request }) => ({ id, request })),
       [
@@ -179,6 +185,26 @@ it.effect("leaves every thread asleep when the setting or the fork switch is off
     assert.lengthOf(yield* startupEffects(settledProjection(), false), 0);
     vi.stubEnv(RESTART_WAKE_ENV, "0");
     assert.lengthOf(yield* startupEffects(settledProjection()), 0);
+  }),
+);
+
+it.effect("leaves awaited work to upstream's unmarked wake, even with the fork switch off", () =>
+  Effect.gen(function* () {
+    const base = settledProjection();
+    const projection = {
+      ...base,
+      providerThreads: [{ ...base.providerThreads[0]!, pendingBackgroundTasks: [monitorTask] }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const unmarked = [{ type: "provider-runtime.continue" as const, sourceRunId: runId }];
+    assert.deepEqual(
+      (yield* startupEffects(projection)).map((effect) => effect.request),
+      unmarked,
+    );
+    vi.stubEnv(RESTART_WAKE_ENV, "0");
+    assert.deepEqual(
+      (yield* startupEffects(projection)).map((effect) => effect.request),
+      unmarked,
+    );
   }),
 );
 
@@ -251,7 +277,7 @@ it.effect("does not wake for app-owned delegations, stale sessions or held queue
   }),
 );
 
-it.effect("captures the wake before shutdown reconciliation cancels an open Monitor", () =>
+it.effect("captures the wake before shutdown reconciliation cancels an open shell", () =>
   Effect.gen(function* () {
     const base = settledProjection();
     const projection = {
@@ -259,14 +285,13 @@ it.effect("captures the wake before shutdown reconciliation cancels an open Moni
       providerThreads: [{ ...base.providerThreads[0]!, pendingBackgroundTasks: [] }],
       turnItems: [
         {
-          id: TurnItemId.make("turn-item:monitor"),
+          id: TurnItemId.make("turn-item:shell"),
           runId,
           nodeId: null,
           providerThreadId,
-          type: "dynamic_tool",
-          toolName: "Monitor",
+          type: "command_execution",
           title: "Watch CI for PR 281",
-          input: { persistent: true },
+          input: "gh pr checks 281 --watch",
           status: "running",
         },
       ],
@@ -285,12 +310,12 @@ it.effect("captures the wake before shutdown reconciliation cancels an open Moni
   }),
 );
 
-/** The source run after reconciliation recorded the Monitor it cancelled. */
+/** The source run after reconciliation recorded the shell it cancelled. */
 function reconciledProjection() {
   const base = settledProjection();
   return {
     ...base,
-    runs: [{ ...base.runs[0]!, restartCancelledBackgroundWork: [monitorWork] }],
+    runs: [{ ...base.runs[0]!, restartCancelledBackgroundWork: [shellWork] }],
     providerTurns: [
       { id: "provider-turn:wake", providerThreadId, runAttemptId: attemptId, status: "completed" },
     ],
@@ -335,7 +360,7 @@ it.effect("prompts the woken run with the restart note and a request to re-arm",
     assert.equal(command.messageId, `message:restart-continuation:${runId}`);
     assert.equal(command.restartContinuationOfRunId, runId);
     assert.include(command.text, "the T3 server restarted");
-    assert.include(command.text, "- monitor: Watch CI for PR 281 (id monitor:ci)");
+    assert.include(command.text, "- shell: gh pr checks 281 --watch (id shell:ci)");
     assert.include(command.text, "re-arm monitors");
   }),
 );
@@ -360,7 +385,8 @@ it.effect("delivers one wake, never after newer user work, and only when marked"
     } as unknown as OrchestrationV2ThreadProjection;
     for (const projection of [alreadyDelivered, userContinued, nothingLost])
       assert.lengthOf(yield* deliver(projection), 0);
-    // An unmarked effect for a settled run stays inert, as upstream requires.
+    // Upstream continues a settled run only for awaited work, so an unmarked
+    // effect for a run that lost only a shell stays inert.
     assert.lengthOf(yield* deliver(reconciled, false), 0);
   }),
 );

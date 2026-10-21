@@ -14,7 +14,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayWriteScope,
-  AuthStandardClientScopes,
+  AuthMemberClientScopes,
   EnvironmentAuthenticatedPrincipal,
   type AuthClientSession,
   type AuthEnvironmentScope,
@@ -85,15 +85,15 @@ const principalWith = (
   }) as unknown as EnvironmentAuthenticatedPrincipal["Service"];
 
 describe("what a member may delegate to their own device", () => {
-  it("narrows scopes to the standard client set", () => {
+  it("narrows scopes to the member client set", () => {
     // Even a session that somehow holds administrative scopes cannot pass them on.
     expect(
-      selfServicePairingScopes(scopeSet(...AuthStandardClientScopes, AuthAccessWriteScope)),
-    ).toEqual([...AuthStandardClientScopes]);
-    expect(selfServicePairingScopes(scopeSet(...AuthStandardClientScopes))).not.toContain(
+      selfServicePairingScopes(scopeSet(...AuthMemberClientScopes, AuthAccessWriteScope)),
+    ).toEqual([...AuthMemberClientScopes]);
+    expect(selfServicePairingScopes(scopeSet(...AuthMemberClientScopes))).not.toContain(
       AuthAccessReadScope,
     );
-    expect(selfServicePairingScopes(scopeSet(...AuthStandardClientScopes))).not.toContain(
+    expect(selfServicePairingScopes(scopeSet(...AuthMemberClientScopes))).not.toContain(
       AuthRelayWriteScope,
     );
   });
@@ -106,7 +106,7 @@ describe("what a member may delegate to their own device", () => {
   });
 
   it("refuses elevated scopes outright", () => {
-    const member = scopeSet(...AuthStandardClientScopes, AuthAccessWriteScope);
+    const member = scopeSet(...AuthMemberClientScopes, AuthAccessWriteScope);
     expect(isSelfServiceScopeAllowed([AuthAccessWriteScope], member)).toBe(false);
     expect(isSelfServiceScopeAllowed([AuthAccessReadScope], member)).toBe(false);
     expect(isSelfServiceScopeAllowed([AuthRelayWriteScope], member)).toBe(false);
@@ -208,20 +208,20 @@ describe("who the self-service path admits", () => {
   it.effect("routes an access:write holder down the administrative path", () =>
     run(
       principalWith(
-        scopeSet(...AuthStandardClientScopes, AuthAccessWriteScope),
+        scopeSet(...AuthMemberClientScopes, AuthAccessWriteScope),
         clerkSubjectForUser(MEMBER_ID),
       ),
     ).pipe(Effect.map((result) => expect(result.administrative).toBe(true))),
   );
 
   it.effect("admits a member with an identity but no access:write", () =>
-    run(principalWith(scopeSet(...AuthStandardClientScopes), clerkSubjectForUser(MEMBER_ID))).pipe(
+    run(principalWith(scopeSet(...AuthMemberClientScopes), clerkSubjectForUser(MEMBER_ID))).pipe(
       Effect.map((result) => expect(result.administrative).toBe(false)),
     ),
   );
 
   it.effect("still refuses a session with neither — a plain bootstrap client", () =>
-    run(principalWith(scopeSet(...AuthStandardClientScopes), "one-time-token")).pipe(
+    run(principalWith(scopeSet(...AuthMemberClientScopes), "one-time-token")).pipe(
       Effect.flip,
       Effect.map((error) => expect(error._tag).toBe("EnvironmentScopeRequiredError")),
     ),
@@ -245,7 +245,7 @@ it.layer(
       const selfIssued = yield* issuePairingCredentialForPrincipal({
         serverAuth,
         principal: MEMBER,
-        scopes: AuthStandardClientScopes,
+        scopes: AuthMemberClientScopes,
         selfIssued: true,
       });
       const memberSession = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
@@ -260,7 +260,7 @@ it.layer(
       const administrative = yield* issuePairingCredentialForPrincipal({
         serverAuth,
         principal: MEMBER,
-        scopes: AuthStandardClientScopes,
+        scopes: AuthMemberClientScopes,
       });
       const adminSession = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         administrative.credential,
@@ -277,7 +277,7 @@ it.layer(
       const deviceBound = yield* issuePairingCredentialForPrincipal({
         serverAuth,
         principal: MEMBER,
-        scopes: AuthStandardClientScopes,
+        scopes: AuthMemberClientScopes,
         requireProofOfPossession: true,
         selfIssued: true,
       });
@@ -302,7 +302,7 @@ it.layer(
       const selfIssued = yield* issuePairingCredentialForPrincipal({
         serverAuth,
         principal: MEMBER,
-        scopes: selfServicePairingScopes(scopeSet(...AuthStandardClientScopes)),
+        scopes: selfServicePairingScopes(scopeSet(...AuthMemberClientScopes)),
         selfIssued: true,
       });
 
@@ -311,7 +311,7 @@ it.layer(
       expect(link?.subject).toBe(`clerk:${MEMBER_ID}`);
       // Upstream's wire model lists the full grant under `permissions`; `scopes` keeps
       // only the vocabulary older clients know. The stored grant is unchanged.
-      expect(link?.permissions).toEqual([...AuthStandardClientScopes]);
+      expect(link?.permissions).toEqual([...AuthMemberClientScopes]);
     }).pipe(Effect.provide(environmentAuthLayer)),
   );
 
@@ -322,7 +322,7 @@ it.layer(
       const selfIssued = yield* issuePairingCredentialForPrincipal({
         serverAuth,
         principal: MEMBER,
-        scopes: AuthStandardClientScopes,
+        scopes: AuthMemberClientScopes,
         selfIssued: true,
       });
 

@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   AuthAdministrativeScopes,
-  AuthStandardClientScopes,
+  AuthMemberClientScopes,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
@@ -54,8 +54,8 @@ const invocation = (
 
 it("generates one unique virtual tool and complete schemas for every web RPC", () => {
   // T3-CUSTOM(expbkt3): the catalog includes native V2 methods and every retained fork RPC.
-  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(237);
-  expect(WEB_UI_STREAM_TOOL_COUNT).toBe(31);
+  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(253);
+  expect(WEB_UI_STREAM_TOOL_COUNT).toBe(35);
   expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(WsRpcGroup.requests.size);
   expect(new Set(WEB_UI_VIRTUAL_TOOLS.map((tool) => tool.name)).size).toBe(
     WEB_UI_VIRTUAL_TOOL_COUNT,
@@ -84,7 +84,7 @@ it("exposes the five Toolyard and webhook RPCs with their required scopes", () =
   for (const [method, requiredScope] of methods) {
     const tool = getWebUiVirtualTool(webUiVirtualToolName(method));
     expect(tool).toMatchObject({ method, requiredScope, stream: false });
-    expect(isWebUiVirtualToolAuthorized(tool!, AuthStandardClientScopes)).toBe(true);
+    expect(isWebUiVirtualToolAuthorized(tool!, AuthMemberClientScopes)).toBe(true);
     expect(isWebUiVirtualToolAuthorized(tool!, AuthAdministrativeScopes)).toBe(true);
   }
 });
@@ -97,12 +97,12 @@ it("uses stable, code-mode-friendly virtual tool names", () => {
   expect(getWebUiVirtualTool("t3_ui_server_get_config")?.method).toBe("server.getConfig");
 });
 
-it("maps user principals to standard web scopes and operators to administrative scopes", () => {
+it("maps user principals to member web scopes and operators to administrative scopes", () => {
   const actorUserId = UserId.make("user-web-ui-catalog-test");
   const externalUser = makeWebUiAuthenticatedSession(invocation("external-user", actorUserId));
   expect(externalUser.userId).toBe(actorUserId);
   expect(externalUser.subject).toBe(`clerk:${actorUserId}`);
-  expect(externalUser.scopes).toEqual(AuthStandardClientScopes);
+  expect(externalUser.scopes).toEqual(AuthMemberClientScopes);
   expect(
     isWebUiVirtualToolAuthorized(
       getWebUiVirtualTool("t3_ui_subscribe_auth_access")!,

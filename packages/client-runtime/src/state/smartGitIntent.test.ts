@@ -1,5 +1,5 @@
 // T3-CUSTOM(expbkt3): smart git button model (mirrors upstream's resolveQuickAction cases).
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -317,7 +317,11 @@ const cases: ReadonlyArray<Case> = [
     name: "GitLab wording",
     status: status({
       aheadCount: 2,
-      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.com" },
+      sourceControlProvider: {
+        kind: SourceControlProviderKind.make("gitlab"),
+        name: "GitLab",
+        baseUrl: "https://gitlab.com",
+      },
     }),
     expected: {
       intent: "create_pr",

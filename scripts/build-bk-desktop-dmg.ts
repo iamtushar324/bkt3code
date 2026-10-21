@@ -22,7 +22,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -429,7 +429,7 @@ const command = Command.make(
       const managedChannel: BkManagedChannel = requestedChannel;
       const brand = BK_DESKTOP_BRANDS[managedChannel];
 
-      const hostPlatform = yield* HostProcessPlatform;
+      const hostPlatform = yield* HostProcess.Platform;
       if (hostPlatform !== "darwin") {
         return yield* new UnsupportedBuildHostError({ hostPlatform });
       }

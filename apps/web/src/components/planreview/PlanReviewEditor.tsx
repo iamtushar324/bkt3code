@@ -254,6 +254,15 @@ interface PlanReviewEditorProps {
   readonly contentWidthClassName: string;
 }
 
+// Outside the component: the React Compiler cannot lower try/finally.
+function applyThenOnNextFrame(apply: () => void, onNextFrame: () => void): void {
+  try {
+    apply();
+  } finally {
+    requestAnimationFrame(onNextFrame);
+  }
+}
+
 function PlanReviewEditorImpl({
   markdown,
   readOnly,
@@ -302,15 +311,11 @@ function PlanReviewEditorImpl({
   const withoutReportingChange = useCallback((apply: () => void) => {
     const wasLoading = loadingRef.current;
     loadingRef.current = true;
-    try {
-      apply();
-    } finally {
-      // Restore on the next frame: Plate's onChange for this transform has not
-      // fired yet, and clearing the flag synchronously would let it through.
-      requestAnimationFrame(() => {
-        loadingRef.current = wasLoading;
-      });
-    }
+    // Restore on the next frame: Plate's onChange for this transform has not
+    // fired yet, and clearing the flag synchronously would let it through.
+    applyThenOnNextFrame(apply, () => {
+      loadingRef.current = wasLoading;
+    });
   }, []);
 
   // Load canonical markdown into the editor whenever the reviewed version
@@ -554,7 +559,7 @@ function PlanReviewEditorImpl({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={surfaceRef}
-        className="relative min-h-0 flex-1 cursor-text select-text overflow-y-auto caret-primary selection:bg-primary/25"
+        className="scrollbar-gutter-both relative min-h-0 flex-1 cursor-text select-text overflow-y-auto caret-primary selection:bg-primary/25"
       >
         <Plate editor={editor} onChange={handleChange}>
           <PlanReviewMarkStateProvider

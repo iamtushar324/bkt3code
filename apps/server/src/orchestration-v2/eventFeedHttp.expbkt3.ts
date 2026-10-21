@@ -168,14 +168,15 @@ const filterVisible = Effect.fnUntraced(function* (
 });
 
 /** Mirrors the WebSocket replay: project events carry the resolved repository identity. */
-const attachRepositoryIdentity = (
+// Untraced: runs once per event in every feed page.
+const attachRepositoryIdentity: (
   event: OrchestrationEvent,
-): Effect.Effect<
+) => Effect.Effect<
   OrchestrationEvent,
   never,
   RepositoryIdentityResolver.RepositoryIdentityResolver | ProjectionSnapshotQuery
-> =>
-  Effect.gen(function* () {
+> = Effect.fnUntraced(
+  function* (event: OrchestrationEvent) {
     const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
     if (event.type === "project.created") {
       const repositoryIdentity = yield* resolver.resolve(event.payload.workspaceRoot);
@@ -194,7 +195,9 @@ const attachRepositoryIdentity = (
       return { ...event, payload: { ...event.payload, repositoryIdentity } };
     }
     return event;
-  }).pipe(Effect.orElseSucceed(() => event));
+  },
+  (effect, event) => effect.pipe(Effect.orElseSucceed(() => event)),
+);
 
 const jsonError = (status: number, body: Record<string, unknown>) =>
   HttpServerResponse.jsonUnsafe(body, { status });

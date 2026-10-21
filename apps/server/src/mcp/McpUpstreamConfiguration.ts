@@ -8,7 +8,7 @@ import {
   type UserId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
-import type { McpUpstreamServerConfig } from "./McpProviderSession.ts";
+import type { McpUpstreamServerConfig } from "@t3tools/provider-core/server/mcpSession";
 
 export function configuredUpstreamServers(input: {
   endpoint: string;

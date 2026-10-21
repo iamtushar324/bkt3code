@@ -1,8 +1,6 @@
 export {
-  getPrimaryKnownEnvironment,
   resetPrimaryEnvironmentDescriptorForTests,
   resolveInitialPrimaryEnvironmentDescriptor,
-  writePrimaryEnvironmentDescriptor,
 } from "./context";
 
 export {
@@ -14,7 +12,6 @@ export {
   fetchSessionState,
   // T3-CUSTOM(expbkt3): the /pair route prefers a pending pairing link over the Clerk gate.
   isExplicitPairingRequested,
-  isPrimaryEnvironmentPairingCredentialRejectedError,
   // T3-CUSTOM(expbkt3): BEGIN — member-devices settings section.
   listServerClientSessions,
   listServerPairingLinks,
@@ -48,9 +45,6 @@ export { PrimaryEnvironmentHttpClient } from "./httpClient";
 
 export {
   DesktopEnvironmentBootstrapIncompleteError,
-  isDesktopEnvironmentBootstrapIncompleteError,
-  isPrimaryEnvironmentProtocolUnsupportedError,
-  isPrimaryEnvironmentUrlInvalidError,
   PrimaryEnvironmentProtocolUnsupportedError,
   PrimaryEnvironmentUrlInvalidError,
   readPrimaryEnvironmentTarget,

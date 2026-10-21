@@ -1,7 +1,7 @@
 /** T3-CUSTOM(expbkt3): pick the session a thread should be filed under. */
 import type { ThreadId } from "@t3tools/contracts";
 import { CornerDownRightIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { ThreadShell } from "../../types";
 import { Button } from "../ui/button";
@@ -35,9 +35,12 @@ export function MoveUnderSessionDialog({
 }) {
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
+  // Clear the search during render whenever a new row is being moved.
+  const [querySubject, setQuerySubject] = useState(subject);
+  if (querySubject !== subject) {
+    setQuerySubject(subject);
     if (subject) setQuery("");
-  }, [subject]);
+  }
 
   const candidates = useMemo(
     () =>

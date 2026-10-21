@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { deriveProviderThread } from "./IdAllocator.ts";
+import { deriveProviderThread } from "@t3tools/provider-core/server/IdAllocator";
 
 const cursorSchema = Schema.Struct({
   resume: Schema.optional(Schema.String),

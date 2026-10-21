@@ -9,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** The thread fields pull request tests set; timestamps are ISO strings. */
 export interface PullRequestTestThread {
   // T3-CUSTOM(expbkt3): fixtures retain fork account ownership fields.
   readonly ownerUserId?: OrchestrationV2ThreadShell["ownerUserId"];

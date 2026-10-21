@@ -6,15 +6,13 @@ import {
   // T3-CUSTOM(expbkt3): HTTP reads retain durable actor access.
   EnvironmentAuthenticatedPrincipal,
   ThreadId,
-  TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
-// T3-CUSTOM(expbkt3): shell snapshot reads run on the SQLite reader worker.
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 // T3-CUSTOM(expbkt3): resolve the bound operator.
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -25,6 +23,7 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
@@ -32,14 +31,13 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
-  selectHistoryPageFromCursor,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { buildActiveShellSnapshot } from "./ShellStream.ts";
+import { buildActiveShellSnapshot, loadShellSnapshotParts } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 // T3-CUSTOM(expbkt3): fork API and team access use native V2 projections.
@@ -61,6 +59,10 @@ import { resolveDelegatedThreadOwner } from "./DelegatedThreadOwnership.ts";
 import { checkCommandAccess } from "./commandAccess.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 
+const isThreadTranscriptTooLargeError = Schema.is(
+  ThreadManagementService.ThreadTranscriptTooLargeError,
+);
+
 function isThreadNotFound(error: unknown): boolean {
   return (
     Predicate.hasProperty(error, "cause") &&
@@ -69,33 +71,12 @@ function isThreadNotFound(error: unknown): boolean {
   );
 }
 
-function selectHistoryPageFromCursorOrError(
-  input: Parameters<typeof selectHistoryPageFromCursor>[0],
-):
-  | { readonly _tag: "ok"; readonly page: ReturnType<typeof selectHistoryPageFromCursor> }
-  | { readonly _tag: "invalid_cursor" }
-  | { readonly _tag: "error"; readonly cause: unknown } {
-  try {
-    return { _tag: "ok", page: selectHistoryPageFromCursor(input) };
-  } catch (cause) {
-    if (cause instanceof InvalidThreadHistoryCursorError) {
-      return { _tag: "invalid_cursor" };
-    }
-    return { _tag: "error", cause };
-  }
-}
-
-/**
- * Serves orchestration V2 snapshots over HTTP so clients can load the
- * (potentially large) shell and thread projections off the socket; gzip
- * compressible and cacheable — and then resume the WebSocket subscription via
- * `afterSequence`.
- */
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
     const sql = yield* SqlClient.SqlClient;
+    const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -134,8 +115,7 @@ export const layer = HttpApiBuilder.group(
           (project) =>
             // Use immediately available enrichment only. Awaiting git-backed
             // identity resolution can exceed the client shell-snapshot budget
-            // (ProcessRunner allows probes up to one minute). Background workers
-            // plus the WS enrichment subscription fill in repositoryIdentity.
+            // (ProcessRunner allows probes up to one minute).
             projectEnrichment.getAvailable(project.workspaceRoot).pipe(
               Effect.map((enrichment) => ({
                 ...project,
@@ -147,20 +127,14 @@ export const layer = HttpApiBuilder.group(
     );
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
-      // T3-CUSTOM(expbkt3): read on the SQLite reader worker, off the event loop and the
-      // writer (upstream does this in loadShellSnapshotParts, which stage does not have).
-      const base = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-            return buildActiveShellSnapshot({
-              projects: yield* projectStore.listShells(),
-              threads,
-              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-            });
-          }),
-        )
-        .pipe(NodeSqliteClient.readOnly);
+      const base = buildActiveShellSnapshot(
+        yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+          listProjects: projectStore.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
+        }),
+      );
       const projects = yield* enrichProjectShells(base.projects);
       // T3-CUSTOM(expbkt3): HTTP shell visibility matches the native socket stream.
       return filterNativeShell({ ...base, projects }, yield* currentActorUserId);
@@ -356,6 +330,33 @@ export const layer = HttpApiBuilder.group(
           }),
         )
         .handle(
+          "threadTranscript",
+          Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            // T3-CUSTOM(expbkt3): transcript reads use the same access gate as snapshots.
+            yield* requireThreadAccess(args.params.threadId);
+            return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
+              Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
+              traceLocalHandlerWork,
+              Effect.catch(
+                Effect.fnUntraced(function* (error) {
+                  if (isThreadTranscriptTooLargeError(error)) {
+                    return yield* failEnvironmentInvalidRequest("thread_transcript_too_large");
+                  }
+                  if (isThreadNotFound(error)) {
+                    return yield* failEnvironmentNotFound("thread_not_found");
+                  }
+                  return yield* failEnvironmentInternal(
+                    "orchestration_thread_snapshot_failed",
+                    error,
+                  );
+                }),
+              ),
+            );
+          }),
+        )
+        .handle(
           "threadBoundedSnapshot",
           Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
@@ -381,41 +382,38 @@ export const layer = HttpApiBuilder.group(
           Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-            let anchorItemId;
+            let cursorThreadId;
             try {
-              anchorItemId = TurnItemId.make(decodeThreadHistoryCursor(args.query.cursor).si);
+              // T3-CUSTOM(expbkt3): keep the cursor's source thread for the access gate below.
+              cursorThreadId = ThreadId.make(decodeThreadHistoryCursor(args.query.cursor).st);
             } catch (cause) {
-              if (cause instanceof InvalidThreadHistoryCursorError) {
+              if (cause instanceof InvalidThreadHistoryCursorError)
                 return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
-              }
               return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
             }
-            const decodedCursor = decodeThreadHistoryCursor(args.query.cursor);
-            const snapshot = yield* loadThreadSnapshotWindow(
-              args.params.threadId,
-              anchorItemId,
-              ThreadId.make(decodedCursor.st),
-            ).pipe(traceLocalHandlerWork);
-            const pageOrError = selectHistoryPageFromCursorOrError({
-              items: snapshot.projection.visibleTurnItems,
-              cursor: args.query.cursor,
-              snapshotSequence: snapshot.snapshotSequence,
-            });
-            if (pageOrError._tag === "invalid_cursor") {
-              return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
-            }
-            if (pageOrError._tag === "error") {
-              return yield* failEnvironmentInternal(
-                "orchestration_thread_history_failed",
-                pageOrError.cause,
+            // T3-CUSTOM(expbkt3): history reads use the same access gate as snapshots.
+            yield* requireThreadAccess(args.params.threadId);
+            if (cursorThreadId !== args.params.threadId) yield* requireThreadAccess(cursorThreadId);
+            return yield* threadManagement
+              .getThreadHistoryPage(
+                args.params.threadId,
+                args.query.cursor,
+                args.query.throughEntryId,
+                args.query.view === "conversation",
+              )
+              .pipe(
+                traceLocalHandlerWork,
+                Effect.catch(
+                  Effect.fnUntraced(function* (cause) {
+                    if (isThreadNotFound(cause))
+                      return yield* failEnvironmentNotFound("thread_not_found");
+                    return yield* failEnvironmentInternal(
+                      "orchestration_thread_history_failed",
+                      cause,
+                    );
+                  }),
+                ),
               );
-            }
-            return {
-              snapshotSequence: snapshot.snapshotSequence,
-              items: pageOrError.page.items,
-              nextCursor: pageOrError.page.nextCursor,
-              hasMoreHistory: pageOrError.page.hasMoreHistory,
-            };
           }),
         )
     );

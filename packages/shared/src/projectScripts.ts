@@ -15,12 +15,6 @@ type ProjectScriptSettings = Pick<
   | "projectSettingsFolded"
 >;
 
-/**
- * The project's override wins, then environment defaults. Until the legacy
- * fields have been folded into `projectSettingsOverrides`, the old map (null
- * there meant "reset to machine defaults") and the aggregate's own scripts
- * still count, so a server that has not run the fold yet behaves as before.
- */
 export function resolveProjectScripts(
   settings: ProjectScriptSettings,
   project: { id: ProjectId; scripts: readonly ProjectScript[] },
@@ -119,7 +113,6 @@ export function projectScriptFromFileScript(
 }
 // T3-CUSTOM(expbkt3): END
 
-/** Menu label naming the lifecycle roles a script runs in, e.g. "Clean (on settle)". */
 export function projectScriptMenuLabel(script: ProjectScript): string {
   const roles = [
     ...(script.runOnWorktreeCreate ? ["setup"] : []),
@@ -130,4 +123,13 @@ export function projectScriptMenuLabel(script: ProjectScript): string {
 
 export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnSettle === true) ?? null;
+}
+
+/**
+ * Leading spaces omit scripts from Bash history with ignorespace/ignoreboth,
+ * zsh with HIST_IGNORE_SPACE, and fish. Only the first line is prefixed, so later
+ * entries from multiline input may still enter history. PowerShell/PSReadLine history is not suppressed.
+ */
+export function projectScriptTerminalInput(command: string): string {
+  return ` ${command}\r`;
 }

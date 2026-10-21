@@ -54,6 +54,7 @@ export function PlanReviewCommentComposer({
     input.style.height = "auto";
     const maxHeight = (window.innerHeight * MAX_HEIGHT_VH) / 100;
     input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The textarea's scrollHeight follows its text, so every edit re-measures.
   }, [body]);
 
   const canSubmit = body.trim().length > 0;
@@ -80,7 +81,7 @@ export function PlanReviewCommentComposer({
       <div className="px-3 pt-2">
         <textarea
           ref={inputRef}
-          className="w-full resize-none overflow-y-auto rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="w-full resize-none overflow-y-auto rounded-md border bg-background p-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
           style={{ minHeight: `${MIN_HEIGHT_REM}rem`, maxHeight: `${MAX_HEIGHT_VH}vh` }}
           value={body}
           placeholder="What should change here?"
