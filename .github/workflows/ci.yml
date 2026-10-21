@@ -248,18 +248,7 @@ jobs:
             filters=()
             for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
           fi
-          # T3-CUSTOM(expbkt3): TEMPORARY diagnosis — same command, but its output goes to
-          # a file and a guard records the still-running processes before it kills the
-          # group, so a hang leaves a readable log instead of a job timeout.
-          setsid bash -c "vp run --parallel --concurrency-limit 4 $(printf '%q ' "${filters[@]}") test > \"$RUNNER_TEMP/test.log\" 2>&1" & pid=$!
-          ( sleep 900; echo "GUARD: still running after 900s"; ps -eo pid,pgid,etime,args --forest | grep -v ' ps ' | cut -c1-260; kill -KILL -- -$pid ) & guard=$!
-          rc=0; wait $pid || rc=$?
-          pkill -P $guard 2>/dev/null; kill $guard 2>/dev/null
-          grep -E 'Test Files|Tests |FAIL|failed|passed|~/|ERR|error|Terminated' "$RUNNER_TEMP/test.log" | cut -c1-300 | tail -300 || true
-          echo "=== failure details"
-          grep -n -A45 -E '^\s*FAIL ' "$RUNNER_TEMP/test.log" | cut -c1-300 | tail -1500 || true
-          echo "rc=$rc"
-          exit $rc
+          vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.

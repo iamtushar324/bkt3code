@@ -1079,8 +1079,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...mcpToolPresentation({ toolName }),
             toolName,
             input: args ?? {},
-            // T3-CUSTOM(expbkt3): preserve raw MCP results for dynamic tool surfaces (McpAppFrame reads output.result).
-            ...(mcpResult === undefined
+            // T3-CUSTOM(expbkt3): preserve raw MCP results for dynamic tool surfaces (McpAppFrame reads
+            // output.result) unless upstream's output already carries the MCP structured result.
+            ...(mcpResult === undefined ||
+            (Predicate.isObject(output) && "structuredContent" in output)
               ? output === undefined
                 ? {}
                 : { output }
