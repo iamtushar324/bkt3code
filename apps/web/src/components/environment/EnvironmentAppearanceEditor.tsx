@@ -16,7 +16,7 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { RotateCcwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -53,13 +53,14 @@ export function EnvironmentAppearanceEditor({
   // the host confirmed, or a quick second click undoes the first.
   const [pending, setPending] = useState<EnvironmentAppearance | null | undefined>(undefined);
   const storedKey = JSON.stringify(environmentAppearanceSettingValue(stored));
-  useEffect(() => {
-    if (pending === undefined) return;
-    const pendingKey = JSON.stringify(
-      pending === null ? null : environmentAppearanceSettingValue(pending),
-    );
-    if (pendingKey === storedKey) setPending(undefined);
-  }, [pending, storedKey]);
+  // Release the pending write during render once the host echoes it back.
+  if (
+    pending !== undefined &&
+    JSON.stringify(pending === null ? null : environmentAppearanceSettingValue(pending)) ===
+      storedKey
+  ) {
+    setPending(undefined);
+  }
   const current: EnvironmentAppearance = pending === undefined ? stored : (pending ?? {});
 
   if (environment === null) {

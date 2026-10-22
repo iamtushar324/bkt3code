@@ -113,10 +113,7 @@ export function CodeBlockElement(props: PlateElementProps) {
         {/* The rendered diagram is decoration; the code lines stay in the
             document so the text remains selectable, editable and serializable. */}
         <div contentEditable={false} className="select-none">
-          <PlanReviewMermaid
-            code={codeBlockText(props.element)}
-            isDark={resolvedTheme === "dark"}
-          />
+          <PlanReviewMermaid code={codeBlockText(props.element)} theme={resolvedTheme} />
         </div>
         <div className="sr-only">{props.children}</div>
       </PlateElement>

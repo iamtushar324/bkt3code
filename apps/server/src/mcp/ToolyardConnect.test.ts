@@ -17,8 +17,11 @@ import {
   UserId,
   WS_FORK_METHODS,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
+import * as Queue from "effect/Queue";
 import {
   HttpClient,
   HttpClientError,
@@ -396,18 +399,24 @@ describe("personalMcp.connectToolyard", () => {
     }),
   );
 
-  // Live clock: the fake toolyard takes real time to answer, so overlap is observable.
-  it.live("runs one user's connects one at a time, each stored before the next starts", () =>
+  it.effect("runs one user's connects one at a time, each stored before the next starts", () =>
     Effect.gen(function* () {
       let inFlight = 0;
       let maxInFlight = 0;
       let answered = 0;
       const { profiles, writes } = makeProfiles();
-      const slowToolyard = HttpClient.make((request) =>
+      // Each request toolyard receives waits on a gate the test opens, so a second
+      // request reaching toolyard while the first is still held is observable.
+      const arrivals = yield* Queue.unbounded<Deferred.Deferred<void>>();
+      const storedBeforeArrival: number[] = [];
+      const heldToolyard = HttpClient.make((request) =>
         Effect.gen(function* () {
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
-          yield* Effect.sleep("15 millis");
+          storedBeforeArrival.push(writes.length);
+          const gate = yield* Deferred.make<void>();
+          yield* Queue.offer(arrivals, gate);
+          yield* Deferred.await(gate);
           inFlight -= 1;
           answered += 1;
           return HttpClientResponse.fromWeb(
@@ -420,17 +429,19 @@ describe("personalMcp.connectToolyard", () => {
         }),
       );
 
-      const results = yield* Effect.all(
-        [
-          connectToolyard({ actorUserId: userId, clerkToken, profiles, httpClient: slowToolyard }),
-          connectToolyard({ actorUserId: userId, clerkToken, profiles, httpClient: slowToolyard }),
-          connectToolyard({ actorUserId: userId, clerkToken, profiles, httpClient: slowToolyard }),
-        ],
-        { concurrency: "unbounded" },
+      const connectOnce = () =>
+        connectToolyard({ actorUserId: userId, clerkToken, profiles, httpClient: heldToolyard });
+      const connects = yield* Effect.forkChild(
+        Effect.all([connectOnce(), connectOnce(), connectOnce()], { concurrency: "unbounded" }),
       );
+      for (let answer = 0; answer < 3; answer++) {
+        yield* Deferred.succeed(yield* Queue.take(arrivals), undefined);
+      }
+      const results = yield* Fiber.join(connects);
 
       expect(results.every((result) => result.connected)).toBe(true);
       expect(maxInFlight).toBe(1);
+      expect(storedBeforeArrival).toEqual([0, 1, 2]);
       // Each exchange's token was stored before the next exchange began, so the
       // last token toolyard issued is the one T3 keeps.
       expect(writes.map((write) => write.credential)).toEqual(["ty_1", "ty_2", "ty_3"]);

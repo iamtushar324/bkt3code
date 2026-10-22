@@ -47,7 +47,7 @@ afterEach(() => {
 
 describe("desktop brand overrides in build-desktop-artifact", () => {
   it("leaves upstream product names untouched", () => {
-    expect(resolveDesktopProductName("0.0.17")).toBe("T3 Code (Alpha)");
+    expect(resolveDesktopProductName("0.0.17")).toBe("T3 Code (Beta)");
     expect(resolveDesktopProductName("0.0.17-nightly.20260413.42")).toBe("T3 Code (Nightly)");
   });
 

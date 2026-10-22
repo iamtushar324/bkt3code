@@ -12,6 +12,7 @@ import {
   OrchestrationV2PlanArtifact,
   OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -53,7 +54,12 @@ const make = Effect.gen(function* () {
   const shell = (location: "active" | "archive" = "active", unsettledOnly = false) =>
     wrap(
       Effect.gen(function* () {
-        const snapshot = yield* projections.getShellSnapshot({ location, unsettledOnly });
+        // The full shell read takes seconds on a large database: run it on the
+        // SQLite reader worker, off the event loop and the writer. Every caller
+        // reads committed state; inside an open transaction it stays on the writer.
+        const snapshot = yield* projections
+          .getShellSnapshot({ location, unsettledOnly })
+          .pipe(NodeSqliteClient.readOnly);
         // The V2 store returns archived rows in `archivedThreads`, never in `threads`.
         const threads = location === "archive" ? snapshot.archivedThreads : snapshot.threads;
         const names = new Map(

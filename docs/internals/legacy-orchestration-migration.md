@@ -53,10 +53,13 @@ running half-upgraded. See `packages/client-runtime/src/connection/compatibility
 rows at or below the recorded maximum are skipped without checking names. A database that ran a
 local or fork migration under an id this build later assigns to a different migration therefore
 never receives this build's migration at that id. `runMigrations` logs each recorded id whose name
-differs from the manifest so the skipped schema change is diagnosable. BK freezes its shipped ids
-1–45 and 1000–1042. Incoming upstream migrations receive the next free ids: V2 is 1043, and index
-cleanup is 1044. Allocate each later migration above the recorded maximum. Never replace an applied
-id or use upstream's preview ledger rewrite on the fork database.
+differs from the manifest so the skipped schema change is diagnosable. Upstream's
+[`runMigrations`](../../apps/server/src/persistence/Migrations.ts) also repairs supported V2 preview
+ledgers and rejects history that would skip a requested migration at id 55 or later without its
+expected name. BK freezes its shipped ids 1–45 and 1000–1042. Incoming upstream migrations receive
+the next free ids: V2 is 1043, and index cleanup is 1044. Allocate each later migration above the
+recorded maximum. Never replace an applied id or use upstream's preview ledger rewrite on the fork
+database.
 
 <!-- T3-CUSTOM(expbkt3): END -->
 

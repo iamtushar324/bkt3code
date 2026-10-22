@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { userManagementEnvironment } from "../../state/users";
 import { serverEnvironment } from "../../state/server";

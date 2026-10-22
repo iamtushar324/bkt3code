@@ -1,8 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import { Tool } from "effect/ai";
 import {
+  resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
-  resolveT3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 
 import { T3ControlToolkit } from "../control/tools.ts";
@@ -26,6 +26,6 @@ it("publishes object-root, reference-free tools with labels and unclassified nam
     expect(resolveT3McpToolPresentation(`mcp__t3-code__${tool.name}`)?.logo, tool.name).toBe(
       "t3-code",
     );
-    expect(resolveT3McpToolSummaryAction(tool.name), tool.name).not.toBeNull();
+    expect(resolveT3McpToolDefinition(tool.name)?.summaryAction ?? null, tool.name).not.toBeNull();
   }
 });

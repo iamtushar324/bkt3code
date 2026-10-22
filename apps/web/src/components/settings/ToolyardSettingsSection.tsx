@@ -1,6 +1,7 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -128,7 +129,7 @@ function FoldTrigger({
 export interface ToolyardSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly serverConfig: ServerConfig;
+  readonly serverConfig: EnvironmentServerConfig;
 }
 export function ToolyardSettingsSection() {
   const { connectedEnvironments } = useSettingsScope();
@@ -323,7 +324,8 @@ function ToolyardSettingsContent({
     let attempts = 0;
     const timer = window.setInterval(() => {
       refresh();
-      if (++attempts >= 40) {
+      attempts += 1;
+      if (attempts >= 40) {
         window.clearInterval(timer);
         setNotice(
           "Complete Save in the browser. Select Refresh here to read the server result. Your draft remains until the result matches.",
@@ -375,113 +377,118 @@ function ToolyardSettingsContent({
     setBusy(true);
     setError(null);
     let hostBrowser: ToolyardBrowserHandoffTarget | null = null;
-    try {
-      if (mode === "host" && current.enabled && !remove && !disconnect && hostAction !== "cancel")
-        hostBrowser = createToolyardBrowserHandoffTarget();
-      const submittedKey = apiKey;
-      const submittedDraft = draft;
-      const adminToken =
-        mode === "team" && !disconnect && clerkUserId === userScope
-          ? await readTeamClerkToken()
-          : null;
-      const saved = await configure({
-        environmentId,
-        input: {
-          expectedRevision: current.revision,
-          baseUrl: current.baseUrl,
-          origin: origin(),
-          enabled: current.enabled,
-          remove,
-          mode,
-          ...(disconnect ? { disconnect: true } : {}),
-          ...(mode === "host" && current.enabled && !remove && !disconnect
-            ? { hostAction: hostAction ?? "begin" }
-            : {}),
-          ...(mode === "api-key" && submittedKey && !remove && !disconnect
-            ? { apiKey: submittedKey }
-            : {}),
-          ...(adminToken ? { adminToken } : {}),
-        },
-      });
-      refresh();
-      if (AsyncResult.isSuccess(saved)) {
-        // A newer edit remains a draft after this request completes.
-        if (!disconnect && draftRef.current === submittedDraft) setDraft(null);
-        if (!disconnect) setApiKey((value) => (value === submittedKey ? "" : value));
-        if (
-          hostBrowser &&
-          saved.value.pendingConnection?.status === "pending" &&
-          saved.value.pendingConnection.authorizationUrl
-        ) {
-          await hostBrowser.open(
-            checkedConsentUrl(saved.value.pendingConnection.authorizationUrl, saved.value.baseUrl),
+    await (async () => {
+      try {
+        if (mode === "host" && current.enabled && !remove && !disconnect && hostAction !== "cancel")
+          hostBrowser = createToolyardBrowserHandoffTarget();
+        const submittedKey = apiKey;
+        const submittedDraft = draft;
+        const adminToken =
+          mode === "team" && !disconnect && clerkUserId === userScope
+            ? await readTeamClerkToken()
+            : null;
+        const saved = await configure({
+          environmentId,
+          input: {
+            expectedRevision: current.revision,
+            baseUrl: current.baseUrl,
+            origin: origin(),
+            enabled: current.enabled,
+            remove,
+            mode,
+            ...(disconnect ? { disconnect: true } : {}),
+            ...(mode === "host" && current.enabled && !remove && !disconnect
+              ? { hostAction: hostAction ?? "begin" }
+              : {}),
+            ...(mode === "api-key" && submittedKey && !remove && !disconnect
+              ? { apiKey: submittedKey }
+              : {}),
+            ...(adminToken ? { adminToken } : {}),
+          },
+        });
+        refresh();
+        if (AsyncResult.isSuccess(saved)) {
+          // A newer edit remains a draft after this request completes.
+          if (!disconnect && draftRef.current === submittedDraft) setDraft(null);
+          if (!disconnect) setApiKey((value) => (value === submittedKey ? "" : value));
+          if (
+            hostBrowser &&
+            saved.value.pendingConnection?.status === "pending" &&
+            saved.value.pendingConnection.authorizationUrl
+          ) {
+            await hostBrowser.open(
+              checkedConsentUrl(
+                saved.value.pendingConnection.authorizationUrl,
+                saved.value.baseUrl,
+              ),
+            );
+          }
+          setNotice(
+            remove
+              ? "The Toolyard instance was removed from this server."
+              : mode === "host" && !disconnect
+                ? hostAction === "cancel"
+                  ? "The connection request was cancelled."
+                  : null
+                : disconnect
+                  ? "Your Toolyard connection was removed."
+                  : mode === "api-key"
+                    ? "Your API key connection is ready. Local decisions arrive through outbound requests."
+                    : null,
           );
-        }
-        setNotice(
-          remove
-            ? "The Toolyard instance was removed from this server."
-            : mode === "host" && !disconnect
-              ? hostAction === "cancel"
-                ? "The connection request was cancelled."
-                : null
-              : disconnect
-                ? "Your Toolyard connection was removed."
-                : mode === "api-key"
-                  ? "Your API key connection is ready. Local decisions arrive through outbound requests."
-                  : null,
-        );
-        // The confirmed action can remove the control that held focus.
-        if (remove || disconnect) summaryRef.current?.focus();
-      } else if (AsyncResult.isFailure(saved)) {
-        const code = toolyardSettingsFailureCode(saved.cause);
-        if (
-          mode === "team" &&
-          code === "admin_trust_registration_required" &&
-          !adminToken &&
-          !remove &&
-          window.desktopBridge
-        ) {
-          const destination = environmentBrowserUrl();
-          if (!destination) {
+          // The confirmed action can remove the control that held focus.
+          if (remove || disconnect) summaryRef.current?.focus();
+        } else if (AsyncResult.isFailure(saved)) {
+          const code = toolyardSettingsFailureCode(saved.cause);
+          if (
+            mode === "team" &&
+            code === "admin_trust_registration_required" &&
+            !adminToken &&
+            !remove &&
+            window.desktopBridge
+          ) {
+            const destination = environmentBrowserUrl();
+            if (!destination) {
+              setError(
+                "This environment has no HTTPS browser address. Your draft remains. Ask its administrator to configure a public address.",
+              );
+              return;
+            }
+            const url = createToolyardSettingsContinuation(
+              destination,
+              environmentId,
+              userScope,
+              current,
+              Date.now(),
+            );
+            const browser = createToolyardBrowserHandoffTarget();
+            await (async () => {
+              await browser.open(url);
+              setBrowserDraft({ ...current });
+              setNotice(
+                "The default browser opened T3 Settings. Use the same account. Review the draft, then select Save and verify trust. Your desktop draft remains.",
+              );
+            })().finally(() => {
+              browser.close();
+            });
+          } else
             setError(
-              "This environment has no HTTPS browser address. Your draft remains. Ask its administrator to configure a public address.",
+              code === "admin_trust_registration_required" && !adminToken
+                ? "Use a signed-in browser administrator account to verify server trust. Your draft remains."
+                : toolyardSettingsFailureMessage(
+                    mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
+                  ),
             );
-            return;
-          }
-          const url = createToolyardSettingsContinuation(
-            destination,
-            environmentId,
-            userScope,
-            current,
-            Date.now(),
-          );
-          const browser = createToolyardBrowserHandoffTarget();
-          try {
-            await browser.open(url);
-            setBrowserDraft({ ...current });
-            setNotice(
-              "The default browser opened T3 Settings. Use the same account. Review the draft, then select Save and verify trust. Your desktop draft remains.",
-            );
-          } finally {
-            browser.close();
-          }
-        } else
-          setError(
-            code === "admin_trust_registration_required" && !adminToken
-              ? "Use a signed-in browser administrator account to verify server trust. Your draft remains."
-              : toolyardSettingsFailureMessage(
-                  mode === "api-key" && code === "invalid_assertion" ? "invalid_api_key" : code,
-                ),
-          );
+        }
+      } catch {
+        setError(
+          "The settings or browser request failed. Your draft remains. Select Refresh, then try again.",
+        );
       }
-    } catch {
-      setError(
-        "The settings or browser request failed. Your draft remains. Select Refresh, then try again.",
-      );
-    } finally {
+    })().finally(() => {
       hostBrowser?.close();
       setBusy(false);
-    }
+    });
   };
   const cancelConsent = async () => {
     if (!status?.baseUrl) return;
@@ -504,9 +511,8 @@ function ToolyardSettingsContent({
         setError("The connection request could not be cancelled. Select Refresh, then try again.");
     } catch {
       setError("The connection request could not be cancelled. Select Refresh, then try again.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
   const resumeConsent = async () => {
     if (!status?.pendingConnection) return;
@@ -519,29 +525,30 @@ function ToolyardSettingsContent({
       );
     } catch {
       setError("The browser did not open the consent page. Select Refresh, then try again.");
-    } finally {
-      browser?.close();
     }
+    browser?.close();
   };
   const open = async () => {
     setBusy(true);
     setError(null);
     let browser: ToolyardBrowserHandoffTarget | null = null;
-    try {
-      browser = createToolyardBrowserHandoffTarget();
-      const response = await handoff({ environmentId, input: {} });
-      if (!AsyncResult.isSuccess(response)) {
-        setError("Toolyard could not create a browser handoff. Check the connection status.");
-        return;
+    await (async () => {
+      try {
+        browser = createToolyardBrowserHandoffTarget();
+        const response = await handoff({ environmentId, input: {} });
+        if (!AsyncResult.isSuccess(response)) {
+          setError("Toolyard could not create a browser handoff. Check the connection status.");
+          return;
+        }
+        // shell.openExternal always invokes the device browser, independent of integrated-link preferences.
+        await browser.open(response.value.url);
+      } catch {
+        setError("The default browser did not open. Try Open Toolyard again.");
       }
-      // shell.openExternal always invokes the device browser, independent of integrated-link preferences.
-      await browser.open(response.value.url);
-    } catch {
-      setError("The default browser did not open. Try Open Toolyard again.");
-    } finally {
+    })().finally(() => {
       browser?.close();
       setBusy(false);
-    }
+    });
   };
   const askToConfirm = (action: "disconnect" | "remove") => {
     setConfirmAction(action);

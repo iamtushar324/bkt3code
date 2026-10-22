@@ -42,7 +42,7 @@ export function PlanCardHeading({
       <div className="min-w-0 flex-1">
         {/* Same heading level as the message author headings in the timeline,
             so a plan's own headings nest beneath it in the outline. */}
-        <h3 className="truncate font-semibold text-foreground text-sm">
+        <h3 className="truncate font-semibold text-foreground text-sm" data-thread-find-text="true">
           {planCardTitle(planMarkdown, title)}
         </h3>
         <p className="flex min-w-0 items-center gap-1.5 truncate text-muted-foreground text-xs">

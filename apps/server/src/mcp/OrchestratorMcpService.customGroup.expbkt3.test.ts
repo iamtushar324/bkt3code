@@ -22,13 +22,16 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
@@ -104,7 +107,14 @@ describe("OrchestratorMcpService custom groups", () => {
 
   const createdProjection = (threadId: ThreadId) =>
     ({
-      thread: { id: threadId, title: "Created", createdBy: "agent", creationSource: "mcp" },
+      // createThreads reports the committed thread's model selection back to the caller.
+      thread: {
+        id: threadId,
+        title: "Created",
+        createdBy: "agent",
+        creationSource: "mcp",
+        modelSelection,
+      },
       runs: [],
       contextTransfers: [],
       messages: [],
@@ -127,6 +137,10 @@ describe("OrchestratorMcpService custom groups", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
             ),
+          // A first request: no create was accepted before, so each thread is new.
+          hasReceipt: () => Effect.succeed(false),
+          // The test's Codex instance is enabled for every project.
+          assertProviderInstanceEnabled: () => Effect.void,
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([codexProvider]),
@@ -137,12 +151,16 @@ describe("OrchestratorMcpService custom groups", () => {
           ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
             list: () => Effect.succeed([codexInstanceId]),
             get: (instanceId) =>
-              Effect.succeed({ instanceId } as unknown as ProviderAdapterV2Shape),
+              Effect.succeed({ instanceId } as unknown as ProviderAdapterV2["Service"]),
           }),
         ),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        // Upstream's service now also reads these; createThreads uses neither.
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        ServerSettings.layerTest(),
       );
 
       const result = yield* Effect.gen(function* () {
@@ -154,6 +172,10 @@ describe("OrchestratorMcpService custom groups", () => {
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
 
       assert.equal(result.threads.length, 2);
+      assert.deepEqual(
+        result.threads.map((thread) => thread.providerInstanceId),
+        [codexInstanceId, codexInstanceId],
+      );
       const creates = (
         (yield* Ref.get(dispatched)) as ReadonlyArray<{
           readonly type: string;

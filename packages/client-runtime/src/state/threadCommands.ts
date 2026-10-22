@@ -36,7 +36,6 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
-  type ThreadCommandInput,
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
   type RetryWorkspacePreparationInput,
@@ -49,6 +48,7 @@ import {
   type MergeThreadBackInput,
   type PromoteQueuedRunInput,
   type ReorderQueuedRunInput,
+  type ResumeThreadQueueInput,
   type LinkThreadPullRequestInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
@@ -148,7 +148,7 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
   const cache = Option.getOrUndefined(cacheOption);
   const commandId =
     serverInput.commandId ??
-    (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie, Effect.map(CommandId.make)));
+    (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie, Effect.map(CommandId.make)));
   const createdAt =
     serverInput.createdAt ?? (yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const queuedMessage: QueuedThreadMessage = {
@@ -307,6 +307,7 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
 
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
+  readonly throughEntryId?: string;
 };
 
 export type {
@@ -325,6 +326,7 @@ export type {
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   DismissThreadUserInputInput,
+  RetryWorkspacePreparationInput,
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
@@ -357,43 +359,64 @@ export function createThreadEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
+  const loadEarlierHistory = Effect.fn("ThreadCommands.loadEarlierHistory")(function* (
+    input: LoadEarlierThreadHistoryInput,
+  ) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const controller = yield* Effect.serviceOption(ThreadHistoryController.ThreadHistoryController);
+    if (Option.isNone(controller)) {
+      return {
+        _tag: "noop",
+      } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
+    }
+    return yield* controller.value.loadEarlier(
+      supervisor.target.environmentId,
+      input.threadId,
+      input.throughEntryId,
+    );
+  });
+
   const commands = {
     // T3-CUSTOM(expbkt3): BEGIN — durable outbox: let a client drop a pending turn
     // that was persisted before send (see startThreadTurnDurably above).
     queueOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:queue-outbox",
-      execute: (message: QueuedThreadMessage, registry) =>
-        Effect.gen(function* () {
-          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
-          if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
-            return yield* Effect.fail(
-              new ThreadOutboxPersistenceError({
-                operation: "save-before-send",
-                cause: "Outbox storage unavailable",
-              }),
-            );
-          }
-          yield* cacheOption.value.saveOutbox(message);
-          bumpOutboxRevision(
-            registry,
-            message.environmentId,
-            message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+      execute: Effect.fn("ThreadCommands.queueOutbox")(function* (
+        message: QueuedThreadMessage,
+        registry: AtomRegistry.AtomRegistry,
+      ) {
+        const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+        if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
+          return yield* Effect.fail(
+            new ThreadOutboxPersistenceError({
+              operation: "save-before-send",
+              cause: "Outbox storage unavailable",
+            }),
           );
-        }),
+        }
+        yield* cacheOption.value.saveOutbox(message);
+        bumpOutboxRevision(
+          registry,
+          message.environmentId,
+          message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+        );
+      }),
     }),
     discardOutbox: createRuntimeCommand(runtime, {
       label: "environment-data:commands:thread:discard-outbox",
-      execute: (message: DiscardDurableOutboxInput, registry) =>
-        Effect.gen(function* () {
-          const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
-          if (Option.isNone(cacheOption) || cacheOption.value.removeOutbox === undefined) return;
-          yield* cacheOption.value.removeOutbox(message);
-          bumpOutboxRevision(
-            registry,
-            message.environmentId,
-            message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
-          );
-        }),
+      execute: Effect.fn("ThreadCommands.discardOutbox")(function* (
+        message: DiscardDurableOutboxInput,
+        registry: AtomRegistry.AtomRegistry,
+      ) {
+        const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
+        if (Option.isNone(cacheOption) || cacheOption.value.removeOutbox === undefined) return;
+        yield* cacheOption.value.removeOutbox(message);
+        bumpOutboxRevision(
+          registry,
+          message.environmentId,
+          message.identityKey ?? ANONYMOUS_OUTBOX_IDENTITY,
+        );
+      }),
     }),
     // T3-CUSTOM(expbkt3): END
     create: createEnvironmentCommand(runtime, {
@@ -619,7 +642,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     resumeThreadQueue: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:resume-queue",
-      execute: (input: ThreadCommandInput) => resumeThreadQueue(input),
+      execute: (input: ResumeThreadQueueInput) => resumeThreadQueue(input),
       scheduler,
       concurrency,
     }),
@@ -655,22 +678,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     loadEarlierHistory: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:load-earlier-history",
-      execute: (input: LoadEarlierThreadHistoryInput) =>
-        Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-          const controller = yield* Effect.serviceOption(
-            ThreadHistoryController.ThreadHistoryController,
-          );
-          if (Option.isNone(controller)) {
-            return {
-              _tag: "noop",
-            } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
-          }
-          return yield* controller.value.loadEarlier(
-            supervisor.target.environmentId,
-            input.threadId,
-          );
-        }),
+      execute: loadEarlierHistory,
       scheduler,
       concurrency: {
         mode: "serial",
@@ -722,11 +730,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             ...thread,
             pendingRuntimeRequest: null,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-            snoozedAt:
-              thread.snoozedUntil != null &&
-              DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
-                ? (thread.snoozedAt ?? now)
-                : now,
+            snoozedAt: now,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({

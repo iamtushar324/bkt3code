@@ -158,9 +158,8 @@ function LocalPhonePairingSettings() {
           description: message,
         }),
       );
-    } finally {
-      setUpdating(false);
     }
+    setUpdating(false);
   }, []);
 
   const reachabilityRows = (
@@ -251,7 +250,7 @@ function EndpointPicker({
               role="radio"
               aria-checked={isSelected}
               className={cn(
-                "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 isSelected
                   ? "border-foreground/60 bg-muted/30"
                   : "border-border/50 hover:bg-muted/20",
@@ -346,9 +345,8 @@ function BundledServerRows({
       }
     } catch (cause) {
       setError(describeLocalPairingError(cause, "Could not create a pairing link."));
-    } finally {
-      setGenerating(false);
     }
+    setGenerating(false);
   }, [endpoint, environmentId, issued]);
 
   const revoke = useCallback(async () => {
@@ -367,9 +365,8 @@ function BundledServerRows({
       });
     } catch (cause) {
       setError(describeLocalPairingError(cause, "Could not revoke the pairing link."));
-    } finally {
-      setRevoking(false);
     }
+    setRevoking(false);
   }, [environmentId, issued]);
 
   const ready = status.kind === "ready";
@@ -464,9 +461,8 @@ function PairedDevicesRow({
         toastManager.add(
           stackedThreadToast({ type: "error", title: "Could not revoke", description: message }),
         );
-      } finally {
-        setRevokingId(null);
       }
+      setRevokingId(null);
     },
     [environmentId, load],
   );

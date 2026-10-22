@@ -25,8 +25,8 @@ vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
 vi.mock("../phasesidebar/usePhaseSidebarRows", () => ({
   usePhaseSidebarViewerUserId: vi.fn(),
 }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: "SymbolView" }));
-vi.mock("../../components/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "SymbolView" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
 vi.mock("../../components/StatusPill", () => ({ StatusPill: "StatusPill" }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { refresh: vi.fn() } }));
 vi.mock("../../state/server", () => ({ serverEnvironment: {} }));

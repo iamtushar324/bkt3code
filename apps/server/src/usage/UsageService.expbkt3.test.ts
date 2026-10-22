@@ -4,8 +4,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +22,15 @@ import {
 } from "./threadTranscriptFiles.expbkt3.ts";
 import * as UsageService from "./UsageService.ts";
 import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
+import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 
 const claudeLine = (id: number, sessionId: string, outputTokens: number) =>
   `${JSON.stringify({
@@ -68,15 +77,20 @@ const seedHome = Effect.gen(function* () {
   return { home, projects, main };
 });
 
-const serviceLayer = (home: string, prefix: string) =>
-  UsageService.layer.pipe(
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+const baseDependencyLayer = (home: string, prefix: string) =>
+  ServerConfig.layerTest(process.cwd(), { prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
       ServerSettings.layerTest({
-        providers: {
-          claudeAgent: { homePath: NodePath.join(home, "claude") },
-          codex: { homePath: NodePath.join(home, "codex") },
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            config: { homePath: NodePath.join(home, "claude") },
+          },
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { homePath: NodePath.join(home, "codex") },
+          },
         },
       }),
     ),
@@ -89,8 +103,26 @@ const serviceLayer = (home: string, prefix: string) =>
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(home, "grok") }),
+      Layer.succeed(HostProcess.Environment, {
+        HOME: home,
+        GROK_HOME: NodePath.join(home, "grok"),
+        PI_CODING_AGENT_DIR: NodePath.join(home, "pi"),
+      }),
     ),
+  );
+
+/** The service's dependencies; the test builds the service with `make` to await its writes. */
+const dependencyLayer = (home: string, prefix: string) =>
+  // The built-in usage readers' services, wired as upstream's UsageService.test.ts does.
+  Layer.fresh(CursorUsageAccounts.layer).pipe(
+    Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
+    Layer.provideMerge(AntigravityUsage.layer),
+    Layer.provideMerge(ProviderHostLive.layer),
+    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+    Layer.provideMerge(baseDependencyLayer(home, prefix)),
   );
 
 const scanCacheText = Effect.gen(function* () {
@@ -102,15 +134,13 @@ const scanCacheText = Effect.gen(function* () {
   );
 });
 
-const readThread = Effect.gen(function* () {
-  const usage = yield* UsageService.UsageService;
-  return yield* usage.readThreadUsage({
+const readThread = (usage: UsageService.UsageService["Service"]) =>
+  usage.readThreadUsage({
     threadId: ThreadId.make("thread-1"),
     sessionIds: ["session-1"],
     sinceMs: Date.parse("2026-07-01T00:00:00Z"),
     timeZone: "UTC",
   });
-});
 
 describe("listThreadTranscriptFiles", () => {
   it.effect("lists only the thread's own Claude and Codex transcripts", () =>
@@ -158,12 +188,18 @@ describe("UsageService.readThreadUsage (expbkt3)", () => {
     Effect.gen(function* () {
       const { home, main } = yield* seedHome;
       const scope = yield* Scope.make();
-      const context = yield* Layer.buildWithScope(serviceLayer(home, "usage-thread-a-"), scope);
-      const withService = <A, E>(
-        effect: Effect.Effect<A, E, UsageService.UsageService | ServerConfig.ServerConfig>,
-      ) => Effect.provide(effect, context);
+      const context = yield* Layer.buildWithScope(dependencyLayer(home, "usage-thread-a-"), scope);
+      const withService = <A, E>(effect: Effect.Effect<A, E, ServerConfig.ServerConfig>) =>
+        Effect.provide(effect, context);
+      // Cache writes run detached (upstream's `schedulePersist`); `awaitPersisted`
+      // settles them, so each read below sees exactly what that read wrote.
+      const usage = yield* UsageService.make.pipe(
+        Effect.provideContext(context),
+        Scope.provide(scope),
+      );
+      const readThreadSettled = readThread(usage).pipe(Effect.tap(() => usage.awaitPersisted));
 
-      const first = yield* withService(readThread);
+      const first = yield* readThreadSettled;
       assert.strictEqual(
         first.totals.outputTokens,
         12,
@@ -174,19 +210,19 @@ describe("UsageService.readThreadUsage (expbkt3)", () => {
 
       // The transcript grows; a second read within the interval does not rewrite the cache.
       yield* Effect.promise(() => NodeFSP.appendFile(main, claudeLine(4, "session-1", 30)));
-      const second = yield* withService(readThread);
+      const second = yield* readThreadSettled;
       assert.strictEqual(second.totals.outputTokens, 42);
       assert.strictEqual(yield* withService(scanCacheText), afterFirst);
 
       // Once the interval has passed, the next read persists.
       yield* TestClock.adjust(THREAD_USAGE_PERSIST_INTERVAL_MS);
-      yield* withService(readThread);
+      yield* readThreadSettled;
       const afterInterval = yield* withService(scanCacheText);
       assert.notStrictEqual(afterInterval, afterFirst);
 
       // A change that was not persisted yet is flushed when the service shuts down.
       yield* Effect.promise(() => NodeFSP.appendFile(main, claudeLine(5, "session-1", 1)));
-      yield* withService(readThread);
+      yield* readThreadSettled;
       assert.strictEqual(yield* withService(scanCacheText), afterInterval);
       yield* Scope.close(scope, Exit.void);
       assert.notStrictEqual(yield* withService(scanCacheText), afterInterval);

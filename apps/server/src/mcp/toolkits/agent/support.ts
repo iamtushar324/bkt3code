@@ -98,7 +98,9 @@ export const commandIdFor = Effect.fn("agentToolkit.commandIdFor")(function* (
     );
   }
   const crypto = yield* Crypto.Crypto;
-  return CommandId.make(`mcp:agent:${operation}:${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`);
+  return CommandId.make(
+    `mcp:agent:${operation}:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+  );
 });
 
 /** The interaction mode a `mode: "build" | "plan"` parameter asks for. */

@@ -72,7 +72,13 @@ Use this entry in your Codex configuration:
 ```toml
 [mcp_servers.toolyard-host]
 command = "t3"
-args = ["toolyard-mcp-bridge", "--server-url", "https://stagebkt3.dev.beknown.live", "--token-file", "/absolute/path/toolyard-native.t3-token"]
+args = [
+  "toolyard-mcp-bridge",
+  "--server-url",
+  "https://stagebkt3.dev.beknown.live",
+  "--token-file",
+  "/absolute/path/toolyard-native.t3-token",
+]
 ```
 
 For a personal local server, replace the origin with its loopback URL.

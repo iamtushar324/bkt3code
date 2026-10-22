@@ -4,8 +4,8 @@
  */
 import {
   AuthAdministrativeScopes,
+  AuthMemberClientScopes,
   AuthSessionId,
-  AuthStandardClientScopes,
   clerkSubjectForUser,
   EnvironmentUserId,
 } from "@t3tools/contracts";
@@ -28,6 +28,6 @@ export const makeWebUiAuthenticatedSession = (
         ? `mcp-web-ui:${invocation.principal}`
         : clerkSubjectForUser(actorUserId),
     method: "bearer-access-token",
-    scopes: isAdministrative ? AuthAdministrativeScopes : AuthStandardClientScopes,
+    scopes: isAdministrative ? AuthAdministrativeScopes : AuthMemberClientScopes,
   };
 };

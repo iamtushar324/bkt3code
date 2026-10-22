@@ -3,7 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentUserId } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,7 +15,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
-import { getTelemetryIdentifier } from "./Identify.ts";
+import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
 interface SentEvent {
@@ -89,8 +89,8 @@ const captureEvents = <A>(
       ),
       Layer.provide(
         Layer.mergeAll(
-          Layer.succeed(HostProcessPlatform, "linux"),
-          Layer.succeed(HostProcessArchitecture, "arm64"),
+          Layer.succeed(HostProcess.Platform, "linux"),
+          Layer.succeed(HostProcess.Architecture, "arm64"),
         ),
       ),
       Layer.provideMerge(NodeHttpServer.layerTest),
@@ -98,7 +98,7 @@ const captureEvents = <A>(
     yield* Effect.gen(function* () {
       yield* Layer.launch(layerBatchServer).pipe(Effect.forkScoped);
       const analytics = yield* AnalyticsService.AnalyticsService;
-      installId = yield* getTelemetryIdentifier;
+      installId = (yield* getTelemetryIdentity).distinctId;
       yield* body(analytics);
       yield* analytics.flush;
     }).pipe(Effect.provide(layerRuntime));

@@ -34,11 +34,8 @@ export const CONNECT_DISCOVERY_REFRESH_AFTER = Duration.minutes(1);
  * arrive before the first success share one scan. Refreshes run in the scope
  * this is built in, never on a caller's fiber, so build it in a long-lived one.
  */
-export const makeStaleWhileRevalidate = <A>(
-  discover: Effect.Effect<A>,
-  refreshAfter: Duration.Input,
-) =>
-  Effect.gen(function* () {
+export const makeStaleWhileRevalidate = Effect.fn("connectDiscoveryCache.makeStaleWhileRevalidate")(
+  function* <A>(discover: Effect.Effect<A>, refreshAfter: Duration.Input) {
     const scope = yield* Effect.scope;
     const refreshAfterNanos = Duration.toNanosUnsafe(refreshAfter);
     let latest: { readonly value: A; readonly discoveredAtNanos: bigint } | undefined;
@@ -80,7 +77,8 @@ export const makeStaleWhileRevalidate = <A>(
       }
       return yield* Deferred.await(inFlight ?? (yield* startRefresh));
     });
-  });
+  },
+);
 
 /** `ExternalLauncher.layer` with editor and reveal-kind discovery served from the last result. */
 export const cachedExternalLauncherLayer = Layer.effect(

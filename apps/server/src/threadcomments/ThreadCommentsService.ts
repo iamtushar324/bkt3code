@@ -139,7 +139,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   // A failing CSPRNG is a defect, not something a caller can recover from.
-  const uuid = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
   const shortId = (prefix: string) =>
     Effect.map(uuid, (value) => `${prefix}_${value.replaceAll("-", "").slice(0, 20)}`);
 
@@ -152,8 +152,10 @@ export const make = Effect.gen(function* () {
   // from racing a user's resolve (and dropping either change).
   const writes = yield* Semaphore.make(1);
 
-  const snapshot: ThreadCommentsServiceShape["snapshot"] = (threadId) =>
-    Effect.gen(function* () {
+  const snapshot: ThreadCommentsServiceShape["snapshot"] = Effect.fn(
+    "ThreadCommentsService.snapshot",
+  )(
+    function* (threadId: ThreadId) {
       const [comments, settings] = yield* Effect.all([
         repository.listForThread(threadId),
         repository.getSettings(threadId),
@@ -163,7 +165,9 @@ export const make = Effect.gen(function* () {
         comments,
         deliveryPaused: settings.deliveryPaused,
       } satisfies ThreadCommentsSnapshot;
-    }).pipe(Effect.mapError(internal("snapshot")));
+    },
+    Effect.mapError(internal("snapshot")),
+  );
 
   const requireComment = (
     operation: string,
@@ -324,63 +328,69 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(internal("setDeliveryPaused"))),
     );
 
-  const agentReply: ThreadCommentsServiceShape["agentReply"] = (input) =>
-    Effect.gen(function* () {
-      const body = input.body?.trim() ?? "";
-      const addressed = input.addressed === true;
-      if (body.length === 0 && !addressed) {
-        return yield* invalid(
-          "agentReply",
-          "Pass a reply `body`, `addressed: true`, or both; there is nothing to record otherwise.",
-        );
-      }
-      const updated = yield* writes.withPermits(1)(
-        Effect.gen(function* () {
-          const comment = yield* requireComment("agentReply", input.threadId, input.commentId);
-          const createdAt = yield* nowIso;
-          const replies =
-            body.length === 0
-              ? comment.replies
-              : appendReply(comment, {
-                  replyId: yield* shortId("tcr"),
-                  author: "agent",
-                  authorUserId: null,
-                  authorLabel: null,
-                  body,
-                  createdAt,
-                });
-          // A resolved comment stays resolved: the user closed it, and the
-          // agent only ever moves an open comment to addressed.
-          const status =
-            addressed && comment.status === "open" ? ("addressed" as const) : comment.status;
-          const next: ThreadComment = { ...comment, status, replies, updatedAt: createdAt };
-          yield* repository.updateComment(next).pipe(Effect.mapError(internal("agentReply")));
-          return next;
-        }),
+  const agentReply: ThreadCommentsServiceShape["agentReply"] = Effect.fn(
+    "ThreadCommentsService.agentReply",
+  )(function* (input) {
+    const body = input.body?.trim() ?? "";
+    const addressed = input.addressed === true;
+    if (body.length === 0 && !addressed) {
+      return yield* invalid(
+        "agentReply",
+        "Pass a reply `body`, `addressed: true`, or both; there is nothing to record otherwise.",
       );
-      yield* announce(input.threadId);
-      return updated;
-    });
+    }
+    const updated = yield* writes.withPermits(1)(
+      Effect.gen(function* () {
+        const comment = yield* requireComment("agentReply", input.threadId, input.commentId);
+        const createdAt = yield* nowIso;
+        const replies =
+          body.length === 0
+            ? comment.replies
+            : appendReply(comment, {
+                replyId: yield* shortId("tcr"),
+                author: "agent",
+                authorUserId: null,
+                authorLabel: null,
+                body,
+                createdAt,
+              });
+        // A resolved comment stays resolved: the user closed it, and the
+        // agent only ever moves an open comment to addressed.
+        const status =
+          addressed && comment.status === "open" ? ("addressed" as const) : comment.status;
+        const next: ThreadComment = { ...comment, status, replies, updatedAt: createdAt };
+        yield* repository.updateComment(next).pipe(Effect.mapError(internal("agentReply")));
+        return next;
+      }),
+    );
+    yield* announce(input.threadId);
+    return updated;
+  });
 
-  const openForDelivery: ThreadCommentsServiceShape["openForDelivery"] = (threadId) =>
-    Effect.gen(function* () {
+  const openForDelivery: ThreadCommentsServiceShape["openForDelivery"] = Effect.fn(
+    "ThreadCommentsService.openForDelivery",
+  )(
+    function* (threadId: ThreadId) {
       const settings = yield* repository.getSettings(threadId);
       if (settings.deliveryPaused) return [];
       const comments = yield* repository.listForThread(threadId);
       return comments.filter(isThreadCommentUnsent);
-    }).pipe(Effect.mapError(internal("openForDelivery")));
+    },
+    Effect.mapError(internal("openForDelivery")),
+  );
 
-  const markSent: ThreadCommentsServiceShape["markSent"] = (input) =>
-    Effect.gen(function* () {
-      if (input.comments.length === 0) return;
-      const sentAt = yield* nowIso;
-      yield* writes.withPermits(1)(
-        repository
-          .markSent({ threadId: input.threadId, comments: input.comments, sentAt })
-          .pipe(Effect.mapError(internal("markSent"))),
-      );
-      yield* announce(input.threadId);
-    });
+  const markSent: ThreadCommentsServiceShape["markSent"] = Effect.fn(
+    "ThreadCommentsService.markSent",
+  )(function* (input) {
+    if (input.comments.length === 0) return;
+    const sentAt = yield* nowIso;
+    yield* writes.withPermits(1)(
+      repository
+        .markSent({ threadId: input.threadId, comments: input.comments, sentAt })
+        .pipe(Effect.mapError(internal("markSent"))),
+    );
+    yield* announce(input.threadId);
+  });
 
   const resend: ThreadCommentsServiceShape["resend"] = (input) =>
     mutate(

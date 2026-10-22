@@ -24,6 +24,13 @@ function userLabel(user: EnvironmentUser): string {
   return user.displayName ?? user.primaryEmail ?? user.id;
 }
 
+// Outside the component: the React Compiler cannot lower a `throw` inside `try`.
+async function readClerkIdentityToken(getToken: () => Promise<string | null>): Promise<string> {
+  const identityToken = await getToken();
+  if (!identityToken) throw new Error("Clerk did not issue an identity token.");
+  return identityToken;
+}
+
 function ClerkIdentityBootstrap({ onBound }: { readonly onBound: () => void }) {
   const clerk = useClerk();
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
@@ -47,8 +54,7 @@ function ClerkIdentityBootstrap({ onBound }: { readonly onBound: () => void }) {
     setBindingState("binding");
     void (async () => {
       try {
-        const identityToken = await getToken();
-        if (!identityToken) throw new Error("Clerk did not issue an identity token.");
+        const identityToken = await readClerkIdentityToken(() => getToken());
         await bindPrimaryEnvironmentClerkIdentity(identityToken);
         if (cancelled) return;
         setBindingState("bound");
@@ -63,7 +69,14 @@ function ClerkIdentityBootstrap({ onBound }: { readonly onBound: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [attempt, getToken, isLoaded, isSignedIn, userId]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry bumps attempt so the binding runs again for the same user.
+    attempt,
+    getToken,
+    isLoaded,
+    isSignedIn,
+    userId,
+  ]);
 
   if (!isLoaded) {
     return <p className="text-xs text-muted-foreground">Loading Clerk sign-in…</p>;

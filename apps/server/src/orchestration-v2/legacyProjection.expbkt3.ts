@@ -145,61 +145,62 @@ export function withRetainedActivitySequence(
 }
 
 /** V1 detail tables are immutable history after the cutover, never a second engine. */
-export const legacyStoredHistory = (threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const activities = yield* sql<{
-      id: string;
-      tone: string;
-      kind: string;
-      summary: string;
-      payload: string;
-      turnId: string | null;
-      sequence: number | null;
-      createdAt: string;
-    }>`
+export const legacyStoredHistory = Effect.fn("LegacyProjection.storedHistory")(function* (
+  threadId: ThreadId,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const activities = yield* sql<{
+    id: string;
+    tone: string;
+    kind: string;
+    summary: string;
+    payload: string;
+    turnId: string | null;
+    sequence: number | null;
+    createdAt: string;
+  }>`
     SELECT activity_id AS id, tone, kind, summary, payload_json AS payload, turn_id AS turnId, sequence, created_at AS createdAt FROM projection_thread_activities WHERE thread_id = ${threadId} ORDER BY sequence ASC, created_at ASC, activity_id ASC
   `;
-    const plans = yield* sql<{
-      id: string;
-      turnId: string | null;
-      planMarkdown: string;
-      implementedAt: string | null;
-      implementationThreadId: string | null;
-      createdAt: string;
-      updatedAt: string;
-    }>`
+  const plans = yield* sql<{
+    id: string;
+    turnId: string | null;
+    planMarkdown: string;
+    implementedAt: string | null;
+    implementationThreadId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>`
     SELECT plan_id AS id, turn_id AS turnId, plan_markdown AS planMarkdown, implemented_at AS implementedAt, implementation_thread_id AS implementationThreadId, created_at AS createdAt, updated_at AS updatedAt FROM projection_thread_proposed_plans WHERE thread_id = ${threadId} ORDER BY created_at ASC, plan_id ASC
   `;
-    const checkpoints = yield* sql<{
-      turnId: string;
-      checkpointTurnCount: number;
-      checkpointRef: string;
-      status: string;
-      files: string;
-      assistantMessageId: string | null;
-      completedAt: string;
-    }>`
+  const checkpoints = yield* sql<{
+    turnId: string;
+    checkpointTurnCount: number;
+    checkpointRef: string;
+    status: string;
+    files: string;
+    assistantMessageId: string | null;
+    completedAt: string;
+  }>`
     SELECT turn_id AS turnId, checkpoint_turn_count AS checkpointTurnCount, checkpoint_ref AS checkpointRef, checkpoint_status AS status, checkpoint_files_json AS files, assistant_message_id AS assistantMessageId, completed_at AS completedAt FROM projection_turns WHERE thread_id = ${threadId} AND turn_id IS NOT NULL AND checkpoint_ref IS NOT NULL AND completed_at IS NOT NULL ORDER BY checkpoint_turn_count ASC
   `;
-    return {
-      activities: activities.map((row) =>
-        Schema.decodeUnknownSync(OrchestrationThreadActivity)({
-          ...row,
-          // V1 rows predating sequence attribution have no cursor, rather than cursor zero.
-          sequence: row.sequence ?? undefined,
-          payload: JSON.parse(row.payload),
-        }),
-      ),
-      proposedPlans: plans.map((row) => Schema.decodeUnknownSync(OrchestrationProposedPlan)(row)),
-      checkpoints: checkpoints.map((row) =>
-        Schema.decodeUnknownSync(OrchestrationCheckpointSummary)({
-          ...row,
-          files: JSON.parse(row.files),
-        }),
-      ),
-    };
-  });
+  return {
+    activities: activities.map((row) =>
+      Schema.decodeUnknownSync(OrchestrationThreadActivity)({
+        ...row,
+        // V1 rows predating sequence attribution have no cursor, rather than cursor zero.
+        sequence: row.sequence ?? undefined,
+        payload: JSON.parse(row.payload),
+      }),
+    ),
+    proposedPlans: plans.map((row) => Schema.decodeUnknownSync(OrchestrationProposedPlan)(row)),
+    checkpoints: checkpoints.map((row) =>
+      Schema.decodeUnknownSync(OrchestrationCheckpointSummary)({
+        ...row,
+        files: JSON.parse(row.files),
+      }),
+    ),
+  };
+});
 
 export function legacyThreadDetail(
   projection: OrchestrationV2ThreadProjection,

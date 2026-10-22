@@ -10,6 +10,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 import { BK_RUNTIME_BRANDS, type BkRuntimeBrand } from "./BkBrand.ts";
@@ -62,6 +63,11 @@ const makeBackendLayer = (
   overrides: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
 ) =>
   DesktopBackendConfiguration.layer.pipe(
+    Layer.provide(
+      Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+        installIntoProcess: Effect.succeed(true),
+      }),
+    ),
     Layer.provideMerge(serverExposureLayer),
     Layer.provideMerge(DesktopAppSettings.layerTest()),
     Layer.provideMerge(DesktopWslEnvironment.layerTest()),

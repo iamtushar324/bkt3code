@@ -2,7 +2,7 @@
  * T3-CUSTOM(expbkt3): adds one Linear tag — an issue or a project — to a
  * thread, from the row's context menu. A session can carry several.
  */
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -37,11 +37,15 @@ export function LinearIssueTagDialog({
   const [url, setUrl] = useState(initialUrl);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setUrl(initialUrl);
-    setError(null);
-  }, [initialUrl, open]);
+  // Reset the form during render whenever the dialog opens or its link changes.
+  const [formSource, setFormSource] = useState({ open, initialUrl });
+  if (formSource.open !== open || formSource.initialUrl !== initialUrl) {
+    setFormSource({ open, initialUrl });
+    if (open) {
+      setUrl(initialUrl);
+      setError(null);
+    }
+  }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

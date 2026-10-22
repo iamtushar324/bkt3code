@@ -14,7 +14,7 @@ import type {
 
 import { makeDayFormatter } from "./usageAggregation.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 const EMPTY_TOTALS: UsageTokenTotals = {
   uncachedInputTokens: 0,

@@ -165,8 +165,6 @@ describe("the built-in toolyard integration", () => {
   });
 });
 
-// --- store behaviour against an in-memory database ---------------------------
-
 const userId = UserId.make("user_clerk_1");
 const toolyardId = "toolyard" as PersonalMcpIntegrationId;
 const bifrostId = "bifrost" as PersonalMcpIntegrationId;
