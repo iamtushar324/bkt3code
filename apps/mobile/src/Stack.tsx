@@ -870,7 +870,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         // cannot be hosted inside a formSheet there.
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : FORM_SHEET_PRESENTATION_OPTIONS),
+          : HORIZONTAL_FORM_SHEET_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,
@@ -883,7 +883,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         // Same Android constraint as the other keyboard-driven sheets.
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : FORM_SHEET_PRESENTATION_OPTIONS),
+          : HORIZONTAL_FORM_SHEET_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.6, 0.95],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,
@@ -896,7 +896,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : FORM_SHEET_PRESENTATION_OPTIONS),
+          : HORIZONTAL_FORM_SHEET_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.6, 0.95],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,
@@ -909,7 +909,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : FORM_SHEET_PRESENTATION_OPTIONS),
+          : HORIZONTAL_FORM_SHEET_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.7, 0.95],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,

@@ -10,6 +10,9 @@ import { readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const client: McpInvocationContext.McpInvocationScope = {
+  // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+  principal: "external-operator",
+  actorUserId: null,
   environmentId: EnvironmentId.make("environment:thread-access"),
   requestNamespace: "client:thread-access",
   thread: undefined,

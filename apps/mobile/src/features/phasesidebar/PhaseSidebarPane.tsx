@@ -33,7 +33,8 @@ import { phaseSidebarFiltersActive } from "@t3tools/client-runtime/state/phase-s
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import { isReservedThreadCustomGroup, type EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { useCallback, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { Alert, FlatList, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -137,6 +138,19 @@ export function PhaseSidebarPane(props: {
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
+  // One draft row stays swiped open at a time, as in the thread sidebar.
+  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current !== methods) {
+      openSwipeableRef.current?.close();
+      openSwipeableRef.current = methods;
+    }
+  }, []);
+  const handleSwipeableClose = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current === methods) {
+      openSwipeableRef.current = null;
+    }
+  }, []);
   const renderDraftRow = useCallback(
     (draft: PendingDraftTask) => (
       <ThreadListV2PendingRow
@@ -148,6 +162,8 @@ export function PhaseSidebarPane(props: {
         environmentMachine={machineByEnvironmentId.get(draft.environmentId)}
         onDeletePendingTask={confirmDeletePendingTask}
         onSelectPendingTask={openPendingTask}
+        onSwipeableClose={handleSwipeableClose}
+        onSwipeableWillOpen={handleSwipeableWillOpen}
         pane="screen"
         pendingTask={draft}
         project={projectByKey.get(scopedProjectKey(draft.environmentId, draft.projectId)) ?? null}
@@ -157,6 +173,8 @@ export function PhaseSidebarPane(props: {
     ),
     [
       confirmDeletePendingTask,
+      handleSwipeableClose,
+      handleSwipeableWillOpen,
       machineByEnvironmentId,
       openPendingTask,
       projectByKey,

@@ -2522,6 +2522,9 @@ describe("OrchestratorMcpService thread lookup", () => {
   const launched = liveThreadShell(ThreadId.make(`mcp:${bareId}`));
   const deletedLaunched = { ...launched, deletedAt: DateTime.makeUnsafe("2026-10-05T00:00:00Z") };
   const client: McpInvocationScope = {
+    // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId: EnvironmentId.make("environment:thread-lookup"),
     requestNamespace: "client:thread-lookup",
     thread: undefined,
