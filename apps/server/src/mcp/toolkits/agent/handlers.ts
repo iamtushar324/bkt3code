@@ -47,6 +47,7 @@ import {
   type VisibleSessions,
 } from "./context.ts";
 import { modelSelectionFor, resolveModel } from "./models.ts";
+import { readOffEventLoop } from "./offLoopReads.ts";
 import {
   EMPTY_PENDING,
   loadPendingDetail,
@@ -973,7 +974,7 @@ const goalOf = Effect.fn("agentToolkit.goalOf")(function* (caller: Caller, shell
   if (shell.goal?.objective !== undefined) return shell.goal.objective;
   const page = yield* caller.threads
     .getTimelinePage(shell.id, { afterPosition: -1, limit: 1, view: "messages" })
-    .pipe(Effect.option);
+    .pipe(readOffEventLoop, Effect.option);
   const first = Option.isSome(page) ? page.value.items[0]?.item : undefined;
   return first?.type === "user_message" ? first.text : null;
 });

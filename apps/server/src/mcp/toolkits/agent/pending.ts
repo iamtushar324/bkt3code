@@ -27,6 +27,7 @@ import { findForkAsyncRequest } from "../../../orchestration-v2/forkAsyncRespons
 import { runEndedWithoutAnswer } from "../../../orchestration-v2/orphanedRuntimeRequest.expbkt3.ts";
 import type { Caller } from "../../threadAccess.ts";
 import type { QuestionView } from "./answers.ts";
+import { readOffEventLoop } from "./offLoopReads.ts";
 import { shortRef, toIso, type SessionShell } from "./view.ts";
 
 export interface PendingQuestion {
@@ -182,7 +183,7 @@ export const loadPendingDetail = Effect.fn("agentToolkit.loadPendingDetail")(fun
     .getThreadRecords(shell.id, ["runtimeRequests", "turnItems"], {
       turnItemTypes: [...types],
     })
-    .pipe(Effect.option);
+    .pipe(readOffEventLoop, Effect.option);
   if (Option.isNone(records)) return EMPTY_PENDING;
   const { runtimeRequests, turnItems } = records.value;
 
