@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { environmentSession } from "../../state/session";
 import { SettingsSection } from "./components/SettingsSection";

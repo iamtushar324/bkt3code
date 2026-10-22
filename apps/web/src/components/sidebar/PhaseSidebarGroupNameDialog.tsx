@@ -1,6 +1,6 @@
 /** T3-CUSTOM(expbkt3): name a custom sidebar group — used for both create and rename. */
 import { PHASE_SIDEBAR_GROUP_LABEL_MAX_LENGTH } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -29,9 +29,12 @@ export function PhaseSidebarGroupNameDialog({
 }) {
   const [label, setLabel] = useState(initialLabel);
 
-  useEffect(() => {
+  // Reset the field during render whenever the dialog opens or its label changes.
+  const [labelSource, setLabelSource] = useState({ open, initialLabel });
+  if (labelSource.open !== open || labelSource.initialLabel !== initialLabel) {
+    setLabelSource({ open, initialLabel });
     if (open) setLabel(initialLabel);
-  }, [initialLabel, open]);
+  }
 
   const trimmed = label.trim();
   const submit = (event: FormEvent<HTMLFormElement>) => {

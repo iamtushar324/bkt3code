@@ -30,7 +30,6 @@ export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>
   }
 }
 
-/** One row of `projection_projects`, the durable project read model. */
 export const ProjectRow = Schema.Struct({
   // T3-CUSTOM(expbkt3): the V2 project store preserves team access metadata.
   ownerUserId: Schema.optionalKey(Schema.NullOr(UserId)),
@@ -60,7 +59,6 @@ const ProjectDbRow = Schema.Struct({
   memberUserIds: Schema.fromJsonString(Schema.Array(UserId)),
 });
 
-/** Shell fields without workspace-derived enrichment such as repository identity. */
 function toShell(row: ProjectRow): OrchestrationProjectShell {
   return {
     // T3-CUSTOM(expbkt3): ownership determines the projects visible to each user.
@@ -84,7 +82,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
 export class ProjectStoreV2 extends Context.Service<
   ProjectStoreV2,
   {
-    /** Fold one committed project event into its row. Call inside the commit transaction. */
+    /** Call inside the commit transaction. */
     readonly apply: (event: ApplicationProjectEvent) => Effect.Effect<void, ProjectStoreV2Error>;
     readonly get: (
       projectId: ProjectId,
@@ -98,11 +96,9 @@ export class ProjectStoreV2 extends Context.Service<
     readonly findActiveByWorkspaceRoot: (
       workspaceRoot: string,
     ) => Effect.Effect<Option.Option<ProjectRow>, ProjectStoreV2Error>;
-    /** An active project's shell without enrichment such as repository identity. */
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectStoreV2Error>;
-    /** Active project shells in creation order, without enrichment. */
     readonly listShells: (options?: {
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectStoreV2Error>;

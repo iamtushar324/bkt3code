@@ -8,7 +8,7 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, FolderPlusIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import type { Project } from "../../types";
@@ -70,10 +70,8 @@ export function NewThreadProjectPicker({
 
   // The nickname can stop existing while the overlay is open — the machine
   // holding it disconnects, or the project is removed elsewhere. Drop the
-  // selection rather than leaving a dialog that can never be reopened.
-  useEffect(() => {
-    if (hostChoiceKey !== null && hostChoiceOption === null) setHostChoiceKey(null);
-  }, [hostChoiceKey, hostChoiceOption]);
+  // selection, during render, rather than leaving a dialog that can never be reopened.
+  if (hostChoiceKey !== null && hostChoiceOption === null) setHostChoiceKey(null);
 
   const chooseOption = useCallback(
     (option: NewThreadProjectOption) => {

@@ -205,8 +205,8 @@ export const makeWsVisibility = ({
           Stream.flatMap((items) => Stream.fromIterable(items)),
         );
 
-  const authorizeNormalizedCommand = (normalizedCommand: OrchestrationCommand) =>
-    Effect.gen(function* () {
+  const authorizeNormalizedCommand = Effect.fn("WsVisibility.authorizeNormalizedCommand")(
+    function* (normalizedCommand: OrchestrationCommand) {
       // Team mode: reject commands on threads/projects this operator can't
       // access before they reach the engine.
       if (actorUserId !== null) {
@@ -232,7 +232,8 @@ export const makeWsVisibility = ({
           });
         }
       }
-    });
+    },
+  );
 
   return {
     visibleAggregateIdsForActor,

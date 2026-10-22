@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -44,6 +45,7 @@ it.effect("passes a launched thread's custom group to the launch, trimmed and va
     } as OrchestrationV2ThreadShell;
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const layerDependencies = Layer.mergeAll(
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         principal: "provider-session",

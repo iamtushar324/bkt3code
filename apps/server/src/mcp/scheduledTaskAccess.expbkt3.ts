@@ -44,14 +44,14 @@ export const mayManageScheduledTask = (input: {
     input.projectAccessible);
 
 /** Reads what the rule needs for one task and applies it. Never fails: unreadable means hidden. */
-export const callerMayManageScheduledTask = (input: {
-  readonly scope: McpInvocationScope;
-  readonly task: ScheduledTask;
-  readonly sql: Option.Option<SqlClient.SqlClient>;
-  readonly threads: Pick<ThreadManagementService.ThreadManagementServiceShape, "getThreadShell">;
-  readonly access: Option.Option<OrchestrationAccessControl["Service"]>;
-}): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+export const callerMayManageScheduledTask = Effect.fn("ScheduledTaskAccess.callerMayManage")(
+  function* (input: {
+    readonly scope: McpInvocationScope;
+    readonly task: ScheduledTask;
+    readonly sql: Option.Option<SqlClient.SqlClient>;
+    readonly threads: Pick<ThreadManagementService.ThreadManagementServiceShape, "getThreadShell">;
+    readonly access: Option.Option<OrchestrationAccessControl["Service"]>;
+  }): Effect.fn.Return<boolean> {
     const { scope, task } = input;
     if (seesEveryScheduledTask(scope)) return true;
     const options = Option.isNone(input.sql)
@@ -72,4 +72,5 @@ export const callerMayManageScheduledTask = (input: {
           )
         : false;
     return mayManageScheduledTask({ scope, task, options, boundThread, projectAccessible });
-  });
+  },
+);

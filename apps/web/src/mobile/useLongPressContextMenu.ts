@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import {
@@ -61,10 +61,12 @@ function requestHaptic(): void {
 
 type Controller = {
   readonly props: LongPressContextMenuProps;
+  readonly setOpenMenu: (openMenu: (position: { x: number; y: number }) => void) => void;
   readonly dispose: () => void;
 };
 
-function createController(readOpenMenu: () => (position: { x: number; y: number }) => void) {
+function createController(initialOpenMenu: (position: { x: number; y: number }) => void) {
+  let currentOpenMenu = initialOpenMenu;
   let listening = false;
   let aftermathHandle: number | null = null;
   let swallowNextClick = false;
@@ -79,7 +81,7 @@ function createController(readOpenMenu: () => (position: { x: number; y: number 
       requestHaptic();
       aftermathHandle = window.setTimeout(stopListening, LONG_PRESS_AFTERMATH_MS);
     },
-    openMenu: (position) => readOpenMenu()({ x: position.x, y: position.y }),
+    openMenu: (position) => currentOpenMenu({ x: position.x, y: position.y }),
     schedule: (run, delayMs) => window.setTimeout(run, delayMs),
   });
 
@@ -135,6 +137,9 @@ function createController(readOpenMenu: () => (position: { x: number; y: number 
   };
 
   const controller: Controller = {
+    setOpenMenu: (openMenu) => {
+      currentOpenMenu = openMenu;
+    },
     dispose: () => {
       gesture.dispose();
       stopListening();
@@ -164,12 +169,10 @@ function createController(readOpenMenu: () => (position: { x: number; y: number 
 export function useLongPressContextMenu(
   openMenu: (position: { x: number; y: number }) => void,
 ): LongPressContextMenuProps {
-  const openMenuRef = useRef(openMenu);
+  const [controller] = useState(() => createController(openMenu));
   useEffect(() => {
-    openMenuRef.current = openMenu;
-  }, [openMenu]);
-
-  const controller = useMemo(() => createController(() => openMenuRef.current), []);
+    controller.setOpenMenu(openMenu);
+  }, [controller, openMenu]);
   useEffect(() => () => controller.dispose(), [controller]);
 
   return controller.props;

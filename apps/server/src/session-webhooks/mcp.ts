@@ -56,20 +56,21 @@ export const SessionWebhookToolkit = Toolkit.make(
     "Remove your webhook and stop pending callback dispatch. Pass the current revision. This never resumes a paused session.",
   ),
 );
-const actor = (capability: "t3.read" | "t3.control") =>
-  Effect.gen(function* () {
-    const scope = yield* McpInvocationContext;
-    const userId =
-      scope.principal === "provider-session"
-        ? managedToolyardActor(scope.actorUserId)
-        : scope.actorUserId;
-    if (userId === null || !scope.capabilities.has(capability))
-      return yield* new OrchestratorMcpFailure({
-        code: "capability_denied",
-        message: `An authenticated user with ${capability} and session access is required.`,
-      });
-    return { ...scope, actorUserId: UserId.make(userId) };
-  });
+const actor = Effect.fn("sessionWebhook.mcp.actor")(function* (
+  capability: "t3.read" | "t3.control",
+) {
+  const scope = yield* McpInvocationContext;
+  const userId =
+    scope.principal === "provider-session"
+      ? managedToolyardActor(scope.actorUserId)
+      : scope.actorUserId;
+  if (userId === null || !scope.capabilities.has(capability))
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: `An authenticated user with ${capability} and session access is required.`,
+    });
+  return { ...scope, actorUserId: UserId.make(userId) };
+});
 /** The only session a caller without user-wide scope may touch; `undefined` means any it can see. */
 const confinedThreadId = (scope: McpInvocationScope) =>
   hasUserWideScope(scope)

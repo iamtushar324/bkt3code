@@ -478,13 +478,18 @@ function ClaudeAccountPickerMenu(props: {
             );
           })}
         </MenuRadioGroup>
-        {hoveredSwitches ? (
-          <span className="block px-2 pt-1 pb-0.5 text-2xs text-muted-foreground">
-            {props.running
-              ? `${SWITCH_RESTARTS_SESSION_HINT}, after this turn.`
-              : `${SWITCH_RESTARTS_SESSION_HINT}.`}
-          </span>
-        ) : null}
+        {/* Always laid out so hovering never resizes (and shifts) the menu. */}
+        <span
+          aria-hidden={!hoveredSwitches}
+          className={cn(
+            "block px-2 pt-1 pb-0.5 text-2xs text-muted-foreground",
+            !hoveredSwitches && "invisible",
+          )}
+        >
+          {props.running
+            ? `${SWITCH_RESTARTS_SESSION_HINT}, after this turn.`
+            : `${SWITCH_RESTARTS_SESSION_HINT}.`}
+        </span>
       </MenuPopup>
     </Menu>
   );

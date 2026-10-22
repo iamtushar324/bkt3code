@@ -9,10 +9,12 @@ import {
   TOOLYARD_MCP_URL,
   UserId,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -132,6 +134,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
   }),
 );
 
+// regression: #3114 use bound host for MCP endpoint
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
@@ -589,7 +592,8 @@ const makeStubSessionStore = (input: {
     readonly subject: string;
     readonly expiresAt: string;
   }>;
-  readonly changes: PubSub.PubSub<SessionStore.SessionCredentialChange>;
+  readonly changes: Queue.Queue<SessionStore.SessionCredentialChange, Cause.Done>;
+  readonly drained: Deferred.Deferred<void>;
 }) =>
   SessionStore.SessionStore.of({
     legacyCookieName: undefined,
@@ -616,7 +620,12 @@ const makeStubSessionStore = (input: {
           current: false,
         })),
       ),
-    streamChanges: Stream.fromPubSub(input.changes),
+    // The queue buffers changes until the layer's subscriber attaches, and
+    // `drained` completes only after that subscriber handled every change.
+    streamChanges: Stream.fromQueue(input.changes).pipe(
+      Stream.concat(Stream.fromEffectDrain(Deferred.succeed(input.drained, undefined))),
+    ),
+    awaitInvalidation: () => Effect.die("unused"),
     revoke: () => Effect.die("unused"),
     revokeAllExcept: () => Effect.die("unused"),
     revokeByUserId: () => Effect.die("unused"),
@@ -625,23 +634,12 @@ const makeStubSessionStore = (input: {
     markDisconnected: () => Effect.void,
   });
 
-const eventuallyUnauthorized = (
-  registry: McpSessionRegistry.McpSessionRegistryShape,
-  token: string,
-) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      if ((yield* registry.resolve(token)) === undefined) return true;
-      yield* Effect.yieldNow;
-    }
-    return false;
-  });
-
 it.effect("cuts off provider MCP access when the auth session store revokes the login", () =>
   Effect.gen(function* () {
     const userId = UserId.make("user_wired");
     const revokedSessionId = AuthSessionId.make("auth-session-wired");
-    const changes = yield* PubSub.unbounded<SessionStore.SessionCredentialChange>();
+    const changes = yield* Queue.unbounded<SessionStore.SessionCredentialChange, Cause.Done>();
+    const drained = yield* Deferred.make<void>();
     const sessionStore = makeStubSessionStore({
       clientSessions: [
         {
@@ -651,6 +649,7 @@ it.effect("cuts off provider MCP access when the auth session store revokes the 
         },
       ],
       changes,
+      drained,
     });
 
     // The whole body runs inside the layer's scope so the revocation
@@ -665,10 +664,10 @@ it.effect("cuts off provider MCP access when the auth session store revokes the 
       const token = bearerToken(issued);
       expect(yield* registry.resolve(token)).toBeDefined();
 
-      // Let the layer's revocation subscriber attach before publishing.
-      for (let attempt = 0; attempt < 20; attempt++) yield* Effect.yieldNow;
-      yield* PubSub.publish(changes, { type: "clientRemoved", sessionId: revokedSessionId });
-      expect(yield* eventuallyUnauthorized(registry, token)).toBe(true);
+      yield* Queue.offer(changes, { type: "clientRemoved", sessionId: revokedSessionId });
+      yield* Queue.end(changes);
+      yield* Deferred.await(drained);
+      expect(yield* registry.resolve(token)).toBeUndefined();
     }).pipe(
       Effect.provide(
         McpSessionRegistry.layer.pipe(
@@ -680,29 +679,6 @@ it.effect("cuts off provider MCP access when the auth session store revokes the 
         ),
       ),
     );
-  }),
-);
-
-it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
-  Effect.gen(function* () {
-    let timestamp = 1_000;
-    const registry = yield* makeRegistry(() => timestamp);
-    const threadId = ThreadId.make("thread-3");
-    const issued = yield* registry.issue({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      capabilities: new Set(["preview"]),
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-
-    // Well past the liveness window in total, but each turn reports in before
-    // it lapses — this is the long-session case that used to lose the toolkit.
-    for (let turn = 0; turn < 10; turn += 1) {
-      timestamp += 99;
-      yield* registry.touch(threadId);
-    }
-
-    expect((yield* registry.resolve(token))?.thread?.threadId).toBe(threadId);
   }),
 );
 
@@ -723,6 +699,69 @@ it.effect("does not keep credentials of other threads alive", () =>
 
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
+);
+
+it.effect("only a trusted touch restores an expired token with its original scope", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-idle");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const scope = yield* registry.resolve(token);
+    expect(scope).toBeDefined();
+
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    const otherThreadId = ThreadId.make("thread-active");
+    const other = yield* registry.issue({
+      threadId: otherThreadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
+    });
+    yield* registry.touch(otherThreadId);
+    expect(
+      // T3-CUSTOM(expbkt3): fork scopes may be thread-less, so `thread` is optional.
+      (yield* registry.resolve(other.config.authorizationHeader.replace(/^Bearer\s+/, "")))?.thread
+        ?.threadId,
+    ).toBe(otherThreadId);
+    expect(yield* registry.resolve("unknown-token")).toBeUndefined();
+    expect(yield* registry.resolve(token)).toBeUndefined();
+
+    yield* registry.touch(threadId);
+    expect(yield* registry.resolve(token)).toEqual(scope);
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect.each(["provider-session", "thread", "all"] as const)(
+  "never restores an expired token after %s revocation",
+  (revocation) =>
+    Effect.gen(function* () {
+      let timestamp = 1_000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const threadId = ThreadId.make("thread-revoked");
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+      timestamp += 101;
+      yield* {
+        "provider-session": registry.revokeProviderSession(issued.config.providerSessionId),
+        thread: registry.revokeThread(threadId),
+        all: registry.revokeAll,
+      }[revocation];
+      yield* registry.touch(threadId);
+      expect(yield* registry.resolve(token)).toBeUndefined();
+    }),
 );
 
 // T3-CUSTOM(expbkt3): the built-in toolyard integration rides along like any

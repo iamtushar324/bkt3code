@@ -1,8 +1,8 @@
 // T3-CUSTOM(expbkt3): a separate collapsible shelf for unstarted mobile drafts.
 import { Pressable } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 
 export function PhaseSidebarDraftHeader(props: {
   readonly count: number;

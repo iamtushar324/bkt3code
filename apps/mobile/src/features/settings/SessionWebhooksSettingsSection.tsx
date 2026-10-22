@@ -26,7 +26,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo, useState } from "react";
 import { Alert, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -129,9 +129,9 @@ function EnvironmentWebhooks({ target, userScope, refreshToken }: SessionCallbac
         ...value,
         [webhook.id]: sessionWebhookChangeFailureMessage(null),
       }));
-    } finally {
-      setBusy(false);
     }
+    // After the catch-all, not in `finally`: the React Compiler cannot lower a finalizer.
+    setBusy(false);
   };
   const card = (group: (typeof groups)[number]) => (
     <SessionCallbackCard

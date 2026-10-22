@@ -19,6 +19,7 @@ import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
@@ -45,6 +46,8 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
         Effect.succeed(actor === ACTOR && target === TARGET && allowed),
     }),
     Layer.mock(ProjectService.ProjectService)({ getShell: () => Effect.succeed(Option.none()) }),
+    // Upstream's handlers now also take the review-guide service; watches never call it.
+    Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
         Effect.gen(function* () {

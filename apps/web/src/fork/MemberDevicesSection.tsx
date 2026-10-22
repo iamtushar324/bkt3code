@@ -83,9 +83,8 @@ export function MemberDevicesSection() {
       await refresh();
     } catch (cause) {
       setError(memberPairingErrorMessage(cause));
-    } finally {
-      setIsBusy(false);
     }
+    setIsBusy(false);
   }, [deviceBound, label, refresh]);
 
   const handleRevokePending = useCallback(
@@ -96,9 +95,8 @@ export function MemberDevicesSection() {
         await refresh();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not revoke that code.");
-      } finally {
-        setIsBusy(false);
       }
+      setIsBusy(false);
     },
     [refresh],
   );
@@ -111,9 +109,8 @@ export function MemberDevicesSection() {
         await refresh();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not revoke that device.");
-      } finally {
-        setIsBusy(false);
       }
+      setIsBusy(false);
     },
     [refresh],
   );

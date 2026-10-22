@@ -54,16 +54,19 @@ function splitNulSeparated(stdout: string): ReadonlyArray<string> {
   return stdout.split("\0").filter((entry) => entry.length > 0);
 }
 
-const runGit = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    return yield* git.execute({
-      operation: `SessionArchive.${operation}`,
-      cwd,
-      args,
-      allowNonZeroExit: true,
-    });
+const runGit = Effect.fn("SessionArchive.runGit")(function* (
+  cwd: string,
+  operation: string,
+  args: ReadonlyArray<string>,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  return yield* git.execute({
+    operation: `SessionArchive.${operation}`,
+    cwd,
+    args,
+    allowNonZeroExit: true,
   });
+});
 
 /**
  * Read every fact in one pass.

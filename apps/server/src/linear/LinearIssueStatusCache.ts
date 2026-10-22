@@ -94,167 +94,168 @@ export interface LinearIssueStatusCache {
 
 const MAX_ENTRIES = 500;
 
-export const makeLinearIssueStatusCache = (
+export const makeLinearIssueStatusCache = Effect.fn("LinearIssueStatusCache.make")(function* (
   options: LinearIssueStatusCacheOptions = {},
-): Effect.Effect<LinearIssueStatusCache> =>
-  Effect.gen(function* () {
-    const ttlMs = options.ttlMs ?? DEFAULT_STATUS_TTL_MS;
-    const errorTtlMs = options.errorTtlMs ?? DEFAULT_ERROR_TTL_MS;
-    const staleServeMs = options.staleServeMs ?? DEFAULT_STALE_SERVE_MS;
-    const maxEntries = options.maxEntries ?? MAX_ENTRIES;
-    const state = yield* SynchronizedRef.make<CacheState>({
-      entries: new Map(),
-      inflight: new Map(),
-    });
+): Effect.fn.Return<LinearIssueStatusCache> {
+  const ttlMs = options.ttlMs ?? DEFAULT_STATUS_TTL_MS;
+  const errorTtlMs = options.errorTtlMs ?? DEFAULT_ERROR_TTL_MS;
+  const staleServeMs = options.staleServeMs ?? DEFAULT_STALE_SERVE_MS;
+  const maxEntries = options.maxEntries ?? MAX_ENTRIES;
+  const state = yield* SynchronizedRef.make<CacheState>({
+    entries: new Map(),
+    inflight: new Map(),
+  });
 
-    const prune = (entries: Map<string, CacheEntry>, now: number) => {
-      // Expired is not the same as useless: a known status stays around past its
-      // TTL so it can be served while its replacement is read. "Unavailable" is
-      // not a status, so it goes the moment it expires.
-      for (const [key, entry] of entries) {
-        const keepUntil = entry.expiresAt + (entry.summary.error === null ? staleServeMs : 0);
-        if (keepUntil <= now) entries.delete(key);
+  const prune = (entries: Map<string, CacheEntry>, now: number) => {
+    // Expired is not the same as useless: a known status stays around past its
+    // TTL so it can be served while its replacement is read. "Unavailable" is
+    // not a status, so it goes the moment it expires.
+    for (const [key, entry] of entries) {
+      const keepUntil = entry.expiresAt + (entry.summary.error === null ? staleServeMs : 0);
+      if (keepUntil <= now) entries.delete(key);
+    }
+    // Oldest-expiry first, so a burst of one-off identifiers cannot evict the
+    // rows the sidebar actually keeps asking for.
+    if (entries.size > maxEntries) {
+      const ordered = [...entries].sort((left, right) => left[1].expiresAt - right[1].expiresAt);
+      for (const [key] of ordered.slice(0, entries.size - maxEntries)) entries.delete(key);
+    }
+  };
+
+  const unavailable = (identifier: string): LinearIssueStatusSummary => ({
+    identifier,
+    url: null,
+    status: null,
+    statusType: null,
+    updatedAt: null,
+    error: "Linear status is temporarily unavailable.",
+  });
+
+  /**
+   * Drops claims this read never answered. Completing an already-completed
+   * Deferred is a no-op and the in-flight entries are matched by identity, so
+   * running this after a clean settle costs nothing; it earns its place when
+   * the read is torn down from outside and never reaches its own settle.
+   */
+  const release = Effect.fn("LinearIssueStatusCache.release")(function* (
+    claimed: ReadonlyMap<string, Deferred.Deferred<LinearIssueStatusSummary>>,
+  ) {
+    yield* SynchronizedRef.update(state, (current) => {
+      const inflight = new Map(current.inflight);
+      for (const [identifier, deferred] of claimed) {
+        // Only ours. A later read may already hold this identifier.
+        if (inflight.get(identifier) === deferred) inflight.delete(identifier);
       }
-      // Oldest-expiry first, so a burst of one-off identifiers cannot evict the
-      // rows the sidebar actually keeps asking for.
-      if (entries.size > maxEntries) {
-        const ordered = [...entries].sort((left, right) => left[1].expiresAt - right[1].expiresAt);
-        for (const [key] of ordered.slice(0, entries.size - maxEntries)) entries.delete(key);
-      }
-    };
-
-    const unavailable = (identifier: string): LinearIssueStatusSummary => ({
-      identifier,
-      url: null,
-      status: null,
-      statusType: null,
-      updatedAt: null,
-      error: "Linear status is temporarily unavailable.",
+      return { entries: current.entries, inflight };
     });
+    for (const [identifier, deferred] of claimed) {
+      yield* Deferred.succeed(deferred, unavailable(identifier));
+    }
+  });
 
-    /**
-     * Drops claims this read never answered. Completing an already-completed
-     * Deferred is a no-op and the in-flight entries are matched by identity, so
-     * running this after a clean settle costs nothing; it earns its place when
-     * the read is torn down from outside and never reaches its own settle.
-     */
-    const release = (claimed: ReadonlyMap<string, Deferred.Deferred<LinearIssueStatusSummary>>) =>
-      Effect.gen(function* () {
-        yield* SynchronizedRef.update(state, (current) => {
-          const inflight = new Map(current.inflight);
-          for (const [identifier, deferred] of claimed) {
-            // Only ours. A later read may already hold this identifier.
-            if (inflight.get(identifier) === deferred) inflight.delete(identifier);
-          }
-          return { entries: current.entries, inflight };
-        });
-        for (const [identifier, deferred] of claimed) {
-          yield* Deferred.succeed(deferred, unavailable(identifier));
-        }
-      });
-
-    const settle = (
+  const settle = Effect.fn("LinearIssueStatusCache.settle")(
+    function* (
       claimed: ReadonlyMap<string, Deferred.Deferred<LinearIssueStatusSummary>>,
       fetchMissing: (
         missing: ReadonlyArray<string>,
       ) => Effect.Effect<ReadonlyArray<LinearIssueStatusSummary>>,
-    ) =>
-      Effect.gen(function* () {
-        const missing = [...claimed.keys()];
-        const fetched = yield* fetchMissing(missing).pipe(
-          Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<LinearIssueStatusSummary>)),
-        );
-        const bySummary = new Map(fetched.map((summary) => [summary.identifier, summary]));
-        const completedAt = yield* Clock.currentTimeMillis;
-        const settled = [...claimed.keys()].map((identifier) => {
-          const summary = bySummary.get(identifier) ?? unavailable(identifier);
-          const lifetime = summary.error === null ? ttlMs : errorTtlMs;
-          return [identifier, { summary, expiresAt: completedAt + lifetime }] as const;
-        });
-        // Publish before waking anyone. A caller that resumes while its own
-        // identifier is still listed as in-flight would queue behind a read that
-        // has already finished.
-        yield* SynchronizedRef.update(state, (current) => {
+    ) {
+      const missing = [...claimed.keys()];
+      const fetched = yield* fetchMissing(missing).pipe(
+        Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<LinearIssueStatusSummary>)),
+      );
+      const bySummary = new Map(fetched.map((summary) => [summary.identifier, summary]));
+      const completedAt = yield* Clock.currentTimeMillis;
+      const settled = [...claimed.keys()].map((identifier) => {
+        const summary = bySummary.get(identifier) ?? unavailable(identifier);
+        const lifetime = summary.error === null ? ttlMs : errorTtlMs;
+        return [identifier, { summary, expiresAt: completedAt + lifetime }] as const;
+      });
+      // Publish before waking anyone. A caller that resumes while its own
+      // identifier is still listed as in-flight would queue behind a read that
+      // has already finished.
+      yield* SynchronizedRef.update(state, (current) => {
+        const entries = new Map(current.entries);
+        const inflight = new Map(current.inflight);
+        for (const [identifier, entry] of settled) {
+          entries.set(identifier, entry);
+          if (inflight.get(identifier) === claimed.get(identifier)) inflight.delete(identifier);
+        }
+        prune(entries, completedAt);
+        return { entries, inflight };
+      });
+      for (const [identifier, entry] of settled) {
+        yield* Deferred.succeed(claimed.get(identifier)!, entry.summary);
+      }
+    },
+    // A claim outliving its read is the whole failure mode, so releasing it
+    // cannot itself be skippable: an interrupted fiber abandons its next
+    // asynchronous step, which would strand exactly what this is here to
+    // free.
+    (effect, claimed) => effect.pipe(Effect.onExit(() => Effect.uninterruptible(release(claimed)))),
+  );
+
+  const resolve: LinearIssueStatusCache["resolve"] = Effect.fn("LinearIssueStatusCache.resolve")(
+    function* (identifiers, fetchMissing) {
+      const wanted = [...new Set(identifiers)];
+      if (wanted.length === 0) return [];
+      const now = yield* Clock.currentTimeMillis;
+
+      const fresh = new Map<string, LinearIssueStatusSummary>();
+      const awaited = new Map<string, Deferred.Deferred<LinearIssueStatusSummary>>();
+      const claimed = new Map<string, Deferred.Deferred<LinearIssueStatusSummary>>();
+
+      yield* SynchronizedRef.updateEffect(state, (current) =>
+        Effect.gen(function* () {
           const entries = new Map(current.entries);
           const inflight = new Map(current.inflight);
-          for (const [identifier, entry] of settled) {
-            entries.set(identifier, entry);
-            if (inflight.get(identifier) === claimed.get(identifier)) inflight.delete(identifier);
+          prune(entries, now);
+          for (const identifier of wanted) {
+            const entry = entries.get(identifier);
+            if (entry && entry.expiresAt > now) {
+              fresh.set(identifier, entry.summary);
+              continue;
+            }
+            // Expired but still here: answer with it and let the re-read run
+            // behind the answer, so a refresh never pays upstream latency for
+            // an issue this process has already resolved once. Only a real
+            // status qualifies — a stale "unavailable" is worth nothing.
+            const servable = entry !== undefined && entry.summary.error === null;
+            if (servable) fresh.set(identifier, entry.summary);
+            const pending = inflight.get(identifier);
+            if (pending) {
+              if (!servable) awaited.set(identifier, pending);
+              continue;
+            }
+            const deferred = yield* Deferred.make<LinearIssueStatusSummary>();
+            inflight.set(identifier, deferred);
+            claimed.set(identifier, deferred);
           }
-          prune(entries, completedAt);
           return { entries, inflight };
-        });
-        for (const [identifier, entry] of settled) {
-          yield* Deferred.succeed(claimed.get(identifier)!, entry.summary);
-        }
-      }).pipe(
-        // A claim outliving its read is the whole failure mode, so releasing it
-        // cannot itself be skippable: an interrupted fiber abandons its next
-        // asynchronous step, which would strand exactly what this is here to
-        // free.
-        Effect.onExit(() => Effect.uninterruptible(release(claimed))),
+        }),
       );
 
-    const resolve: LinearIssueStatusCache["resolve"] = (identifiers, fetchMissing) =>
-      Effect.gen(function* () {
-        const wanted = [...new Set(identifiers)];
-        if (wanted.length === 0) return [];
-        const now = yield* Clock.currentTimeMillis;
+      if (claimed.size > 0) {
+        // Detached on purpose. This caller is one of several viewers and is
+        // interrupted by its own next refresh; the read has to outlive it, or
+        // the claim is stranded and everyone behind it waits forever.
+        yield* Effect.forkDetach(settle(claimed, fetchMissing), { startImmediately: true });
+      }
 
-        const fresh = new Map<string, LinearIssueStatusSummary>();
-        const awaited = new Map<string, Deferred.Deferred<LinearIssueStatusSummary>>();
-        const claimed = new Map<string, Deferred.Deferred<LinearIssueStatusSummary>>();
+      for (const [identifier, deferred] of claimed) {
+        if (fresh.has(identifier)) continue;
+        fresh.set(identifier, yield* Deferred.await(deferred));
+      }
+      for (const [identifier, deferred] of awaited) {
+        fresh.set(identifier, yield* Deferred.await(deferred));
+      }
 
-        yield* SynchronizedRef.updateEffect(state, (current) =>
-          Effect.gen(function* () {
-            const entries = new Map(current.entries);
-            const inflight = new Map(current.inflight);
-            prune(entries, now);
-            for (const identifier of wanted) {
-              const entry = entries.get(identifier);
-              if (entry && entry.expiresAt > now) {
-                fresh.set(identifier, entry.summary);
-                continue;
-              }
-              // Expired but still here: answer with it and let the re-read run
-              // behind the answer, so a refresh never pays upstream latency for
-              // an issue this process has already resolved once. Only a real
-              // status qualifies — a stale "unavailable" is worth nothing.
-              const servable = entry !== undefined && entry.summary.error === null;
-              if (servable) fresh.set(identifier, entry.summary);
-              const pending = inflight.get(identifier);
-              if (pending) {
-                if (!servable) awaited.set(identifier, pending);
-                continue;
-              }
-              const deferred = yield* Deferred.make<LinearIssueStatusSummary>();
-              inflight.set(identifier, deferred);
-              claimed.set(identifier, deferred);
-            }
-            return { entries, inflight };
-          }),
-        );
+      return wanted.map((identifier) => fresh.get(identifier)!);
+    },
+  );
 
-        if (claimed.size > 0) {
-          // Detached on purpose. This caller is one of several viewers and is
-          // interrupted by its own next refresh; the read has to outlive it, or
-          // the claim is stranded and everyone behind it waits forever.
-          yield* Effect.forkDetach(settle(claimed, fetchMissing), { startImmediately: true });
-        }
-
-        for (const [identifier, deferred] of claimed) {
-          if (fresh.has(identifier)) continue;
-          fresh.set(identifier, yield* Deferred.await(deferred));
-        }
-        for (const [identifier, deferred] of awaited) {
-          fresh.set(identifier, yield* Deferred.await(deferred));
-        }
-
-        return wanted.map((identifier) => fresh.get(identifier)!);
-      });
-
-    return { resolve };
-  });
+  return { resolve };
+});
 
 /**
  * The process-wide instance. The fork's RPC handler map is rebuilt per

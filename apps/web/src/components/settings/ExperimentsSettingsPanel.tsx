@@ -4,7 +4,7 @@ import { BkAddonsIntegrationsSection } from "../../fork/BkAddonsIntegrationsSect
 import { LocalPhonePairingSection } from "../../fork/LocalPhonePairingSection";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { ExternalMcpSettingsSection } from "./ExternalMcpSettingsSection";
 // T3-CUSTOM(expbkt3): archived-session worktree reclaim.
@@ -26,7 +26,6 @@ export function ExperimentsSettingsPanel() {
   const phaseGroupedSidebarEnabled = useClientSettings(
     (settings) => settings.phaseGroupedSidebarEnabled,
   );
-  const updateSettings = useUpdateClientSettings();
   // T3-CUSTOM(expbkt3): native plan review (moved here from the removed Beta panel).
   const nativePlanReviewEnabled = useClientSettings((settings) => settings.nativePlanReviewEnabled);
   // T3-CUSTOM(expbkt3): plan review takeover.
@@ -63,7 +62,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={nativePlanReviewEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ nativePlanReviewEnabled: Boolean(checked) })
+                updateClientSettings({ nativePlanReviewEnabled: Boolean(checked) })
               }
               aria-label="Native plan review"
             />
@@ -81,7 +80,7 @@ export function ExperimentsSettingsPanel() {
               checked={planReviewAutoOpenEnabled}
               disabled={!nativePlanReviewEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ planReviewAutoOpenEnabled: Boolean(checked) })
+                updateClientSettings({ planReviewAutoOpenEnabled: Boolean(checked) })
               }
               aria-label="Open a ready plan automatically"
             />
@@ -96,7 +95,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={agentUiSurfacesEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ agentUiSurfacesEnabled: Boolean(checked) })
+                updateClientSettings({ agentUiSurfacesEnabled: Boolean(checked) })
               }
               aria-label="Agent views in chat"
             />
@@ -111,7 +110,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={smartGitPromptsEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ smartGitPromptsEnabled: Boolean(checked) })
+                updateClientSettings({ smartGitPromptsEnabled: Boolean(checked) })
               }
               aria-label="Smart git button"
             />
@@ -126,7 +125,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={chatCommentsEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ chatCommentsEnabled: Boolean(checked) })
+                updateClientSettings({ chatCommentsEnabled: Boolean(checked) })
               }
               aria-label="Chat comments"
             />
@@ -141,7 +140,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={nativePullRequestViewEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ nativePullRequestViewEnabled: Boolean(checked) })
+                updateClientSettings({ nativePullRequestViewEnabled: Boolean(checked) })
               }
               aria-label="Native pull request view"
             />
@@ -156,7 +155,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={openLinksInIntegratedBrowser}
               onCheckedChange={(checked) =>
-                updateSettings({ openLinksInIntegratedBrowser: Boolean(checked) })
+                updateClientSettings({ openLinksInIntegratedBrowser: Boolean(checked) })
               }
               aria-label="Open links in the integrated browser"
             />
@@ -171,7 +170,7 @@ export function ExperimentsSettingsPanel() {
               <SettingResetButton
                 label="BK sidebar"
                 onClick={() =>
-                  updateSettings({
+                  updateClientSettings({
                     phaseGroupedSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled,
                   })
                 }
@@ -182,7 +181,7 @@ export function ExperimentsSettingsPanel() {
             <Switch
               checked={phaseGroupedSidebarEnabled}
               onCheckedChange={(checked) =>
-                updateSettings({ phaseGroupedSidebarEnabled: Boolean(checked) })
+                updateClientSettings({ phaseGroupedSidebarEnabled: Boolean(checked) })
               }
               aria-label="Enable the BK sidebar"
             />

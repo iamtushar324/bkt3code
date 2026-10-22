@@ -7,7 +7,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
 import { EnvironmentAppearanceEditor } from "./EnvironmentAppearanceEditor";
 import { useEnvironmentAppearance } from "./useEnvironmentAppearance";

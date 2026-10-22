@@ -24,7 +24,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
@@ -36,7 +36,7 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Runs here never reach a provider"),
-} as ProviderAdapterV2Shape;
+} as ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
 // No effect worker: a started run stays "starting" until the test ends it, and the
 // provider-turn.start effect that would run it stays in the outbox.
@@ -88,6 +88,31 @@ const sendUserMessage = (
       dispatchMode: { type },
       createdBy: "user",
       creationSource: "web",
+    });
+  });
+
+/**
+ * A message an agent sends over MCP. Since upstream #21473 a message the user
+ * sends from a client releases a held queue, so the held-queue scenarios below
+ * use an agent's message, which leaves the user's hold in place.
+ */
+const sendAgentMessage = (
+  threadId: ThreadId,
+  label: string,
+  type: "start_immediately" | "queue_after_active",
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`agent-send:${threadId}:${label}`),
+      threadId,
+      messageId: messageIdFor(threadId, label),
+      text: label,
+      attachments: [],
+      dispatchMode: { type },
+      createdBy: "agent",
+      creationSource: "mcp",
     });
   });
 
@@ -194,7 +219,7 @@ const queuedStartEffects = (runId: RunId) =>
   });
 
 /**
- * A stopped thread: the user's queued message is held, and a later user turn runs
+ * A stopped thread: the user's queued message is held, and a later turn runs
  * ahead of it, as on the thread where the Claude output was lost.
  */
 const stoppedThreadWithActiveRun = (threadId: ThreadId) =>
@@ -203,7 +228,7 @@ const stoppedThreadWithActiveRun = (threadId: ThreadId) =>
     yield* sendUserMessage(threadId, "first", "start_immediately");
     yield* sendUserMessage(threadId, "queued before stop", "queue_after_active");
     yield* stop(threadId, (yield* runFor(threadId, "first")).id);
-    yield* sendUserMessage(threadId, "after stop", "start_immediately");
+    yield* sendAgentMessage(threadId, "after stop", "start_immediately");
     assert.deepEqual(yield* runStates(threadId), ["interrupted", "queued:held", "starting"]);
     return yield* runFor(threadId, "after stop");
   });
@@ -241,13 +266,13 @@ it.effect("an adapter continuation starts past a held queue while held messages 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a user message queued behind a held queue is still held and does not start", () =>
+it.effect("an agent message queued behind a held queue is still held and does not start", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const threadId = ThreadId.make("thread:held-queue-user-message");
     const active = yield* stoppedThreadWithActiveRun(threadId);
 
-    yield* sendUserMessage(threadId, "queued after stop", "queue_after_active");
+    yield* sendAgentMessage(threadId, "queued after stop", "queue_after_active");
     const queued = yield* runFor(threadId, "queued after stop");
     assert.equal(queued.status, "queued");
     assert.isTrue(queued.queueHeld);
@@ -280,7 +305,11 @@ it.effect("a thread whose only queued runs are held starts nothing until the use
       commandId: CommandId.make(`resume:${threadId}`),
       threadId,
     });
-    assert.deepEqual(yield* runStates(threadId), ["interrupted", "starting", "completed"]);
+    // Upstream #17773: the resumed run takes a new ordinal after the run that ran ahead of it.
+    assert.deepEqual(yield* runStates(threadId), ["interrupted", "completed", "starting"]);
+    const resumed = yield* runFor(threadId, "queued before stop");
+    assert.equal(resumed.status, "starting");
+    assert.isTrue(resumed.ordinal > active.ordinal);
   }).pipe(Effect.provide(layerTest)),
 );
 

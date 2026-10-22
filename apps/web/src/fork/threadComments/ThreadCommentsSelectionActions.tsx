@@ -80,6 +80,14 @@ export function ThreadCommentsSelectionActions({
     dismiss();
   };
 
+  const handleButtonKeyDown = (event: ReactKeyboardEvent) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
+
   const reaction = (kind: Exclude<ThreadCommentKind, "comment">, Icon: typeof ThumbsUpIcon) => (
     <Button
       key={kind}
@@ -107,14 +115,6 @@ export function ThreadCommentsSelectionActions({
       {THREAD_COMMENT_KIND_LABEL[kind]}
     </Button>
   );
-
-  function handleButtonKeyDown(event: ReactKeyboardEvent) {
-    event.stopPropagation();
-    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      dismiss();
-    }
-  }
 
   return (
     <>

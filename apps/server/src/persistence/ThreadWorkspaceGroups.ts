@@ -158,20 +158,19 @@ export const make = Effect.gen(function* () {
     );
 
   return ThreadWorkspaceGroupRepository.of({
-    claim: (input) =>
-      Effect.gen(function* () {
-        yield* insertGroupRow(input).pipe(Effect.mapError(mapError("ThreadWorkspaceGroups.claim")));
-        const existing = yield* read(input, "ThreadWorkspaceGroups.claim");
-        // The row is written before it is read inside the same call, so a none
-        // here means the table lost the write rather than a lost race.
-        return Option.getOrElse(existing, () => ({
-          ownerThreadId: input.ownerThreadId,
-          projectId: input.projectId,
-          branch: input.branch,
-          worktreePath: input.worktreePath,
-          isReady: false,
-        }));
-      }),
+    claim: Effect.fn("ThreadWorkspaceGroupRepository.claim")(function* (input) {
+      yield* insertGroupRow(input).pipe(Effect.mapError(mapError("ThreadWorkspaceGroups.claim")));
+      const existing = yield* read(input, "ThreadWorkspaceGroups.claim");
+      // The row is written before it is read inside the same call, so a none
+      // here means the table lost the write rather than a lost race.
+      return Option.getOrElse(existing, () => ({
+        ownerThreadId: input.ownerThreadId,
+        projectId: input.projectId,
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        isReady: false,
+      }));
+    }),
 
     get: (key) => read(key, "ThreadWorkspaceGroups.get"),
 

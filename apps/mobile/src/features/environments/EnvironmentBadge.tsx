@@ -6,7 +6,7 @@
 // symbol with no mapping falls back to a coloured dot.
 import { View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import type { MobileEnvironmentAppearance } from "./environmentAppearance";
 
 export function EnvironmentBadge(props: {

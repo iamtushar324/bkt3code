@@ -134,6 +134,10 @@ const SERVER_EVENT_KEYS = [
   "closedRequests",
   "retiredEffects",
   "requeuedEffects",
+  // install.owner_observed (upstream); ownerId is a hash.
+  "ownerSource",
+  "ownerId",
+  "observedBy",
 ] as const;
 
 export const ALLOWED_ANALYTICS_PROPERTY_KEYS: ReadonlySet<string> = new Set<string>([

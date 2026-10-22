@@ -8,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/phase-sidebar";
 import { useEffect, useState } from "react";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 
 export function PhaseSidebarRowWorkingLabel(props: { readonly status: PhaseSidebarWorkingStatus }) {
   const { label, startedAt } = props.status;

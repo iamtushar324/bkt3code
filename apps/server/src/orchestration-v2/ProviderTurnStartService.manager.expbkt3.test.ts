@@ -21,6 +21,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as ServerConfig from "../config.ts";
 
 import { isActiveExternalGrant } from "../mcp/UserMcpProfileStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -29,7 +31,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
@@ -230,6 +232,9 @@ function fixture(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: true }),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          // `start` reads the thread's worktree path to take the workspace lease;
+          // the fixture thread has none, so the turn starts without one.
+          getThreadRecords: () => Effect.sync(() => ({ thread: projection.thread }) as never),
           getThreadShell: () =>
             Effect.succeed({
               ...projection.thread,
@@ -270,6 +275,11 @@ function fixture(
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         FileSystem.layerNoop({}),
+        // The service resolves managed worktree paths at construction, as upstream's fixture provides.
+        Path.layer,
+        Layer.mock(ServerConfig.ServerConfig)({
+          worktreesDir: "/tmp/worktrees",
+        } as ServerConfig.ServerConfig["Service"]),
         IdAllocator.layer,
       ),
     ),

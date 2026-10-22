@@ -9,6 +9,7 @@ import {
   ThreadId,
   UserId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
@@ -52,12 +53,15 @@ it.effect.each([true, false])(
                     status: "cancelled",
                     providerInstanceId: instanceId,
                     modelSelection: { instanceId, model: "test" },
+                    requestedAt: DateTime.makeUnsafe("2026-10-07T10:00:00Z"),
+                    completedAt: null,
                   },
                 ],
                 providerTurns: [],
                 attempts: [],
               }
             : {}),
+          ...(fields.includes("runtimeRequests") ? { runtimeRequests: [] } : {}),
           ...(fields.includes("turnItems") ? { turnItems: [] } : {}),
         } as never),
       );

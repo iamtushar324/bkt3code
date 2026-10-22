@@ -51,10 +51,6 @@ export function errorClassOf(cause: Cause.Cause<unknown>): string {
   return error === undefined ? "Defect" : "unknown";
 }
 
-// ---------------------------------------------------------------------------
-// mcp.tool.called
-// ---------------------------------------------------------------------------
-
 /** Who called a T3 MCP tool. */
 export type McpCallerKind = "agent" | "user" | "operator";
 
@@ -82,37 +78,36 @@ export interface McpToolCaller {
  * the tool name is sent, never its arguments or result. `caller` reads the
  * invocation scope, or returns undefined when there is none.
  */
-export const withMcpToolAnalytics = <A, E, R>(
+export const withMcpToolAnalytics = Effect.fn("serverEvents.withMcpToolAnalytics")(function* <
+  A,
+  E,
+  R,
+>(
   toolName: string,
   caller: Effect.Effect<McpToolCaller | undefined>,
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.gen(function* () {
-    const startedAt = yield* Clock.currentTimeMillis;
-    return yield* effect.pipe(
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          const endedAt = yield* Clock.currentTimeMillis;
-          const scope = yield* caller;
-          yield* recordServerEvent(
-            "mcp.tool.called",
-            {
-              toolName,
-              callerKind: scope === undefined ? "unknown" : mcpCallerKind(scope.principal),
-              ok: Exit.isSuccess(exit),
-              durationMs: Math.max(0, endedAt - startedAt),
-              ...(Exit.isFailure(exit) ? { errorClass: errorClassOf(exit.cause) } : {}),
-            },
-            userOption(scope?.actorUserId),
-          );
-        }),
-      ),
-    );
-  });
-
-// ---------------------------------------------------------------------------
-// scheduled_task.ran
-// ---------------------------------------------------------------------------
+): Effect.fn.Return<A, E, R> {
+  const startedAt = yield* Clock.currentTimeMillis;
+  return yield* effect.pipe(
+    Effect.onExit((exit) =>
+      Effect.gen(function* () {
+        const endedAt = yield* Clock.currentTimeMillis;
+        const scope = yield* caller;
+        yield* recordServerEvent(
+          "mcp.tool.called",
+          {
+            toolName,
+            callerKind: scope === undefined ? "unknown" : mcpCallerKind(scope.principal),
+            ok: Exit.isSuccess(exit),
+            durationMs: Math.max(0, endedAt - startedAt),
+            ...(Exit.isFailure(exit) ? { errorClass: errorClassOf(exit.cause) } : {}),
+          },
+          userOption(scope?.actorUserId),
+        );
+      }),
+    ),
+  );
+});
 
 export const recordScheduledTaskRan = (input: {
   readonly taskId: string;
@@ -136,10 +131,6 @@ export const recordScheduledTaskRan = (input: {
     userOption(input.ownerUserId),
   );
 
-// ---------------------------------------------------------------------------
-// webhook.delivered
-// ---------------------------------------------------------------------------
-
 /**
  * An inbound webhook delivery and how the server answered it. `kind` is
  * "scheduled_task" for `/api/hooks/...` and "session_callback" for
@@ -155,19 +146,13 @@ export function webhookStatusFromHttp(status: number): string {
   return status === 202 ? "accepted" : `http_${status}`;
 }
 
-// ---------------------------------------------------------------------------
-// session.recovery.*
-// ---------------------------------------------------------------------------
-
 /**
  * Wraps the startup provider-runtime recovery: `session.recovery.attempted`
  * before it runs and `session.recovery.finished` with its outcome and counts
  * after. Recovery runs once per boot, so `attempts` is 1.
  */
-export const withSessionRecoveryAnalytics = <A extends object, E, R>(
-  recover: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.gen(function* () {
+export const withSessionRecoveryAnalytics = Effect.fn("serverEvents.withSessionRecoveryAnalytics")(
+  function* <A extends object, E, R>(recover: Effect.Effect<A, E, R>): Effect.fn.Return<A, E, R> {
     yield* recordServerEvent("session.recovery.attempted", { trigger: "startup", attempts: 1 });
     const startedAt = yield* Clock.currentTimeMillis;
     return yield* recover.pipe(
@@ -185,7 +170,8 @@ export const withSessionRecoveryAnalytics = <A extends object, E, R>(
         }),
       ),
     );
-  });
+  },
+);
 
 const RECOVERY_COUNT_KEYS = [
   "terminalizedRuns",
@@ -204,10 +190,6 @@ function recoveryCounts(summary: object): Record<string, number> {
   return counts;
 }
 
-// ---------------------------------------------------------------------------
-// linear.linked
-// ---------------------------------------------------------------------------
-
 /** Linear items newly linked to a session through the T3 MCP tool. */
 export const recordLinearLinked = (input: {
   readonly threadId: string;
@@ -221,10 +203,6 @@ export const recordLinearLinked = (input: {
         { threadId: input.threadId, count: input.count },
         userOption(input.userId),
       );
-
-// ---------------------------------------------------------------------------
-// client.connected
-// ---------------------------------------------------------------------------
 
 export type ClientConnectionMode = "relay" | "local" | "tailnet" | "remote";
 

@@ -1,6 +1,7 @@
 import {
   ProjectId,
   ProviderInstanceId,
+  SourceControlProviderKind,
   ThreadId,
   type OrchestrationShellSnapshot,
   type VcsStatusResult,
@@ -67,7 +68,7 @@ const snapshot: OrchestrationShellSnapshot = {
 const status: VcsStatusResult = {
   isRepo: true,
   sourceControlProvider: {
-    kind: "github",
+    kind: SourceControlProviderKind.make("github"),
     name: "GitHub",
     baseUrl: "https://github.com",
   },

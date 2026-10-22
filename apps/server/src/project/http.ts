@@ -1,9 +1,9 @@
 import {
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   // T3-CUSTOM(expbkt3): project operations bind to the authenticated operator.
   EnvironmentAuthenticatedPrincipal,
+  requiredScopesForProjectMutation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 // T3-CUSTOM(expbkt3): durable actor access.
@@ -25,7 +25,7 @@ import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
 
-export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
+const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
   if (
@@ -80,7 +80,9 @@ export const layer = HttpApiBuilder.group(
         "mutate",
         Effect.fn("environment.projects.mutate")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          for (const scope of requiredScopesForProjectMutation(args.payload)) {
+            yield* requireEnvironmentScope(scope);
+          }
           // T3-CUSTOM(expbkt3): ownership, member changes and metadata use the same gate.
           const actor = yield* currentActor;
           const admin =

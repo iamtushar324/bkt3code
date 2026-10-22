@@ -1,11 +1,12 @@
 // T3-CUSTOM(expbkt3): wake a settled run whose background work a server restart cancelled.
 //
-// Upstream (#15604) resumes only an unfinished root turn after a restart and
-// reports cancelled background work on the next user turn. An agent that had
-// finished its turn and was waiting on a Monitor, a background shell or a
-// subagent is then idle until a human types. The fork queues the same
-// `provider-runtime.continue` effect for that settled run, so the agent is
-// prompted with the restart note and can re-arm what it still needs.
+// Upstream (#15604, #19750) resumes an unfinished root turn after a restart,
+// and wakes a settled run only for awaited work (a Monitor, a subagent, a
+// background task). A settled run that lost only background shells is idle
+// until a human types. The fork queues the same `provider-runtime.continue`
+// effect for that run, marked, so the agent is prompted with the restart note
+// and can re-arm what it still needs. Upstream's own wake always wins and
+// stays unmarked.
 //
 // Gated by `T3_RESTART_WAKE_SETTLED_BACKGROUND` (on in deploy/stage/start.sh) on top
 // of `continueThreadsAfterServerUpdate`: upstream's own tests assert that a
@@ -128,13 +129,20 @@ export function settledBackgroundWakeRun(
 }
 
 /**
- * Marks the continuation effect of a woken settled run. Upstream continuations
- * only ever target a running (or admitted, starting) run, so they stay unmarked.
+ * The run a restart continues and the mark its effect carries. Upstream's
+ * continuation (`restartContinuationRun`, which since #19750 also wakes a
+ * settled run for awaited work) wins and stays unmarked; only when it picks
+ * nothing is the fork's settled wake tried, and that one is marked.
  */
-export function settledBackgroundWakeRequest(run: Pick<OrchestrationV2Run, "status">): {
-  readonly wakeSettledRun?: true;
-} {
-  return run.status === "completed" || run.status === "waiting" ? { wakeSettledRun: true } : {};
+export function restartContinuationOrWake(
+  upstreamRun: OrchestrationV2Run | undefined,
+  wake: () => OrchestrationV2Run | undefined,
+):
+  | { readonly run: OrchestrationV2Run; readonly mark: { readonly wakeSettledRun?: true } }
+  | undefined {
+  if (upstreamRun !== undefined) return { run: upstreamRun, mark: {} };
+  const run = wake();
+  return run === undefined ? undefined : { run, mark: { wakeSettledRun: true } };
 }
 
 /** The wake's own command id, which the orchestrator admits for a settled source. */
