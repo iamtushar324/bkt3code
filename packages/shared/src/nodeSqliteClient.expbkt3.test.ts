@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
@@ -89,9 +90,12 @@ const withPinnedWal = <A, E>(
         },
       });
     }).pipe(
-      Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true, ...config })),
-      // The client captures its logger and clock when it starts.
-      Effect.provide(Logger.layer([events.logger])),
+      Effect.provide(
+        SqliteClient.layer({ filename, checkpointWorker: true, ...config }).pipe(
+          // The client captures its logger and clock when it starts.
+          Layer.provide(Logger.layer([events.logger])),
+        ),
+      ),
       Effect.provideService(References.MinimumLogLevel, "Debug"),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
