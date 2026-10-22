@@ -27,6 +27,8 @@ import {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+// T3-CUSTOM(expbkt3): the per-read transcript lookup uses the SQLite reader worker.
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -808,12 +810,14 @@ const make = Effect.gen(function* () {
     transcriptImports.withLock(
       threadId,
       Effect.gen(function* () {
+        // T3-CUSTOM(expbkt3): a native thread has no import row, so this runs on each of its
+        // reads; one lookup by key need not wait behind writes. The import stays on the writer.
         const imports = yield* sql<LegacyImportRow>`
           SELECT thread_id, transcript_imported_at
           FROM orchestration_v2_legacy_imports
           WHERE thread_id = ${threadId}
           LIMIT 1
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
           if (imported !== undefined) {

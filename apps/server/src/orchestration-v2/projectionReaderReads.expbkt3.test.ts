@@ -1,5 +1,6 @@
-// T3-CUSTOM(expbkt3): thread snapshot, window, shell and record reads run on the SQLite
-// reader workers, so a client syncing a thread never waits behind the writer.
+// T3-CUSTOM(expbkt3): the thread snapshot, window, shell and timeline page reads run on the
+// SQLite reader workers, so a client syncing a thread never waits behind the writer.
+// getThreadRecords stays on the writer: control paths read it, then act on what it shows.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -95,20 +96,15 @@ it.live("thread reads do not wait for an open write transaction", () =>
         const shell = yield* store.getThreadShell(threadId);
         const snapshot = yield* store.getThreadSnapshot(threadId);
         const window = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
-        const records = yield* store.getThreadRecords(threadId, []);
+        const page = yield* store.getTimelinePage(threadId, { view: "activity", limit: 10 });
         return [
           shell?.title,
           snapshot.projection.thread.title,
           window.projection.thread.title,
-          records.thread.title,
+          page.totalItems,
         ];
       }).pipe(Effect.timeout("10 seconds"));
-      assert.deepEqual(titles, [
-        "Committed title",
-        "Committed title",
-        "Committed title",
-        "Committed title",
-      ]);
+      assert.deepEqual(titles, ["Committed title", "Committed title", "Committed title", 0]);
 
       yield* Deferred.succeed(releaseWriter, undefined);
       yield* Fiber.join(writer);
