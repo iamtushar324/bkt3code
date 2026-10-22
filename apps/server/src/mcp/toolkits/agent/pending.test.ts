@@ -62,6 +62,7 @@ const callerWith = (records: {
   const reads: Array<unknown> = [];
   const caller = {
     threads: {
+      ensureLegacyTranscript: () => Effect.void,
       getThreadRecords: (_threadId: unknown, _fields: unknown, filter: unknown) => {
         reads.push(filter);
         return Effect.succeed({ runs: [], ...records });

@@ -47,7 +47,7 @@ import {
   type VisibleSessions,
 } from "./context.ts";
 import { modelSelectionFor, resolveModel } from "./models.ts";
-import { readOffEventLoop } from "./offLoopReads.ts";
+import { readSessionOffEventLoop } from "./offLoopReads.ts";
 import {
   EMPTY_PENDING,
   loadPendingDetail,
@@ -972,9 +972,11 @@ const correctPlanFlags = Effect.fn("agentToolkit.correctPlanFlags")(function* (
 /** The session's goal: the provider's own, else the first message. */
 const goalOf = Effect.fn("agentToolkit.goalOf")(function* (caller: Caller, shell: SessionShell) {
   if (shell.goal?.objective !== undefined) return shell.goal.objective;
-  const page = yield* caller.threads
-    .getTimelinePage(shell.id, { afterPosition: -1, limit: 1, view: "messages" })
-    .pipe(readOffEventLoop, Effect.option);
+  const page = yield* readSessionOffEventLoop(
+    caller,
+    shell.id,
+    caller.threads.getTimelinePage(shell.id, { afterPosition: -1, limit: 1, view: "messages" }),
+  ).pipe(Effect.option);
   const first = Option.isSome(page) ? page.value.items[0]?.item : undefined;
   return first?.type === "user_message" ? first.text : null;
 });
