@@ -46,6 +46,24 @@ export interface SqliteClientConfig {
    * Ignored for in-memory databases.
    */
   readonly checkpointWorker?: boolean | undefined;
+  // T3-CUSTOM(expbkt3): BEGIN reader pool and bounded checkpoint admission options; every default keeps upstream behavior.
+  /**
+   * Reader worker threads. A read-only transaction goes to the least busy one.
+   * Defaults to 1.
+   */
+  readonly readerWorkers?: number | undefined;
+  /**
+   * The longest time writes wait for a blocked checkpoint. After it, writes run
+   * and the WAL grows past its limit until the readers that pin it finish.
+   * Defaults to no limit.
+   */
+  readonly checkpointAdmissionTimeout?: Duration.Input | undefined;
+  /**
+   * How long a TRUNCATE checkpoint waits for readers to leave the WAL while
+   * writes are paused for it. Defaults to 0.
+   */
+  readonly checkpointTruncateBusyTimeout?: Duration.Input | undefined;
+  // T3-CUSTOM(expbkt3): END
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -289,6 +307,8 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         readonly worker: NodeWorkerThreads.Worker;
         readonly connection: Connection;
         readonly started: Promise<ReaderStartup>;
+        // T3-CUSTOM(expbkt3): in-flight worker requests, read by the reader pool.
+        readonly pending: ReadonlyMap<number, unknown>;
       }
     | undefined;
   let unavailable = false;
@@ -410,7 +430,8 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    current = { worker, connection, started };
+    // T3-CUSTOM(expbkt3): the pool reads `pending` to skip a worker still running a cancelled statement.
+    current = { worker, connection, started, pending };
     return current;
   };
 
@@ -437,7 +458,9 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
       }).pipe(Effect.as(undefined));
     });
 
-  return Effect.suspend((): Effect.Effect<Connection | undefined> => {
+  // T3-CUSTOM(expbkt3): also report whether the worker still runs a request, for the reader pool.
+  const busy = () => (current?.pending.size ?? 0) > 0;
+  const acquire = Effect.suspend((): Effect.Effect<Connection | undefined> => {
     if (unavailable) return Effect.succeed(undefined);
     let reader: NonNullable<typeof current>;
     try {
@@ -470,7 +493,13 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
               ),
     );
   });
+  // T3-CUSTOM(expbkt3): return the busy probe with the acquirer.
+  return { acquire, busy };
 });
+
+// T3-CUSTOM(expbkt3): an unset duration keeps upstream's default.
+const optionalMillis = (input: Duration.Input | undefined) =>
+  input === undefined ? undefined : Duration.toMillis(Duration.fromInputUnsafe(input));
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
@@ -542,13 +571,15 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
   parentPort.postMessage({ type: "checkpoint", id, generation, ...state, blocked });
   schedule(state, blocked);
 };
-const finishTruncate = (truncateId) => {
+// T3-CUSTOM(expbkt3): the parent may let truncation wait briefly for short readers.
+const finishTruncate = (truncateId, busyTimeoutMs = 0) => {
   if (pendingTruncate === undefined || pendingTruncate.truncateId !== truncateId) return;
   const pending = pendingTruncate;
   parentPort.postMessage({ type: "truncate-start", truncateId });
   let busy;
   // Admission is paused here; a pinned reader must not make truncation wait.
-  db.exec("PRAGMA busy_timeout = 0;");
+  // T3-CUSTOM(expbkt3): wait at most busyTimeoutMs for readers, never the 5 s default.
+  db.exec("PRAGMA busy_timeout = " + (Number.isSafeInteger(busyTimeoutMs) && busyTimeoutMs > 0 ? busyTimeoutMs : 0) + ";");
   try {
     busy = truncate.get().busy !== 0;
   } finally {
@@ -574,7 +605,8 @@ const finishTruncate = (truncateId) => {
 parentPort.on("message", (request) => {
   clearTimeout(idle);
   if (request && request.type === "truncate") {
-    finishTruncate(request.truncateId);
+    // T3-CUSTOM(expbkt3): pass the parent's truncate busy timeout.
+    finishTruncate(request.truncateId, request.busyTimeoutMs);
     return;
   }
   const isBarrier = request === "barrier";
@@ -601,9 +633,18 @@ parentPort.on("message", (request) => {
 });
 `;
 
+// T3-CUSTOM(expbkt3): BEGIN bounded checkpoint admission options (milliseconds).
+interface CheckpointAdmissionOptions {
+  readonly timeoutMs?: number | undefined;
+  readonly truncateBusyTimeoutMs?: number | undefined;
+}
+// T3-CUSTOM(expbkt3): END
+
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
+  // T3-CUSTOM(expbkt3): an empty object keeps upstream's unbounded admission.
+  admission: CheckpointAdmissionOptions = {},
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -652,16 +693,69 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   type Waiter = { resume: () => void; cancelled: boolean };
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
-  const gated = () =>
-    !stopped &&
-    !writer.isTransaction &&
-    (unknown || blocked || truncate !== undefined || log >= CHECKPOINT_BACKPRESSURE_FRAMES);
+  // T3-CUSTOM(expbkt3): BEGIN bounded admission. A pinned WAL (a reader holds frames the
+  // checkpoint needs) closes the gate for as long as that reader runs. Once a write has
+  // waited admission.timeoutMs, writes stop waiting for the pin until the worker reports
+  // the WAL is back under its limits; the WAL grows meanwhile. A pending truncate still
+  // pauses writes, and it ends within the truncate busy timeout.
+  let failOpen = false;
+  let pinnedSince: number | undefined;
+  let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+  const lockWaiters = new Set<() => void>();
+  const pinned = () => unknown || blocked || log >= CHECKPOINT_BACKPRESSURE_FRAMES;
+  const closed = () => !stopped && (truncate !== undefined || (!failOpen && pinned()));
+  const settleEpisode = () => {
+    if (!stopped && pinned()) return;
+    if (admissionTimer !== undefined) clearTimeout(admissionTimer);
+    admissionTimer = undefined;
+    if (failOpen) {
+      failOpen = false;
+      runFork(
+        Effect.logInfo("SQLite checkpoint admission resumed", {
+          pinnedMs: pinnedSince === undefined ? undefined : Date.now() - pinnedSince,
+        }),
+      );
+    }
+    pinnedSince = undefined;
+  };
+  const armAdmissionTimeout = () => {
+    const timeoutMs = admission.timeoutMs;
+    if (timeoutMs === undefined || failOpen || admissionTimer !== undefined) return;
+    if (stopped || !pinned()) return;
+    pinnedSince ??= Date.now();
+    admissionTimer = setTimeout(() => {
+      admissionTimer = undefined;
+      if (stopped || failOpen || !pinned()) return;
+      failOpen = true;
+      runFork(
+        Effect.logWarning(
+          "SQLite checkpoint admission timed out; writes continue while the WAL grows",
+          {
+            waitedMs: Date.now() - (pinnedSince ?? Date.now()),
+            log,
+            checkpointed,
+            blocked,
+            unknown,
+          },
+        ),
+      );
+      wake();
+    }, timeoutMs);
+    admissionTimer.unref?.();
+  };
+  // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): upstream's gate, expressed through closed() and its bounded pin.
+  const gated = () => !writer.isTransaction && closed();
   const wake = () => {
+    // T3-CUSTOM(expbkt3): end a finished episode, then let lock waiters take the writer lock.
+    settleEpisode();
+    if (!closed()) for (const resume of [...lockWaiters]) resume();
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
       elected?.resume();
     }
-    if (waiters.length === 0 && elected === undefined) worker.unref();
+    // T3-CUSTOM(expbkt3): lock waiters also keep the worker referenced.
+    if (waiters.length === 0 && elected === undefined && lockWaiters.size === 0) worker.unref();
   };
   const release = (waiter: Waiter) => {
     waiter.cancelled = true;
@@ -691,7 +785,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   const acknowledge = () => {
     if (truncate === undefined || truncate.acknowledged || stopped || writer.isTransaction) return;
     truncate.acknowledged = true;
-    send({ type: "truncate", truncateId: truncate.id });
+    // T3-CUSTOM(expbkt3): wait for readers only while writes are paused for the pin anyway.
+    const busyTimeoutMs = failOpen ? 0 : (admission.truncateBusyTimeoutMs ?? 0);
+    send({ type: "truncate", truncateId: truncate.id, busyTimeoutMs });
   };
   const observe = () => {
     try {
@@ -818,6 +914,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
               };
               waiters.push(waiter);
               worker.ref();
+              // T3-CUSTOM(expbkt3): bound how long this wait can last.
+              armAdmissionTimeout();
               request(true);
               wake();
               return Effect.sync(() => release(waiter));
@@ -830,7 +928,36 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
         Effect.onInterrupt(() => Effect.sync(() => release(waiter))),
       );
     });
-  return { check, runWithAdmission };
+  // T3-CUSTOM(expbkt3): BEGIN wait at the gate before the writer lock is taken, so a
+  // gated transaction does not hold the lock that reads on the writer also need. The
+  // BEGIN statement still passes runWithAdmission after the lock is taken.
+  const awaitAdmission = (
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.suspend(() =>
+      !closed()
+        ? Effect.void
+        : restore(
+            Effect.callback<void>(function (this: Scheduler.Scheduler, resume) {
+              const dispatcher = this.makeDispatcher();
+              const admit = () => {
+                if (!lockWaiters.delete(admit)) return;
+                dispatcher.scheduleTask(() => resume(Effect.void), 0);
+              };
+              lockWaiters.add(admit);
+              worker.ref();
+              armAdmissionTimeout();
+              request(true);
+              wake();
+              return Effect.sync(() => {
+                lockWaiters.delete(admit);
+                wake();
+              });
+            }),
+          ),
+    );
+  return { check, runWithAdmission, admission: { wait: awaitAdmission, closed } };
+  // T3-CUSTOM(expbkt3): END
 });
 
 const make = Effect.fn("makeWithDatabase")(function* (
@@ -844,6 +971,15 @@ const make = Effect.fn("makeWithDatabase")(function* (
     ? Statement.defaultTransforms(options.transformResultNames).array
     : undefined;
 
+  // T3-CUSTOM(expbkt3): set by makeConnection when the checkpoint worker runs.
+  let writerAdmission:
+    | {
+        readonly wait: (
+          restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+        ) => Effect.Effect<void>;
+        readonly closed: () => boolean;
+      }
+    | undefined;
   const makeConnection = Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const db = yield* Effect.try({
@@ -868,10 +1004,15 @@ const make = Effect.fn("makeWithDatabase")(function* (
       }).pipe(Effect.orDie),
     );
     // Started after the close finalizer, so the worker stops before the writer closes.
+    // T3-CUSTOM(expbkt3): pass the bounded admission options and expose the gate to the transaction acquirer.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(options.filename, db)
+        ? yield* startCheckpointWorker(options.filename, db, {
+            timeoutMs: optionalMillis(options.checkpointAdmissionTimeout),
+            truncateBusyTimeoutMs: optionalMillis(options.checkpointTruncateBusyTimeout),
+          })
         : undefined;
+    writerAdmission = checkpoint?.admission;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
     interface CheckpointClassification {
@@ -1065,20 +1206,66 @@ const make = Effect.fn("makeWithDatabase")(function* (
 
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
-  const acquireReader =
-    options.readerWorker && isFileDatabase ? yield* makeReader(options) : undefined;
-  const readerSemaphore = yield* Semaphore.make(1);
-
-  const writer = { name: "writer" as const, lock: semaphore, connection };
-  const route = Effect.withFiber((fiber) =>
-    acquireReader !== undefined && Context.get(fiber.context, ReadOnly)
-      ? Effect.map(acquireReader, (readerConnection) =>
-          readerConnection === undefined
-            ? writer
-            : { name: "reader" as const, lock: readerSemaphore, connection: readerConnection },
+  // T3-CUSTOM(expbkt3): BEGIN a pool of reader workers, each with its own lock. A read-only
+  // transaction goes to the reader with the fewest borrows, then to one whose worker is not
+  // still running a cancelled statement.
+  const readers =
+    options.readerWorker && isFileDatabase
+      ? yield* Effect.forEach(
+          Array.from({ length: Math.max(1, Math.floor(options.readerWorkers ?? 1)) }),
+          () =>
+            Effect.map(Effect.zip(makeReader(options), Semaphore.make(1)), ([reader, lock]) => ({
+              ...reader,
+              lock,
+              claims: 0,
+            })),
         )
-      : Effect.succeed(writer),
-  );
+      : [];
+  let nextReader = 0;
+  const pickReader = () => {
+    let best = readers[nextReader++ % readers.length]!;
+    for (const reader of readers) {
+      if (
+        reader.claims < best.claims ||
+        (reader.claims === best.claims && best.busy() && !reader.busy())
+      ) {
+        best = reader;
+      }
+    }
+    return best;
+  };
+  type Target = {
+    readonly name: Acquired["connection"];
+    readonly lock: Semaphore.Semaphore;
+    readonly connection: Connection;
+    readonly reader?: (typeof readers)[number];
+  };
+  const writer: Target = { name: "writer", lock: semaphore, connection };
+  const route = Effect.withFiber((fiber): Effect.Effect<Target> => {
+    if (readers.length === 0 || !Context.get(fiber.context, ReadOnly)) {
+      return Effect.succeed(writer);
+    }
+    const reader = pickReader();
+    return Effect.map(reader.acquire, (readerConnection) =>
+      readerConnection === undefined
+        ? writer
+        : { name: "reader", lock: reader.lock, connection: readerConnection, reader },
+    );
+  });
+  const claim = <A, E, R>(target: Target, effect: Effect.Effect<A, E, R>) => {
+    const reader = target.reader;
+    if (reader === undefined) return effect;
+    return Effect.uninterruptibleMask((restore) => {
+      reader.claims++;
+      return Effect.ensuring(
+        restore(effect),
+        Effect.sync(() => {
+          reader.claims--;
+        }),
+      );
+    });
+  };
+  // T3-CUSTOM(expbkt3): END
 
   const acquired = (
     target: { readonly name: Acquired["connection"] },
@@ -1106,7 +1293,8 @@ const make = Effect.fn("makeWithDatabase")(function* (
           return use(target.connection);
         });
         if (!options.checkpointWorker || target.name !== "writer") {
-          return target.lock.withPermits(1)(useConnection);
+          // T3-CUSTOM(expbkt3): count the borrow against its reader.
+          return claim(target, target.lock.withPermits(1)(useConnection));
         }
         const writerUse = Effect.onExit(useConnection, (exit) =>
           Effect.sync(() => {
@@ -1142,10 +1330,37 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
       const pending = fiber.getRef(TransactionAcquire);
-      const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
+      // T3-CUSTOM(expbkt3): BEGIN count the transaction against its reader until its scope
+      // closes, and make a writer transaction wait at the checkpoint gate before the lock.
+      const reader = target.reader;
+      const track =
+        reader === undefined
+          ? Effect.void
+          : Effect.suspend(() => {
+              reader.claims++;
+              return Scope.addFinalizer(
+                scope,
+                Effect.sync(() => {
+                  reader.claims--;
+                }),
+              );
+            });
+      const take = (pending?.restore ?? restore)(target.lock.take(1));
+      const gate = target.name === "writer" ? writerAdmission : undefined;
+      // If the gate closed while this waited for the lock, give the lock back and wait again.
+      const admitted: Effect.Effect<unknown> =
+        gate === undefined
+          ? take
+          : Effect.andThen(gate.wait(pending?.restore ?? restore), take).pipe(
+              Effect.andThen(() =>
+                gate.closed() ? Effect.andThen(target.lock.release(1), admitted) : Effect.void,
+              ),
+            );
+      const acquire = Effect.tap(Effect.andThen(track, admitted), () => {
         if (pending !== undefined) pending.acquired = acquired(target, clock, start);
         return Scope.addFinalizer(scope, target.lock.release(1));
       });
+      // T3-CUSTOM(expbkt3): END
       return Effect.as(
         // A scheduler yield after taking the permit must not precede its release finalizer.
         Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),

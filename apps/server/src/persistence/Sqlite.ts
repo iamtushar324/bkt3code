@@ -64,6 +64,12 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
       // the event loop so a slow flush cannot stall clients.
       checkpointWorker: true,
+      // T3-CUSTOM(expbkt3): four readers, so one long snapshot read does not queue the
+      // per-request session checks; a write waits at most 1 s for a WAL that a reader
+      // pins; a truncate waits up to 250 ms for short readers, while writes are paused.
+      readerWorkers: 4,
+      checkpointAdmissionTimeout: "1 second",
+      checkpointTruncateBusyTimeout: "250 millis",
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",
