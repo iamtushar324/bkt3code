@@ -29,6 +29,10 @@ export PATH="/home/ubuntu/.nvm/versions/node/v24.16.0/bin:/home/ubuntu/.local/bi
 export TMPDIR="$BASE_DIR/tmp"
 mkdir -p "$TMPDIR"
 
+# Keep about 600 MB of server traces. At the default 10 files of 10 MB, a busy
+# server rotates out a stall's evidence within about 15 minutes.
+export T3CODE_TRACE_MAX_FILES="60"
+
 # A restart wakes a settled thread whose monitors, background commands or
 # subagents it cancelled, so the agent can re-arm them (only for projects with
 # "continue threads after server update" on). See
