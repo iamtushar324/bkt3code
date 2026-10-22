@@ -331,7 +331,9 @@ export function commentsForMessage(
   snapshot: Pick<ThreadCommentsSnapshot, "comments"> | null,
   messageId: string,
 ): ThreadComment[] {
-  if (snapshot === null) return [];
+  // Upstream timeline tests mock every environment query with one payload, so
+  // the snapshot can arrive without a comment list.
+  if (snapshot === null || !Array.isArray(snapshot.comments)) return [];
   return snapshot.comments.filter((comment) => comment.anchor.messageId === messageId);
 }
 
