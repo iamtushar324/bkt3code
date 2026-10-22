@@ -66,7 +66,8 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       checkpointWorker: true,
       // T3-CUSTOM(expbkt3): four readers, so one long snapshot read does not queue the
       // per-request session checks; a write waits at most 1 s for a WAL that a reader
-      // pins; a truncate waits up to 250 ms for short readers, while writes are paused.
+      // pins, until the WAL reaches ten times its limit; a truncate waits up to 250 ms
+      // for short readers, while writes are paused.
       readerWorkers: 4,
       checkpointAdmissionTimeout: "1 second",
       checkpointTruncateBusyTimeout: "250 millis",

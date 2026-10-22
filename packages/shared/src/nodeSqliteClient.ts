@@ -55,8 +55,8 @@ export interface SqliteClientConfig {
   /**
    * The longest time writes wait for a checkpoint that cannot catch up, because
    * a reader pins the WAL or the checkpoint is slow. After it, writes run and the
-   * WAL grows until a checkpoint backfills all of it; at ten times the
-   * backpressure limit writes wait again. Defaults to no limit.
+   * WAL grows until the checkpoint catches up; at ten times the backpressure
+   * limit writes wait again, with no timeout. Defaults to no limit.
    */
   readonly checkpointAdmissionTimeout?: Duration.Input | undefined;
   /**
@@ -698,15 +698,16 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   let elected: Waiter | undefined;
   // T3-CUSTOM(expbkt3): BEGIN bounded admission. The gate closes while the checkpoint cannot
   // catch up: a reader pins WAL frames, or the checkpoint itself is slow. Once a write has
-  // waited admission.timeoutMs, writes stop waiting ("open") and the WAL grows, until a
-  // checkpoint backfills the whole WAL or the WAL reaches OPEN_MAX_FRAMES. A pending
-  // truncate still pauses writes, and it ends within the truncate busy timeout.
+  // waited admission.timeoutMs, writes stop waiting ("open") and the WAL grows, until the
+  // worker reports the WAL back under its limits or the WAL reaches OPEN_MAX_FRAMES. A
+  // pending truncate still pauses writes, and it ends within the truncate busy timeout.
   const OPEN_MAX_FRAMES = 10 * CHECKPOINT_BACKPRESSURE_FRAMES;
   const clock = yield* Clock.Clock;
   let failOpen = false;
   let pinnedSince: number | undefined;
   let admissionTimer: Fiber.Fiber<void> | undefined;
   let growthWarningFrames = 0;
+  let capReached = false;
   const lockWaiters = new Set<() => void>();
   const pinned = () => unknown || blocked || log >= CHECKPOINT_BACKPRESSURE_FRAMES;
   const closed = () =>
@@ -721,6 +722,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   const endFailOpen = () => {
     if (!failOpen) return;
     failOpen = false;
+    capReached = false;
     runFork(
       Effect.logInfo("SQLite checkpoint admission resumed", {
         pinnedMs: pinnedMs(),
@@ -737,14 +739,25 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     pinnedSince = undefined;
   };
   const reportGrowth = () => {
-    if (!failOpen || log < growthWarningFrames) return;
+    if (!failOpen) return;
+    if (log >= OPEN_MAX_FRAMES) {
+      if (capReached) return;
+      capReached = true;
+      runFork(
+        Effect.logWarning(
+          "SQLite WAL reached its limit while checkpoint admission is open; writes wait for the checkpoint again",
+          { pinnedMs: pinnedMs(), log, checkpointed },
+        ),
+      );
+      return;
+    }
+    if (log < growthWarningFrames) return;
     growthWarningFrames = log + CHECKPOINT_BACKPRESSURE_FRAMES;
     runFork(
       Effect.logWarning("SQLite WAL keeps growing while checkpoint admission is open", {
         pinnedMs: pinnedMs(),
         log,
         checkpointed,
-        writesWait: log >= OPEN_MAX_FRAMES,
       }),
     );
   };
@@ -765,8 +778,12 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     const timeoutMs = admission.timeoutMs;
     if (timeoutMs === undefined || failOpen || admissionTimer !== undefined) return;
     if (stopped || !pinned()) return;
-    if (pinnedSince === undefined) {
-      pinnedSince = clock.currentTimeMillisUnsafe();
+    const starts = pinnedSince === undefined;
+    if (starts) pinnedSince = clock.currentTimeMillisUnsafe();
+    const timer = runFork(Effect.andThen(Effect.sleep(timeoutMs), Effect.sync(timeOut)));
+    // A zero timeout can finish inside runFork; keep only a timer that still runs.
+    if (timer.pollUnsafe() === undefined) admissionTimer = timer;
+    if (starts) {
       runFork(
         Effect.logDebug("SQLite checkpoint admission paused writes", {
           log,
@@ -777,7 +794,6 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
         }),
       );
     }
-    admissionTimer = runFork(Effect.andThen(Effect.sleep(timeoutMs), Effect.sync(timeOut)));
   };
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): upstream's gate, expressed through closed() and its bounded pin.
@@ -791,10 +807,12 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       elected?.resume();
     }
     // T3-CUSTOM(expbkt3): lock waiters also keep the worker referenced. With no write left
-    // waiting, the admission timer stops; the next wait starts it again.
+    // waiting, the admission timer stops; while writes wait at a closed gate, one runs.
     if (waiters.length === 0 && elected === undefined && lockWaiters.size === 0) {
       worker.unref();
       disarm();
+    } else if (closed()) {
+      armAdmissionTimeout();
     }
   };
   const release = (waiter: Waiter) => {
@@ -911,18 +929,10 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       blocked = message.blocked;
       unknown = false;
     }
-    // T3-CUSTOM(expbkt3): BEGIN a checkpoint that backfilled its whole WAL shows that no
-    // reader pins it, even when later writes made the reply stale. Close the gate again.
-    if (
-      failOpen &&
-      "log" in message &&
-      typeof message.log === "number" &&
-      "checkpointed" in message &&
-      typeof message.checkpointed === "number" &&
-      message.checkpointed >= message.log
-    ) {
-      endFailOpen();
-    }
+    // T3-CUSTOM(expbkt3): BEGIN a reply that is not blocked shows the WAL was back under its
+    // limits, even when later writes made it stale. Writes wait at the gate again. A failed
+    // TRUNCATE reports blocked, so a reader that still pins the WAL keeps the gate open.
+    if (failOpen && "blocked" in message && message.blocked === false) endFailOpen();
     // T3-CUSTOM(expbkt3): END
     // Even a stale snapshot must retire its request so a newer check can run.
     if ("id" in message && message.id === inFlight) inFlight = undefined;
@@ -1321,22 +1331,15 @@ const make = Effect.fn("makeWithDatabase")(function* (
     if (readers.length === 0 || !Context.get(fiber.context, ReadOnly)) {
       return Effect.succeed(writer);
     }
-    // A reader that fails to start turns itself off; try the next one before the writer.
-    const next = (attempt: number): Effect.Effect<Target> => {
-      const reader = attempt < readers.length ? pickReader() : undefined;
-      if (reader === undefined) return Effect.succeed(writer);
-      return Effect.flatMap(reader.acquire, (readerConnection) =>
-        readerConnection === undefined
-          ? next(attempt + 1)
-          : Effect.succeed<Target>({
-              name: "reader",
-              lock: reader.lock,
-              connection: readerConnection,
-              reader,
-            }),
-      );
-    };
-    return next(0);
+    // A reader that fails to start turns itself off and this read uses the writer, as
+    // upstream does; later reads skip that reader.
+    const reader = pickReader();
+    if (reader === undefined) return Effect.succeed(writer);
+    return Effect.map(reader.acquire, (readerConnection) =>
+      readerConnection === undefined
+        ? writer
+        : { name: "reader", lock: reader.lock, connection: readerConnection, reader },
+    );
   });
   const claim = <A, E, R>(target: Target, effect: Effect.Effect<A, E, R>) => {
     const reader = target.reader;

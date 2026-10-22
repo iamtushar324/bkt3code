@@ -127,7 +127,7 @@ it.effect("lets writes through a pinned WAL once one has waited the admission ti
       assert.isTrue(pin.held());
       assert.equal(yield* countRows(sql), ROWS + 1);
 
-      // Once the pin ends, a checkpoint catches up and writes wait at the gate again.
+      // Once the pin ends, a TRUNCATE checkpoint empties the WAL and the open state ends.
       pin.release();
       yield* Deferred.await(events.resumed);
       yield* insertRows(sql, 1);
@@ -155,6 +155,7 @@ it.effect("keeps the writer free for reads while a write transaction waits at th
 );
 
 const withReaderPool = <A, E>(
+  readerWorkers: number,
   use: (sql: SqlClient.SqlClient) => Effect.Effect<A, E, SqlClient.SqlClient>,
 ) =>
   Effect.gen(function* () {
@@ -168,11 +169,11 @@ const withReaderPool = <A, E>(
       yield* sql`CREATE TABLE entries(body BLOB NOT NULL)`;
       yield* sql`INSERT INTO entries VALUES (zeroblob(16))`;
       return yield* use(sql);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true, readerWorkers: 2 })));
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true, readerWorkers })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 it.effect("serves a read-only transaction from a free reader while another reader is held", () =>
-  withReaderPool((sql) =>
+  withReaderPool(2, (sql) =>
     Effect.gen(function* () {
       const readerHeld = yield* Deferred.make<void>();
       const writerHeld = yield* Deferred.make<void>();
@@ -206,6 +207,30 @@ it.effect("serves a read-only transaction from a free reader while another reade
       yield* Fiber.join(holdReader);
       yield* Fiber.join(holdWriter);
       assert.equal(yield* countRows(sql), 2);
+    }),
+  ),
+);
+
+it.effect("keeps one reader when readerWorkers is not a number", () =>
+  withReaderPool(Number.NaN, (sql) =>
+    Effect.gen(function* () {
+      const writerHeld = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holdWriter = yield* Effect.forkChild(
+        sql.withTransaction(
+          sql`INSERT INTO entries VALUES (zeroblob(16))`.pipe(
+            Effect.andThen(Deferred.succeed(writerHeld, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        ),
+      );
+      yield* Deferred.await(writerHeld);
+
+      // On the writer this read would wait for `release`.
+      assert.equal(yield* sql.withTransaction(countRows(sql)).pipe(SqliteClient.readOnly), 1);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holdWriter);
     }),
   ),
 );

@@ -11,9 +11,10 @@ import type { Caller } from "../../threadAccess.ts";
  * event loop it froze the whole server for that long.
  *
  * Every thread read first makes sure a migrated v1 transcript is imported,
- * which can write, and a write fails on the reader. So that check runs on the
- * writer first (one indexed read, none once the thread is known), and the read
- * then finds the transcript in place.
+ * which can write, and a write fails on the reader. So that check runs first,
+ * outside the reader context: its lookup is one indexed read on a reader
+ * worker, and an import writes on the writer. The read then finds the
+ * transcript in place.
  */
 export const readSessionOffEventLoop = <A, E, R>(
   caller: Caller,
