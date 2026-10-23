@@ -65,6 +65,8 @@ import {
   resolvePhaseSidebarWorkBadge,
   sanitizePhaseSidebarFilters,
   sanitizePhaseSidebarSort,
+  // T3-CUSTOM(expbkt3): a nested row's own group chip in Custom mode.
+  phaseSidebarNestedRowShowsCustomGroup,
   type PhaseSidebarRow,
 } from "./PhaseGroupedSidebar.logic";
 
@@ -2156,6 +2158,40 @@ describe("phase sidebar pinning", () => {
       ThreadId.make("thread-a"),
       ThreadId.make("thread-b"),
     ]);
+  });
+});
+// T3-CUSTOM(expbkt3): END
+
+// T3-CUSTOM(expbkt3): BEGIN — a nested row's own group chip in Custom mode.
+describe("phaseSidebarNestedRowShowsCustomGroup", () => {
+  it("shows the chip when the child's group differs from its parent's", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: "Today" }, { customGroup: "Manager" }),
+    ).toBe(true);
+  });
+
+  it("shows the chip when the parent has no group and the child has one", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: "Today" }, { customGroup: null }),
+    ).toBe(true);
+  });
+
+  it("hides the chip when the child is in its parent's group", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: "Today" }, { customGroup: "Today" }),
+    ).toBe(false);
+  });
+
+  it("compares groups by their normalised id, not by the label's case", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: "today" }, { customGroup: "Today" }),
+    ).toBe(false);
+  });
+
+  it("hides the chip when the child has no group", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: null }, { customGroup: "Today" }),
+    ).toBe(false);
   });
 });
 // T3-CUSTOM(expbkt3): END
