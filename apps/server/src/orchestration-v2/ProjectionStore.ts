@@ -5374,6 +5374,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(
+          // T3-CUSTOM(expbkt3): runs on a SQLite reader worker; inside an open write transaction it stays on the writer.
+          NodeSqliteClient.readOnly,
           Effect.mapError((cause) =>
             isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
@@ -5612,7 +5614,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             };
           }),
         )
-        .pipe(Effect.mapError(controlReadError(threadId)));
+        // T3-CUSTOM(expbkt3): runs on a SQLite reader worker; inside an open write transaction it stays on the writer.
+        .pipe(NodeSqliteClient.readOnly, Effect.mapError(controlReadError(threadId)));
 
     const getTimelinePage: ProjectionStoreV2Shape["getTimelinePage"] = (threadId, options) =>
       sql
@@ -5671,6 +5674,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(
+          // T3-CUSTOM(expbkt3): runs on a SQLite reader worker; inside an open write transaction it stays on the writer.
+          NodeSqliteClient.readOnly,
           Effect.mapError((cause) =>
             isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
@@ -5723,6 +5728,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(
+          // T3-CUSTOM(expbkt3): runs on a SQLite reader worker; inside an open write transaction it stays on the writer.
+          NodeSqliteClient.readOnly,
           Effect.mapError((cause) =>
             isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
@@ -6597,7 +6604,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             });
           }),
         )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+        // T3-CUSTOM(expbkt3): runs on a SQLite reader worker; inside an open write transaction it stays on the writer.
+        .pipe(
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        );
 
     return {
       apply,

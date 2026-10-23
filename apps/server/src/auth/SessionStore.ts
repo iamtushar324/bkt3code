@@ -21,6 +21,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
+// T3-CUSTOM(expbkt3): per-request session lookups use the SQLite reader worker.
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -896,6 +898,8 @@ const make = Effect.gen(function* () {
 
       const row = yield* authSessions
         .getById({ sessionId: claims.sid })
+        // T3-CUSTOM(expbkt3): one SELECT by primary key, so it need not wait behind writes on the writer.
+        .pipe(NodeSqliteClient.readOnly)
         .pipe(
           Effect.mapError(
             (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),

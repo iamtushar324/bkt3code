@@ -51,7 +51,7 @@ On web and desktop, unpinning, settling, snoozing, and archiving a thread each s
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
 viewing. Discarding an unsent draft from the sidebar works the same way: Undo brings
-back its text and attachments. `mod+z` triggers the most recent Undo when no text field is focused; see
+back its text and attachments. `mod+z` triggers the most recent Undo, even from the composer; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
 On web and desktop, you can also drag files from your computer onto any thread row:
@@ -286,6 +286,13 @@ A custom group is a label on the thread itself, so everyone who can see the
 thread sees the same group, on every device. To file a thread, open its menu
 and choose **Move to group**, pick an existing group or **New group…**, or
 **Remove from group**.
+
+<!-- T3-CUSTOM(expbkt3): a nested session's own group chip. -->
+
+In Custom mode, a session nested under a parent session stays under that
+parent, in the parent's group. You can still move the nested session to a
+group of its own. When its group differs from its parent's, the row shows a
+chip with its own group's name.
 
 <!-- T3-CUSTOM(expbkt3): XFN-59 shared group registry, colours and header actions. -->
 

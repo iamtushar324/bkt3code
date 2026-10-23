@@ -2,7 +2,6 @@
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
-  getPromptControlledTraits,
   getTraitSelectChange,
   replaceDescriptorCurrentValue,
   selectableProviderOptionChoices,
@@ -22,6 +21,7 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
+  isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo } from "react";
@@ -50,6 +50,17 @@ import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
+
+/**
+ * All the picker reads from the prompt while rendering. Passing this instead of
+ * the prompt keeps the picker from re-rendering on every keystroke.
+ */
+export type PromptUltrathink = "none" | "prefix" | "body";
+
+export function readPromptUltrathink(prompt: string): PromptUltrathink {
+  if (!isClaudeUltrathinkPrompt(prompt)) return "none";
+  return isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, "")) ? "body" : "prefix";
+}
 
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
@@ -109,7 +120,7 @@ function getSelectedTraits(
   provider: ProviderDriverKind,
   models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
-  prompt: string,
+  promptUltrathink: PromptUltrathink,
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -146,11 +157,11 @@ function getSelectedTraits(
   const thinkingDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "thinking") ?? null;
 
-  const { ultrathinkPromptControlled, ultrathinkInBodyText } = getPromptControlledTraits(
-    descriptors,
-    prompt,
-    allowPromptInjectedEffort,
-  );
+  const ultrathinkPromptControlled =
+    allowPromptInjectedEffort &&
+    (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
+    promptUltrathink !== "none";
+  const ultrathinkInBodyText = ultrathinkPromptControlled && promptUltrathink === "body";
   const effort =
     (ultrathinkPromptControlled
       ? "ultrathink"
@@ -188,7 +199,7 @@ function getTraitsSectionVisibility(input: {
   provider: ProviderDriverKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
-  prompt: string;
+  promptUltrathink?: PromptUltrathink | undefined;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
@@ -199,7 +210,7 @@ function getTraitsSectionVisibility(input: {
     input.provider,
     input.models,
     input.model,
-    input.prompt,
+    input.promptUltrathink ?? "none",
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -249,7 +260,7 @@ export function getReasoningTraitStep(input: {
     input.provider,
     input.models,
     input.model,
-    input.prompt,
+    readPromptUltrathink(input.prompt),
     input.modelOptions,
     true,
     input.planModeEnabled,
@@ -298,7 +309,7 @@ export function shouldRenderTraitsControls(input: {
   models: ReadonlyArray<ServerProviderModel>;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   model: string | null | undefined;
-  prompt: string;
+  promptUltrathink?: PromptUltrathink | undefined;
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -314,8 +325,9 @@ export interface TraitsMenuContentProps {
   models: ReadonlyArray<ServerProviderModel>;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   model: string | null | undefined;
-  prompt: string;
-  onPromptChange: (prompt: string) => void;
+  promptUltrathink?: PromptUltrathink | undefined;
+  /** Receives an edit of the live prompt; the picker never holds the prompt text itself. */
+  onPromptEdit?: (edit: (prompt: string) => string) => void;
   modelOptions?: ProviderOptions | null | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
@@ -331,8 +343,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
   models,
   model,
-  prompt,
-  onPromptChange,
+  promptUltrathink,
+  onPromptEdit,
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
@@ -362,7 +374,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     provider,
     models,
     model,
-    prompt,
+    promptUltrathink,
     modelOptions,
     allowPromptInjectedEffort,
     // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -386,9 +398,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
     value: string,
   ) => {
-    const change = getTraitSelectChange(selected, descriptor, prompt, value);
+    // Whether a pick applies, and the options it writes, do not depend on the prompt text.
+    const change = getTraitSelectChange(selected, descriptor, "", value);
     if (!change) return;
-    if (change.prompt !== prompt) onPromptChange(change.prompt);
+    onPromptEdit?.(
+      (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
+    );
     if ("modelOptions" in change) updateModelOptions(change.modelOptions);
   };
 
@@ -515,8 +530,8 @@ export const TraitsPicker = memo(function TraitsPicker({
   instanceId,
   models,
   model,
-  prompt,
-  onPromptChange,
+  promptUltrathink,
+  onPromptEdit,
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
@@ -541,7 +556,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       provider,
       models,
       model,
-      prompt,
+      promptUltrathink,
       modelOptions,
       allowPromptInjectedEffort,
       // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -552,7 +567,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       provider,
       models,
       model,
-      prompt,
+      promptUltrathink,
       modelOptions,
       allowPromptInjectedEffort,
       // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
@@ -629,8 +644,8 @@ export const TraitsPicker = memo(function TraitsPicker({
           {...(instanceId ? { instanceId } : {})}
           models={models}
           model={model}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
+          promptUltrathink={promptUltrathink}
+          {...(onPromptEdit ? { onPromptEdit } : {})}
           modelOptions={modelOptions}
           reportedModelSelection={reportedModelSelection}
           allowPromptInjectedEffort={allowPromptInjectedEffort}

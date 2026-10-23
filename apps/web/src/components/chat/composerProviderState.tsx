@@ -25,6 +25,7 @@ import {
   shouldRenderTraitsControls,
   TraitsMenuContent,
   TraitsPicker,
+  type PromptUltrathink,
 } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
@@ -57,9 +58,9 @@ type TraitsRenderInput = {
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
-  prompt: string;
+  promptUltrathink: PromptUltrathink;
+  onPromptEdit: (edit: (prompt: string) => string) => void;
   // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
-  onPromptChange: (prompt: string) => void;
   planModeAvailable: boolean;
   size?: ComposerControlSize;
   hidden?: boolean;
@@ -240,8 +241,9 @@ function renderTraitsControl(
     models,
     modelOptions,
     reportedModelSelection,
-    prompt,
-    onPromptChange,
+    promptUltrathink,
+    onPromptEdit,
+    // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
     planModeAvailable,
     size,
     hidden,
@@ -264,7 +266,7 @@ function renderTraitsControl(
       models,
       model,
       modelOptions: resolvedModelOptions,
-      prompt,
+      promptUltrathink,
       // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
       planModeAvailable,
     })
@@ -281,8 +283,9 @@ function renderTraitsControl(
       model={model}
       modelOptions={resolvedModelOptions}
       reportedModelSelection={reportedModelSelection}
-      prompt={prompt}
-      onPromptChange={onPromptChange}
+      promptUltrathink={promptUltrathink}
+      onPromptEdit={onPromptEdit}
+      // T3-CUSTOM(expbkt3): the fork setting is planModeAvailable (fresh key, default on).
       planModeAvailable={planModeAvailable}
       {...(size !== undefined ? { size } : {})}
       {...(hidden !== undefined ? { hidden } : {})}

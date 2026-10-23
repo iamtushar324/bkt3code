@@ -101,7 +101,7 @@ import {
 } from "~/fork/threadComments/threadCommentsSurface";
 import { observeResize } from "~/lib/observeResize";
 
-interface RightPanelTabsProps {
+export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;

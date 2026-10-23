@@ -11,6 +11,11 @@
 export * from "@t3tools/client-runtime/state/phase-sidebar";
 
 import type { PhaseSidebarPhaseId } from "@t3tools/client-runtime/state/phase-sidebar";
+// T3-CUSTOM(expbkt3): a nested row's own group chip in Custom mode.
+import {
+  phaseSidebarCustomGroupIdForRow,
+  type PhaseSidebarRow,
+} from "@t3tools/client-runtime/state/phase-sidebar";
 // T3-CUSTOM(expbkt3): a custom group's colour is an inline style (a hex value).
 import type { CSSProperties } from "react";
 // T3-CUSTOM(expbkt3): Linear tags on a session.
@@ -367,3 +372,24 @@ export function resolvePhaseSidebarShelfRows<Row>(input: {
     routedRow !== undefined && routedIndex >= page.length ? [...page, routedRow] : page;
   return { rendered, hiddenCount: rows.length - rendered.length, containsRoutedThread };
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — a nested row's own group chip in Custom mode.
+/**
+ * Whether a NESTED row shows its own custom-group chip in Custom mode.
+ *
+ * Custom mode places a whole subtree by its root, so a child renders under its
+ * parent in the parent's section, whatever its own group is. A top-level row
+ * needs no chip there (the section header names its group), but a child filed
+ * in a different group would hide that group completely. So a child shows its
+ * own chip only when it has a group and that group differs from its direct
+ * parent's. Groups compare by their normalised id, so "Today" and "today" are
+ * the same group.
+ */
+export function phaseSidebarNestedRowShowsCustomGroup(
+  row: Pick<PhaseSidebarRow, "customGroup">,
+  parent: Pick<PhaseSidebarRow, "customGroup">,
+): boolean {
+  const ownGroupId = phaseSidebarCustomGroupIdForRow(row);
+  return ownGroupId !== null && ownGroupId !== phaseSidebarCustomGroupIdForRow(parent);
+}
+// T3-CUSTOM(expbkt3): END

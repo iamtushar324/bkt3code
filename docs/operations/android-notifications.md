@@ -16,7 +16,9 @@ The native notification tests cover API 24, 26, 33 and 36 (plus API 25 for legac
 ./gradlew :t3-agent-notifications:testDebugUnitTest :t3-agent-notifications:lintRelease -Pandroid.lint.useK2Uast=false
 ```
 
-Robolectric's API 36 runtime requires JDK 21; module compilation still uses Expo's Java 17 toolchain. The existing Mobile Native Static Analysis job separately runs ktlint and detekt. The native fingerprint check marks this change as requiring a new binary; the production workflow cannot deliver it to an older binary by OTA. Settings disable Android notifications if the installed native module is missing required methods.
+<!-- T3-CUSTOM(expbkt3): Native mobile lint is manual in this fork. -->
+
+Robolectric's API 36 runtime requires JDK 21; module compilation still uses Expo's Java 17 toolchain. Run `vp run lint:mobile` manually to run ktlint and detekt; CI does not run native mobile static analysis in this fork. The native fingerprint check marks this change as requiring a new binary; the production workflow cannot deliver it to an older binary by OTA. Settings disable Android notifications if the installed native module is missing required methods.
 
 The lint command uses the K1 frontend because AGP's K2 frontend crashes while analyzing Worklets 0.10's Gradle Kotlin scripts. This does not disable lint checks. Live Update eligibility must be verified on a device: Robolectric's API 36 image implements older promotion rules that require colorization, while shipped Live Updates require uncolorized notifications.
 
