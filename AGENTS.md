@@ -41,8 +41,18 @@ confirm the running service is on the merge SHA. Report once, when it is deploye
 when it is merged. "Merged" is not a delivery; the reviewer cannot verify anything until
 expbkt3 is actually serving the new build, and a build or install can still fail after a
 green PR. Ground truth is `/home/ubuntu/.t3/expbkt3-dev/deployed-sha` matching the merge
-commit, plus `t3-expbkt3.service` active. This authorisation covers `expbkmain` only —
-`bkmain` still needs a human, because deploying it kills the team's live sessions.
+commit, plus `t3-expbkt3.service` active. This authorisation covers `expbkmain`, and
+`stage` for the Manager session below, only — `bkmain` still needs a human, because
+deploying it kills the team's live sessions.
+
+**Tushar's Manager session may merge to `stage` by its own judgement.** Tushar's Manager
+session (the bk-docs `manager` skill, `tushar` child) may merge a green PR into `stage`
+without a further ask, once CI is green and the change is reviewed. It then owns the
+change until it is live: it verifies it running on stagebkt3.dev.beknown.live, the same
+way as the `expbkmain` rule above. A merge or promotion to `bkmain` still needs Tushar.
+The Manager asks once, as one item on its batched Toolyard decision card, because a
+`bkmain` deploy restarts bkt3 and stops the live sessions; Tushar then picks the time.
+(Tushar, 2026-10-23.)
 
 ## Building features that survive upstream merges
 
@@ -223,7 +233,10 @@ For authorized mobile verification, a missing or outdated native client is a bui
 - Never make a PR unless the developer explicitly asks you to do so.
 - Merging a green PR into `expbkmain` needs no further ask, but it is not finished at
   merge: follow it through the deploy and report only once expbkt3 is serving it. See
-  "Beknown fork and deployments". Merging to `bkmain` still needs a human.
+  "Beknown fork and deployments". Tushar's Manager session may also merge a green,
+  reviewed PR into `stage` by its own judgement, then verify it on stagebkt3. Merging to
+  `bkmain` still needs a human (for the Manager: one item on its batched Toolyard
+  decision card).
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.

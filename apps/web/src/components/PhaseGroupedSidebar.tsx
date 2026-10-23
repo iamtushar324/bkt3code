@@ -262,6 +262,8 @@ import {
   PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
   PHASE_SIDEBAR_SECTION_MANAGED_HEADER_CLASS_NAME,
   phaseSidebarCustomGroupAccentStyle,
+  // T3-CUSTOM(expbkt3): a nested row's own group chip in Custom mode.
+  phaseSidebarNestedRowShowsCustomGroup,
   phaseSidebarSectionActionsClassName,
   phaseSidebarSectionHeaderClassName,
 } from "./sidebar/PhaseGroupedSidebar.logic";
@@ -1113,7 +1115,11 @@ interface PhaseThreadRowProps {
   // `groupActions` absent = the host cannot store custom groups.
   readonly groupActions?: PhaseThreadRowGroupActions;
   readonly customGroupId?: string | null;
-  /** The group's display label, shown as a chip outside Custom mode only. */
+  /**
+   * The group's display label, shown as a chip outside Custom mode. In Custom
+   * mode only on Running shelf rows and on nested rows filed in another group
+   * than their parent.
+   */
   readonly customGroupLabel?: string | null;
   /** The group's colour (a hex value) from the shared registry, tinting that chip. */
   readonly customGroupColor?: string | null;
@@ -1602,27 +1608,26 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     // T3-CUSTOM(expbkt3): custom groups. Always offered, whichever mode is
     // showing — placing a session is cheap, and the group is waiting when the
     // user switches to Custom.
-    // A nested row is placed with its parent, so offering to move it alone
-    // would show a tick for a group it never appears in.
-    const groupItems =
-      groupActions && treeParentKey == null
-        ? [
-            {
-              id: "move-to-group",
-              label: "Move to group",
-              children: [
-                ...groupActions.groups.map((group) => ({
-                  id: `group:${group.id}`,
-                  label: customGroupId === group.id ? `${group.label} ✓` : group.label,
-                })),
-                ...(customGroupId != null
-                  ? [{ id: "group:none", label: "Remove from group" }]
-                  : []),
-                { id: "group:new", label: "New group…" },
-              ],
-            },
-          ]
-        : [];
+    // Offered on nested rows too. A nested row still renders under its parent
+    // in Custom mode (a subtree is placed by its root), but it now shows its
+    // own group chip when that group differs from its parent's, so the move
+    // visibly took effect. The group also applies when the row is detached.
+    const groupItems = groupActions
+      ? [
+          {
+            id: "move-to-group",
+            label: "Move to group",
+            children: [
+              ...groupActions.groups.map((group) => ({
+                id: `group:${group.id}`,
+                label: customGroupId === group.id ? `${group.label} ✓` : group.label,
+              })),
+              ...(customGroupId != null ? [{ id: "group:none", label: "Remove from group" }] : []),
+              { id: "group:new", label: "New group…" },
+            ],
+          },
+        ]
+      : [];
     // Side-by-side sessions. First in the menu because it is the one item that
     // starts work rather than tidying up after it, and because the whole point
     // is opening a second session without leaving the one you are reading.
@@ -4094,7 +4099,8 @@ export function PhaseGroupedSidebar() {
     // clean while silently leaving every treeXxx prop undefined, which reads as
     // "the feature is off" rather than as a build error.
     tree?: PhaseThreadRowTreeProps,
-    // T3-CUSTOM(expbkt3): Running shelf rows left their group, so they name it.
+    // T3-CUSTOM(expbkt3): Running shelf rows left their group, so they name it,
+    // and so does a nested row filed in another group than its parent.
     showGroup = false,
   ) => {
     const key = scopedThreadKey(scopeThreadRef(row.thread.environmentId, row.thread.id));
@@ -4150,8 +4156,16 @@ export function PhaseGroupedSidebar() {
         // T3-CUSTOM(expbkt3): custom groups.
         {...(groupActions ? { groupActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
+        // T3-CUSTOM(expbkt3): in Custom mode a chip names the group as the
+        // registry spells it (the section header's label), not the row's own spelling.
         customGroupLabel={
-          grouping.groupBy === "custom" && !showGroup ? null : (row.customGroup ?? null)
+          grouping.groupBy !== "custom"
+            ? (row.customGroup ?? null)
+            : showGroup
+              ? (customGroupLabels.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ??
+                row.customGroup ??
+                null)
+              : null
         }
         customGroupColor={customGroupColors.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ?? null}
         linearIssueStatuses={linearStatusesForRow(row)}
@@ -4191,7 +4205,11 @@ export function PhaseGroupedSidebar() {
               aria-label={`Sessions started by ${node.row.thread.title}`}
               className="mt-0.5 space-y-0.5 border-l border-sidebar-border pl-1"
             >
-              {node.children.map((child) => renderTreeNode(child))}
+              {/* T3-CUSTOM(expbkt3): a child filed in another group than its
+                  parent names that group, since it renders in the parent's section. */}
+              {node.children.map((child) =>
+                renderTreeNode(child, phaseSidebarNestedRowShowsCustomGroup(child.row, node.row)),
+              )}
             </ul>
           </li>
         ) : null}

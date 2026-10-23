@@ -287,6 +287,13 @@ thread sees the same group, on every device. To file a thread, open its menu
 and choose **Move to group**, pick an existing group or **New group…**, or
 **Remove from group**.
 
+<!-- T3-CUSTOM(expbkt3): a nested session's own group chip. -->
+
+In Custom mode, a session nested under a parent session stays under that
+parent, in the parent's group. You can still move the nested session to a
+group of its own. When its group differs from its parent's, the row shows a
+chip with its own group's name.
+
 <!-- T3-CUSTOM(expbkt3): XFN-59 shared group registry, colours and header actions. -->
 
 The groups themselves are shared too. Each environment keeps a list of its
