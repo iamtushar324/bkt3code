@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { EventId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -103,7 +103,7 @@ it.effect("imports a v1 transcript on the writer, then reads the session on the 
       // write would fail with "attempt to write a readonly database".
       const first = yield* recordStatements(snapshots.getThreadDetailSnapshot(threadId));
       assert.isTrue(Option.isSome(first.value));
-      const writes = first.statements.filter(({ query }) => /^\s*(INSERT|UPDATE)\b/i.test(query));
+      const writes = first.statements.filter(({ query }) => /\b(INSERT|UPDATE)\b/i.test(query));
       assert.isAbove(writes.length, 0);
       assert.deepEqual([...new Set(writes.map(({ connection }) => connection))], ["writer"]);
 
@@ -114,7 +114,7 @@ it.effect("imports a v1 transcript on the writer, then reads the session on the 
       if (Option.isNone(second.value)) return;
       assert.include(
         second.value.value.thread.activities.map((activity) => activity.id),
-        "activity:legacy",
+        EventId.make("activity:legacy"),
       );
       assert.isTrue(
         second.statements.some(({ query }) =>
