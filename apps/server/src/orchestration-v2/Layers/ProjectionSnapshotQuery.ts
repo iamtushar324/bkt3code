@@ -303,16 +303,21 @@ const make = Effect.gen(function* () {
       wrap(
         Effect.gen(function* () {
           yield* importer.ensureTranscript(threadId);
-          return yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const thread = yield* detail(threadId, false);
-              if (Option.isNone(thread)) return Option.none();
-              return Option.some({
-                snapshotSequence: yield* events.latestApplicationSequence,
-                thread: thread.value,
-              });
-            }),
-          );
+          // The whole-session read takes seconds on a large session: run it on the
+          // SQLite reader worker, off the event loop. The transcript import above can
+          // write, so it stays on the writer, and `detail(threadId, false)` skips it.
+          return yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const thread = yield* detail(threadId, false);
+                if (Option.isNone(thread)) return Option.none();
+                return Option.some({
+                  snapshotSequence: yield* events.latestApplicationSequence,
+                  thread: thread.value,
+                });
+              }),
+            )
+            .pipe(NodeSqliteClient.readOnly);
         }),
       ),
     getThreadRuntimeContext: (threadId) =>
