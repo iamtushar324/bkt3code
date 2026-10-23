@@ -4156,8 +4156,16 @@ export function PhaseGroupedSidebar() {
         // T3-CUSTOM(expbkt3): custom groups.
         {...(groupActions ? { groupActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
+        // T3-CUSTOM(expbkt3): in Custom mode a chip names the group as the
+        // registry spells it (the section header's label), not the row's own spelling.
         customGroupLabel={
-          grouping.groupBy === "custom" && !showGroup ? null : (row.customGroup ?? null)
+          grouping.groupBy !== "custom"
+            ? (row.customGroup ?? null)
+            : showGroup
+              ? (customGroupLabels.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ??
+                row.customGroup ??
+                null)
+              : null
         }
         customGroupColor={customGroupColors.get(phaseSidebarCustomGroupIdForRow(row) ?? "") ?? null}
         linearIssueStatuses={linearStatusesForRow(row)}

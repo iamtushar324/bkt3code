@@ -2188,6 +2188,18 @@ describe("phaseSidebarNestedRowShowsCustomGroup", () => {
     ).toBe(false);
   });
 
+  it("compares groups after trimming whitespace and folding case", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: "  Today " }, { customGroup: "today" }),
+    ).toBe(false);
+  });
+
+  it("hides the chip when neither the child nor its parent has a group", () => {
+    expect(
+      phaseSidebarNestedRowShowsCustomGroup({ customGroup: null }, { customGroup: null }),
+    ).toBe(false);
+  });
+
   it("hides the chip when the child has no group", () => {
     expect(
       phaseSidebarNestedRowShowsCustomGroup({ customGroup: null }, { customGroup: "Today" }),
