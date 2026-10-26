@@ -90,6 +90,14 @@ export interface ThreadCommentsServiceShape {
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadComment>, ThreadCommentsError>;
   /**
+   * One read for a turn start: the unsent open comments (`openForDelivery`)
+   * and the open ones the agent already got but has not marked addressed,
+   * which only earn a short reminder. Both are empty while paused.
+   */
+  readonly deliveryState: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ThreadCommentsDeliveryState, ThreadCommentsError>;
+  /**
    * Records that these comments went to the agent with a turn. A comment that
    * changed after it was read (its `updatedAt` moved) stays unsent.
    */
@@ -108,6 +116,11 @@ export interface ThreadCommentsServiceShape {
   readonly watch: (
     threadId: ThreadId,
   ) => Stream.Stream<ThreadCommentsSnapshot, ThreadCommentsError>;
+}
+
+export interface ThreadCommentsDeliveryState {
+  readonly unsent: ReadonlyArray<ThreadComment>;
+  readonly alreadySent: ReadonlyArray<ThreadComment>;
 }
 
 export class ThreadCommentsService extends Context.Service<
@@ -367,17 +380,25 @@ export const make = Effect.gen(function* () {
     return updated;
   });
 
-  const openForDelivery: ThreadCommentsServiceShape["openForDelivery"] = Effect.fn(
-    "ThreadCommentsService.openForDelivery",
+  const deliveryState: ThreadCommentsServiceShape["deliveryState"] = Effect.fn(
+    "ThreadCommentsService.deliveryState",
   )(
     function* (threadId: ThreadId) {
       const settings = yield* repository.getSettings(threadId);
-      if (settings.deliveryPaused) return [];
+      if (settings.deliveryPaused) return { unsent: [], alreadySent: [] };
       const comments = yield* repository.listForThread(threadId);
-      return comments.filter(isThreadCommentUnsent);
+      return {
+        unsent: comments.filter(isThreadCommentUnsent),
+        alreadySent: comments.filter(
+          (comment) => comment.status === "open" && !isThreadCommentUnsent(comment),
+        ),
+      } satisfies ThreadCommentsDeliveryState;
     },
-    Effect.mapError(internal("openForDelivery")),
+    Effect.mapError(internal("deliveryState")),
   );
+
+  const openForDelivery: ThreadCommentsServiceShape["openForDelivery"] = (threadId) =>
+    Effect.map(deliveryState(threadId), (state) => state.unsent);
 
   const markSent: ThreadCommentsServiceShape["markSent"] = Effect.fn(
     "ThreadCommentsService.markSent",
@@ -426,6 +447,7 @@ export const make = Effect.gen(function* () {
     setDeliveryPaused,
     agentReply,
     openForDelivery,
+    deliveryState,
     markSent,
     resend,
     watch,

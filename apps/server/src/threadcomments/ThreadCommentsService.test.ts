@@ -313,6 +313,49 @@ describe("ThreadCommentsService", () => {
     ),
   );
 
+  // T3-CUSTOM(expbkt3): sent but still open comments earn a reminder on every turn.
+  it.effect("deliveryState splits unsent from already-sent open comments", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        yield* service.add({ threadId, kind: "comment", anchor: anchor(), body: "a", ...actor });
+        const sent = yield* service.openForDelivery(threadId);
+        yield* service.markSent({ threadId, comments: sent });
+        const added = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "b",
+          ...actor,
+        });
+        const done = yield* service.add({
+          threadId,
+          kind: "comment",
+          anchor: anchor(),
+          body: "c",
+          ...actor,
+        });
+        yield* service.markSent({ threadId, comments: [done.comments[2]!] });
+        // Addressed by the agent: waits on the user, so no reminder.
+        yield* service.agentReply({
+          threadId,
+          commentId: done.comments[2]!.commentId,
+          addressed: true,
+        });
+
+        const state = yield* service.deliveryState(threadId);
+        expect(state.unsent.map((comment) => comment.commentId)).toEqual([
+          added.comments[1]!.commentId,
+        ]);
+        expect(state.alreadySent.map((comment) => comment.commentId)).toEqual([
+          sent[0]!.commentId,
+        ]);
+
+        yield* service.setDeliveryPaused({ threadId, paused: true });
+        expect(yield* service.deliveryState(threadId)).toEqual({ unsent: [], alreadySent: [] });
+      }),
+    ),
+  );
+
   it.effect("openForDelivery returns open comments only, and nothing while paused", () =>
     withService((service) =>
       Effect.gen(function* () {
