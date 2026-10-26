@@ -346,9 +346,7 @@ describe("ThreadCommentsService", () => {
         expect(state.unsent.map((comment) => comment.commentId)).toEqual([
           added.comments[1]!.commentId,
         ]);
-        expect(state.alreadySent.map((comment) => comment.commentId)).toEqual([
-          sent[0]!.commentId,
-        ]);
+        expect(state.alreadySent.map((comment) => comment.commentId)).toEqual([sent[0]!.commentId]);
 
         yield* service.setDeliveryPaused({ threadId, paused: true });
         expect(yield* service.deliveryState(threadId)).toEqual({ unsent: [], alreadySent: [] });
