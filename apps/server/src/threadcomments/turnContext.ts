@@ -4,8 +4,10 @@
  *
  * Each open comment goes with the next provider turn once, and is then marked
  * sent; it goes again only after the user edits, replies to or reopens it, or
- * asks for a re-send. The agent answers through `t3_reply_comment`, and the
- * user resolves. The reactor calls
+ * asks for a re-send. While a sent comment stays open (the agent has not marked
+ * it addressed), every later turn carries a short reminder that names it
+ * instead of the full block. The agent answers through `t3_reply_comment`, and
+ * the user resolves. The reactor calls
  * `appendOpenThreadComments` from one marked seam; everything else here is
  * fork-owned, and nothing in this module can fail a turn — a broken read or a
  * block that does not fit logs and falls back to the user's text.
@@ -29,16 +31,18 @@ const QUOTE_MAX_CHARS = 1_500;
 /** Bodies and replies can be 8k each; the agent only needs the gist. */
 const TEXT_MAX_CHARS = 2_000;
 const REPLIES_SHOWN = 3;
+/** The reminder names comments by number; past this it only counts the rest. */
+const REMINDER_NUMBERS_SHOWN = 20;
 
 const INSTRUCTIONS =
-  "You received review comments on your earlier messages in this session, listed below. Treat this as review work: for each comment, either make the change it asks for or answer it. Then call t3_reply_comment with that comment's id and a short reply that says what you did; pass addressed=true when it is done. Do not skip a comment. If a comment is unclear, reply with your question instead of guessing. Reply to every comment before you end your turn. Each comment is sent to you once; the user resolves comments, or sends them again if they are still open.";
+  "You received review comments on your earlier messages in this session, listed below. Treat this as review work: for each comment, either make the change it asks for or answer it. Then call t3_reply_comment with that comment's id and a short reply that says what you did; pass addressed=true when it is done. Do not skip a comment. If a comment is unclear, reply with your question instead of guessing. Reply to every comment before you end your turn. Each comment is sent to you in full once, and later turns remind you of the ones still open; the user resolves comments, or sends them again in full.";
 
 /**
  * Only the block's own tags are defused, by swapping their `<` for `‹`: a
  * quote of code or HTML must arrive as the agent wrote it, not as entities.
  */
 const OWN_TAG_OPENER =
-  /<(?=\/?(?:open_chat_comments|chat_comment|earlier_replies|quote|comment|reply)\b)/gi;
+  /<(?=\/?(?:open_chat_comments_reminder|open_chat_comments|chat_comment|earlier_replies|quote|comment|reply)\b)/gi;
 
 export function neutralizeOwnTags(text: string): string {
   return text.replace(OWN_TAG_OPENER, "‹");
@@ -118,6 +122,30 @@ function renderOpenThreadComments(
   return block.length <= maxChars ? { block, kept: comments.slice(omitted) } : null;
 }
 
+/**
+ * The short nudge for open comments the agent already received in full: it
+ * names them by number and points at `t3_list_comments` instead of repeating
+ * their text, so it stays a few hundred characters on every turn.
+ */
+export function formatOpenThreadCommentsReminder(
+  comments: ReadonlyArray<ThreadComment>,
+  options: { readonly alongsideNewComments?: boolean } = {},
+): string | null {
+  if (comments.length === 0) return null;
+  const shown = comments.slice(0, REMINDER_NUMBERS_SHOWN).map((comment) => `#${comment.number}`);
+  const more = comments.length - shown.length;
+  const numbers = `${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
+  const single = comments.length === 1;
+  const noun = single ? "review comment is" : "review comments are";
+  const them = single ? "it" : "them";
+  const alongside = options.alongsideNewComments ? ", in addition to the new comments above" : "";
+  return [
+    `<open_chat_comments_reminder count=${attribute(comments.length)}>`,
+    `Reminder: ${comments.length} ${noun} still open in this session: ${numbers}. You received ${them} in an earlier turn${alongside}. Keep working toward resolving ${them} along with this message: make the change each one asks for, or answer it, then call t3_reply_comment with its id and addressed=true. Call t3_list_comments to read them again. If you already replied and wait for the user's answer, do not reply again.`,
+    "</open_chat_comments_reminder>",
+  ].join("\n");
+}
+
 /** A send while a real turn is running steers that turn rather than starting one. */
 function isSteeringRunningTurn(
   session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null | undefined,
@@ -137,11 +165,12 @@ export interface PreparedThreadComments {
 }
 
 /**
- * The user's text with the thread's unsent open comments appended, or the text
- * unchanged when there is nothing to add, the message steers a running turn
- * (the block already went out with that turn), the service is not wired
- * (isolated upstream reactor tests), the block would not fit the provider's
- * input limit, or the read fails.
+ * The user's text with the thread's unsent open comments appended, followed by
+ * a short reminder of the open comments already sent. The text stays unchanged
+ * when nothing is open, the message steers a running turn (the block already
+ * went out with that turn), the service is not wired (isolated upstream
+ * reactor tests), nothing fits the provider's input limit, or the read fails.
+ * When the full block does not fit, the reminder still goes if it fits.
  */
 export const prepareOpenThreadComments = (
   threadId: ThreadId,
@@ -153,35 +182,40 @@ export const prepareOpenThreadComments = (
     const service = yield* Effect.serviceOption(ThreadCommentsService);
     if (Option.isNone(service)) return unchanged;
     if (isSteeringRunningTurn(session)) return unchanged;
-    const comments = yield* service.value.openForDelivery(threadId);
-    if (comments.length === 0) return unchanged;
+    const { unsent, alreadySent } = yield* service.value.deliveryState(threadId);
+    if (unsent.length === 0 && alreadySent.length === 0) return unchanged;
 
     const separator = text.length === 0 ? "" : "\n\n";
     const room = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - text.length - separator.length;
+    const reminder = formatOpenThreadCommentsReminder(alreadySent, {
+      alongsideNewComments: unsent.length > 0,
+    });
+    const reminderRoom = reminder === null ? 0 : reminder.length + 1;
     const rendered =
-      room > 0
-        ? renderOpenThreadComments(comments, {
-            maxChars: Math.min(OPEN_THREAD_COMMENTS_MAX_CHARS, room),
+      unsent.length > 0 && room - reminderRoom > 0
+        ? renderOpenThreadComments(unsent, {
+            maxChars: Math.min(OPEN_THREAD_COMMENTS_MAX_CHARS, room - reminderRoom),
           })
         : null;
-    const result = rendered === null ? null : `${text}${separator}${rendered.block}`;
-    if (
-      rendered === null ||
-      result === null ||
-      result.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
-    ) {
+    const appended = [rendered?.block ?? null, reminder]
+      .filter((part): part is string => part !== null)
+      .join("\n");
+    if (unsent.length > 0 && rendered === null) {
       yield* Effect.logWarning("thread comments skipped: no room left in the turn input", {
         threadId,
-        openComments: comments.length,
+        openComments: unsent.length,
         textLength: text.length,
       });
-      return unchanged;
     }
+    if (appended.length === 0 || appended.length > room) return unchanged;
     yield* Effect.logInfo("thread comments appended to turn input", {
       threadId,
-      openComments: comments.length,
-      blockLength: rendered.block.length,
+      openComments: rendered?.kept.length ?? 0,
+      remindedComments: alreadySent.length,
+      blockLength: appended.length,
     });
+    const result = `${text}${separator}${appended}`;
+    if (rendered === null) return { text: result, markSent: Effect.void };
     // Only the comments read here, unchanged since: a reply that lands in
     // between keeps its comment unsent, so the reply still reaches the agent.
     const markSent = service.value.markSent({ threadId, comments: rendered.kept }).pipe(

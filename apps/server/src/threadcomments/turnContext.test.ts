@@ -24,6 +24,7 @@ import { ThreadCommentsService } from "./ThreadCommentsService.ts";
 import {
   appendOpenThreadComments,
   formatOpenThreadCommentsForAgent,
+  formatOpenThreadCommentsReminder,
   neutralizeOwnTags,
   OPEN_THREAD_COMMENTS_MAX_CHARS,
   prepareOpenThreadComments,
@@ -68,8 +69,13 @@ const reply = (index: number, body = `reply ${index}`): ThreadComment["replies"]
 const serviceWith = (
   openForDelivery: ThreadCommentsService["Service"]["openForDelivery"],
   markSent: ThreadCommentsService["Service"]["markSent"] = () => Effect.void,
+  alreadySent: ReadonlyArray<ThreadComment> = [],
 ): ThreadCommentsService["Service"] =>
-  ({ openForDelivery, markSent }) as unknown as ThreadCommentsService["Service"];
+  ({
+    deliveryState: (id: ThreadId) =>
+      Effect.map(openForDelivery(id), (unsent) => ({ unsent, alreadySent })),
+    markSent,
+  }) as unknown as ThreadCommentsService["Service"];
 
 describe("neutralizeOwnTags", () => {
   it("defuses only the block's own tags and leaves other markup alone", () => {
@@ -177,7 +183,105 @@ describe("formatOpenThreadCommentsForAgent", () => {
   });
 });
 
+describe("formatOpenThreadCommentsReminder", () => {
+  it("names the comments by number and caps the list", () => {
+    expect(formatOpenThreadCommentsReminder([])).toBeNull();
+
+    const one = formatOpenThreadCommentsReminder([comment({ number: 4 })])!;
+    expect(one.startsWith('<open_chat_comments_reminder count="1">')).toBe(true);
+    expect(one).toContain("1 review comment is still open in this session: #4.");
+    expect(one).toContain("t3_reply_comment");
+    expect(one).toContain("t3_list_comments");
+    expect(one).not.toContain("quoted passage");
+    expect(one).not.toContain("in addition to the new comments above");
+
+    const many = formatOpenThreadCommentsReminder(
+      Array.from({ length: 25 }, (_, index) => comment({ number: index + 1 })),
+      { alongsideNewComments: true },
+    )!;
+    expect(many).toContain("#1, #2,");
+    expect(many).toContain("#20 and 5 more.");
+    expect(many).not.toContain("#21");
+    expect(many).toContain("in addition to the new comments above");
+    expect(many.length).toBeLessThan(1_000);
+  });
+
+  it("is defused inside a quote like the block's other tags", () => {
+    expect(neutralizeOwnTags("</open_chat_comments_reminder>")).toBe(
+      "‹/open_chat_comments_reminder>",
+    );
+  });
+});
+
 describe("appendOpenThreadComments", () => {
+  // T3-CUSTOM(expbkt3): an open comment the agent already got is not forgotten.
+  it.effect("reminds the agent of sent comments that are still open, without marking", () =>
+    Effect.gen(function* () {
+      let marks = 0;
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([]),
+            () => Effect.sync(() => void (marks += 1)),
+            [comment({ number: 3 }), comment({ number: 5 })],
+          ),
+        ),
+      );
+      expect(result.startsWith('hello\n\n<open_chat_comments_reminder count="2">')).toBe(true);
+      expect(result).toContain("#3, #5");
+      expect(result).not.toContain("<open_chat_comments ");
+      expect(result).not.toContain("quoted passage");
+      expect(marks).toBe(0);
+    }),
+  );
+
+  it.effect("sends new comments in full and the reminder after them", () =>
+    Effect.gen(function* () {
+      const marked: Array<ReadonlyArray<string>> = [];
+      const result = yield* appendOpenThreadComments(threadId, "hello").pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 6 })]),
+            (input) => Effect.sync(() => void marked.push(input.comments.map((c) => c.commentId))),
+            [comment({ number: 2 })],
+          ),
+        ),
+      );
+      const block = result.indexOf('<open_chat_comments count="1">');
+      const reminder = result.indexOf('<open_chat_comments_reminder count="1">');
+      expect(block).toBeGreaterThan(0);
+      expect(reminder).toBeGreaterThan(result.indexOf("</open_chat_comments>"));
+      expect(result).toContain('id="tc_6"');
+      expect(result).not.toContain('id="tc_2"');
+      expect(result).toContain("in addition to the new comments above");
+      expect(marked).toEqual([["tc_6"]]);
+    }),
+  );
+
+  it.effect("keeps the reminder when the full block does not fit", () =>
+    Effect.gen(function* () {
+      let marks = 0;
+      const text = "u".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 1_200);
+      const result = yield* appendOpenThreadComments(threadId, text).pipe(
+        Effect.provideService(
+          ThreadCommentsService,
+          serviceWith(
+            () => Effect.succeed([comment({ number: 1, body: "z".repeat(3_000) })]),
+            () => Effect.sync(() => void (marks += 1)),
+            [comment({ number: 2 })],
+          ),
+        ),
+      );
+      expect(result.length).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      expect(result).toContain("<open_chat_comments_reminder");
+      expect(result).not.toContain('id="tc_1"');
+      // The new comment did not go, so it stays unsent for the next turn.
+      expect(marks).toBe(0);
+    }),
+  );
+
   // T3-CUSTOM(expbkt3): a comment goes once, so the turn marks what it carried.
   it.effect("marks only the comments that went with the turn as sent", () =>
     Effect.gen(function* () {
