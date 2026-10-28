@@ -814,6 +814,14 @@ const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
 
 type SessionLifecycleAction = Tool.Parameters<typeof T3SessionActionTool>["action"];
 
+interface SessionLifecycleInput {
+  readonly operation: string;
+  readonly sessionId: ThreadId;
+  readonly action: SessionLifecycleAction;
+  readonly snoozedUntil?: string | undefined;
+  readonly commandId?: CommandId | undefined;
+}
+
 /**
  * One lifecycle action on a session the caller already resolved and may
  * change: the control toolkit's t3_session_action and the agent toolkit's
@@ -823,13 +831,7 @@ type SessionLifecycleAction = Tool.Parameters<typeof T3SessionActionTool>["actio
  * its own `commandId` (a retry with the same id is then the same command).
  */
 export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecycle")(function* (
-  input: {
-    readonly operation: string;
-    readonly sessionId: ThreadId;
-    readonly action: SessionLifecycleAction;
-    readonly snoozedUntil?: string | undefined;
-    readonly commandId?: CommandId | undefined;
-  },
+  input: SessionLifecycleInput,
 ) {
   const { operation, sessionId } = input;
   const query = yield* ProjectionSnapshotQuery;

@@ -53,6 +53,10 @@ const withInvocation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provideService(McpSchema.McpServerClient, client),
   );
 
+interface ListedTools {
+  readonly tools: ReadonlyArray<ListedTool>;
+}
+
 interface ListedTool {
   readonly name: string;
   readonly description: string;
@@ -68,7 +72,7 @@ it.effect("lists compact entries with a description and required fields", () =>
         server.callTool({ name: "t3_ui_list_tools", arguments: { query: "read_file" } }),
       );
       expect(listed.isError).toBe(false);
-      const tools = (listed.structuredContent as { tools: ReadonlyArray<ListedTool> }).tools;
+      const tools = (listed.structuredContent as unknown as ListedTools).tools;
       const readFile = tools.find((tool) => tool.name === "t3_ui_projects_read_file");
       expect(readFile?.description).toBe("Read a file in a project.");
       expect(readFile?.requiredFields).toEqual(expect.arrayContaining(["cwd", "relativePath"]));
@@ -89,7 +93,7 @@ it.effect("returns the input schema of named tools, so no t3_ui_get_tool call is
         }),
       );
       expect(listed.isError).toBe(false);
-      const [tool] = (listed.structuredContent as { tools: ReadonlyArray<ListedTool> }).tools;
+      const [tool] = (listed.structuredContent as unknown as ListedTools).tools;
       expect(tool?.name).toBe("t3_ui_projects_read_file");
       expect(JSON.stringify(tool?.inputSchema)).toContain("relativePath");
     }),
