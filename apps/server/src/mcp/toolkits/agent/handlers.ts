@@ -33,7 +33,7 @@ import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { assertTargetWithinLimits, dispatchFailure, type Caller } from "../../threadAccess.ts";
-import { createSession } from "../control/handlers.ts";
+import { createSession, runSessionLifecycle } from "../control/handlers.ts";
 import { buildAnswers } from "./answers.ts";
 import {
   fail,
@@ -83,6 +83,7 @@ import {
   type InboxTool,
   type SendMessageTool,
   type SessionBriefTool,
+  type SessionLifecycleTool,
   type StartSessionTool,
   type WaitTool,
   type WhoamiTool,
@@ -1258,6 +1259,9 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
   const outcomeLines =
     shell === null || input.waitFor !== "first-reply" ? [] : yield* firstOutcome(caller, shell);
   const lines = [
+    // TEC-1819: the full id comes first, so a client that cut the call short
+    // still has what it needs to find the session.
+    `Session id: ${newId}`,
     `## ${existing !== null ? "Already started" : "Started"}: \`${ref}\` ${shell?.title ?? input.title ?? oneLine(prompt, 80)}`,
     `- Project ${project.title} · ${created?.workspace === undefined ? (shell?.worktreePath ?? project.workspaceRoot) : `${created.workspace.mode}${"path" in created.workspace && created.workspace.path !== undefined ? ` at ${created.workspace.path}` : ""}`}`,
     ...(shell === null
@@ -1266,7 +1270,6 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
           `- Model ${shell.modelSelection.model} · mode ${shell.interactionMode === "plan" ? "plan" : "build"} · ${sessionActivity(shell, context?.nowMs ?? nowMs)}`,
         ]),
     ...(context?.link === null || context === null ? [] : [`- Link: ${context.link}`]),
-    `- Id ${newId}`,
     ...(waitNote === null ? [] : ["", waitNote]),
     ...(outcomeLines.length === 0 ? [] : ["", ...outcomeLines]),
     "",
@@ -1379,6 +1382,70 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
       runId: sent.run.id,
       runStatus: sent.run.status,
       messageId: sent.message.id,
+    },
+  );
+});
+
+// TEC-1819: lifecycle actions for agents on the OAuth tool list, which does
+// not include the control toolkit's t3_session_action. Same logic, one call.
+const LIFECYCLE_DONE: Readonly<Record<string, string>> = {
+  archive: "Archived",
+  unarchive: "Unarchived",
+  stop: "Stopped",
+  snooze: "Snoozed",
+  unsnooze: "Unsnoozed",
+  delete: "Deleted",
+};
+
+const sessionLifecycle = Effect.fn("agentToolkit.sessionLifecycle")(function* (
+  input: Tool.Parameters<typeof SessionLifecycleTool>,
+) {
+  const caller = yield* loadAgentCaller("t3.control");
+  const nowMs = yield* Clock.currentTimeMillis;
+  // An exact id reads archived sessions too, so unarchive finds its target.
+  const shell = yield* resolveSession({ caller, ref: input.session, nowMs });
+  const ref = shortRef(shell.id);
+  if (input.action === "snooze" && (input.snoozedUntil ?? "").trim().length === 0) {
+    return yield* fail(
+      "snoozed_until_required",
+      "Pass snoozedUntil (an ISO-8601 time, for example 2026-11-02T09:00:00.000Z) with action snooze.",
+    );
+  }
+  yield* assertTargetWithinLimits(caller.limits, shell);
+  const commandId = yield* commandIdFor(
+    caller.scope,
+    `lifecycle-${input.action}`,
+    shell.id,
+    input.clientRequestId,
+  );
+  const outcome = yield* runSessionLifecycle({
+    operation: `session-${input.action}`,
+    sessionId: shell.id,
+    action: input.action,
+    snoozedUntil: input.snoozedUntil,
+    commandId,
+  }).pipe(
+    Effect.mapError((error) => fail("lifecycle_failed", error.message)),
+    withModeLimit(caller),
+  );
+  const heading = outcome.changed
+    ? `## ${LIFECYCLE_DONE[input.action] ?? input.action}: \`${ref}\` ${shell.title}`
+    : `## Nothing to do: \`${ref}\` ${shell.title}`;
+  return result(
+    [
+      `Session id: ${shell.id}`,
+      heading,
+      ...("message" in outcome ? [outcome.message] : []),
+      ...(input.action === "archive"
+        ? [`Undo: ${callHint("t3_session_lifecycle", { session: ref, action: "unarchive" })}.`]
+        : []),
+    ].join("\n"),
+    {
+      sessionId: shell.id,
+      ref,
+      action: input.action,
+      changed: outcome.changed,
+      ...("sequence" in outcome ? { sequence: outcome.sequence } : {}),
     },
   );
 });
@@ -1517,6 +1584,7 @@ export const AgentToolkitHandlers = McpToolAccess.toLayer(AgentToolkit, {
     startSession,
   ),
   t3_send_message: McpToolAccess.writes(sendMessage),
+  t3_session_lifecycle: McpToolAccess.writes(sessionLifecycle),
   t3_wait: McpToolAccess.reads(wait),
   // Creating may start sessions on each run, at modes no broader than the caller's.
   t3_schedule: McpToolAccess.startsThreads(
@@ -1535,5 +1603,6 @@ export const __testing = {
   brief,
   startSession,
   sendMessage,
+  sessionLifecycle,
   wait,
 };

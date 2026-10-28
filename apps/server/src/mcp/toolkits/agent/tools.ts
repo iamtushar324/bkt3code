@@ -291,7 +291,7 @@ export const SessionBriefTool = readOnly(
 export const StartSessionTool = changing(
   Tool.make("t3_start_session", {
     description:
-      "Start a new session with a first message, in one call. Name the project by name, path or id, and the model by alias (opus, sonnet, haiku, codex, or any model name or id from the server's catalog). Omitted settings follow the project's saved new-session defaults. Set waitFor: first-reply to wait for the agent's first answer or question. With clientRequestId, a retry returns the same session.",
+      "Start a new session with a first message, in one call. Name the project by name, path or id, and the model by alias (opus, sonnet, haiku, codex, or any model name or id from the server's catalog). Omitted settings follow the project's saved new-session defaults. Set waitFor: first-reply to wait for the agent's first answer or question (keep timeoutSeconds at 50 or less). Always pass clientRequestId: if the call fails or times out, retry with the same id and it returns the same session. The result starts with the full session id.",
     parameters: Schema.Struct({
       project: described(Schema.String, "The project: its name, path or id."),
       prompt: described(Schema.String, "The first message: the outcome you want and its limits."),
@@ -339,7 +339,7 @@ export const StartSessionTool = changing(
       timeoutSeconds: Schema.optional(
         described(
           Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
-          "For waitFor: first-reply, the longest wait. Defaults to 50; most clients stop a call after 60 seconds.",
+          "For waitFor: first-reply, the longest wait. Defaults to 50. Keep it at 50 or less: most clients stop a call after 60 seconds, and the session may have started anyway. If your client reports a failure or timeout, call again with the same clientRequestId; it returns the session that started instead of a second one.",
         ),
       ),
       clientRequestId: Schema.optional(
@@ -613,6 +613,38 @@ export const NotifyMeTool = changing(
   }).annotate(Tool.Title, "Notify me when a session changes"),
 );
 
+// Destructive: delete removes a session for good, so clients that run
+// non-destructive tools without asking still ask (TEC-1819).
+export const SessionLifecycleTool = destructive(
+  Tool.make("t3_session_lifecycle", {
+    description:
+      "Archive, unarchive, stop, snooze, unsnooze or delete a session. archive and unarchive are safe to retry: a session already in that state returns success with nothing changed. stop ends the session's provider process; snooze hides it until snoozedUntil. delete is DESTRUCTIVE and cannot be undone: it removes the session and its history; prefer archive. With clientRequestId, a retry does not act twice.",
+    parameters: Schema.Struct({
+      session: sessionRef(SESSION_REF_HELP),
+      action: described(
+        Schema.Literals(["archive", "unarchive", "stop", "snooze", "unsnooze", "delete"]),
+        "archive, unarchive, stop, snooze (needs snoozedUntil), unsnooze, or delete (destructive, cannot be undone).",
+      ),
+      snoozedUntil: Schema.optional(
+        described(
+          Schema.String,
+          "For snooze: the ISO-8601 wake time, for example 2026-11-02T09:00:00.000Z.",
+        ),
+      ),
+      clientRequestId: Schema.optional(
+        described(
+          Schema.String,
+          "Your own id for this action, so a retry with the same id does not act twice.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [...dependencies, ProjectionSnapshotQuery, TurnStartBootstrap],
+  }).annotate(Tool.Title, "Archive, stop, snooze or delete a session"),
+);
+
 export const AgentToolkit = Toolkit.make(
   WhoamiTool,
   InboxTool,
@@ -621,6 +653,7 @@ export const AgentToolkit = Toolkit.make(
   SessionBriefTool,
   StartSessionTool,
   SendMessageTool,
+  SessionLifecycleTool,
   WaitTool,
   ScheduleTool,
   SchedulesTool,

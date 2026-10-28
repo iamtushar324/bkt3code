@@ -11,8 +11,9 @@ export const MCP_SERVER_INSTRUCTIONS = [
   "- t3_start_session and t3_send_message: start work, or send to a session.",
   "- t3_wait: wait for the next question, approval, finish or failure with a cursor. Do not poll t3_inbox.",
   '- t3_schedule and t3_schedules: send a prompt later or on a clock (in "30m", every "2h", daily "09:00"), into your own session, another one, or a new session each run.',
+  "- t3_session_lifecycle: archive, unarchive, stop, snooze or delete a session. Archive is safe to retry; delete cannot be undone.",
   "- t3_notify_me: get one message in your session when another session waits on a person, finishes or fails. Do not tail transcripts or poll.",
   "Name a session by its id, the first 8 characters of its id, a T3 link, a Linear key, a pull request URL or its title. Inside a session, omit it to mean your own.",
   'Results are short Markdown that ends with the next call; pass format: "json" for data. Pass clientRequestId on writes so a retry does not act twice.',
-  "For anything these do not cover, t3_ui_list_tools and t3_ui_call reach every action of the web app.",
+  "For anything these do not cover, t3_ui_list_tools (pass tools: [name] for its input schema) and t3_ui_call reach every action of the web app.",
 ].join("\n");
