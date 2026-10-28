@@ -716,39 +716,46 @@ const moveGroupSessions = Effect.fn("T3ControlToolkit.moveGroupSessions")(functi
 });
 // T3-CUSTOM(expbkt3): END
 
-// T3-CUSTOM(expbkt3): t3_list_sessions paging (TEC-1818). The cursor is
-// opaque to callers: base64url JSON of the next offset and the last session it
-// returned. The next page starts after that session when it has not changed
-// since, so a session that moved to the front does not shift the page; else
-// it falls back to the offset.
+// T3-CUSTOM(expbkt3): t3_list_sessions paging (TEC-1818). Sessions are
+// ordered newest change first, then by id, so the order is total. The cursor
+// is opaque to callers: base64url JSON of the last session's sort key. The
+// next page holds the sessions strictly after that key, so a deleted or moved
+// session neither skips nor repeats the others.
 interface ListSessionsCursor {
-  readonly offset: number;
-  readonly id: string;
   readonly updatedAt: string;
+  readonly id: string;
 }
 
-const encodeListSessionsCursor = (cursor: ListSessionsCursor): string =>
-  Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+function compareListedSessions(left: ListSessionsCursor, right: ListSessionsCursor): number {
+  if (left.updatedAt !== right.updatedAt) return left.updatedAt > right.updatedAt ? -1 : 1;
+  if (left.id === right.id) return 0;
+  return left.id < right.id ? -1 : 1;
+}
+
+function encodeListSessionsCursor(cursor: ListSessionsCursor): string {
+  const json = JSON.stringify({ updatedAt: cursor.updatedAt, id: cursor.id });
+  return Buffer.from(json, "utf8").toString("base64url");
+}
 
 const decodeListSessionsCursor = (value: string): ListSessionsCursor | null => {
   try {
     const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (typeof parsed !== "object" || parsed === null) return null;
-    const { offset, id, updatedAt } = parsed as Record<string, unknown>;
-    if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) return null;
-    if (typeof id !== "string" || typeof updatedAt !== "string") return null;
-    return { offset, id, updatedAt };
+    const { updatedAt, id } = parsed as Record<string, unknown>;
+    if (typeof updatedAt !== "string" || typeof id !== "string") return null;
+    return { updatedAt, id };
   } catch {
     return null;
   }
 };
 
-const listSessionsPageStart = (
+/** The sessions after the cursor's key, in the list order. */
+const listSessionsAfterCursor = <T extends ListSessionsCursor>(
   operation: string,
-  ordered: ReadonlyArray<{ readonly id: string; readonly updatedAt: string }>,
+  ordered: ReadonlyArray<T>,
   value: string | undefined,
-): Effect.Effect<number, T3ControlToolError> => {
-  if (value === undefined || value.trim().length === 0) return Effect.succeed(0);
+): Effect.Effect<ReadonlyArray<T>, T3ControlToolError> => {
+  if (value === undefined || value.trim().length === 0) return Effect.succeed(ordered);
   const cursor = decodeListSessionsCursor(value.trim());
   if (cursor === null) {
     return Effect.fail(
@@ -759,10 +766,7 @@ const listSessionsPageStart = (
       }),
     );
   }
-  const anchor = ordered.findIndex((thread) => thread.id === cursor.id);
-  return Effect.succeed(
-    anchor >= 0 && ordered[anchor]?.updatedAt === cursor.updatedAt ? anchor + 1 : cursor.offset,
-  );
+  return Effect.succeed(ordered.filter((thread) => compareListedSessions(thread, cursor) > 0));
 };
 // T3-CUSTOM(expbkt3): END
 
@@ -1120,11 +1124,12 @@ const handlers = {
       )
       // T3-CUSTOM(expbkt3): custom sidebar group facet.
       .filter((thread) => matchesCustomGroupFilter(thread, input.customGroup))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      // T3-CUSTOM(expbkt3): ties broken by id, so cursor pages are stable (TEC-1818).
+      .sort(compareListedSessions);
     // T3-CUSTOM(expbkt3): cursor paging and compact Linear tags (TEC-1818).
-    const start = yield* listSessionsPageStart(operation, selected, input.cursor);
+    const remaining = yield* listSessionsAfterCursor(operation, selected, input.cursor);
     const limit = boundedLimit(input.limit, 100, 500);
-    const page = selected.slice(start, start + limit);
+    const page = remaining.slice(0, limit);
     const summaries = page.map((thread) => {
       const summary = sessionSummary(thread, projects.get(thread.projectId));
       if (input.detail === "full") return summary;
@@ -1140,13 +1145,9 @@ const handlers = {
       },
       sessions: summaries,
       nextCursor:
-        last === undefined || start + page.length >= selected.length
+        last === undefined || page.length >= remaining.length
           ? null
-          : encodeListSessionsCursor({
-              offset: start + page.length,
-              id: last.id,
-              updatedAt: last.updatedAt,
-            }),
+          : encodeListSessionsCursor(last),
     };
     // T3-CUSTOM(expbkt3): END
   }),

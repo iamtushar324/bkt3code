@@ -73,6 +73,7 @@ import {
   sessionActivity,
   sessionHeading,
   sessionTagsData,
+  waitAgainHint,
   type InboxEntry,
   type SessionContext,
   type SessionDetail,
@@ -1418,6 +1419,8 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_WAIT_SECONDS;
   let sessions: VisibleSessions | undefined;
   let threadIds: Set<string> | null = null;
+  // The resolved full ids, for the hints that keep waiting (TEC-1818).
+  let waitIds: ReadonlyArray<string> | null = null;
   if (input.sessions !== undefined && input.sessions.length > 0) {
     // One snapshot for every reference that is not an exact id.
     if (input.sessions.length > 1) {
@@ -1428,6 +1431,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
       resolved.push(yield* resolveSession({ caller, ref, nowMs, sessions }));
     }
     threadIds = new Set(resolved.map((shell) => shell.id));
+    waitIds = [...threadIds];
   }
   let after: number;
   if (input.cursor !== undefined) {
@@ -1463,7 +1467,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
     return result(
       [
         `## No change in ${timeoutSeconds}s`,
-        `Call ${callHint("t3_wait", { ...(input.sessions === undefined ? {} : { sessions: input.sessions }), cursor })} to keep waiting.`,
+        `Call ${waitAgainHint(waitIds, cursor)} to keep waiting.`,
       ].join("\n"),
       { timedOut: true, cursor },
     );
@@ -1504,7 +1508,7 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
       : []),
     ...(reply === null ? [] : [`   Last reply: ${oneLine(reply, 400)}`]),
     ...(context.link === null ? [] : [`   Link: ${context.link}`]),
-    `Next: ${callHint("t3_wait", { ...(input.sessions === undefined ? {} : { sessions: input.sessions }), cursor })} to keep watching.`,
+    `Next: ${waitAgainHint(waitIds, cursor)} to keep watching.`,
   ];
   return result(lines.join("\n"), {
     timedOut: false,

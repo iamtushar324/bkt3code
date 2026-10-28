@@ -110,6 +110,14 @@ export const sessionTagsData = (shell: SessionShell, detail: SessionDetail | und
       };
 };
 
+/**
+ * The t3_wait call that keeps waiting. It names the resolved full session ids,
+ * never the caller's own references: a short ref can match a sibling session
+ * that appears later (TEC-1818).
+ */
+export const waitAgainHint = (sessionIds: ReadonlyArray<string> | null, cursor: string): string =>
+  callHint("t3_wait", { ...(sessionIds === null ? {} : { sessions: sessionIds }), cursor });
+
 /** The bold header of one session: short id, title, project, tags, link. */
 export const sessionHeading = (shell: SessionShell, context: SessionContext): string =>
   [

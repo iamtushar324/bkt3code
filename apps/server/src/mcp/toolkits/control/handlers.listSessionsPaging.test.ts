@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): TEC-1818. t3_list_sessions pages with an opaque cursor
-// in its newest-change-first order, and drops each session's linearLinks list
-// to a count unless detail is "full".
+// in its newest-change-first order (ties by id), resumes strictly after the
+// last session it returned, and drops each session's linearLinks list to a
+// count unless detail is "full".
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -40,7 +41,7 @@ const accessControl = OrchestrationAccessControl.of({
 
 const ISSUE = "https://linear.app/beknown/issue/TEC-1818/compact";
 
-function makeThread(index: number, updatedSecond: number) {
+function makeThread(index: number | string, updatedSecond: number) {
   return {
     id: ThreadId.make(`thread-${index}`),
     projectId,
@@ -147,6 +148,46 @@ it.effect("resumes after the last session shown when a newer one arrives", () =>
     threads = [...threads, makeThread(9, 9)];
     const second = yield* list({ limit: 2, cursor: first.nextCursor ?? undefined });
     expect(ids(second)).toEqual(["thread-2", "thread-1"]);
+  }),
+);
+
+it.effect("skips nothing when the last session shown is deleted", () =>
+  Effect.gen(function* () {
+    threads = [1, 2, 3, 4, 5].map((index) => makeThread(index, index));
+    const first = yield* list({ limit: 2 });
+    expect(ids(first)).toEqual(["thread-5", "thread-4"]);
+    threads = threads.filter((thread) => thread.id !== "thread-4");
+    const second = yield* list({ limit: 2, cursor: first.nextCursor ?? undefined });
+    expect(ids(second)).toEqual(["thread-3", "thread-2"]);
+  }),
+);
+
+it.effect("neither repeats nor skips when the last session shown moves to the front", () =>
+  Effect.gen(function* () {
+    threads = [1, 2, 3, 4, 5].map((index) => makeThread(index, index));
+    const first = yield* list({ limit: 2 });
+    expect(ids(first)).toEqual(["thread-5", "thread-4"]);
+    threads = threads.map((thread) => (thread.id === "thread-4" ? makeThread(4, 9) : thread));
+    const second = yield* list({ limit: 2, cursor: first.nextCursor ?? undefined });
+    expect(ids(second)).toEqual(["thread-3", "thread-2"]);
+    const third = yield* list({ limit: 2, cursor: second.nextCursor ?? undefined });
+    expect(ids(third)).toEqual(["thread-1"]);
+    expect(third.nextCursor).toBeNull();
+  }),
+);
+
+it.effect("pages through equal change times by id", () =>
+  Effect.gen(function* () {
+    threads = ["c", "a", "e", "b", "d"].map((key) => makeThread(key, 1));
+    const seen: Array<string> = [];
+    let cursor: string | undefined;
+    for (let round = 0; round < 5; round += 1) {
+      const page = yield* list({ limit: 2, cursor });
+      seen.push(...ids(page));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    expect(seen).toEqual(["thread-a", "thread-b", "thread-c", "thread-d", "thread-e"]);
   }),
 );
 

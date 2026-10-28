@@ -12,6 +12,7 @@ import {
   sessionHeading,
   sessionTagsData,
   tagsOf,
+  waitAgainHint,
 } from "./render.ts";
 import { matchSessionRef, shortRef, type SessionShell } from "./view.ts";
 
@@ -176,5 +177,20 @@ describe("next-call hints", () => {
     // The question's options and request id are never dropped in compact output.
     expect(text).toContain("1. A");
     expect(text).toContain("2. B");
+  });
+
+  it("keeps t3_wait on the resolved full ids, not the short refs it was given", () => {
+    // The caller passed a short ref while only the first child existed.
+    const resolved = matchSessionRef(shortRef(child.id), [child]);
+    expect(resolved).toEqual([child]);
+    const ids = resolved.map((session) => session.id);
+    // The same hint follows a timeout and a matched change.
+    const hint = waitAgainHint(ids, "42");
+    expect(hint).toBe(`\`t3_wait {"sessions":["${child.id}"],"cursor":"42"}\``);
+    expect(hint).not.toContain('"aaaaaaaa"');
+    // A sibling appears later: the short ref is now ambiguous, the hint's id is not.
+    expect(matchSessionRef(shortRef(child.id), [child, sibling])).toHaveLength(2);
+    expect(matchSessionRef(child.id, [child, sibling])).toEqual([child]);
+    expect(waitAgainHint(null, "42")).toBe('`t3_wait {"cursor":"42"}`');
   });
 });
