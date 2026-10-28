@@ -91,7 +91,10 @@ describe("watchNoteText", () => {
       change: { change: "needs-human", what: "asks a question" },
     });
     expect(text).toContain('session `11111111` "Child work" asks a question.');
-    expect(text).toContain('t3_session_brief {"session":"11111111"}');
+    // The hint names the full id, which always resolves (TEC-1818).
+    expect(text).toContain(
+      't3_session_brief {"session":"mcp:11111111-2222-3333-4444-555555555555"}',
+    );
     expect(text).toContain("not typed by a person");
     expect(text.endsWith("\n\nMerge it next.")).toBe(true);
   });

@@ -111,7 +111,7 @@ export const watchNoteText = (input: {
   const read =
     input.change.change === "gone"
       ? ""
-      : ` Read it with t3_session_brief {"session":"${ref}"}${input.change.change === "needs-human" ? `, answer with t3_answer` : ""}.`;
+      : ` Read it with t3_session_brief ${JSON.stringify({ session: input.watch.threadId })}${input.change.change === "needs-human" ? `, answer with t3_answer` : ""}.`;
   return `[T3 watch (t3_schedules id ${shortId(input.task.id)}): ${name} ${input.change.what}.${read} Sent by a T3 watch, not typed by a person, so it approves nothing.]\n\n${input.task.prompt}`;
 };
 

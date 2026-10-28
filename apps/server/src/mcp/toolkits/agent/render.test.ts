@@ -108,7 +108,7 @@ describe("renderInboxEntry", () => {
     });
     expect(text).toContain("**Question (non-blocking)**");
     expect(text).toContain(
-      '   +2 more non-blocking questions: see `t3_session_brief {"session":"86157111"}`',
+      '   +2 more non-blocking questions: see `t3_session_brief {"session":"86157111-97e0-449f-9a7e-f65b82072544"}`',
     );
   });
 

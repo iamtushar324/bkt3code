@@ -141,7 +141,7 @@ const destructiveTool = <T extends Tool.Any>(tool: T): T =>
 export const T3ListSessionsTool = readonlyTool(
   Tool.make("t3_list_sessions", {
     description:
-      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary. User-bound agents see every session accessible to that user; external operators see all sessions. To see what waits on a person, prefer t3_inbox; to find a session by title, ticket or pull request, prefer t3_find_sessions.",
+      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary, newest change first. A result with more sessions than limit returns nextCursor; pass it as cursor for the next page. User-bound agents see every session accessible to that user; external operators see all sessions. To see what waits on a person, prefer t3_inbox; to find a session by title, ticket or pull request, prefer t3_find_sessions.",
     parameters: Schema.Struct({
       includeArchived: Schema.optional(
         described(
@@ -163,6 +163,19 @@ export const T3ListSessionsTool = readonlyTool(
         described(
           Schema.String,
           "Return only sessions filed in this custom group (the shared label shown in the sidebar's Custom view). Matched exactly but case-insensitively; sessions with no group never match.",
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): paging and compact output (TEC-1818).
+      cursor: Schema.optional(
+        described(
+          Schema.String,
+          "The nextCursor of a previous result, to read the next page in the same order (newest change first). Pass the same filters again.",
+        ),
+      ),
+      detail: Schema.optional(
+        described(
+          Schema.Literals(["compact", "full"]),
+          "compact (the default) replaces each session's linearLinks list with linearLinkCount; full returns the linearLinks list.",
         ),
       ),
     }),

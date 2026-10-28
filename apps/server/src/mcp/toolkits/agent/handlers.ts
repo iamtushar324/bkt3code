@@ -61,6 +61,7 @@ import {
 } from "./pending.ts";
 import {
   DECISION_NAMES,
+  headingTagsOf,
   messageExcerpt,
   planTitle,
   renderApproval,
@@ -71,9 +72,10 @@ import {
   renderSessionLine,
   sessionActivity,
   sessionHeading,
-  tagsOf,
+  sessionTagsData,
   type InboxEntry,
   type SessionContext,
+  type SessionDetail,
 } from "./render.ts";
 import {
   AgentToolkit,
@@ -128,11 +130,13 @@ const contextFor =
     projects: ReadonlyMap<string, ProjectSummary>,
     nowMs: number,
     origin: string | undefined,
+    detail?: SessionDetail,
   ) =>
   (shell: SessionShell): SessionContext => ({
     projectTitle: projects.get(shell.projectId)?.title ?? null,
     link: sessionLink(origin, caller.scope.environmentId, shell.id),
     nowMs,
+    detail,
   });
 
 /** The facts of one session, for `format: "json"`. */
@@ -147,8 +151,7 @@ const sessionData = (shell: SessionShell, context: SessionContext) => ({
   branch: shell.branch,
   model: shell.modelSelection.model,
   mode: shell.interactionMode === "plan" ? "plan" : "build",
-  linear: linearKeysOf(shell),
-  pullRequests: pullRequestsOf(shell),
+  ...sessionTagsData(shell, context.detail),
   updatedAt: toIso(shell.updatedAt),
   link: context.link,
 });
@@ -365,7 +368,7 @@ const inbox = Effect.fn("agentToolkit.inbox")(function* (input: Tool.Parameters<
       ? candidates.entries
       : candidates.entries.filter((entry) => wanted.has(entry.kind));
   const limit = input.limit ?? 20;
-  const context = contextFor(caller, projects, nowMs, origin);
+  const context = contextFor(caller, projects, nowMs, origin, input.detail);
   let unreadReads = 0;
   const loaded = yield* Effect.forEach(matching.slice(0, limit), (candidate) =>
     Effect.gen(function* () {
@@ -528,7 +531,8 @@ const DECISIONS: Record<string, ProviderApprovalDecision> = {
 
 /** What waits in a session, for a refusal that names the right parameter. */
 const describeWaiting = (shell: SessionShell, detail: PendingDetail) => {
-  const ref = shortRef(shell.id);
+  // Hints name the full id: a short ref can match several sessions (TEC-1818).
+  const ref = shell.id;
   if (detail.approval !== null)
     return `It waits on an approval: pass decision (${callHint("t3_answer", { session: ref, requestId: requestRef(detail.approval.requestId), decision: "approve" })}).`;
   if (detail.secret !== null)
@@ -552,6 +556,7 @@ const answerResult = Effect.fn("agentToolkit.answerResult")(function* (input: {
   readonly origin: string | undefined;
   readonly answered: string;
   readonly delivery: AnswerDelivery | null;
+  readonly detail?: SessionDetail | undefined;
 }) {
   const { caller, shell, cursor, nowMs, answered, delivery } = input;
   const after = yield* caller.threads
@@ -559,13 +564,13 @@ const answerResult = Effect.fn("agentToolkit.answerResult")(function* (input: {
     .pipe(Effect.orElseSucceed(() => null));
   const now = after ?? shell;
   const projects = yield* loadProjects();
-  const context = contextFor(caller, projects, nowMs, input.origin)(now);
+  const context = contextFor(caller, projects, nowMs, input.origin, input.detail)(now);
   return result(
     [
       `## ${answered}`,
       ...(delivery === null ? [] : [DELIVERY_TEXT[delivery]]),
       `${sessionHeading(now, context)} — ${sessionActivity(now, nowMs)}`,
-      `Next: ${waitHint(shortRef(shell.id), cursor)} to hear when it needs you again.`,
+      `Next: ${waitHint(shell.id, cursor)} to hear when it needs you again.`,
     ].join("\n"),
     { answered, delivery, session: sessionData(now, context), cursor: cursor ?? null },
   );
@@ -579,7 +584,8 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
   const nowMs = yield* Clock.currentTimeMillis;
   const origin = yield* linkOrigin(caller.scope);
   const shell = yield* resolveSession({ caller, ref: input.session, nowMs });
-  const ref = shortRef(shell.id);
+  // Hints name the full id: a short ref can match several sessions (TEC-1818).
+  const ref = shell.id;
   if (scope.thread?.threadId === shell.id) {
     return yield* fail(
       "own_session",
@@ -773,6 +779,7 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
       return yield* answerResult({
         caller,
         shell,
+        detail: input.detail,
         cursor,
         nowMs,
         origin,
@@ -803,10 +810,28 @@ const answer = Effect.fn("agentToolkit.answer")(function* (
       .join(" · ")}.`;
     if (target.async) {
       const delivery = yield* answerDelivery(caller, shell.id, target.requestId);
-      return yield* answerResult({ caller, shell, cursor, nowMs, origin, answered, delivery });
+      return yield* answerResult({
+        caller,
+        shell,
+        detail: input.detail,
+        cursor,
+        nowMs,
+        origin,
+        answered,
+        delivery,
+      });
     }
   }
-  return yield* answerResult({ caller, shell, cursor, nowMs, origin, answered, delivery: null });
+  return yield* answerResult({
+    caller,
+    shell,
+    detail: input.detail,
+    cursor,
+    nowMs,
+    origin,
+    answered,
+    delivery: null,
+  });
 });
 
 const ACTIVE_STATES: ReadonlySet<SessionState> = new Set([
@@ -871,7 +896,7 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
   const limit = input.limit ?? 20;
   const page = pool.slice(cursor, cursor + limit);
   const nextCursor = cursor + page.length < pool.length ? cursor + page.length : null;
-  const context = contextFor(caller, projects, nowMs, origin);
+  const context = contextFor(caller, projects, nowMs, origin, input.detail);
   const lines = [
     pool.length === 0
       ? "## No session matches"
@@ -883,7 +908,7 @@ const findSessions = Effect.fn("agentToolkit.findSessions")(function* (
           `More: ${callHint("t3_find_sessions", { ...input, cursor: nextCursor, format: undefined })}`,
         ]),
     ...(page.length > 0
-      ? [`Read one with ${callHint("t3_session_brief", { session: shortRef(page[0]?.id ?? "") })}.`]
+      ? [`Read one with ${callHint("t3_session_brief", { session: page[0]?.id ?? "" })}.`]
       : ['Try state: "any", a shorter query, or t3_inbox for what waits on you.']),
   ];
   return result(lines.join("\n"), {
@@ -991,10 +1016,11 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     yield* resolveSession({ caller, ref: input.session, nowMs }),
   ]);
   if (shell === undefined) return yield* fail("session_not_found", "The session was not found.");
-  const ref = shortRef(shell.id);
+  // Hints name the full id: a short ref can match several sessions (TEC-1818).
+  const ref = shell.id;
   const projects = yield* loadProjects();
   const people = yield* loadPeople();
-  const context = contextFor(caller, projects, nowMs, origin)(shell);
+  const context = contextFor(caller, projects, nowMs, origin, input.detail)(shell);
   const include = new Set(input.include ?? []);
   const attention = attentionOf(shell);
   const detail = yield* loadPendingDetail(caller, shell, {
@@ -1057,7 +1083,7 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
         .slice(0, 15)
         .map(
           (child) =>
-            `- ${sessionHeading(child, contextFor(caller, projects, nowMs, origin)(child))} — ${sessionActivity(child, nowMs)}`,
+            `- ${sessionHeading(child, contextFor(caller, projects, nowMs, origin, input.detail)(child))} — ${sessionActivity(child, nowMs)}`,
         ),
     );
   }
@@ -1085,9 +1111,9 @@ const brief = Effect.fn("agentToolkit.brief")(function* (
     goal: goal === null ? null : cutText(goal, 800),
     messages: messages.map((message) => ({ ...message, text: cutText(message.text, 1_500) })),
     children: children.map((child) =>
-      sessionData(child, contextFor(caller, projects, nowMs, origin)(child)),
+      sessionData(child, contextFor(caller, projects, nowMs, origin, input.detail)(child)),
     ),
-    tags: tagsOf(shell),
+    tags: headingTagsOf(shell, input.detail),
   });
 });
 
@@ -1105,7 +1131,8 @@ const firstOutcome = Effect.fn("agentToolkit.firstOutcome")(function* (
   caller: Caller,
   shell: SessionShell,
 ) {
-  const ref = shortRef(shell.id);
+  // Hints name the full id: a short ref can match several sessions (TEC-1818).
+  const ref = shell.id;
   const attention = attentionOf(shell);
   if (attention === "question" || attention === "approval" || attention === "async-question") {
     const detail = yield* loadPendingDetail(caller, shell, { includePlan: false });
@@ -1270,7 +1297,7 @@ const startSession = Effect.fn("agentToolkit.startSession")(function* (
     ...(waitNote === null ? [] : ["", waitNote]),
     ...(outcomeLines.length === 0 ? [] : ["", ...outcomeLines]),
     "",
-    `Next: ${waitHint(ref, cursor)} for its next question or finish, or ${callHint("t3_session_brief", { session: ref })}.`,
+    `Next: ${waitHint(newId, cursor)} for its next question or finish, or ${callHint("t3_session_brief", { session: newId })}.`,
   ];
   return result(lines.join("\n"), {
     cursor: cursor ?? null,
@@ -1323,7 +1350,7 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
       "question_open",
       secret !== null
         ? `${ref} waits on a secret ("${oneLine(secret.label, 80)}"), which a person must enter in the app; no tool can answer it. Pass force: true to send anyway.`
-        : `${ref} waits on ${attention === "approval" ? "an approval" : "a blocking question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
+        : `${ref} waits on ${attention === "approval" ? "an approval" : "a blocking question"}. Answer it with t3_answer (see ${callHint("t3_session_brief", { session: shell.id })}), or pass force: true to send anyway; the agent may then drop the open ${attention === "approval" ? "approval" : "question"}.`,
     );
   }
   yield* assertTargetWithinLimits(caller.limits, shell);
@@ -1366,10 +1393,10 @@ const sendMessage = Effect.fn("agentToolkit.sendMessage")(function* (
       `\`${ref}\` ${shell.title} · run ${sent.run.id} (${sent.run.status})`,
       ...(attention === "async-question"
         ? [
-            `A non-blocking question stays open in ${ref}. Answer or dismiss it with t3_answer (see ${callHint("t3_session_brief", { session: ref })}).`,
+            `A non-blocking question stays open in ${ref}. Answer or dismiss it with t3_answer (see ${callHint("t3_session_brief", { session: shell.id })}).`,
           ]
         : []),
-      `Next: ${waitHint(ref, cursor)} to hear when it answers, asks or fails.`,
+      `Next: ${waitHint(shell.id, cursor)} to hear when it answers, asks or fails.`,
     ].join("\n"),
     {
       cursor: cursor ?? null,
@@ -1466,11 +1493,12 @@ const wait = Effect.fn("agentToolkit.wait")(function* (input: Tool.Parameters<ty
   const lines = [
     `## \`${ref}\` ${match.what}`,
     `${sessionHeading(shell, context)} — ${sessionActivity(shell, context.nowMs)}`,
-    ...(detail.approval === null ? [] : renderApproval(detail.approval, ref)),
+    // Hints name the full id: a short ref can match several sessions (TEC-1818).
+    ...(detail.approval === null ? [] : renderApproval(detail.approval, shell.id)),
     ...(detail.secret === null ? [] : renderSecret(detail.secret)),
-    ...(detail.question === null ? [] : renderQuestion(detail.question, ref)),
-    ...detail.asyncQuestions.flatMap((question) => renderQuestion(question, ref)),
-    ...(attention === "plan" ? renderPlan(detail.plan, ref, 600) : []),
+    ...(detail.question === null ? [] : renderQuestion(detail.question, shell.id)),
+    ...detail.asyncQuestions.flatMap((question) => renderQuestion(question, shell.id)),
+    ...(attention === "plan" ? renderPlan(detail.plan, shell.id, 600) : []),
     ...(attention === "failed"
       ? [`   Error: ${oneLine(shell.lastError ?? "no message", 400)}`]
       : []),

@@ -1014,7 +1014,7 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       return yield* reportSchedule("Ran now", { task, options: view.options }, context, [
         task.threadId === null
           ? `Next: ${callHint("t3_find_sessions", { query: task.title })} finds the session it started.`
-          : `Next: ${callHint("t3_wait", { sessions: [shortRef(task.threadId)] })} to hear when the session answers.`,
+          : `Next: ${callHint("t3_wait", { sessions: [task.threadId] })} to hear when the session answers.`,
       ]);
     }
   }
@@ -1072,7 +1072,7 @@ export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
       [
         `## \`${watchedRef}\` ${oneLine(watched.title, 80)} already ${now.what}`,
         "No watch was made: it waits now.",
-        `Next: ${callHint("t3_session_brief", { session: watchedRef })}, then ${callHint("t3_answer", { session: watchedRef })}.`,
+        `Next: ${callHint("t3_session_brief", { session: watched.id })}, then ${callHint("t3_answer", { session: watched.id })}.`,
       ].join("\n"),
       { watching: false, sessionId: watched.id, ref: watchedRef, now: now.what },
     );

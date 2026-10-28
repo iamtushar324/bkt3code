@@ -61,6 +61,16 @@ const format = {
   ),
 };
 
+/** How much of each session's Linear tickets and pull requests to show (TEC-1818). */
+const detail = {
+  detail: Schema.optional(
+    described(
+      Schema.Literals(["compact", "full"]),
+      'compact (the default) counts tickets and pull requests ("3 PRs (1 open) · 2 tickets"; json: linearCount, pullRequestCount, openPullRequestCount). full lists every ticket key and pull request with its state and checks.',
+    ),
+  ),
+};
+
 const sessionRef = (description: string) => described(Schema.String, description);
 
 const SESSION_REF_HELP =
@@ -126,6 +136,7 @@ export const InboxTool = readOnly(
           "Most items to show, 1 to 50. Defaults to 20.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -201,6 +212,7 @@ export const AnswerTool = destructive(
           "Your own id for this answer, so a retry with the same id does not answer twice.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -212,7 +224,7 @@ export const AnswerTool = destructive(
 export const FindSessionsTool = readOnly(
   Tool.make("t3_find_sessions", {
     description:
-      "Find sessions, one line each: short id, title, state, project, Linear tags, pull requests, last change and link. A running session also shows how long it has run and its goal; a waiting one shows what it waits on. Filter by text, ticket, pull request, branch, project and state. Use the short id with the other t3_ tools.",
+      "Find sessions, one line each: short id, title, state, project, Linear tags, pull requests, last change and link. A running session also shows how long it has run and its goal; a waiting one shows what it waits on. Filter by text, ticket, pull request, branch, project and state. Tickets and pull requests are counted unless detail is full. The next-call lines carry the full session id; use it with the other t3_ tools.",
     parameters: Schema.Struct({
       query: Schema.optional(
         described(Schema.String, "Text in the title, or an id, link, ticket or pull request URL."),
@@ -254,6 +266,7 @@ export const FindSessionsTool = readOnly(
       cursor: Schema.optional(
         described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), "From a previous result."),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -280,6 +293,7 @@ export const SessionBriefTool = readOnly(
           "Also show the newest plan's text, or the sessions filed under this one.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,

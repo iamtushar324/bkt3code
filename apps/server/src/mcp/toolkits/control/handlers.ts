@@ -716,6 +716,56 @@ const moveGroupSessions = Effect.fn("T3ControlToolkit.moveGroupSessions")(functi
 });
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): t3_list_sessions paging (TEC-1818). The cursor is
+// opaque to callers: base64url JSON of the next offset and the last session it
+// returned. The next page starts after that session when it has not changed
+// since, so a session that moved to the front does not shift the page; else
+// it falls back to the offset.
+interface ListSessionsCursor {
+  readonly offset: number;
+  readonly id: string;
+  readonly updatedAt: string;
+}
+
+const encodeListSessionsCursor = (cursor: ListSessionsCursor): string =>
+  Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+
+const decodeListSessionsCursor = (value: string): ListSessionsCursor | null => {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { offset, id, updatedAt } = parsed as Record<string, unknown>;
+    if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) return null;
+    if (typeof id !== "string" || typeof updatedAt !== "string") return null;
+    return { offset, id, updatedAt };
+  } catch {
+    return null;
+  }
+};
+
+const listSessionsPageStart = (
+  operation: string,
+  ordered: ReadonlyArray<{ readonly id: string; readonly updatedAt: string }>,
+  value: string | undefined,
+): Effect.Effect<number, T3ControlToolError> => {
+  if (value === undefined || value.trim().length === 0) return Effect.succeed(0);
+  const cursor = decodeListSessionsCursor(value.trim());
+  if (cursor === null) {
+    return Effect.fail(
+      new T3ControlToolError({
+        operation,
+        message:
+          "cursor is not a nextCursor from t3_list_sessions. Call again without cursor to start from the first page.",
+      }),
+    );
+  }
+  const anchor = ordered.findIndex((thread) => thread.id === cursor.id);
+  return Effect.succeed(
+    anchor >= 0 && ordered[anchor]?.updatedAt === cursor.updatedAt ? anchor + 1 : cursor.offset,
+  );
+};
+// T3-CUSTOM(expbkt3): END
+
 function sessionSummary(
   thread: OrchestrationThreadShell,
   project:
@@ -1070,11 +1120,18 @@ const handlers = {
       )
       // T3-CUSTOM(expbkt3): custom sidebar group facet.
       .filter((thread) => matchesCustomGroupFilter(thread, input.customGroup))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, boundedLimit(input.limit, 100, 500));
-    const summaries = selected.map((thread) =>
-      sessionSummary(thread, projects.get(thread.projectId)),
-    );
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    // T3-CUSTOM(expbkt3): cursor paging and compact Linear tags (TEC-1818).
+    const start = yield* listSessionsPageStart(operation, selected, input.cursor);
+    const limit = boundedLimit(input.limit, 100, 500);
+    const page = selected.slice(start, start + limit);
+    const summaries = page.map((thread) => {
+      const summary = sessionSummary(thread, projects.get(thread.projectId));
+      if (input.detail === "full") return summary;
+      const { linearLinks, ...rest } = summary;
+      return { ...rest, linearLinkCount: linearLinks.length };
+    });
+    const last = page.at(-1);
     return {
       totals: {
         returned: summaries.length,
@@ -1082,7 +1139,16 @@ const handlers = {
         running: summaries.filter((session) => isRunningStatus(session.status)).length,
       },
       sessions: summaries,
+      nextCursor:
+        last === undefined || start + page.length >= selected.length
+          ? null
+          : encodeListSessionsCursor({
+              offset: start + page.length,
+              id: last.id,
+              updatedAt: last.updatedAt,
+            }),
     };
+    // T3-CUSTOM(expbkt3): END
   }),
 
   t3_get_session: Effect.fn("T3ControlToolkit.getSession")(function* (input) {
@@ -2131,6 +2197,8 @@ function resolveCreatedSessionDefaults(options: {
 
 export const __testing = {
   resolveSessionId,
+  // T3-CUSTOM(expbkt3): t3_list_sessions cursor (TEC-1818).
+  decodeListSessionsCursor,
   // T3-CUSTOM(expbkt3): saved new-thread defaults for created sessions.
   resolveCreatedSessionDefaults,
   // T3-CUSTOM(expbkt3): caller-seam regression for bounded session list reads.

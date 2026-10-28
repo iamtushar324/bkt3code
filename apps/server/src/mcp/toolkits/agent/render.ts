@@ -30,6 +30,7 @@ import {
   shortRef,
   toMillis,
   type InboxKind,
+  type SessionPullRequest,
   type SessionShell,
 } from "./view.ts";
 
@@ -42,28 +43,79 @@ export const DECISION_NAMES: Record<ProviderApprovalDecision, string> = {
   cancel: "cancel",
 };
 
+/** How much of a session's tags a result shows; compact is the default (TEC-1818). */
+export type SessionDetail = "compact" | "full";
+
 export interface SessionContext {
   readonly projectTitle: string | null;
   readonly link: string | null;
   readonly nowMs: number;
+  /** compact (the default when omitted) counts tickets and pull requests; full lists each. */
+  readonly detail?: SessionDetail | undefined;
 }
+
+/** `PR #297 (open, checks passing)`. */
+const pullRequestTag = (pr: SessionPullRequest): string =>
+  `PR #${pr.number}${pr.state === null ? "" : ` (${[pr.state, pr.checks === null ? null : `checks ${pr.checks}`].filter((part) => part !== null).join(", ")})`}`;
 
 /** `TEC-1488 · PR #297 (open, checks passing)`, or empty. */
 export const tagsOf = (shell: SessionShell): string =>
-  [
-    ...linearKeysOf(shell),
-    ...pullRequestsOf(shell).map(
-      (pr) =>
-        `PR #${pr.number}${pr.state === null ? "" : ` (${[pr.state, pr.checks === null ? null : `checks ${pr.checks}`].filter((part) => part !== null).join(", ")})`}`,
-    ),
-  ].join(" · ");
+  [...linearKeysOf(shell), ...pullRequestsOf(shell).map(pullRequestTag)].join(" · ");
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * The tags as counts: `3 PRs (1 open) · 2 tickets`. A single ticket or pull
+ * request is shown as itself, since its name is as short as its count.
+ */
+export const compactTagsOf = (shell: SessionShell): string => {
+  const keys = linearKeysOf(shell);
+  const pullRequests = pullRequestsOf(shell);
+  const open = pullRequests.filter((pr) => pr.state === "open").length;
+  const [onlyKey] = keys;
+  const [onlyPullRequest] = pullRequests;
+  return [
+    keys.length === 1 && onlyKey !== undefined
+      ? onlyKey
+      : keys.length > 1
+        ? plural(keys.length, "ticket", "tickets")
+        : null,
+    pullRequests.length === 1 && onlyPullRequest !== undefined
+      ? pullRequestTag(onlyPullRequest)
+      : pullRequests.length > 1
+        ? `${plural(pullRequests.length, "PR", "PRs")} (${open} open)`
+        : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+};
+
+/** The tags a heading shows at this detail. */
+export const headingTagsOf = (shell: SessionShell, detail: SessionDetail | undefined): string =>
+  detail === "full" ? tagsOf(shell) : compactTagsOf(shell);
+
+/**
+ * A session's tickets and pull requests as data: the lists at detail "full",
+ * counts at "compact" (the default; TEC-1818).
+ */
+export const sessionTagsData = (shell: SessionShell, detail: SessionDetail | undefined) => {
+  const linear = linearKeysOf(shell);
+  const pullRequests = pullRequestsOf(shell);
+  return detail === "full"
+    ? { linear, pullRequests }
+    : {
+        linearCount: linear.length,
+        pullRequestCount: pullRequests.length,
+        openPullRequestCount: pullRequests.filter((pr) => pr.state === "open").length,
+      };
+};
 
 /** The bold header of one session: short id, title, project, tags, link. */
 export const sessionHeading = (shell: SessionShell, context: SessionContext): string =>
   [
     `\`${shortRef(shell.id)}\` **${oneLine(shell.title, 90)}**`,
     context.projectTitle === null ? null : `project ${context.projectTitle}`,
-    tagsOf(shell) || null,
+    headingTagsOf(shell, context.detail) || null,
     isUrgent(shell) ? "URGENT" : null,
   ]
     .filter((part) => part !== null)
@@ -236,7 +288,8 @@ export interface InboxEntry {
 
 export const renderInboxEntry = (index: number, entry: InboxEntry): string => {
   const { shell, context } = entry;
-  const ref = shortRef(shell.id);
+  // Next-call hints name the full id: a short ref can match several sessions (TEC-1818).
+  const ref = shell.id;
   const lines = [
     `${index}. **${INBOX_KIND_LABEL[entry.kind]}** · ${sessionHeading(shell, context)} · waiting ${duration(entry.waitingSinceMs, context.nowMs)}`,
   ];
