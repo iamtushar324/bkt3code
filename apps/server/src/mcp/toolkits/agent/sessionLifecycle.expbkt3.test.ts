@@ -185,7 +185,7 @@ it.layer(NodeServices.layer)("t3_session_lifecycle", (it) => {
         .sessionLifecycle({ session: "me", action: "archive" })
         .pipe(provideAs(providerScope));
       expect(own.data).toMatchObject({ sessionId: ownSessionId, changed: true });
-      expect(dispatched.map((command) => command.threadId)).toEqual([ownSessionId]);
+      expect(dispatched).toMatchObject([{ type: "thread.archive", threadId: ownSessionId }]);
     }),
   );
 });
