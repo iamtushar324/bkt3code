@@ -115,6 +115,18 @@ export const ForkScheduledTaskCustomGroupResultFields = {
   ),
 };
 
+const forkScheduledTaskIfBusyDescription =
+  "What a run does when the thread it posts into is busy: steer (the default) adds the prompt to the running turn; queue waits until that turn ends. Applies only to tasks bound to a thread.";
+
+/** `ifBusy` for schedule_task, update_scheduled_task (omitted keeps it) and task summaries. */
+export const ForkScheduledTaskIfBusyFields = {
+  ifBusy: Schema.optional(
+    Schema.Literals(["steer", "queue"]).annotate({
+      description: forkScheduledTaskIfBusyDescription,
+    }),
+  ),
+};
+
 export const ForkThreadCommands = [
   Schema.Struct({
     type: Schema.Literal("thread.activity.append"),

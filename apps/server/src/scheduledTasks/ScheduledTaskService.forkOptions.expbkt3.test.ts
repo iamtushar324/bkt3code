@@ -155,7 +155,8 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
       yield* scheduled.runNow({ id: bound.id });
       expect(sends).toHaveLength(1);
       expect(sends[0]?.actor).toBeNull();
-      expect(sends[0]?.input.mode).toBe("queue");
+      // A busy session takes the prompt as steering by default.
+      expect(sends[0]?.input.mode).toBe("auto");
       expect("modelSelection" in (sends[0]?.input ?? {})).toBe(false);
       const { tasks: stillRunning } = yield* scheduled.list();
       expect(stillRunning.find((task) => task.id === bound.id)?.enabled).toBe(true);
@@ -171,6 +172,67 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
       expect(yield* readScheduledTaskForkOptions(sql, bound.id)).toEqual({});
       yield* writeScheduledTaskForkOptions(sql, bound.id, { ownerUserId: owner });
       expect(yield* readScheduledTaskForkOptions(sql, bound.id)).toEqual({});
+    }).pipe(Effect.provide(services));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a bound run steers by default, queues on request, and queues a refused steer", () =>
+  Effect.gen(function* () {
+    const sends: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+    let refuseSteer = false;
+    const services = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Effect.gen(function* () {
+                sends.push(input);
+                if (refuseSteer && input.mode === "auto") {
+                  return yield* new ThreadManagementService.ThreadManagementNoSteerableRunError({
+                    threadId: input.threadId,
+                    mode: "steer",
+                  });
+                }
+                return {} as ThreadManagementService.ThreadManagementSendResult;
+              }),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const scheduled = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* scheduled.upsert({ ...baseTask, threadId: boundThreadId });
+
+      // No options: steer, and the prompt goes out unchanged.
+      yield* scheduled.runNow({ id: task.id });
+      expect(sends.map((send) => send.mode)).toEqual(["auto"]);
+      expect(sends[0]?.text).toBe("Check the nightly build.");
+
+      // ifBusy alone (as schedule_task stores it) changes only the send mode.
+      yield* writeScheduledTaskForkOptions(sql, task.id, { ifBusy: "queue" });
+      const { task: queued } = yield* scheduled.runNow({ id: task.id });
+      expect(sends.map((send) => send.mode)).toEqual(["auto", "queue"]);
+      expect(sends[1]?.text).toBe("Check the nightly build.");
+      expect(queued).toMatchObject({ enabled: true, lastRunStatus: "succeeded" });
+
+      // A steer the session refuses waits in the queue under its own command id.
+      yield* writeScheduledTaskForkOptions(sql, task.id, { ifBusy: "steer" });
+      refuseSteer = true;
+      const { task: fellBack } = yield* scheduled.runNow({ id: task.id });
+      expect(sends.slice(2).map((send) => send.mode)).toEqual(["auto", "queue"]);
+      expect(sends[3]?.commandId).toBe(`${sends[2]?.commandId}:queue`);
+      expect(sends[3]?.messageId).toBe(sends[2]?.messageId);
+      expect(fellBack.lastRunStatus).toBe("succeeded");
     }).pipe(Effect.provide(services));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

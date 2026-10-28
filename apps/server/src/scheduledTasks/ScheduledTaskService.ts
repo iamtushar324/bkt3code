@@ -80,6 +80,7 @@ import {
   scheduledTaskForkOptionsForRun,
   scheduledTaskOwner,
   scheduledPromptText,
+  sendScheduledPrompt,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): watches — tasks that run once another session changes.
 import {
@@ -876,8 +877,9 @@ export const layer = Layer.effect(
         // aborting before markCompleted.
         // T3-CUSTOM(expbkt3): BEGIN — dispatch as the task's owner (forkOptions).
         const text = watchNote ?? scheduledPromptText(active, forkOptions, prompt);
+        const boundThreadId = active.threadId === null ? null : ThreadId.make(active.threadId);
         const result =
-          active.threadId === null
+          boundThreadId === null
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
@@ -908,23 +910,22 @@ export const layer = Layer.effect(
                 // follows the thread's current provider, so it passes none.
                 // T3-CUSTOM(expbkt3): upstream now always does what the fork's
                 // `keepThreadModel` option asked for, so that option is a no-op here.
-                threadManagement
-                  .sendToThread({
+                // T3-CUSTOM(expbkt3): a busy session takes the prompt as steering
+                // unless the task asks to queue (scheduledTaskForkOptions.expbkt3.ts).
+                sendScheduledPrompt(forkOptions, commandId, (mode, sendCommandId) =>
+                  threadManagement.sendToThread({
                     projectId: active.projectId,
-                    commandId,
-                    threadId: ThreadId.make(active.threadId),
+                    commandId: sendCommandId,
+                    threadId: boundThreadId,
                     messageId,
                     scheduledTaskId: active.id,
                     text,
                     attachments: [],
-                    mode: "queue",
+                    mode,
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    asScheduledTaskOwner(forkOwner, trigger),
-                    Effect.as(ThreadId.make(active.threadId)),
-                  ),
+                  }),
+                ).pipe(asScheduledTaskOwner(forkOwner, trigger), Effect.as(boundThreadId)),
               );
         // T3-CUSTOM(expbkt3): END
 

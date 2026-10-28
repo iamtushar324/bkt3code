@@ -124,6 +124,11 @@ import {
   saveScheduledTaskCustomGroupForMcp,
   withScheduledTaskCustomGroup,
 } from "../scheduledTasks/scheduledTaskCustomGroup.expbkt3.ts";
+// T3-CUSTOM(expbkt3): steer (default) or queue when a task's bound thread is busy.
+import {
+  saveScheduledTaskIfBusyForMcp,
+  withScheduledTaskIfBusy,
+} from "../scheduledTasks/scheduledTaskForkOptions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): team mode lists and changes only the caller's scheduled tasks.
 import { callerMayManageScheduledTask } from "./scheduledTaskAccess.expbkt3.ts";
 
@@ -1830,9 +1835,12 @@ const make = Effect.gen(function* () {
           modes.value.every((mode) => withinLimits(caller.limits, mode)),
       );
     },
-    // T3-CUSTOM(expbkt3): echo the task's custom group so a caller can read it back.
+    // T3-CUSTOM(expbkt3): echo the task's custom group and ifBusy so a caller can read them back.
     (effect) =>
-      effect.pipe(Effect.flatMap((summary) => withScheduledTaskCustomGroup(forkSql, summary))),
+      effect.pipe(
+        Effect.flatMap((summary) => withScheduledTaskCustomGroup(forkSql, summary)),
+        Effect.flatMap((summary) => withScheduledTaskIfBusy(forkSql, summary)),
+      ),
   );
 
   /**
@@ -1921,8 +1929,10 @@ const make = Effect.gen(function* () {
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
           ),
         );
-      // T3-CUSTOM(expbkt3): the custom group of the threads this task's runs create.
+      // T3-CUSTOM(expbkt3): the custom group of the threads this task's runs create,
+      // and whether a run steers or queues when its bound thread is busy.
       yield* saveScheduledTaskCustomGroupForMcp(forkSql, task.id, input.customGroup);
+      yield* saveScheduledTaskIfBusyForMcp(forkSql, task.id, input.ifBusy);
       return yield* summarizeScheduledTask(scope, { parent, limits }, task);
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
@@ -2005,8 +2015,10 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
             ),
           );
-        // T3-CUSTOM(expbkt3): a label sets the custom group, null removes it, omitted keeps it.
+        // T3-CUSTOM(expbkt3): a label sets the custom group, null removes it, omitted keeps it;
+        // ifBusy, when given, replaces the task's steer-or-queue choice.
         yield* saveScheduledTaskCustomGroupForMcp(forkSql, task.id, input.customGroup);
+        yield* saveScheduledTaskIfBusyForMcp(forkSql, task.id, input.ifBusy);
         return yield* summarizeScheduledTask(scope, { parent, limits }, task);
       },
     ),
