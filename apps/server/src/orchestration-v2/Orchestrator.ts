@@ -5237,7 +5237,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // same route, and steers even where steering interrupts a running tool, as a
     // person's steer from the composer does.
     const scheduledSteer =
-      command.steerWhenSupported === true && dispatchMode.type === "queue_after_active";
+      command.steerWhenSupported === true &&
+      command.scheduledTaskId !== undefined &&
+      command.notification === undefined &&
+      delegatedCompletion === undefined &&
+      dispatchMode.type === "queue_after_active";
     if (
       scheduledSteer ||
       (delegatedCompletion !== undefined &&
@@ -5267,6 +5271,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           Option.isSome(session) &&
           session.value.providerSession.capabilities.turns.supportsActiveSteering &&
+          // T3-CUSTOM(expbkt3): a scheduled prompt sent while a Stop is in progress
+          // stays queued, since the stopping run refuses steering.
+          !(scheduledSteer && (yield* stopReachedRun(command, command.threadId, active.id))) &&
           // T3-CUSTOM(expbkt3): scheduledSteer accepts a steer that interrupts a tool.
           (scheduledSteer ||
             session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true)
