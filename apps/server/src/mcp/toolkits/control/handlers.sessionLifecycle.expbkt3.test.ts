@@ -12,6 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestrationCommandInvariantError } from "../../../orchestration-v2/Errors.ts";
 import { OrchestratorDispatchError } from "../../../orchestration-v2/Orchestrator.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -21,61 +22,92 @@ import { rejectionReason, runSessionLifecycle } from "./handlers.ts";
 const threadId = ThreadId.make("thread-lifecycle");
 const ARCHIVED_AT = "2026-10-28T10:00:00.000Z";
 
-/** The refusal chain the V2 engine produces for a second archive. */
-const alreadyArchivedFailure = () =>
+/** The refusal chain the V2 engine produces, with the orchestrator's reason. */
+const refusal = (commandType: string, reason: string) =>
   new OrchestrationDispatchCommandError({
-    message:
-      "Orchestration command invariant failed (thread.archive): The V2 command could not complete.",
+    message: `Orchestration command invariant failed (${commandType}): The V2 command could not complete.`,
     cause: new OrchestrationCommandInvariantError({
-      commandType: "thread.archive",
+      commandType,
       detail: "The V2 command could not complete.",
       cause: new OrchestratorDispatchError({
-        commandId: CommandId.make("mcp:session-archive:race"),
-        commandType: "thread.archive",
-        cause: `Thread ${threadId} is already archived.`,
+        commandId: CommandId.make("mcp:session-lifecycle:refused"),
+        commandType,
+        cause: reason,
       }),
     }),
   });
 
+type Action = "archive" | "unarchive" | "stop";
+
 it.layer(NodeServices.layer)("runSessionLifecycle", (it) => {
   let archivedAt: string | null = null;
   let shellReads = 0;
-  let failNextDispatch = false;
+  // A read that lags the writes, as when two calls race past the pre-check.
+  let staleView: { readonly archivedAt: string | null } | undefined;
+  let failWith: OrchestrationDispatchCommandError | undefined;
   const dispatched: OrchestrationCommand[] = [];
+  const receipts = new Map<string, CommandReceiptStore.CommandReceiptV2>();
   const query = {
     getThreadShellById: (id: ThreadId) =>
       Effect.sync(() => {
         shellReads += 1;
-        return id === threadId ? Option.some({ id, archivedAt }) : Option.none();
+        return id === threadId
+          ? Option.some({ id, archivedAt: (staleView ?? { archivedAt }).archivedAt })
+          : Option.none();
       }),
   } as unknown as ProjectionSnapshotQuery["Service"];
+  // Behaves like the V2 orchestrator: a known command id replays its receipt,
+  // and archive/unarchive refuse a session already in the target state.
   const dispatcher = TurnStartBootstrap.of({
     dispatch: (command) =>
-      failNextDispatch
-        ? Effect.fail(alreadyArchivedFailure())
-        : Effect.sync(() => {
-            dispatched.push(command);
-            if (command.type === "thread.archive") archivedAt = ARCHIVED_AT;
-            if (command.type === "thread.unarchive") archivedAt = null;
-            return { sequence: dispatched.length };
-          }),
+      Effect.suspend(() => {
+        const receipt = receipts.get(command.commandId);
+        if (receipt !== undefined) return Effect.succeed({ sequence: receipt.resultSequence });
+        if (failWith !== undefined) return Effect.fail(failWith);
+        if (command.type === "thread.archive" && archivedAt !== null) {
+          return Effect.fail(refusal(command.type, `Thread ${threadId} is already archived.`));
+        }
+        if (command.type === "thread.unarchive" && archivedAt === null) {
+          return Effect.fail(refusal(command.type, `Thread ${threadId} is not archived.`));
+        }
+        dispatched.push(command);
+        if (command.type === "thread.archive") archivedAt = ARCHIVED_AT;
+        if (command.type === "thread.unarchive") archivedAt = null;
+        return Effect.succeed({ sequence: dispatched.length });
+      }),
     createThread: () => Effect.die("createThread should not be called"),
   });
+  const receiptStore = {
+    insertIfAbsent: (receipt: CommandReceiptStore.CommandReceiptV2) =>
+      Effect.sync(() => {
+        if (receipts.has(receipt.commandId)) return false;
+        receipts.set(receipt.commandId, receipt);
+        return true;
+      }),
+    getByCommandId: (commandId: CommandId) =>
+      Effect.sync(() => Option.fromNullishOr(receipts.get(commandId))),
+  } as unknown as CommandReceiptStore.CommandReceiptStoreV2["Service"];
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(TurnStartBootstrap, dispatcher),
       Effect.provideService(ProjectionSnapshotQuery, query),
+      Effect.provideService(CommandReceiptStore.CommandReceiptStoreV2, receiptStore),
     );
   const reset = (state: { archivedAt: string | null }) => {
     archivedAt = state.archivedAt;
     shellReads = 0;
-    failNextDispatch = false;
+    staleView = undefined;
+    failWith = undefined;
     dispatched.length = 0;
+    receipts.clear();
   };
-  const run = (action: "archive" | "unarchive" | "stop") =>
-    runSessionLifecycle({ operation: `session-${action}`, sessionId: threadId, action }).pipe(
-      provide,
-    );
+  const run = (action: Action, commandId?: string) =>
+    runSessionLifecycle({
+      operation: `session-${action}`,
+      sessionId: threadId,
+      action,
+      commandId: commandId === undefined ? undefined : CommandId.make(commandId),
+    }).pipe(provide);
 
   it.effect("archives an active session, then a retry succeeds without a dispatch", () =>
     Effect.gen(function* () {
@@ -113,20 +145,63 @@ it.layer(NodeServices.layer)("runSessionLifecycle", (it) => {
     }),
   );
 
-  it.effect("a refusal surfaces the orchestrator's own reason", () =>
+  it.effect("a retried no-op command id replays its outcome after the state changed", () =>
     Effect.gen(function* () {
-      // The read saw it active, but another archive won the race.
+      reset({ archivedAt: ARCHIVED_AT });
+      const first = yield* run("archive", "mcp:agent:archive:x");
+      expect(first).toMatchObject({ changed: false });
+      expect(receipts.get("mcp:agent:archive:x")).toMatchObject({
+        status: "accepted",
+        resultSequence: 0,
+      });
+
+      // Someone unarchives the session between the call and its retry.
+      archivedAt = null;
+      const retry = yield* run("archive", "mcp:agent:archive:x");
+      expect(retry).toMatchObject({ changed: false });
+      expect(archivedAt).toBeNull();
+      expect(dispatched).toHaveLength(0);
+    }),
+  );
+
+  it.effect("two archives that race past the read both succeed", () =>
+    Effect.gen(function* () {
       reset({ archivedAt: null });
-      failNextDispatch = true;
+      staleView = { archivedAt: null };
+      const outcomes = yield* Effect.all([run("archive"), run("archive")], {
+        concurrency: "unbounded",
+      });
+      expect(outcomes.map((outcome) => outcome.changed).toSorted()).toEqual([false, true]);
+      expect(dispatched.map((command) => command.type)).toEqual(["thread.archive"]);
+
+      // Unarchive has the same race.
+      staleView = { archivedAt: ARCHIVED_AT };
+      const back = yield* Effect.all([run("unarchive"), run("unarchive")], {
+        concurrency: "unbounded",
+      });
+      expect(back.map((outcome) => outcome.changed).toSorted()).toEqual([false, true]);
+      expect(dispatched.map((command) => command.type)).toEqual([
+        "thread.archive",
+        "thread.unarchive",
+      ]);
+    }),
+  );
+
+  it.effect("an unrelated refusal stays a failure with the orchestrator's own reason", () =>
+    Effect.gen(function* () {
+      reset({ archivedAt: null });
+      failWith = refusal("thread.archive", `Thread ${threadId} is no longer empty.`);
       const error = yield* Effect.flip(run("archive"));
       expect(error._tag).toBe("T3ControlToolError");
-      expect(error.message).toBe(`Thread ${threadId} is already archived.`);
+      expect(error.message).toBe(`Thread ${threadId} is no longer empty.`);
     }),
   );
 });
 
 it("rejectionReason finds a string cause through nested errors, and nothing otherwise", () => {
-  expect(rejectionReason(alreadyArchivedFailure())).toBe(`Thread ${threadId} is already archived.`);
+  expect(rejectionReason(refusal("thread.archive", "Thread t is already archived."))).toBe(
+    "Thread t is already archived.",
+  );
   expect(rejectionReason(new Error("plain"))).toBeUndefined();
   expect(rejectionReason({ cause: "   " })).toBeUndefined();
   expect(rejectionReason("text")).toBeUndefined();

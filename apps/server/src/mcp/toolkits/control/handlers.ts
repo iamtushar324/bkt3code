@@ -58,6 +58,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import { resolveParentWorkspaceInheritance } from "../../../workspace-groups/parentWorkspaceInheritance.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -830,6 +831,53 @@ interface SessionLifecycleInput {
  * nothing is dispatched, so a retried archive does not fail. A caller may pass
  * its own `commandId` (a retry with the same id is then the same command).
  */
+/** The orchestrator's refusal for an archive or unarchive already in its target state. */
+const isAlreadyInStateRefusal = (action: SessionLifecycleAction, reason: string | undefined) =>
+  reason !== undefined &&
+  ((action === "archive" && / is already archived\.$/.test(reason)) ||
+    (action === "unarchive" && / is not archived\.$/.test(reason)));
+
+const NO_OP_RESULT_SEQUENCE = 0;
+
+/**
+ * The success for an archive or unarchive that found the session already in
+ * its target state. With a caller's command id it is written as an accepted
+ * command receipt with sequence 0, so a retry with that id replays this
+ * outcome, and a later dispatch of that id replays instead of acting, even
+ * after the session's state changed in between.
+ */
+const noOpLifecycle = Effect.fn("T3ControlToolkit.noOpLifecycle")(function* (
+  input: SessionLifecycleInput,
+) {
+  if (input.commandId !== undefined) {
+    const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
+    if (Option.isSome(receipts)) {
+      const acceptedAt = yield* DateTime.now;
+      yield* receipts.value
+        .insertIfAbsent({
+          commandId: input.commandId,
+          threadId: input.sessionId,
+          commandType: input.action === "archive" ? "thread.archive" : "thread.unarchive",
+          acceptedAt,
+          resultSequence: NO_OP_RESULT_SEQUENCE,
+          status: "accepted",
+          error: null,
+        })
+        .pipe(mapControlError(input.operation));
+    }
+  }
+  return {
+    accepted: true,
+    changed: false,
+    action: input.action,
+    sessionId: input.sessionId,
+    message:
+      input.action === "archive"
+        ? `Session ${input.sessionId} is already archived. Nothing to do.`
+        : `Session ${input.sessionId} is already active (not archived). Nothing to do.`,
+  };
+});
+
 export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecycle")(function* (
   input: SessionLifecycleInput,
 ) {
@@ -838,21 +886,29 @@ export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecyc
   const dispatcher = yield* TurnStartBootstrap;
   const crypto = yield* Crypto.Crypto;
   if (input.action === "archive" || input.action === "unarchive") {
+    // A retry of a caller's command id replays its first no-op outcome rather
+    // than acting on a state that changed since.
+    if (input.commandId !== undefined) {
+      const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
+      const receipt = Option.isSome(receipts)
+        ? yield* receipts.value.getByCommandId(input.commandId).pipe(mapControlError(operation))
+        : Option.none();
+      // Only a no-op writes sequence 0; a dispatched command has a later one,
+      // and a refused one replays as refused through the dispatch below.
+      if (
+        Option.isSome(receipt) &&
+        receipt.value.status === "accepted" &&
+        receipt.value.resultSequence === NO_OP_RESULT_SEQUENCE
+      ) {
+        return yield* noOpLifecycle(input);
+      }
+    }
     // One indexed row read; the shell query includes archived threads.
     const shell = yield* query.getThreadShellById(sessionId).pipe(mapControlError(operation));
     if (Option.isSome(shell)) {
       const archived = shell.value.archivedAt !== null;
       if (input.action === "archive" ? archived : !archived) {
-        return {
-          accepted: true,
-          changed: false,
-          action: input.action,
-          sessionId,
-          message:
-            input.action === "archive"
-              ? `Session ${sessionId} is already archived. Nothing to do.`
-              : `Session ${sessionId} is already active (not archived). Nothing to do.`,
-        };
+        return yield* noOpLifecycle(input);
       }
     }
   }
@@ -927,7 +983,19 @@ export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecyc
       command = { type: "thread.delete", commandId, threadId: sessionId };
       break;
   }
-  const result = yield* dispatcher.dispatch(command).pipe(mapControlError(operation));
+  const dispatched = yield* dispatcher.dispatch(command).pipe(
+    Effect.map((result) => ({ sequence: result.sequence })),
+    // Two archives can both pass the read above; the one that loses the race
+    // is refused as already archived, which is the state it asked for.
+    Effect.catch((error) =>
+      isAlreadyInStateRefusal(input.action, rejectionReason(error))
+        ? Effect.succeed(undefined)
+        : Effect.fail(error),
+    ),
+    mapControlError(operation),
+  );
+  if (dispatched === undefined) return yield* noOpLifecycle(input);
+  const result = dispatched;
   return {
     accepted: true,
     changed: true,

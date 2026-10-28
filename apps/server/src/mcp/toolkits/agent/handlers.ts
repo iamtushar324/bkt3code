@@ -32,6 +32,7 @@ import { PlanReviewService } from "../../../planreview/PlanReviewService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
 import { assertTargetWithinLimits, dispatchFailure, type Caller } from "../../threadAccess.ts";
 import { createSession, runSessionLifecycle } from "../control/handlers.ts";
 import { buildAnswers } from "./answers.ts";
@@ -1411,6 +1412,11 @@ const sessionLifecycle = Effect.fn("agentToolkit.sessionLifecycle")(function* (
       "Pass snoozedUntil (an ISO-8601 time, for example 2026-11-02T09:00:00.000Z) with action snooze.",
     );
   }
+  // The same session policy as t3_session_action: an in-session credential
+  // without user-wide scope acts only on its own session.
+  yield* resolveMcpSessionTarget({ requested: shell.id, capability: "t3.control" }).pipe(
+    Effect.mapError((error) => fail(error.code ?? "session_not_allowed", error.message)),
+  );
   yield* assertTargetWithinLimits(caller.limits, shell);
   const commandId = yield* commandIdFor(
     caller.scope,
