@@ -45,6 +45,7 @@ import {
   ForkScheduledTaskCustomGroupFields,
   ForkScheduledTaskCustomGroupResultFields,
   ForkScheduledTaskCustomGroupUpdateFields,
+  ForkScheduledTaskIfBusyFields,
 } from "./orchestrationFork.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
@@ -610,6 +611,8 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   // T3-CUSTOM(expbkt3): BK sidebar custom group for the threads its runs create.
   ...ForkScheduledTaskCustomGroupFields,
+  // T3-CUSTOM(expbkt3): steer (default) or queue when the bound thread is busy.
+  ...ForkScheduledTaskIfBusyFields,
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
 
@@ -632,6 +635,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   }),
   // T3-CUSTOM(expbkt3): BK sidebar custom group of the threads its runs create.
   ...ForkScheduledTaskCustomGroupResultFields,
+  // T3-CUSTOM(expbkt3): steer (default) or queue when the bound thread is busy.
+  ...ForkScheduledTaskIfBusyFields,
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -664,6 +669,8 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   bindToCurrentThread: Schema.optional(Schema.Boolean),
   // T3-CUSTOM(expbkt3): set (label), remove (null) or keep (omitted) the task's custom group.
   ...ForkScheduledTaskCustomGroupUpdateFields,
+  // T3-CUSTOM(expbkt3): steer or queue when the bound thread is busy; omitted keeps it.
+  ...ForkScheduledTaskIfBusyFields,
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

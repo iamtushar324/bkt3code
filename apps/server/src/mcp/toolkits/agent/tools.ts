@@ -434,7 +434,7 @@ const SCHEDULE_REF_HELP =
 export const ScheduleTool = destructive(
   Tool.make("t3_schedule", {
     description:
-      'Schedule a prompt, in one call. By default the prompt is sent into a session (your own when you are in one, or the one you name) as a queued message, so it never interrupts a turn: use it to remind yourself, check back on work, or nudge another session. Pass project instead to start a new session on every run, with the same options as t3_start_session plus quiet (snoozed while it works, so it only surfaces when it finishes, fails or asks). Say when with exactly one of: in ("10m", once), at (an ISO time or "09:00", once), every ("2h"), daily ("09:00", with weekdays and timeZone), or webhook: true. Runs act for the person you act for: new sessions are theirs and show in their sidebar. Other actions take id: update, pause, resume, delete, run_now.',
+      'Schedule a prompt, in one call. By default the prompt is sent into a session (your own when you are in one, or the one you name), and when that session is busy it steers the running turn; pass ifBusy: "queue" to wait for the turn to end instead. Use it to remind yourself, check back on work, or nudge another session. Pass project instead to start a new session on every run, with the same options as t3_start_session plus quiet (snoozed while it works, so it only surfaces when it finishes, fails or asks). Say when with exactly one of: in ("10m", once), at (an ISO time or "09:00", once), every ("2h"), daily ("09:00", with weekdays and timeZone), or webhook: true. Runs act for the person you act for: new sessions are theirs and show in their sidebar. Other actions take id: update, pause, resume, delete, run_now.',
     parameters: Schema.Struct({
       action: Schema.optional(
         described(
@@ -527,6 +527,12 @@ export const ScheduleTool = destructive(
         described(
           Schema.Boolean,
           "For new sessions: snooze each one while it works, so it surfaces only when it finishes, fails or asks a person. Defaults to false.",
+        ),
+      ),
+      ifBusy: Schema.optional(
+        described(
+          Schema.Literals(["steer", "queue"]),
+          'When the session it sends into is busy: steer (the default) adds the prompt to the running turn when its provider supports steering, and otherwise queues it; queue always waits until the turn ends. Pass it with action "update" to change an existing schedule.',
         ),
       ),
       clientRequestId: Schema.optional(

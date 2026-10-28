@@ -129,6 +129,8 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  // T3-CUSTOM(expbkt3): with mode "queue", steer instead when the live session supports it.
+  readonly steerWhenSupported?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -792,6 +794,10 @@ const make = Effect.gen(function* () {
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       dispatchMode,
+      // T3-CUSTOM(expbkt3): scheduled prompts (ScheduledTaskService).
+      ...(input.steerWhenSupported === true && dispatchMode.type === "queue_after_active"
+        ? { steerWhenSupported: true }
+        : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });

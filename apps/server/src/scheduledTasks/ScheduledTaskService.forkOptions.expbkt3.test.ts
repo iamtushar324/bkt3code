@@ -155,7 +155,8 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
       yield* scheduled.runNow({ id: bound.id });
       expect(sends).toHaveLength(1);
       expect(sends[0]?.actor).toBeNull();
-      expect(sends[0]?.input.mode).toBe("queue");
+      // A busy session takes the prompt as steering by default.
+      expect(sends[0]?.input).toMatchObject({ mode: "queue", steerWhenSupported: true });
       expect("modelSelection" in (sends[0]?.input ?? {})).toBe(false);
       const { tasks: stillRunning } = yield* scheduled.list();
       expect(stillRunning.find((task) => task.id === bound.id)?.enabled).toBe(true);
@@ -171,6 +172,54 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
       expect(yield* readScheduledTaskForkOptions(sql, bound.id)).toEqual({});
       yield* writeScheduledTaskForkOptions(sql, bound.id, { ownerUserId: owner });
       expect(yield* readScheduledTaskForkOptions(sql, bound.id)).toEqual({});
+    }).pipe(Effect.provide(services));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a bound run steers by default and queues on request", () =>
+  Effect.gen(function* () {
+    const sends: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+    const services = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Effect.sync(() => {
+                sends.push(input);
+                return {} as ThreadManagementService.ThreadManagementSendResult;
+              }),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const scheduled = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* scheduled.upsert({ ...baseTask, threadId: boundThreadId });
+
+      // No options: steer when the session can, and the prompt goes out unchanged.
+      yield* scheduled.runNow({ id: task.id });
+      expect(sends[0]).toMatchObject({
+        mode: "queue",
+        steerWhenSupported: true,
+        text: "Check the nightly build.",
+      });
+
+      // ifBusy alone (as schedule_task stores it) changes only the delivery.
+      yield* writeScheduledTaskForkOptions(sql, task.id, { ifBusy: "queue" });
+      const { task: queued } = yield* scheduled.runNow({ id: task.id });
+      expect(sends[1]).toMatchObject({ mode: "queue", text: "Check the nightly build." });
+      expect("steerWhenSupported" in (sends[1] ?? {})).toBe(false);
+      expect(queued).toMatchObject({ enabled: true, lastRunStatus: "succeeded" });
     }).pipe(Effect.provide(services));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
