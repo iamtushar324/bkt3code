@@ -532,7 +532,7 @@ export const ScheduleTool = destructive(
       ifBusy: Schema.optional(
         described(
           Schema.Literals(["steer", "queue"]),
-          'When the session it sends into is busy: steer (the default) adds the prompt to the running turn; queue waits until the turn ends. Pass it with action "update" to change an existing schedule.',
+          'When the session it sends into is busy: steer (the default) adds the prompt to the running turn when its provider supports steering, and otherwise queues it; queue always waits until the turn ends. Pass it with action "update" to change an existing schedule.',
         ),
       ),
       clientRequestId: Schema.optional(

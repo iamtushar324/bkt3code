@@ -5233,11 +5233,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // Route durable mailbox deliveries under the thread lock, using the live
     // session's capabilities. Never interrupt/restart a turn for a notification.
+    // T3-CUSTOM(expbkt3): a queued scheduled prompt (steerWhenSupported) takes the
+    // same route, and steers even where steering interrupts a running tool, as a
+    // person's steer from the composer does.
+    const scheduledSteer =
+      command.steerWhenSupported === true && dispatchMode.type === "queue_after_active";
     if (
-      delegatedCompletion !== undefined &&
-      delegatedCompletion.taskIds.every(
-        (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
-      )
+      scheduledSteer ||
+      (delegatedCompletion !== undefined &&
+        delegatedCompletion.taskIds.every(
+          (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
+        ))
     ) {
       const active = projection.runs.find((run) => run.status === "running");
       const providerThread = projection.providerThreads.find(
@@ -5261,7 +5267,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           Option.isSome(session) &&
           session.value.providerSession.capabilities.turns.supportsActiveSteering &&
-          session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true
+          // T3-CUSTOM(expbkt3): scheduledSteer accepts a steer that interrupts a tool.
+          (scheduledSteer ||
+            session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true)
         ) {
           dispatchMode = { type: "steer_active", targetRunId: active.id };
         }

@@ -116,7 +116,7 @@ export const ForkScheduledTaskCustomGroupResultFields = {
 };
 
 const forkScheduledTaskIfBusyDescription =
-  "What a run does when the thread it posts into is busy: steer (the default) adds the prompt to the running turn; queue waits until that turn ends. Applies only to tasks bound to a thread.";
+  "What a run does when the thread it posts into is busy: steer (the default) adds the prompt to the running turn when its provider supports steering, and otherwise queues it; queue always waits until that turn ends. Applies only to tasks bound to a thread.";
 
 /** `ifBusy` for schedule_task, update_scheduled_task (omitted keeps it) and task summaries. */
 export const ForkScheduledTaskIfBusyFields = {

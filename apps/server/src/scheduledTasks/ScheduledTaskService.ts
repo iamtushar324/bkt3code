@@ -80,7 +80,7 @@ import {
   scheduledTaskForkOptionsForRun,
   scheduledTaskOwner,
   scheduledPromptText,
-  sendScheduledPrompt,
+  scheduledTaskSteers,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): watches — tasks that run once another session changes.
 import {
@@ -910,22 +910,23 @@ export const layer = Layer.effect(
                 // follows the thread's current provider, so it passes none.
                 // T3-CUSTOM(expbkt3): upstream now always does what the fork's
                 // `keepThreadModel` option asked for, so that option is a no-op here.
-                // T3-CUSTOM(expbkt3): a busy session takes the prompt as steering
-                // unless the task asks to queue (scheduledTaskForkOptions.expbkt3.ts).
-                sendScheduledPrompt(forkOptions, commandId, (mode, sendCommandId) =>
-                  threadManagement.sendToThread({
+                threadManagement
+                  .sendToThread({
                     projectId: active.projectId,
-                    commandId: sendCommandId,
+                    commandId,
                     threadId: boundThreadId,
                     messageId,
                     scheduledTaskId: active.id,
                     text,
                     attachments: [],
-                    mode,
+                    mode: "queue",
+                    // T3-CUSTOM(expbkt3): a busy session takes the prompt as steering
+                    // unless the task asks to queue (scheduledTaskForkOptions.expbkt3.ts).
+                    ...(scheduledTaskSteers(forkOptions) ? { steerWhenSupported: true } : {}),
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
-                  }),
-                ).pipe(asScheduledTaskOwner(forkOwner, trigger), Effect.as(boundThreadId)),
+                  })
+                  .pipe(asScheduledTaskOwner(forkOwner, trigger), Effect.as(boundThreadId)),
               );
         // T3-CUSTOM(expbkt3): END
 

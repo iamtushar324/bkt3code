@@ -80,44 +80,17 @@ const hasRunOptions = (options: ScheduledTaskForkOptions): boolean =>
   Object.keys(options).some((key) => key !== "ifBusy");
 
 /**
- * The send mode of a prompt for a bound session: `auto` steers a running
- * turn, starts an idle session, and queues behind a turn that cannot take
- * steering yet; `queue` always waits for the turn to end.
+ * Whether a run's prompt steers its bound session's running turn: when the
+ * live session supports steering it joins the turn, otherwise it waits in the
+ * queue. A turn is never interrupted and restarted for it.
  */
-export const scheduledTaskSendMode = (options: ScheduledTaskForkOptions): "auto" | "queue" =>
-  options.ifBusy === "queue" ? "queue" : "auto";
+export const scheduledTaskSteers = (options: ScheduledTaskForkOptions): boolean =>
+  options.ifBusy !== "queue";
 
 const GONE_TARGET_TAGS: ReadonlySet<string> = new Set([
   "ThreadManagementThreadArchivedError",
   "ThreadManagementThreadNotFoundError",
 ]);
-
-/** Whether a failed send found its session gone, so another try cannot help. */
-export const isGoneScheduledTaskTarget = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "_tag" in error &&
-  GONE_TARGET_TAGS.has(String(error._tag));
-
-/**
- * Sends a run's prompt into its bound session with the task's send mode. A
- * steer the session refuses (a provider without steering, a turn that ended
- * meanwhile) goes to the queue instead, so the prompt is never lost.
- */
-export const sendScheduledPrompt = <A, E, R>(
-  options: ScheduledTaskForkOptions,
-  commandId: CommandId,
-  send: (mode: "auto" | "queue", commandId: CommandId) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  scheduledTaskSendMode(options) === "queue"
-    ? send("queue", commandId)
-    : send("auto", commandId).pipe(
-        Effect.catch((error) =>
-          isGoneScheduledTaskTarget(error)
-            ? Effect.fail(error)
-            : send("queue", CommandId.make(`${commandId}:queue`)),
-        ),
-      );
 
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(ScheduledTaskForkOptions));
 
@@ -321,7 +294,10 @@ export const scheduledTaskPauseReason = (
 ): { readonly error: string | null } | null => {
   if (!hasRunOptions(options)) return null;
   if (Exit.isFailure(exit)) {
-    if (isGoneScheduledTaskTarget(Cause.squash(exit.cause))) {
+    const error = Cause.squash(exit.cause);
+    const tag =
+      typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "";
+    if (GONE_TARGET_TAGS.has(tag)) {
       return {
         error: "The session this task sends to is archived or deleted, so the task is paused.",
       };
