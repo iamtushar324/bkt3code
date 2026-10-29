@@ -24,6 +24,7 @@ import { ServerConfig } from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -641,7 +642,12 @@ export const SessionLifecycleTool = destructive(
     }),
     success: AgentToolResult,
     failure: AgentToolFailure,
-    dependencies: [...dependencies, ProjectionSnapshotQuery, TurnStartBootstrap],
+    dependencies: [
+      ...dependencies,
+      ProjectionSnapshotQuery,
+      TurnStartBootstrap,
+      CommandReceiptStore.CommandReceiptStoreV2,
+    ],
   }).annotate(Tool.Title, "Archive, stop, snooze or delete a session"),
 );
 

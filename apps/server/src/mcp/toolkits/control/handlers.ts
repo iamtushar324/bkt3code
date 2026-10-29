@@ -844,27 +844,28 @@ const NO_OP_RESULT_SEQUENCE = 0;
  * its target state. With a caller's command id it is written as an accepted
  * command receipt with sequence 0, so a retry with that id replays this
  * outcome, and a later dispatch of that id replays instead of acting, even
- * after the session's state changed in between.
+ * after the session's state changed in between. `replace` overwrites the
+ * rejected receipt the orchestrator wrote when this same command lost a race
+ * to the state it asked for; that receipt belongs to this command id alone.
  */
 const noOpLifecycle = Effect.fn("T3ControlToolkit.noOpLifecycle")(function* (
   input: SessionLifecycleInput,
+  options: { readonly replace: boolean } = { replace: false },
 ) {
   if (input.commandId !== undefined) {
-    const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
-    if (Option.isSome(receipts)) {
-      const acceptedAt = yield* DateTime.now;
-      yield* receipts.value
-        .insertIfAbsent({
-          commandId: input.commandId,
-          threadId: input.sessionId,
-          commandType: input.action === "archive" ? "thread.archive" : "thread.unarchive",
-          acceptedAt,
-          resultSequence: NO_OP_RESULT_SEQUENCE,
-          status: "accepted",
-          error: null,
-        })
-        .pipe(mapControlError(input.operation));
-    }
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const acceptedAt = yield* DateTime.now;
+    const receipt: CommandReceiptStore.CommandReceiptV2 = {
+      commandId: input.commandId,
+      threadId: input.sessionId,
+      commandType: input.action === "archive" ? "thread.archive" : "thread.unarchive",
+      acceptedAt,
+      resultSequence: NO_OP_RESULT_SEQUENCE,
+      status: "accepted",
+      error: null,
+    };
+    const write = options.replace ? receipts.upsert(receipt) : receipts.insertIfAbsent(receipt);
+    yield* write.pipe(mapControlError(input.operation));
   }
   return {
     accepted: true,
@@ -889,10 +890,9 @@ export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecyc
     // A retry of a caller's command id replays its first no-op outcome rather
     // than acting on a state that changed since.
     if (input.commandId !== undefined) {
-      const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
-      const receipt = Option.isSome(receipts)
-        ? yield* receipts.value.getByCommandId(input.commandId).pipe(mapControlError(operation))
-        : Option.none();
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const lookup = receipts.getByCommandId(input.commandId);
+      const receipt = yield* lookup.pipe(mapControlError(operation));
       // Only a no-op writes sequence 0; a dispatched command has a later one,
       // and a refused one replays as refused through the dispatch below.
       if (
@@ -994,7 +994,7 @@ export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecyc
     ),
     mapControlError(operation),
   );
-  if (dispatched === undefined) return yield* noOpLifecycle(input);
+  if (dispatched === undefined) return yield* noOpLifecycle(input, { replace: true });
   const result = dispatched;
   return {
     accepted: true,

@@ -2,6 +2,8 @@
 import { SessionWebhookHandlers, SessionWebhookToolkit } from "../session-webhooks/mcp.ts";
 // T3-CUSTOM(expbkt3): native MCP commands carry the authenticated sender.
 import { CurrentOrchestrationActorUserId } from "../orchestration-v2/forkActor.expbkt3.ts";
+// T3-CUSTOM(expbkt3): session lifecycle no-op receipts for the fork toolkits (TEC-1819).
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 // T3-CUSTOM(expbkt3): BEGIN — T3 MCP control plane: authenticated external operators alongside
 // scoped native agent sessions.
 /**
@@ -1141,6 +1143,8 @@ const t3ControlToolkitRegistered = t3ControlToolkitRegistration as Layer.Layer<
 >;
 export const T3ControlToolkitRegistrationLive = t3ControlToolkitRegistered.pipe(
   Layer.provide(McpToolAccess.HandlersLayer.layer(T3ControlToolkitHandlers)),
+  // Session lifecycle no-op receipts (TEC-1819); the runtime keeps its store private.
+  Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),
 );
 
 const layerSessionWebhookRegistration = toolkitRegistration(
@@ -1274,6 +1278,8 @@ const registerAgentToolkit = Effect.fn("McpHttpServer.registerAgentToolkit")(fun
 
 export const layerAgentToolkitRegistration = Layer.effectDiscard(registerAgentToolkit()).pipe(
   Layer.provide(McpToolAccess.HandlersLayer.layer(AgentToolkitHandlers)),
+  // Session lifecycle no-op receipts (TEC-1819); the runtime keeps its store private.
+  Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),
 );
 // T3-CUSTOM(expbkt3): END
 

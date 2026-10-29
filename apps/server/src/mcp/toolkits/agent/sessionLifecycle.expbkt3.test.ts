@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Tool } from "effect/ai";
 
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -104,6 +105,21 @@ it.layer(NodeServices.layer)("t3_session_lifecycle", (it) => {
       }),
     createThread: () => Effect.die("createThread should not be called"),
   });
+  const receipts = new Map<string, CommandReceiptStore.CommandReceiptV2>();
+  const receiptStore = {
+    insertIfAbsent: (receipt: CommandReceiptStore.CommandReceiptV2) =>
+      Effect.sync(() => {
+        if (receipts.has(receipt.commandId)) return false;
+        receipts.set(receipt.commandId, receipt);
+        return true;
+      }),
+    upsert: (receipt: CommandReceiptStore.CommandReceiptV2) =>
+      Effect.sync(() => {
+        receipts.set(receipt.commandId, receipt);
+      }),
+    getByCommandId: (commandId: string) =>
+      Effect.sync(() => Option.fromNullishOr(receipts.get(commandId))),
+  } as unknown as CommandReceiptStore.CommandReceiptStoreV2["Service"];
   const provideAs =
     (caller: McpInvocationContext.McpInvocationScope) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -112,12 +128,14 @@ it.layer(NodeServices.layer)("t3_session_lifecycle", (it) => {
         Effect.provideService(ProjectionSnapshotQuery, query),
         Effect.provideService(TurnStartBootstrap, dispatcher),
         Effect.provideService(OrchestrationAccessControl, accessControl),
+        Effect.provideService(CommandReceiptStore.CommandReceiptStoreV2, receiptStore),
         Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
       );
   const provide = provideAs(scope);
   const reset = () => {
     archivedAt = null;
     dispatched.length = 0;
+    receipts.clear();
   };
 
   it.effect("archives, and a retry is a success that dispatches nothing", () =>

@@ -30,6 +30,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -338,7 +339,8 @@ export const T3SessionActionTool = destructiveTool(
     }),
     success: JsonToolResult,
     failure: T3ControlFailure,
-    dependencies,
+    // TEC-1819: archive/unarchive record no-op outcomes as command receipts.
+    dependencies: [...dependencies, CommandReceiptStore.CommandReceiptStoreV2],
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
 
