@@ -515,6 +515,9 @@ const make = Effect.gen(function* () {
       if (result === null) return null;
       if (result.exitCode === 0 || result.exitCode === allowedExitCode) return result;
       if (result.stderr.toLowerCase().includes("not a git repository")) return null;
+      // T3-CUSTOM(expbkt3): newer git reports a broken .git file this way instead.
+      if (result.stderr.toLowerCase().includes("gitfile does not point to a valid repository"))
+        return null;
       return yield* failure(
         result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
       );
