@@ -149,10 +149,11 @@ it("matches the list filter exactly but case-insensitively", () => {
 it.effect("reports each session's custom group and filters the list by it", () =>
   Effect.gen(function* () {
     const all = yield* provideReads(__testing.listSessions({}));
+    // Equal change times sort by id (TEC-1818).
     expect(all.sessions.map((session) => [session.sessionId, session.customGroup])).toEqual([
-      ["thread-sprint", "Sprint 42"],
       ["thread-loose", null],
       ["thread-other", "Bugs"],
+      ["thread-sprint", "Sprint 42"],
     ]);
 
     const filtered = yield* provideReads(__testing.listSessions({ customGroup: "sprint 42" }));
