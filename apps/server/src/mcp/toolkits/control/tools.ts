@@ -30,6 +30,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -324,7 +325,7 @@ export const T3UpdateSessionTool = mutatingTool(
 export const T3SessionActionTool = destructiveTool(
   Tool.make("t3_session_action", {
     description:
-      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete.",
+      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete. Archive and unarchive are idempotent: a session already in that state returns success with changed: false.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       action: described(
@@ -351,7 +352,8 @@ export const T3SessionActionTool = destructiveTool(
     }),
     success: JsonToolResult,
     failure: T3ControlFailure,
-    dependencies,
+    // TEC-1819: archive/unarchive record no-op outcomes as command receipts.
+    dependencies: [...dependencies, CommandReceiptStore.CommandReceiptStoreV2],
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
 
@@ -579,7 +581,7 @@ export const T3CreateSessionTool = mutatingTool(
 export const T3DispatchCommandTool = destructiveTool(
   Tool.make("t3_dispatch_command", {
     description:
-      "External-operator escape hatch for advanced T3 automation. Dispatch any validated OrchestrationCommand through T3's durable command gate. Not available to an in-session agent; prefer the focused tools whenever possible.",
+      "External-operator escape hatch for advanced T3 automation. Dispatch any validated OrchestrationCommand through T3's durable command gate. Not available to an in-session agent; prefer the focused tools whenever possible. To archive, unarchive, delete, stop, restart, interrupt, settle, snooze or unsnooze a session, use t3_session_action instead: it builds the command and is safe to retry. For a web app action's exact input schema, use t3_ui_get_tool. A wrong command returns its required fields and an example.",
     parameters: Schema.Struct({
       // Schema.Unknown drops a schema-level description in the generated JSON
       // schema, so annotate the key instead — the agent needs to be told what
@@ -587,7 +589,7 @@ export const T3DispatchCommandTool = destructiveTool(
       command: Schema.Unknown.pipe(
         Schema.annotateKey({
           description:
-            "A complete OrchestrationCommand object conforming to the current T3 contracts schema.",
+            'A complete OrchestrationCommand object, for example {"type":"thread.archive","commandId":"mcp:<unique-id>","threadId":"<session id>"}. commandId is a new unique string you choose.',
         }),
       ),
     }),

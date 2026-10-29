@@ -58,6 +58,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import { resolveParentWorkspaceInheritance } from "../../../workspace-groups/parentWorkspaceInheritance.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -75,8 +76,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import { hasUserWideScope, resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
+import { describeCommandDecodeFailure } from "./dispatchCommandHelp.ts";
 import { boundSessionDetail } from "./sessionDetail.ts";
-import { T3ControlToolkit, T3ControlToolError, type T3CreateSessionTool } from "./tools.ts";
+import {
+  T3ControlToolkit,
+  T3ControlToolError,
+  type T3CreateSessionTool,
+  type T3SessionActionTool,
+} from "./tools.ts";
 import type { Tool } from "effect/ai";
 import { recordLinearLinked } from "../../../telemetry/serverEvents.ts";
 import { CurrentOrchestrationActorUserId } from "../../../orchestration-v2/forkActor.expbkt3.ts";
@@ -91,7 +98,29 @@ function boundedLimit(value: number | undefined, fallback: number, maximum: numb
   return Math.max(0, Math.min(value, maximum));
 }
 
+/**
+ * The reason an orchestrator refusal carries as a plain string `cause`, such
+ * as "Thread x is already archived.", found through the error's cause chain.
+ * The wrapping errors' own messages are generic ("The V2 command could not
+ * complete."), so this is the text that tells an agent what went wrong.
+ */
+export function rejectionReason(cause: unknown): string | undefined {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (typeof current !== "object" || current === null || !("cause" in current)) return undefined;
+    const next: unknown = current.cause;
+    if (typeof next === "string") {
+      const trimmed = next.trim();
+      return trimmed.length === 0 ? undefined : Array.from(trimmed).slice(0, 1000).join("");
+    }
+    current = next;
+  }
+  return undefined;
+}
+
 function errorMessage(cause: unknown): string {
+  const reason = rejectionReason(cause);
+  if (reason !== undefined) return reason;
   if (cause instanceof Error && cause.message.trim().length > 0) return cause.message;
   if (
     typeof cause === "object" &&
@@ -838,6 +867,198 @@ const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
     mapControlError(operation),
   );
 
+type SessionLifecycleAction = Tool.Parameters<typeof T3SessionActionTool>["action"];
+
+interface SessionLifecycleInput {
+  readonly operation: string;
+  readonly sessionId: ThreadId;
+  readonly action: SessionLifecycleAction;
+  readonly snoozedUntil?: string | undefined;
+  readonly commandId?: CommandId | undefined;
+}
+
+/**
+ * One lifecycle action on a session the caller already resolved and may
+ * change: the control toolkit's t3_session_action and the agent toolkit's
+ * t3_session_lifecycle both run it. Archive and unarchive are idempotent: a
+ * session already in the asked state is a success with `changed: false`, and
+ * nothing is dispatched, so a retried archive does not fail. A caller may pass
+ * its own `commandId` (a retry with the same id is then the same command).
+ */
+/** The orchestrator's refusal for an archive or unarchive already in its target state. */
+const isAlreadyInStateRefusal = (action: SessionLifecycleAction, reason: string | undefined) =>
+  reason !== undefined &&
+  ((action === "archive" && / is already archived\.$/.test(reason)) ||
+    (action === "unarchive" && / is not archived\.$/.test(reason)));
+
+const NO_OP_RESULT_SEQUENCE = 0;
+
+/**
+ * The success for an archive or unarchive that found the session already in
+ * its target state. With a caller's command id it is written as an accepted
+ * command receipt with sequence 0, so a retry with that id replays this
+ * outcome, and a later dispatch of that id replays instead of acting, even
+ * after the session's state changed in between. `replace` overwrites the
+ * rejected receipt the orchestrator wrote when this same command lost a race
+ * to the state it asked for; that receipt belongs to this command id alone.
+ */
+const noOpLifecycle = Effect.fn("T3ControlToolkit.noOpLifecycle")(function* (
+  input: SessionLifecycleInput,
+  options: { readonly replace: boolean } = { replace: false },
+) {
+  if (input.commandId !== undefined) {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const acceptedAt = yield* DateTime.now;
+    const receipt: CommandReceiptStore.CommandReceiptV2 = {
+      commandId: input.commandId,
+      threadId: input.sessionId,
+      commandType: input.action === "archive" ? "thread.archive" : "thread.unarchive",
+      acceptedAt,
+      resultSequence: NO_OP_RESULT_SEQUENCE,
+      status: "accepted",
+      error: null,
+    };
+    const write = options.replace ? receipts.upsert(receipt) : receipts.insertIfAbsent(receipt);
+    yield* write.pipe(mapControlError(input.operation));
+  }
+  return {
+    accepted: true,
+    changed: false,
+    action: input.action,
+    sessionId: input.sessionId,
+    message:
+      input.action === "archive"
+        ? `Session ${input.sessionId} is already archived. Nothing to do.`
+        : `Session ${input.sessionId} is already active (not archived). Nothing to do.`,
+  };
+});
+
+export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecycle")(function* (
+  input: SessionLifecycleInput,
+) {
+  const { operation, sessionId } = input;
+  const query = yield* ProjectionSnapshotQuery;
+  const dispatcher = yield* TurnStartBootstrap;
+  const crypto = yield* Crypto.Crypto;
+  if (input.action === "archive" || input.action === "unarchive") {
+    // A retry of a caller's command id replays its first no-op outcome rather
+    // than acting on a state that changed since.
+    if (input.commandId !== undefined) {
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const lookup = receipts.getByCommandId(input.commandId);
+      const receipt = yield* lookup.pipe(mapControlError(operation));
+      // Only a no-op writes sequence 0; a dispatched command has a later one,
+      // and a refused one replays as refused through the dispatch below.
+      if (
+        Option.isSome(receipt) &&
+        receipt.value.status === "accepted" &&
+        receipt.value.resultSequence === NO_OP_RESULT_SEQUENCE
+      ) {
+        return yield* noOpLifecycle(input);
+      }
+    }
+    // One indexed row read; the shell query includes archived threads.
+    const shell = yield* query.getThreadShellById(sessionId).pipe(mapControlError(operation));
+    if (Option.isSome(shell)) {
+      const archived = shell.value.archivedAt !== null;
+      if (input.action === "archive" ? archived : !archived) {
+        return yield* noOpLifecycle(input);
+      }
+    }
+  }
+  const commandId = input.commandId ?? (yield* makeCommandId(crypto, operation));
+  const createdAt = yield* nowIso;
+  let command: OrchestrationCommand;
+  switch (input.action) {
+    case "interrupt":
+      command = {
+        type: "thread.turn.interrupt",
+        commandId,
+        threadId: sessionId,
+        createdAt,
+      };
+      break;
+    case "stop":
+      command = {
+        type: "thread.session.stop",
+        commandId,
+        threadId: sessionId,
+        createdAt,
+      };
+      break;
+    case "restart":
+      command = {
+        type: "thread.session.restart",
+        commandId,
+        threadId: sessionId,
+        createdAt,
+      };
+      break;
+    case "archive":
+      command = { type: "thread.archive", commandId, threadId: sessionId };
+      break;
+    case "unarchive":
+      command = { type: "thread.unarchive", commandId, threadId: sessionId };
+      break;
+    case "settle":
+      command = { type: "thread.settle", commandId, threadId: sessionId };
+      break;
+    case "activate":
+      command = {
+        type: "thread.unsettle",
+        commandId,
+        threadId: sessionId,
+        reason: "user",
+      };
+      break;
+    case "snooze":
+      if (input.snoozedUntil === undefined) {
+        return yield* new T3ControlToolError({
+          operation,
+          message: "snoozedUntil is required for the snooze action.",
+        });
+      }
+      command = {
+        type: "thread.snooze",
+        commandId,
+        threadId: sessionId,
+        snoozedUntil: input.snoozedUntil,
+      };
+      break;
+    case "unsnooze":
+      command = {
+        type: "thread.unsnooze",
+        commandId,
+        threadId: sessionId,
+        reason: "user",
+      };
+      break;
+    case "delete":
+      command = { type: "thread.delete", commandId, threadId: sessionId };
+      break;
+  }
+  const dispatched = yield* dispatcher.dispatch(command).pipe(
+    Effect.map((result) => ({ sequence: result.sequence })),
+    // Two archives can both pass the read above; the one that loses the race
+    // is refused as already archived, which is the state it asked for.
+    Effect.catch((error) =>
+      isAlreadyInStateRefusal(input.action, rejectionReason(error))
+        ? Effect.succeed(undefined)
+        : Effect.fail(error),
+    ),
+    mapControlError(operation),
+  );
+  if (dispatched === undefined) return yield* noOpLifecycle(input, { replace: true });
+  const result = dispatched;
+  return {
+    accepted: true,
+    changed: true,
+    action: input.action,
+    sessionId,
+    sequence: result.sequence,
+  };
+});
+
 /**
  * `started` is what McpToolAccess.startsThreads resolved: the modes the caller
  * asked for, or its own where it asked for none. A saved default it did not ask
@@ -1392,81 +1613,12 @@ const handlers = {
   t3_session_action: Effect.fn("T3ControlToolkit.sessionAction")(function* (input) {
     const operation = `session-${input.action}`;
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.control");
-    const query = yield* ProjectionSnapshotQuery;
-    const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
-    const [commandId, createdAt] = yield* Effect.all([makeCommandId(crypto, operation), nowIso]);
-    let command: OrchestrationCommand;
-    switch (input.action) {
-      case "interrupt":
-        command = {
-          type: "thread.turn.interrupt",
-          commandId,
-          threadId: sessionId,
-          createdAt,
-        };
-        break;
-      case "stop":
-        command = {
-          type: "thread.session.stop",
-          commandId,
-          threadId: sessionId,
-          createdAt,
-        };
-        break;
-      case "restart":
-        command = {
-          type: "thread.session.restart",
-          commandId,
-          threadId: sessionId,
-          createdAt,
-        };
-        break;
-      case "archive":
-        command = { type: "thread.archive", commandId, threadId: sessionId };
-        break;
-      case "unarchive":
-        command = { type: "thread.unarchive", commandId, threadId: sessionId };
-        break;
-      case "settle":
-        command = { type: "thread.settle", commandId, threadId: sessionId };
-        break;
-      case "activate":
-        command = {
-          type: "thread.unsettle",
-          commandId,
-          threadId: sessionId,
-          reason: "user",
-        };
-        break;
-      case "snooze":
-        if (input.snoozedUntil === undefined) {
-          return yield* new T3ControlToolError({
-            operation,
-            message: "snoozedUntil is required for the snooze action.",
-          });
-        }
-        command = {
-          type: "thread.snooze",
-          commandId,
-          threadId: sessionId,
-          snoozedUntil: input.snoozedUntil,
-        };
-        break;
-      case "unsnooze":
-        command = {
-          type: "thread.unsnooze",
-          commandId,
-          threadId: sessionId,
-          reason: "user",
-        };
-        break;
-      case "delete":
-        command = { type: "thread.delete", commandId, threadId: sessionId };
-        break;
-    }
-    const result = yield* dispatcher.dispatch(command).pipe(mapControlError(operation));
-    return { accepted: true, action: input.action, sessionId, sequence: result.sequence };
+    return yield* runSessionLifecycle({
+      operation,
+      sessionId,
+      action: input.action,
+      snoozedUntil: input.snoozedUntil,
+    });
   }),
 
   t3_respond_approval: Effect.fn("T3ControlToolkit.respondApproval")(function* (input) {
@@ -2101,8 +2253,15 @@ const handlers = {
     const operation = "dispatch-command";
     yield* requireExternalOperator(operation);
     const dispatcher = yield* TurnStartBootstrap;
+    // TEC-1819: a wrong command gets an error that says exactly what to send.
     const command = yield* decodeOrchestrationCommand(input.command).pipe(
-      mapControlError(operation),
+      Effect.mapError(
+        (cause) =>
+          new T3ControlToolError({
+            operation,
+            message: describeCommandDecodeFailure(input.command, errorMessage(cause)),
+          }),
+      ),
     );
     const result = yield* dispatcher.dispatch(command).pipe(mapControlError(operation));
     return { accepted: true, commandType: command.type, sequence: result.sequence };

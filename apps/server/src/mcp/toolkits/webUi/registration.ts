@@ -27,7 +27,9 @@ import {
   WEB_UI_STREAM_TOOL_COUNT,
   WEB_UI_VIRTUAL_TOOL_COUNT,
   WEB_UI_VIRTUAL_TOOLS,
+  webUiVirtualToolSummary,
 } from "./catalog.ts";
+import { closestNames } from "../control/dispatchCommandHelp.ts";
 import { makeWebUiAuthenticatedSession } from "./session.ts";
 
 export const WEB_UI_MCP_TOOL_NAMES = [
@@ -38,6 +40,21 @@ export const WEB_UI_MCP_TOOL_NAMES = [
 ] as const;
 
 const virtualToolNames = WEB_UI_VIRTUAL_TOOLS.map((tool) => tool.name);
+
+// T3-CUSTOM(expbkt3): TEC-1819 — the input schemas name a virtual tool as a
+// plain string, not an enum of all ~250 names, which made each schema ~17k
+// characters. The handlers still validate the name and suggest the closest.
+const VIRTUAL_TOOL_NAME_HELP =
+  "Virtual tool name from t3_ui_list_tools, for example t3_ui_server_get_config.";
+
+/** The refusal for a name that is not a virtual tool, with the nearest names. */
+const unknownVirtualToolMessage = (name: string) => {
+  const closest = closestNames(name, virtualToolNames);
+  return `Unknown virtual tool: ${name}.${closest.length > 0 ? ` Closest: ${closest.join(", ")}.` : ""} Call t3_ui_list_tools with query to search.`;
+};
+
+const MAX_SCHEMA_TOOLS = 5;
+// T3-CUSTOM(expbkt3): END
 
 const streamOptionsJsonSchema = {
   type: "object",
@@ -68,8 +85,7 @@ const virtualCallProperties = {
   id: { type: "string", description: "Optional caller correlation ID." },
   tool: {
     type: "string",
-    enum: virtualToolNames,
-    description: "Virtual tool name from t3_ui_list_tools.",
+    description: VIRTUAL_TOOL_NAME_HELP,
   },
   input: {
     description: "Input validated against the virtual tool's exact web RPC schema.",
@@ -81,7 +97,20 @@ const listToolsInputSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    query: { type: "string", description: "Case-insensitive name, method, or category filter." },
+    query: {
+      type: "string",
+      description: "Case-insensitive filter on name, method, category or description.",
+    },
+    tools: {
+      type: "array",
+      maxItems: MAX_SCHEMA_TOOLS,
+      items: { type: "string" },
+      description: `Up to ${MAX_SCHEMA_TOOLS} virtual tool names; returns each with its full inputSchema, so you need no t3_ui_get_tool call.`,
+    },
+    tool: {
+      type: "string",
+      description: "One virtual tool name; same as tools: [name].",
+    },
     authorizedOnly: {
       type: "boolean",
       description: "Return only tools whose transport scope is present for this caller.",
@@ -96,7 +125,7 @@ const getToolInputSchema = {
   additionalProperties: false,
   required: ["tool"],
   properties: {
-    tool: { type: "string", enum: virtualToolNames },
+    tool: { type: "string", description: VIRTUAL_TOOL_NAME_HELP },
   },
 } as const;
 
@@ -145,6 +174,8 @@ const VirtualCallSchema = Schema.Struct({
 
 const ListToolsSchema = Schema.Struct({
   query: Schema.optionalKey(Schema.String),
+  tools: Schema.optionalKey(Schema.Array(Schema.String)),
+  tool: Schema.optionalKey(Schema.String),
   authorizedOnly: Schema.optionalKey(Schema.Boolean),
   cursor: Schema.optionalKey(Schema.Number),
   limit: Schema.optionalKey(Schema.Number),
@@ -236,7 +267,7 @@ export const WebUiRpcToolkit = Toolkit.make(
   webUiTool("t3_ui_list_tools", {
     title: "List authenticated web UI tools",
     description:
-      "List the complete virtual tool surface generated from bkt3's authenticated web UI RPC contract. Call this first for deep/code-mode control.",
+      "List the web app's actions as virtual tools: name, one-line description and required input fields. Filter with query. Pass tools: [name] (up to 5) to get each one's full inputSchema, then run it with t3_ui_call. For session archive, stop, snooze or delete, use t3_session_lifecycle instead.",
     inputSchema: listToolsInputSchema,
     readOnly: true,
   }),
@@ -285,6 +316,39 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
       if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
       const invocation = yield* McpInvocationContext.McpInvocationContext;
       const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
+      // T3-CUSTOM(expbkt3): TEC-1819 — named tools come back with their schemas.
+      const named = [
+        ...(decoded.success.tool === undefined ? [] : [decoded.success.tool]),
+        ...(decoded.success.tools ?? []),
+      ]
+        .map((name) => name.trim())
+        .filter((name, index, all) => name.length > 0 && all.indexOf(name) === index);
+      if (named.length > 0) {
+        if (named.length > MAX_SCHEMA_TOOLS) {
+          return yield* invalidToolInput(
+            `Ask for at most ${MAX_SCHEMA_TOOLS} tools at a time; you asked for ${named.length}.`,
+          );
+        }
+        const details: Array<Readonly<Record<string, unknown>>> = [];
+        for (const name of named) {
+          const detail = getWebUiVirtualToolDetail(name);
+          if (!detail) return yield* invalidToolInput(unknownVirtualToolMessage(name));
+          details.push({
+            name: detail.name,
+            description: detail.description,
+            requiredFields: detail.requiredFields,
+            readOnly: detail.readOnly,
+            ...(detail.stream ? { streamMode: detail.streamMode } : {}),
+            authorized: isWebUiVirtualToolAuthorized(detail, scopes),
+            inputSchema: detail.inputSchema,
+          });
+        }
+        return yield* toolResult({
+          ok: true,
+          tools: details,
+          next: "Call t3_ui_call with tool and an input that matches inputSchema.",
+        });
+      }
       const query = decoded.success.query?.trim().toLowerCase() ?? "";
       const filtered = WEB_UI_VIRTUAL_TOOLS.filter((tool) => {
         const authorized = isWebUiVirtualToolAuthorized(tool, scopes);
@@ -293,13 +357,18 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
           query.length === 0 ||
           tool.name.includes(query) ||
           tool.method.toLowerCase().includes(query) ||
-          tool.category.toLowerCase().includes(query)
+          tool.category.toLowerCase().includes(query) ||
+          webUiVirtualToolSummary(tool).description.toLowerCase().includes(query)
         );
       });
       const cursor = normalizedOffset(decoded.success.cursor, 0, filtered.length);
       const limit = normalizedOffset(decoded.success.limit, 100, 100) || 1;
+      // Compact entries: what to pick a tool by and what its input needs.
       const page = filtered.slice(cursor, cursor + limit).map((tool) => ({
-        ...tool,
+        name: tool.name,
+        ...webUiVirtualToolSummary(tool),
+        readOnly: tool.readOnly,
+        ...(tool.stream ? { streamMode: tool.streamMode } : {}),
         authorized: isWebUiVirtualToolAuthorized(tool, scopes),
       }));
       const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
@@ -311,7 +380,7 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
         cursor,
         nextCursor,
         tools: page,
-        note: "authorized reflects the transport scope only; each call still enforces the web UI's user, project, thread, and administrator checks.",
+        note: "authorized reflects the transport scope only; each call still enforces the web UI's user, project, thread, and administrator checks. Pass tools: [name] for a tool's full inputSchema.",
       });
     }),
   ),
@@ -321,7 +390,7 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
       if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
       const detail = getWebUiVirtualToolDetail(decoded.success.tool);
       if (!detail) {
-        return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
+        return yield* invalidToolInput(unknownVirtualToolMessage(decoded.success.tool));
       }
       const invocation = yield* McpInvocationContext.McpInvocationContext;
       const scopes = makeWebUiAuthenticatedSession(invocation).scopes;
@@ -340,7 +409,7 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
       if (Result.isFailure(decoded)) return yield* invalidToolInput(decoded.failure.message);
       const call = toCallRequest(decoded.success);
       if (!call) {
-        return yield* invalidToolInput(`Unknown virtual tool: ${decoded.success.tool}`);
+        return yield* invalidToolInput(unknownVirtualToolMessage(decoded.success.tool));
       }
       const invocation = yield* McpInvocationContext.McpInvocationContext;
       const outcomes = yield* execute(invocation, [call], false);
@@ -359,7 +428,7 @@ const webUiRpcHandlers = (execute: WebUiRpcExecutor) => ({
       const calls: Array<WebUiRpcCallRequest> = [];
       for (const input of decoded.success.calls) {
         const call = toCallRequest(input);
-        if (!call) return yield* invalidToolInput(`Unknown virtual tool: ${input.tool}`);
+        if (!call) return yield* invalidToolInput(unknownVirtualToolMessage(input.tool));
         calls.push(call);
       }
       const invocation = yield* McpInvocationContext.McpInvocationContext;

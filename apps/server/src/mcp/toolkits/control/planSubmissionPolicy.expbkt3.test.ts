@@ -24,7 +24,9 @@ import { AgentUiService } from "../../../agentui/AgentUiService.ts";
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import * as ServerConfig from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
+import { OrchestrationCommandReceiptRepository } from "../../../persistence/OrchestrationCommandReceipts.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
 import { UserPresenceService } from "../../../presence/UserPresenceService.ts";
@@ -140,6 +142,9 @@ const makeFixture = Effect.gen(function* () {
     Layer.mock(GitWorkflowService)({}),
     // McpToolAccess reads the calling thread before a write.
     liveThreadsLayer,
+    // TEC-1819: session lifecycle no-op receipts (unused by the plan tools).
+    Layer.mock(OrchestrationCommandReceiptRepository)({}),
+    Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
     NodeServices.layer,
   );
   const setCurrent = (enabled: boolean) =>
