@@ -24,6 +24,7 @@ import { ServerConfig } from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -57,6 +58,16 @@ const format = {
     described(
       Schema.Literals(["markdown", "json"]),
       "markdown (the default) returns a short text with the next call to make; json returns the same facts as data.",
+    ),
+  ),
+};
+
+/** How much of each session's Linear tickets and pull requests to show (TEC-1818). */
+const detail = {
+  detail: Schema.optional(
+    described(
+      Schema.Literals(["compact", "full"]),
+      'compact (the default) counts tickets and pull requests ("3 PRs (1 open) · 2 tickets"; json: linearCount, pullRequestCount, openPullRequestCount). full lists every ticket key and pull request with its state and checks.',
     ),
   ),
 };
@@ -126,6 +137,7 @@ export const InboxTool = readOnly(
           "Most items to show, 1 to 50. Defaults to 20.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -201,6 +213,7 @@ export const AnswerTool = destructive(
           "Your own id for this answer, so a retry with the same id does not answer twice.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -212,7 +225,7 @@ export const AnswerTool = destructive(
 export const FindSessionsTool = readOnly(
   Tool.make("t3_find_sessions", {
     description:
-      "Find sessions, one line each: short id, title, state, project, Linear tags, pull requests, last change and link. A running session also shows how long it has run and its goal; a waiting one shows what it waits on. Filter by text, ticket, pull request, branch, project and state. Use the short id with the other t3_ tools.",
+      "Find sessions, one line each: short id, title, state, project, Linear tags, pull requests, last change and link. A running session also shows how long it has run and its goal; a waiting one shows what it waits on. Filter by text, ticket, pull request, branch, project and state. Tickets and pull requests are counted unless detail is full. The next-call lines carry the full session id; use it with the other t3_ tools.",
     parameters: Schema.Struct({
       query: Schema.optional(
         described(Schema.String, "Text in the title, or an id, link, ticket or pull request URL."),
@@ -254,6 +267,7 @@ export const FindSessionsTool = readOnly(
       cursor: Schema.optional(
         described(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), "From a previous result."),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -280,6 +294,7 @@ export const SessionBriefTool = readOnly(
           "Also show the newest plan's text, or the sessions filed under this one.",
         ),
       ),
+      ...detail,
       ...format,
     }),
     success: AgentToolResult,
@@ -291,7 +306,7 @@ export const SessionBriefTool = readOnly(
 export const StartSessionTool = changing(
   Tool.make("t3_start_session", {
     description:
-      "Start a new session with a first message, in one call. Name the project by name, path or id, and the model by alias (opus, sonnet, haiku, codex, or any model name or id from the server's catalog). Omitted settings follow the project's saved new-session defaults. Set waitFor: first-reply to wait for the agent's first answer or question. With clientRequestId, a retry returns the same session.",
+      "Start a new session with a first message, in one call. Name the project by name, path or id, and the model by alias (opus, sonnet, haiku, codex, or any model name or id from the server's catalog). Omitted settings follow the project's saved new-session defaults. Set waitFor: first-reply to wait for the agent's first answer or question (keep timeoutSeconds at 50 or less). Always pass clientRequestId: if the call fails or times out, retry with the same id and it returns the same session. The result starts with the full session id.",
     parameters: Schema.Struct({
       project: described(Schema.String, "The project: its name, path or id."),
       prompt: described(Schema.String, "The first message: the outcome you want and its limits."),
@@ -339,7 +354,7 @@ export const StartSessionTool = changing(
       timeoutSeconds: Schema.optional(
         described(
           Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
-          "For waitFor: first-reply, the longest wait. Defaults to 50; most clients stop a call after 60 seconds.",
+          "For waitFor: first-reply, the longest wait. Defaults to 50. Keep it at 50 or less: most clients stop a call after 60 seconds, and the session may have started anyway. If your client reports a failure or timeout, call again with the same clientRequestId; it returns the session that started instead of a second one.",
         ),
       ),
       clientRequestId: Schema.optional(
@@ -434,7 +449,7 @@ const SCHEDULE_REF_HELP =
 export const ScheduleTool = destructive(
   Tool.make("t3_schedule", {
     description:
-      'Schedule a prompt, in one call. By default the prompt is sent into a session (your own when you are in one, or the one you name) as a queued message, so it never interrupts a turn: use it to remind yourself, check back on work, or nudge another session. Pass project instead to start a new session on every run, with the same options as t3_start_session plus quiet (snoozed while it works, so it only surfaces when it finishes, fails or asks). Say when with exactly one of: in ("10m", once), at (an ISO time or "09:00", once), every ("2h"), daily ("09:00", with weekdays and timeZone), or webhook: true. Runs act for the person you act for: new sessions are theirs and show in their sidebar. Other actions take id: update, pause, resume, delete, run_now.',
+      'Schedule a prompt, in one call. By default the prompt is sent into a session (your own when you are in one, or the one you name), and when that session is busy it steers the running turn; pass ifBusy: "queue" to wait for the turn to end instead. Use it to remind yourself, check back on work, or nudge another session. Pass project instead to start a new session on every run, with the same options as t3_start_session plus quiet (snoozed while it works, so it only surfaces when it finishes, fails or asks). Say when with exactly one of: in ("10m", once), at (an ISO time or "09:00", once), every ("2h"), daily ("09:00", with weekdays and timeZone), or webhook: true. Runs act for the person you act for: new sessions are theirs and show in their sidebar. Other actions take id: update, pause, resume, delete, run_now.',
     parameters: Schema.Struct({
       action: Schema.optional(
         described(
@@ -529,6 +544,12 @@ export const ScheduleTool = destructive(
           "For new sessions: snooze each one while it works, so it surfaces only when it finishes, fails or asks a person. Defaults to false.",
         ),
       ),
+      ifBusy: Schema.optional(
+        described(
+          Schema.Literals(["steer", "queue"]),
+          'When the session it sends into is busy: steer (the default) adds the prompt to the running turn when its provider supports steering, and otherwise queues it; queue always waits until the turn ends. Pass it with action "update" to change an existing schedule.',
+        ),
+      ),
       clientRequestId: Schema.optional(
         described(
           Schema.String,
@@ -607,6 +628,43 @@ export const NotifyMeTool = changing(
   }).annotate(Tool.Title, "Notify me when a session changes"),
 );
 
+// Destructive: delete removes a session for good, so clients that run
+// non-destructive tools without asking still ask (TEC-1819).
+export const SessionLifecycleTool = destructive(
+  Tool.make("t3_session_lifecycle", {
+    description:
+      "Archive, unarchive, stop, snooze, unsnooze or delete a session. archive and unarchive are safe to retry: a session already in that state returns success with nothing changed. stop ends the session's provider process; snooze hides it until snoozedUntil. delete is DESTRUCTIVE and cannot be undone: it removes the session and its history; prefer archive. With clientRequestId, a retry does not act twice.",
+    parameters: Schema.Struct({
+      session: sessionRef(SESSION_REF_HELP),
+      action: described(
+        Schema.Literals(["archive", "unarchive", "stop", "snooze", "unsnooze", "delete"]),
+        "archive, unarchive, stop, snooze (needs snoozedUntil), unsnooze, or delete (destructive, cannot be undone).",
+      ),
+      snoozedUntil: Schema.optional(
+        described(
+          Schema.String,
+          "For snooze: the ISO-8601 wake time, for example 2026-11-02T09:00:00.000Z.",
+        ),
+      ),
+      clientRequestId: Schema.optional(
+        described(
+          Schema.String,
+          "Your own id for this action, so a retry with the same id does not act twice.",
+        ),
+      ),
+      ...format,
+    }),
+    success: AgentToolResult,
+    failure: AgentToolFailure,
+    dependencies: [
+      ...dependencies,
+      ProjectionSnapshotQuery,
+      TurnStartBootstrap,
+      CommandReceiptStore.CommandReceiptStoreV2,
+    ],
+  }).annotate(Tool.Title, "Archive, stop, snooze or delete a session"),
+);
+
 export const AgentToolkit = Toolkit.make(
   WhoamiTool,
   InboxTool,
@@ -615,6 +673,7 @@ export const AgentToolkit = Toolkit.make(
   SessionBriefTool,
   StartSessionTool,
   SendMessageTool,
+  SessionLifecycleTool,
   WaitTool,
   ScheduleTool,
   SchedulesTool,

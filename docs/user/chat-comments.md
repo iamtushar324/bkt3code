@@ -58,7 +58,9 @@ the thread under a comment, and the agent sees the replies too.
 Each open comment goes to the agent once, with your next message: quoted with
 your note, plus the instruction to act on it or answer it. The agent can reply
 under a comment and mark it addressed; only you resolve. A comment goes again
-when you edit it, reply to it or reopen it.
+when you edit it, reply to it or reopen it. Until the agent marks a sent comment
+addressed, each later message carries a short reminder that lists it by number,
+so the agent keeps working on it alongside whatever you asked next.
 
 While some comments are not sent yet, a strip above the composer says how many.
 **Review** opens the panel. **Send now** sends just the comments and leaves your

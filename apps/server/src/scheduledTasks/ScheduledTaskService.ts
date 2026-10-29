@@ -80,6 +80,7 @@ import {
   scheduledTaskForkOptionsForRun,
   scheduledTaskOwner,
   scheduledPromptText,
+  scheduledTaskSteers,
 } from "./scheduledTaskForkOptions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): watches — tasks that run once another session changes.
 import {
@@ -876,8 +877,9 @@ export const layer = Layer.effect(
         // aborting before markCompleted.
         // T3-CUSTOM(expbkt3): BEGIN — dispatch as the task's owner (forkOptions).
         const text = watchNote ?? scheduledPromptText(active, forkOptions, prompt);
+        const boundThreadId = active.threadId === null ? null : ThreadId.make(active.threadId);
         const result =
-          active.threadId === null
+          boundThreadId === null
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
@@ -912,19 +914,19 @@ export const layer = Layer.effect(
                   .sendToThread({
                     projectId: active.projectId,
                     commandId,
-                    threadId: ThreadId.make(active.threadId),
+                    threadId: boundThreadId,
                     messageId,
                     scheduledTaskId: active.id,
                     text,
                     attachments: [],
                     mode: "queue",
+                    // T3-CUSTOM(expbkt3): a busy session takes the prompt as steering
+                    // unless the task asks to queue (scheduledTaskForkOptions.expbkt3.ts).
+                    ...(scheduledTaskSteers(forkOptions) ? { steerWhenSupported: true } : {}),
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
                   })
-                  .pipe(
-                    asScheduledTaskOwner(forkOwner, trigger),
-                    Effect.as(ThreadId.make(active.threadId)),
-                  ),
+                  .pipe(asScheduledTaskOwner(forkOwner, trigger), Effect.as(boundThreadId)),
               );
         // T3-CUSTOM(expbkt3): END
 

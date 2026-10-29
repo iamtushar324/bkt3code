@@ -310,6 +310,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_session_brief: tool(["Read", "Reading", "Read", "a session brief"], "thread-read"),
   t3_start_session: tool(["Start", "Starting", "Started", "a T3 session"], "thread-create"),
   t3_send_message: tool(["Send", "Sending", "Sent", "to a T3 session"], "thread-send"),
+  t3_session_lifecycle: tool(
+    ["Change", "Changing", "Changed", "a session's state"],
+    "thread-update",
+  ),
   t3_wait: tool(["Wait", "Waiting", "Waited", "for a session change"], "thread-wait"),
   t3_schedule: tool(["Schedule", "Scheduling", "Scheduled", "a prompt"], "schedule-create"),
   t3_schedules: tool(["List", "Listing", "Listed", "schedules"], "schedule-list"),

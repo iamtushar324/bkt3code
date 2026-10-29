@@ -30,6 +30,7 @@ import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
 import { TurnStartBootstrap } from "../../../orchestration-v2/turnStartBootstrap.expbkt3.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration-v2/Services/ProjectionSnapshotQuery.ts";
@@ -141,7 +142,7 @@ const destructiveTool = <T extends Tool.Any>(tool: T): T =>
 export const T3ListSessionsTool = readonlyTool(
   Tool.make("t3_list_sessions", {
     description:
-      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary. User-bound agents see every session accessible to that user; external operators see all sessions. To see what waits on a person, prefer t3_inbox; to find a session by title, ticket or pull request, prefer t3_find_sessions.",
+      "List T3 Code sessions with project, model, mode, provider session status, human-attention reasons, and latest turn summary, newest change first. A result with more sessions than limit returns nextCursor; pass it as cursor for the next page. User-bound agents see every session accessible to that user; external operators see all sessions. To see what waits on a person, prefer t3_inbox; to find a session by title, ticket or pull request, prefer t3_find_sessions.",
     parameters: Schema.Struct({
       includeArchived: Schema.optional(
         described(
@@ -163,6 +164,19 @@ export const T3ListSessionsTool = readonlyTool(
         described(
           Schema.String,
           "Return only sessions filed in this custom group (the shared label shown in the sidebar's Custom view). Matched exactly but case-insensitively; sessions with no group never match.",
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): paging and compact output (TEC-1818).
+      cursor: Schema.optional(
+        described(
+          Schema.String,
+          "The nextCursor of a previous result, to read the next page in the same order (newest change first). Pass the same filters again.",
+        ),
+      ),
+      detail: Schema.optional(
+        described(
+          Schema.Literals(["compact", "full"]),
+          "compact (the default) replaces each session's linearLinks list with linearLinkCount; full returns the linearLinks list.",
         ),
       ),
     }),
@@ -311,7 +325,7 @@ export const T3UpdateSessionTool = mutatingTool(
 export const T3SessionActionTool = destructiveTool(
   Tool.make("t3_session_action", {
     description:
-      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete.",
+      "Perform a lifecycle action on a T3 session: interrupt the active turn, stop/restart its provider, archive/unarchive, settle/activate, snooze/unsnooze, or delete. Archive and unarchive are idempotent: a session already in that state returns success with changed: false.",
     parameters: Schema.Struct({
       ...optionalSessionId,
       action: described(
@@ -338,7 +352,8 @@ export const T3SessionActionTool = destructiveTool(
     }),
     success: JsonToolResult,
     failure: T3ControlFailure,
-    dependencies,
+    // TEC-1819: archive/unarchive record no-op outcomes as command receipts.
+    dependencies: [...dependencies, CommandReceiptStore.CommandReceiptStoreV2],
   }).annotate(Tool.Title, "Control T3 session lifecycle"),
 );
 
@@ -566,7 +581,7 @@ export const T3CreateSessionTool = mutatingTool(
 export const T3DispatchCommandTool = destructiveTool(
   Tool.make("t3_dispatch_command", {
     description:
-      "External-operator escape hatch for advanced T3 automation. Dispatch any validated OrchestrationCommand through T3's durable command gate. Not available to an in-session agent; prefer the focused tools whenever possible.",
+      "External-operator escape hatch for advanced T3 automation. Dispatch any validated OrchestrationCommand through T3's durable command gate. Not available to an in-session agent; prefer the focused tools whenever possible. To archive, unarchive, delete, stop, restart, interrupt, settle, snooze or unsnooze a session, use t3_session_action instead: it builds the command and is safe to retry. For a web app action's exact input schema, use t3_ui_get_tool. A wrong command returns its required fields and an example.",
     parameters: Schema.Struct({
       // Schema.Unknown drops a schema-level description in the generated JSON
       // schema, so annotate the key instead — the agent needs to be told what
@@ -574,7 +589,7 @@ export const T3DispatchCommandTool = destructiveTool(
       command: Schema.Unknown.pipe(
         Schema.annotateKey({
           description:
-            "A complete OrchestrationCommand object conforming to the current T3 contracts schema.",
+            'A complete OrchestrationCommand object, for example {"type":"thread.archive","commandId":"mcp:<unique-id>","threadId":"<session id>"}. commandId is a new unique string you choose.',
         }),
       ),
     }),

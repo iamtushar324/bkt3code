@@ -398,8 +398,12 @@ it.effect.each(deliveries)(
             assert.equal(steer.inputIntent, "promoted_queued_to_steer");
           }
           yield* worker.drain();
+          // T3-CUSTOM(expbkt3): a scheduled prompt steers a busy session by default
+          // (ifBusy, scheduledTaskForkOptions.expbkt3.ts), as a person's steer does.
           const explicitSteer =
-            delivery === "user steering" || delivery === "promoted queued message";
+            delivery === "user steering" ||
+            delivery === "promoted queued message" ||
+            delivery === "scheduled message";
           assert.equal(batchAbort.signal.aborted, explicitSteer);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
           const finished = yield* watch(

@@ -56,6 +56,7 @@ function makeHandlers() {
     resend: record("resend")(snapshotFor(visibleThreadId)),
     agentReply: () => Effect.die("unused"),
     openForDelivery: () => Effect.die("unused"),
+    deliveryState: () => Effect.die("unused"),
     markSent: () => Effect.die("unused"),
     watch: (threadId: ThreadId) =>
       Stream.fromEffect(

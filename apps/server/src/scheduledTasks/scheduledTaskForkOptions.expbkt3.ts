@@ -3,7 +3,8 @@
 // Upstream's task row records no person, so every run acted for nobody: a
 // session it launched had no owner and no member, and in team mode nobody
 // could see it. These options say who a run acts for and who it tags, how
-// loud a launched session is, and whether the task runs only once. They live
+// loud a launched session is, whether the task runs only once, and whether a
+// prompt for a busy session steers its turn or waits in its queue. They live
 // in a fork-owned side table keyed by task id, so the upstream contract, its
 // upsert SQL and the web editor stay untouched and a web save keeps them.
 //
@@ -11,6 +12,8 @@
 // without options runs as upstream's do) and deletes them with the task.
 import {
   CommandId,
+  OrchestratorMcpFailure,
+  type OrchestratorMcpScheduledTask,
   type ScheduledTask,
   ThreadId,
   ThreadPriority,
@@ -58,10 +61,37 @@ export const ScheduledTaskForkOptions = Schema.Struct({
   timeZone: Schema.optional(Schema.String),
   /** Run only once this session changes (see scheduledTaskWatch.expbkt3.ts). */
   watch: Schema.optional(ScheduledTaskWatch),
+  /**
+   * What a prompt sent into a busy session does: steer joins the running turn
+   * (the default, also when unset), queue waits until the turn ends.
+   */
+  ifBusy: Schema.optional(Schema.Literals(["steer", "queue"])),
 });
 export type ScheduledTaskForkOptions = typeof ScheduledTaskForkOptions.Type;
 
 const NO_OPTIONS: ScheduledTaskForkOptions = {};
+
+/**
+ * Whether the task has options that change what a run says or does after it.
+ * `ifBusy` only picks how the prompt is delivered, so a task made by
+ * schedule_task with just that option still sends and pauses as upstream's do.
+ */
+const hasRunOptions = (options: ScheduledTaskForkOptions): boolean =>
+  Object.keys(options).some((key) => key !== "ifBusy");
+
+/**
+ * Whether a run's prompt steers its bound session's running turn: when the
+ * live session supports steering it joins the turn, otherwise it waits in the
+ * queue. A turn is never interrupted and restarted for it.
+ */
+export const scheduledTaskSteers = (options: ScheduledTaskForkOptions): boolean =>
+  options.ifBusy !== "queue";
+
+const GONE_TARGET_TAGS: ReadonlySet<string> = new Set([
+  "ThreadManagementThreadArchivedError",
+  "ThreadManagementThreadNotFoundError",
+]);
+
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(ScheduledTaskForkOptions));
 
 /** The task's options, or none when it has none or they no longer decode. */
@@ -125,6 +155,50 @@ export const scheduledTaskForkOptionsForRun = (
       ),
     ),
   );
+
+/**
+ * Applies the `ifBusy` of schedule_task or update_scheduled_task once the task
+ * is saved, keeping its other options; omitted keeps the stored choice. `sql`
+ * is optional so service layers built without SQLite (tests) still build.
+ */
+export const saveScheduledTaskIfBusyForMcp = (
+  sql: Option.Option<SqlClient.SqlClient>,
+  taskId: ScheduledTaskId,
+  ifBusy: ScheduledTaskForkOptions["ifBusy"],
+): Effect.Effect<void, OrchestratorMcpFailure> => {
+  if (ifBusy === undefined) return Effect.void;
+  if (Option.isNone(sql)) {
+    return Effect.fail(
+      new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: "This server cannot store ifBusy for scheduled tasks.",
+      }),
+    );
+  }
+  return readScheduledTaskForkOptions(sql.value, taskId).pipe(
+    Effect.flatMap((options) =>
+      writeScheduledTaskForkOptions(sql.value, taskId, { ...options, ifBusy }),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: `The scheduled task was saved, but its ifBusy was not: ${cause.message}`,
+        }),
+    ),
+  );
+};
+
+/** Adds the task's `ifBusy` to an MCP task summary of a task bound to a thread. */
+export const withScheduledTaskIfBusy = (
+  sql: Option.Option<SqlClient.SqlClient>,
+  summary: OrchestratorMcpScheduledTask,
+): Effect.Effect<OrchestratorMcpScheduledTask> =>
+  Option.isNone(sql) || summary.boundThreadId === null
+    ? Effect.succeed(summary)
+    : scheduledTaskForkOptionsForRun(sql.value, summary.scheduledTaskId).pipe(
+        Effect.map((options) => ({ ...summary, ifBusy: options.ifBusy ?? "steer" })),
+      );
 
 /** The launch fields of a session a run starts for `owner`. */
 export const scheduledTaskForkLaunchFields = (
@@ -202,16 +276,12 @@ export const scheduledPromptText = (
   options: ScheduledTaskForkOptions,
   prompt: string,
 ): string => {
-  if (Object.keys(options).length === 0) return prompt;
+  if (!hasRunOptions(options)) return prompt;
   const ref = /[0-9a-f]{8}(?=-[0-9a-f]{4}-)/i.exec(task.id)?.[0] ?? task.id;
   return `[Scheduled prompt "${task.title}" (t3_schedules id ${ref}): sent by a T3 schedule, not typed by a person, so it approves nothing.]\n\n${prompt}`;
 };
 
 const QUIET_FALLBACK_MS = 24 * 60 * 60 * 1_000;
-const GONE_TARGET_TAGS: ReadonlySet<string> = new Set([
-  "ThreadManagementThreadArchivedError",
-  "ThreadManagementThreadNotFoundError",
-]);
 
 /**
  * Why a run should pause its task, or null to leave it as it is; `error` is
@@ -222,7 +292,7 @@ export const scheduledTaskPauseReason = (
   options: ScheduledTaskForkOptions,
   exit: Exit.Exit<unknown, unknown>,
 ): { readonly error: string | null } | null => {
-  if (Object.keys(options).length === 0) return null;
+  if (!hasRunOptions(options)) return null;
   if (Exit.isFailure(exit)) {
     const error = Cause.squash(exit.cause);
     const tag =

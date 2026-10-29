@@ -3,9 +3,10 @@
  *
  * A schedule is upstream's scheduled task plus the fork's options for it
  * (scheduledTaskForkOptions.expbkt3.ts): the person its runs act for, the
- * tags and links of the sessions it starts, quiet, and run-once. By default a
- * schedule sends its prompt into a session as a queued message with that
- * session's own model; with a project it starts a new session on every run.
+ * tags and links of the sessions it starts, quiet, run-once, and ifBusy. By
+ * default a schedule sends its prompt into a session with that session's own
+ * model, steering its turn when it is busy (ifBusy: "queue" waits instead);
+ * with a project it starts a new session on every run.
  *
  * A caller manages the schedules it owns, those that send into a session it
  * can see, and ownerless ones (made in the app or by schedule_task) in a
@@ -230,14 +231,16 @@ const targetOf = (view: ScheduleView, context: ScheduleContext) => {
   if (task.threadId !== null) {
     const shell = context.sessions.get(task.threadId);
     const ref = shortRef(task.threadId);
+    const ifBusy = options.ifBusy ?? "steer";
     return {
-      text: `into session \`${ref}\`${shell === undefined ? "" : ` ${oneLine(shell.title, 60)}`}${shell?.archivedAt != null ? " (archived)" : ""}`,
+      text: `into session \`${ref}\`${shell === undefined ? "" : ` ${oneLine(shell.title, 60)}`}${shell?.archivedAt != null ? " (archived)" : ""}${ifBusy === "queue" ? " (queued when busy)" : ""}`,
       data: {
         type: "session" as const,
         sessionId: task.threadId,
         ref,
         title: shell?.title ?? null,
         link: sessionLink(context.origin, context.caller.scope.environmentId, task.threadId),
+        ifBusy,
       },
     };
   }
@@ -766,6 +769,7 @@ const createSchedule = Effect.fn("agentToolkit.createSchedule")(function* (
       creationSource: "mcp",
     };
   }
+  if (input.ifBusy !== undefined) options = { ...options, ifBusy: input.ifBusy };
   const commandId =
     input.clientRequestId === undefined
       ? undefined
@@ -847,6 +851,7 @@ const updateSchedule = Effect.fn("agentToolkit.updateSchedule")(function* (
   }
   let options: ScheduledTaskForkOptions =
     when === undefined ? view.options : withWhenOptions(view.options, when.success);
+  if (input.ifBusy !== undefined) options = { ...options, ifBusy: input.ifBusy };
   let group: ThreadCustomGroup | null | undefined;
   let settings: Partial<
     Pick<ScheduledTaskUpsertInput, "modelSelection" | "runtimeMode" | "interactionMode">
@@ -1009,7 +1014,7 @@ export const schedule = Effect.fn("agentToolkit.schedule")(function* (
       return yield* reportSchedule("Ran now", { task, options: view.options }, context, [
         task.threadId === null
           ? `Next: ${callHint("t3_find_sessions", { query: task.title })} finds the session it started.`
-          : `Next: ${callHint("t3_wait", { sessions: [shortRef(task.threadId)] })} to hear when the session answers.`,
+          : `Next: ${callHint("t3_wait", { sessions: [task.threadId] })} to hear when the session answers.`,
       ]);
     }
   }
@@ -1067,7 +1072,7 @@ export const notifyMe = Effect.fn("agentToolkit.notifyMe")(function* (
       [
         `## \`${watchedRef}\` ${oneLine(watched.title, 80)} already ${now.what}`,
         "No watch was made: it waits now.",
-        `Next: ${callHint("t3_session_brief", { session: watchedRef })}, then ${callHint("t3_answer", { session: watchedRef })}.`,
+        `Next: ${callHint("t3_session_brief", { session: watched.id })}, then ${callHint("t3_answer", { session: watched.id })}.`,
       ].join("\n"),
       { watching: false, sessionId: watched.id, ref: watchedRef, now: now.what },
     );
