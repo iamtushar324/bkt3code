@@ -122,7 +122,8 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
   Layer.mock(ClerkDirectory)({ enabled: false, descriptor: null }),
-  Layer.mock(ServerConfig)({}),
+  // Only the shape matters: the lifecycle tool reads no server config.
+  Layer.succeed(ServerConfig, {} as unknown as ServerConfig["Service"]),
   Layer.mock(ServerEnvironment.ServerEnvironment)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(PlanReviewService)({}),
