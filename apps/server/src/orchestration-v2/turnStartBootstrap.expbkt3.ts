@@ -571,25 +571,26 @@ export const make = Effect.gen(function* () {
    * worktree takes a generated codename branch, so a retry allocates a fresh
    * one instead of failing, and there is nothing to match here.
    */
-  const findUnrecordedWorktree = Effect.fn("TurnStartBootstrap.findUnrecordedWorktree")(
-    function* (projectCwd: string, branch: string) {
-      if (isTemporaryWorktreeBranch(branch)) return null;
-      const listed = yield* gitWorkflow.listRefs({
-        cwd: projectCwd,
-        query: branch,
-        refKind: "local",
-        refresh: true,
-      });
-      const candidate = listed.refs.find(
-        (ref) => !ref.isRemote && ref.name === branch && ref.worktreePath !== null,
-      )?.worktreePath;
-      if (candidate == null) return null;
-      const repoName = path.basename(path.resolve(projectCwd));
-      if (path.basename(path.dirname(path.resolve(candidate))) !== repoName) return null;
-      if ((yield* realPathOf(candidate)) === (yield* realPathOf(projectCwd))) return null;
-      return (yield* isManagedWorktreePath(candidate)) ? candidate : null;
-    },
-  );
+  const findUnrecordedWorktree = Effect.fn("TurnStartBootstrap.findUnrecordedWorktree")(function* (
+    projectCwd: string,
+    branch: string,
+  ) {
+    if (isTemporaryWorktreeBranch(branch)) return null;
+    const listed = yield* gitWorkflow.listRefs({
+      cwd: projectCwd,
+      query: branch,
+      refKind: "local",
+      refresh: true,
+    });
+    const candidate = listed.refs.find(
+      (ref) => !ref.isRemote && ref.name === branch && ref.worktreePath !== null,
+    )?.worktreePath;
+    if (candidate == null) return null;
+    const repoName = path.basename(path.resolve(projectCwd));
+    if (path.basename(path.dirname(path.resolve(candidate))) !== repoName) return null;
+    if ((yield* realPathOf(candidate)) === (yield* realPathOf(projectCwd))) return null;
+    return (yield* isManagedWorktreePath(candidate)) ? candidate : null;
+  });
 
   const dispatchBootstrapTurnStart = Effect.fn("TurnStartBootstrap.dispatchBootstrapTurnStart")(
     function* (command: TurnStartCommand, options: TurnStartBootstrapDispatchOptions | undefined) {
