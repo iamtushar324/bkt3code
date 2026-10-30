@@ -677,10 +677,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           // T3-CUSTOM(expbkt3): BEGIN — keep a socket that still delivers frames, mark it slow,
           // and probe again. Only silence ends the session (TEC-1837).
           const outcome = probeTimeoutOutcome({
-            framesDuringProbe: yield* receivedFrameSince(
-              lease.session.lastFrameAt,
-              probeStartedAt,
-            ),
+            framesDuringProbe: yield* receivedFrameSince(lease.session.lastFrameAt, probeStartedAt),
             silentTimeoutsBefore: silentTimeouts,
             decisive,
           });

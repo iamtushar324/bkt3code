@@ -1,16 +1,7 @@
 // T3-CUSTOM(expbkt3): per-user views of the shared shell feed keep team visibility.
 import { assert, describe, it } from "@effect/vitest";
-import type {
-  OrchestrationProjectShell,
-  OrchestrationV2ThreadShell,
-} from "@t3tools/contracts";
-import {
-  CommandId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  UserId,
-} from "@t3tools/contracts";
+import type { OrchestrationProjectShell, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { CommandId, ProjectId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

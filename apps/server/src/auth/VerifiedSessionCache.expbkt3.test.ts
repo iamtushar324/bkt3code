@@ -1,5 +1,5 @@
 import { AuthSessionId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import type { AuthSessionRecord } from "../persistence/AuthSessions.ts";

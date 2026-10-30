@@ -113,7 +113,8 @@ const makeHarness = Effect.fn("ShellResumeHarness.make")(function* (
     retryNow: Effect.void,
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
-    load: () => Ref.update(httpLoads, (count) => count + 1).pipe(Effect.as(Option.some(HTTP_SNAPSHOT))),
+    load: () =>
+      Ref.update(httpLoads, (count) => count + 1).pipe(Effect.as(Option.some(HTTP_SNAPSHOT))),
   });
   const shellState = yield* makeEnvironmentShellState().pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),

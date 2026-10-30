@@ -150,28 +150,26 @@ const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(funct
 
 // Steps the test clock until the state matches. A probe or retry sleep is registered a few
 // fiber hops after the signal that starts it, so one large adjustment can miss it.
-const advanceClockUntilState = Effect.fn("TestConnectionHarness.advanceClockUntilState")(
-  function* (
-    state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
-    predicate: (value: SupervisorConnectionState) => boolean,
-    step: Duration.Input = "500 millis",
-    maxSteps = 120,
-  ) {
-    for (let index = 0; index < maxSteps; index += 1) {
-      const current = yield* SubscriptionRef.get(state);
-      if (predicate(current)) {
-        return current;
-      }
-      yield* TestClock.adjust(step);
+const advanceClockUntilState = Effect.fn("TestConnectionHarness.advanceClockUntilState")(function* (
+  state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
+  predicate: (value: SupervisorConnectionState) => boolean,
+  step: Duration.Input = "500 millis",
+  maxSteps = 120,
+) {
+  for (let index = 0; index < maxSteps; index += 1) {
+    const current = yield* SubscriptionRef.get(state);
+    if (predicate(current)) {
+      return current;
     }
-    const last = yield* SubscriptionRef.get(state);
-    return yield* Effect.die(
-      new Error(
-        `Expected supervisor state was not observed while advancing the clock. Last state: phase=${last.phase}, generation=${last.generation}, degraded=${last.degraded === true}`,
-      ),
-    );
-  },
-);
+    yield* TestClock.adjust(step);
+  }
+  const last = yield* SubscriptionRef.get(state);
+  return yield* Effect.die(
+    new Error(
+      `Expected supervisor state was not observed while advancing the clock. Last state: phase=${last.phase}, generation=${last.generation}, degraded=${last.degraded === true}`,
+    ),
+  );
+});
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
@@ -239,7 +237,9 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         closed: Deferred.await(closed),
-        ...(options?.lastFrameAt === undefined ? {} : { lastFrameAt: options.lastFrameAt(attempt) }),
+        ...(options?.lastFrameAt === undefined
+          ? {}
+          : { lastFrameAt: options.lastFrameAt(attempt) }),
       } satisfies RpcSession.RpcSession),
       () => Ref.update(releaseCount, (count) => count + 1),
     );
