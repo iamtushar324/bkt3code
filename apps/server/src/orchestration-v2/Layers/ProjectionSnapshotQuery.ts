@@ -132,6 +132,19 @@ const make = Effect.gen(function* () {
           ),
         ),
     );
+  // T3-CUSTOM(expbkt3): per-thread cost. Seeks the provider threads' thread_id index.
+  const threadNativeSessionIds = (threadId: ThreadId) =>
+    wrap(
+      sql<{ nativeId: unknown }>`
+    SELECT json_extract(payload_json, '$.nativeThreadRef.nativeId') AS nativeId FROM orchestration_v2_projection_provider_threads WHERE thread_id = ${threadId} AND owner_node_id IS NULL ORDER BY updated_at ASC, provider_thread_id ASC
+  `.pipe(
+        Effect.map((rows) =>
+          rows.flatMap((row) =>
+            typeof row.nativeId === "string" && row.nativeId.length > 0 ? [row.nativeId] : [],
+          ),
+        ),
+      ),
+    );
   const retainedPlanRows = () =>
     wrap(
       sql<{
@@ -284,6 +297,7 @@ const make = Effect.gen(function* () {
     getShellSnapshot: (options) => shell("active", options?.unsettledOnly),
     getArchivedShellSnapshot: () => shell("archive"),
     getThreadShellById: threadShell,
+    getThreadNativeSessionIds: threadNativeSessionIds,
     getThreadDetailById: (threadId, query) =>
       detail(threadId).pipe(
         Effect.map(

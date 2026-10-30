@@ -280,6 +280,15 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
+  /**
+   * T3-CUSTOM(expbkt3): the provider-native session ids behind a thread's root
+   * provider threads, oldest first. Per-thread cost finds transcripts by them;
+   * the legacy shell's `session.providerThreadId` is always null under V2.
+   */
+  readonly getThreadNativeSessionIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionRepositoryError>;
+
   /** Read the active thread and session facts used to ingest provider events. */
   readonly getThreadRuntimeContext: (
     threadId: ThreadId,

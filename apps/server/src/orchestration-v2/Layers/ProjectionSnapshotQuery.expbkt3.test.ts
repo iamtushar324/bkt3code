@@ -128,3 +128,36 @@ it.effect("imports a v1 transcript on the writer, then reads the session on the 
     }),
   ),
 );
+
+// Per-thread cost finds transcripts by these ids; the legacy shell no longer carries them.
+it.effect("lists a thread's root native session ids, oldest first", () =>
+  withSnapshotQuery(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const row = (
+        id: string,
+        thread: string,
+        owner: string | null,
+        updatedAt: string,
+        nativeThreadRef: unknown,
+      ) =>
+        sql`INSERT INTO orchestration_v2_projection_provider_threads (provider_thread_id,thread_id,owner_node_id,provider,status,updated_at,payload_json) VALUES (${id},${thread},${owner},'claudeAgent','active',${updatedAt},${JSON.stringify({ nativeThreadRef })})`;
+      const native = (nativeId: string) => ({ driver: "claudeAgent", nativeId, strength: "strong" });
+      yield* row("pt:newer", threadId, null, "2026-01-02T00:00:00Z", native("session-b"));
+      yield* row("pt:older", threadId, null, "2026-01-01T00:00:00Z", native("session-a"));
+      yield* row("pt:subagent", threadId, "node:child", "2026-01-03T00:00:00Z", native("session-c"));
+      yield* row("pt:unbound", threadId, null, "2026-01-04T00:00:00Z", null);
+      yield* row("pt:other", "thread:other", null, "2026-01-01T00:00:00Z", native("session-d"));
+
+      assert.deepEqual(yield* snapshots.getThreadNativeSessionIds(threadId), [
+        "session-a",
+        "session-b",
+      ]);
+      assert.deepEqual(
+        yield* snapshots.getThreadNativeSessionIds(ThreadId.make("thread:missing")),
+        [],
+      );
+    }),
+  ),
+);
