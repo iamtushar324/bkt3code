@@ -30,6 +30,14 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+// T3-CUSTOM(expbkt3): BEGIN — late probes with live frames keep the session (TEC-1837).
+import { receivedFrameSince } from "../rpc/frameLiveness.expbkt3.ts";
+import {
+  probeTimeoutOutcome,
+  probeTimeoutReconnectJitterMs,
+  QUICK_PROBE_TIMEOUT,
+} from "./probeLiveness.expbkt3.ts";
+// T3-CUSTOM(expbkt3): END
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -46,7 +54,8 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
-const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+// T3-CUSTOM(expbkt3): 8 s, not 3 s. A server busy for a few seconds is slow, not gone (TEC-1837).
+const QUICK_CONNECTION_PROBE_TIMEOUT = QUICK_PROBE_TIMEOUT;
 const BACKOFF_RESET_AFTER_MS = 30_000;
 const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
 // A better route that answered the check but then failed to connect is not
@@ -365,6 +374,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* SubscriptionRef.set(state, next);
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — mark a live session slow, or clear the mark (TEC-1837).
+  // Only the run loop writes the state, so a read, then a write, cannot race.
+  const setDegraded = Effect.fnUntraced(function* (degraded: boolean) {
+    const current = yield* SubscriptionRef.get(state);
+    if (current.phase !== "connected" || (current.degraded === true) === degraded) return;
+    if (degraded) {
+      yield* SubscriptionRef.set(state, { ...current, degraded: true });
+      return;
+    }
+    const { degraded: _cleared, ...healthy } = current;
+    yield* SubscriptionRef.set(state, healthy);
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
     yield* Queue.offer(signals, next);
   });
@@ -584,6 +607,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
+  // T3-CUSTOM(expbkt3): BEGIN — a signal that says the old path may be gone. A silent late
+  // probe after it ends the session at once, without the second chance (TEC-1837).
+  const isDecisiveProbeSignal = (next: SupervisorSignal): boolean =>
+    next._tag === "RetryRequested" ||
+    (next._tag === "NetworkChanged" && next.network === "offline") ||
+    (next._tag === "Wakeup" && next.reason === "network-changed");
+  // T3-CUSTOM(expbkt3): END
+
   // Returning to the app, an explicit retry, and the network reporting offline
   // all probe the live session instead of replacing it, so a healthy socket is
   // not torn down (the offline report is often wrong, for example for a
@@ -622,7 +653,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
-      const probe = yield* Effect.forkChild(lease.session.probe);
+      // T3-CUSTOM(expbkt3): BEGIN — what a late probe needs to decide (TEC-1837).
+      let decisive = isDecisiveProbeSignal(next);
+      let silentTimeouts = 0;
+      let probeStartedAt = yield* Clock.currentTimeMillis;
+      // T3-CUSTOM(expbkt3): END
+      // T3-CUSTOM(expbkt3): `let`, so a late probe can start its retry (TEC-1837).
+      let probe = yield* Effect.forkChild(lease.session.probe);
       let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
@@ -637,6 +674,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         ]);
         if (probeEvent._tag === "TimedOut") {
           yield* Fiber.interrupt(probe);
+          // T3-CUSTOM(expbkt3): BEGIN — keep a socket that still delivers frames, mark it slow,
+          // and probe again. Only silence ends the session (TEC-1837).
+          const outcome = probeTimeoutOutcome({
+            framesDuringProbe: yield* receivedFrameSince(
+              lease.session.lastFrameAt,
+              probeStartedAt,
+            ),
+            silentTimeoutsBefore: silentTimeouts,
+            decisive,
+          });
+          if (outcome._tag === "Degraded") {
+            silentTimeouts = outcome.silentTimeouts;
+            yield* setDegraded(true);
+            probeStartedAt = yield* Clock.currentTimeMillis;
+            probe = yield* Effect.forkChild(lease.session.probe);
+            deadline =
+              (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(QUICK_PROBE_TIMEOUT);
+            continue;
+          }
+          // T3-CUSTOM(expbkt3): END
           return yield* new ConnectionTransientError({
             reason: "timeout",
             detail: `${target.label} did not respond to a connection health check.`,
@@ -645,6 +702,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (probeEvent._tag === "ProbeCompleted") {
           if (Exit.isSuccess(probeEvent.exit)) {
             yield* Ref.set(probeUnanswered, false);
+            // T3-CUSTOM(expbkt3): an answered probe clears the slow mark (TEC-1837).
+            yield* setDegraded(false);
           }
           yield* probeEvent.exit;
           break;
@@ -655,6 +714,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           return endDuringProbe === "reset";
         }
         const signalTimeout = probeTimeoutFor(probeEvent.signal);
+        // T3-CUSTOM(expbkt3): BEGIN — a path change during the probe makes its silence decisive.
+        // Every probe timeout is at least QUICK_PROBE_TIMEOUT (8 s) from the signal, so a second
+        // signal cannot cut a running probe below 8 s (TEC-1837).
+        if (signalTimeout !== undefined && isDecisiveProbeSignal(probeEvent.signal)) {
+          decisive = true;
+        }
+        // T3-CUSTOM(expbkt3): END
         if (signalTimeout !== undefined) {
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
@@ -960,6 +1026,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (failedProbe) {
         resetRetryLadder();
         yield* setState(connectingState(yield* Ref.get(intent), generation, 1, latestFailure));
+        // T3-CUSTOM(expbkt3): BEGIN — after a probe timeout, wait 0-2 s at random first. Clients
+        // that saw the same server stall then do not all reconnect at once. A signal (a
+        // retry, a disconnect, a return to the app) ends the wait early (TEC-1837).
+        if (error.reason === "timeout") {
+          const jitterMs = probeTimeoutReconnectJitterMs(yield* Random.next);
+          if (jitterMs > 0) {
+            yield* waitForRetrySignal(jitterMs);
+          }
+        }
+        // T3-CUSTOM(expbkt3): END
         continue;
       }
 

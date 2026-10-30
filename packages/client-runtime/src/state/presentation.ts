@@ -36,7 +36,13 @@ function sameConnection(
   left: EnvironmentConnectionPresentation,
   right: EnvironmentConnectionPresentation,
 ): boolean {
-  return left.phase === right.phase && left.error === right.error && left.traceId === right.traceId;
+  // T3-CUSTOM(expbkt3): compare the slow hint too, so it reaches subscribers (TEC-1837).
+  return (
+    left.phase === right.phase &&
+    left.error === right.error &&
+    left.traceId === right.traceId &&
+    left.slow === right.slow
+  );
 }
 
 function withoutProviders(

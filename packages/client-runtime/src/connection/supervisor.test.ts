@@ -1,6 +1,8 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -146,6 +148,31 @@ const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(funct
   );
 });
 
+// Steps the test clock until the state matches. A probe or retry sleep is registered a few
+// fiber hops after the signal that starts it, so one large adjustment can miss it.
+const advanceClockUntilState = Effect.fn("TestConnectionHarness.advanceClockUntilState")(
+  function* (
+    state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
+    predicate: (value: SupervisorConnectionState) => boolean,
+    step: Duration.Input = "500 millis",
+    maxSteps = 120,
+  ) {
+    for (let index = 0; index < maxSteps; index += 1) {
+      const current = yield* SubscriptionRef.get(state);
+      if (predicate(current)) {
+        return current;
+      }
+      yield* TestClock.adjust(step);
+    }
+    const last = yield* SubscriptionRef.get(state);
+    return yield* Effect.die(
+      new Error(
+        `Expected supervisor state was not observed while advancing the clock. Last state: phase=${last.phase}, generation=${last.generation}, degraded=${last.degraded === true}`,
+      ),
+    );
+  },
+);
+
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
   readonly prepare?: (
@@ -154,6 +181,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
   readonly ready?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
+  readonly lastFrameAt?: (attempt: number) => Effect.Effect<number>;
   readonly initialConfig?: (attempt: number) => Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
 }) {
@@ -211,6 +239,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         closed: Deferred.await(closed),
+        ...(options?.lastFrameAt === undefined ? {} : { lastFrameAt: options.lastFrameAt(attempt) }),
       } satisfies RpcSession.RpcSession),
       () => Ref.update(releaseCount, (count) => count + 1),
     );
@@ -755,6 +784,146 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps a late-probed session that still receives frames and marks it slow", () =>
+    Effect.gen(function* () {
+      const probeCalls = yield* Ref.make(0);
+      const retryAnswered = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        // Frames keep arriving: the socket reaches a busy server.
+        lastFrameAt: () => Clock.currentTimeMillis,
+        probe: () =>
+          Ref.updateAndGet(probeCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) => (count === 1 ? Effect.never : Deferred.await(retryAnswered))),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      const degraded = yield* advanceClockUntilState(
+        supervisor.state,
+        (state) => state.degraded === true,
+      );
+
+      expect(degraded.phase).toBe("connected");
+      expect(presentConnectionState(degraded)).toEqual({
+        phase: "connected",
+        error: null,
+        traceId: null,
+        slow: true,
+      });
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* Deferred.succeed(retryAnswered, undefined);
+      const recovered = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.degraded !== true,
+      );
+      expect(presentConnectionState(recovered)).toEqual({
+        phase: "connected",
+        error: null,
+        traceId: null,
+      });
+      expect(yield* Ref.get(probeCalls)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a silent session only after two late probes in a row", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        // No frame since the session opened.
+        lastFrameAt: () => Effect.succeed(0),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+
+      // First silent timeout: one more chance, still the same session.
+      yield* advanceClockUntilState(supervisor.state, (state) => state.degraded === true);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      // Second silent timeout: the session is replaced.
+      const replaced = yield* advanceClockUntilState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(replaced.attempt).toBe(1);
+      expect(replaced.degraded).toBeUndefined();
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a slow session at once when its socket closes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        lastFrameAt: () => Clock.currentTimeMillis,
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      yield* advanceClockUntilState(supervisor.state, (state) => state.degraded === true);
+
+      // No clock movement: a real close skips the probe-timeout jitter.
+      yield* harness.closeLatestSession();
+      const replaced = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(replaced.degraded).toBeUndefined();
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits a random 0-2 s before reconnecting after a probe timeout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        lastFrameAt: () => Effect.succeed(0),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // A network change makes the first silent timeout decisive.
+      yield* harness.wake("network-changed");
+      yield* advanceClockUntilState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.generation === 1,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      // The harness random is just below 1, so the jitter is close to 2 s.
+      yield* TestClock.adjust("1 second");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      const reconnected = yield* advanceClockUntilState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+        "250 millis",
+        8,
+      );
+      expect(reconnected.attempt).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("honors an explicit disconnect while a foreground probe is stalled", () =>
     Effect.gen(function* () {
       const probeStarted = yield* Deferred.make<void>();
@@ -1162,9 +1331,9 @@ describe("EnvironmentSupervisor routes", () => {
 
       yield* Ref.set(lanReachable, false);
       yield* harness.wake("network-changed");
-      yield* TestClock.adjust("3 seconds");
-
-      yield* awaitState(
+      // A network change makes the first silent probe timeout (8 s) decisive, then the
+      // reconnect waits up to 2 s of jitter.
+      yield* advanceClockUntilState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
