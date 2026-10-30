@@ -11,6 +11,7 @@ import type {
   UserId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type {
@@ -63,20 +64,24 @@ interface ShellViewInput {
   /** The client's snapshot, already filtered for `actor`. */
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
-  readonly feed: Pick<ShellFeed, "projectHasVisibleThread">;
+  readonly feed: Pick<ShellFeed, "projectHasVisibleThread" | "projectVisibleTo">;
   readonly projectService: Pick<ProjectService["Service"], "getShell">;
 }
 
-/**
- * A synchronized client gets no delta for a shell that changed only its `updatedAt`. After this
- * long a row is resent anyway, so the client converges on the newest shell and its cursor moves.
- */
-const RESEND_AFTER_MS = 5_000;
+/** An idle client is brought up to date after this long without a delta. */
+const IDLE_CONVERGE_MS = 5_000;
+
+const sameInstant = (left: DateTime.Utc, right: DateTime.Utc) =>
+  DateTime.toEpochMillis(left) === DateTime.toEpochMillis(right);
 
 /**
  * One active-shell subscriber's view of the shared feed: the same team visibility as the
  * snapshot filter, evaluated in memory. A removal goes only to a client that could hold the row,
  * so a member never learns another user's thread or project id.
+ *
+ * The client reducer drops a delta at or below its cursor (a new thread at the cursor excepted),
+ * so every delta here carries a sequence above the previous one, and nothing is sent above a
+ * row whose newest shell the client still lacks.
  */
 export function makeActiveShellView(
   input: ShellViewInput & {
@@ -97,53 +102,68 @@ export function makeActiveShellView(
 ) {
   const { actor } = input;
   const removeUnheld = actor === null && input.removeUnheld === true;
-  // The exact shell the client has for each row, and the newest one the feed has read for it.
+  // The exact shell the client holds for each row.
   const shells = new Map(input.threads.map((thread) => [thread.id, thread] as const));
-  const latest = new Map(shells);
-  const sentAt = new Map<ThreadId, number>();
+  // Rows whose newest shell differs from the client's only in `updatedAt`, not yet sent.
+  const stale = new Map<
+    ThreadId,
+    { readonly shell: OrchestrationV2ThreadShell; readonly sequence: number }
+  >();
   const heldThreads = new Set<ThreadId>([...shells.keys(), ...(input.held?.threadIds ?? [])]);
   const synced = new Set<ThreadId>();
   const projects = new Set<ProjectId>([
     ...input.projects.map((project) => project.id),
     ...(input.held?.projectIds ?? []),
   ]);
+  // Projects the user stopped seeing when it lost their last thread. The thread's removal took
+  // that sequence, so each waits for a later one.
+  const hiddenProjects = new Set<ProjectId>();
   let lastSentSequence = input.afterSequence;
   let lastSentAt: number | undefined;
   let feedHighSequence = input.afterSequence;
 
-  const send = (
-    shell: OrchestrationV2ThreadShell,
-    sequence: number,
-    now: number,
-    out: Array<ActiveShellDelta>,
-  ) => {
-    shells.set(shell.id, shell);
-    latest.set(shell.id, shell);
-    heldThreads.add(shell.id);
-    synced.add(shell.id);
-    sentAt.set(shell.id, now);
-    out.push({ kind: "thread.updated", sequence, location: "active", thread: shell });
+  // Stale rows below `sequence` go first, at their own sequences: the cursor never passes them.
+  const flushStale = (sequence: number, out: Array<ActiveShellDelta>) => {
+    const due = [...stale.values()]
+      .filter((row) => row.sequence < sequence)
+      .sort((left, right) => left.sequence - right.sequence);
+    for (const row of due) {
+      stale.delete(row.shell.id);
+      shells.set(row.shell.id, row.shell);
+      out.push({
+        kind: "thread.updated",
+        sequence: row.sequence,
+        location: "active",
+        thread: row.shell,
+      });
+    }
   };
+
+  const emit = (item: ActiveShellDelta, out: Array<ActiveShellDelta>) => {
+    flushStale(item.sequence, out);
+    out.push(item);
+  };
+
+  const projectVisible = (project: OrchestrationProjectShell) =>
+    actor === null || owns(project, actor) || input.feed.projectHasVisibleThread(project.id, actor);
 
   const applyEntry = Effect.fnUntraced(function* (
     entry: ShellFeedEntry,
-    now: number,
     out: Array<ActiveShellDelta>,
   ) {
     if (entry.kind === "project") {
+      hiddenProjects.delete(entry.projectId);
       const project = entry.project;
-      if (
-        project !== null &&
-        (actor === null ||
-          owns(project, actor) ||
-          input.feed.projectHasVisibleThread(project.id, actor))
-      ) {
+      if (project !== null && projectVisible(project)) {
         projects.add(project.id);
-        out.push({ kind: "project.updated", sequence: entry.sequence, project });
+        emit({ kind: "project.updated", sequence: entry.sequence, project }, out);
         return;
       }
       if (projects.delete(entry.projectId) || removeUnheld) {
-        out.push({ kind: "project.removed", sequence: entry.sequence, projectId: entry.projectId });
+        emit(
+          { kind: "project.removed", sequence: entry.sequence, projectId: entry.projectId },
+          out,
+        );
       }
       return;
     }
@@ -155,45 +175,66 @@ export function makeActiveShellView(
           .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
         if (Option.isSome(project)) {
           projects.add(project.value.id);
-          out.push({ kind: "project.updated", sequence: entry.sequence, project: project.value });
+          hiddenProjects.delete(project.value.id);
+          emit({ kind: "project.updated", sequence: entry.sequence, project: project.value }, out);
         }
       }
-      latest.set(shell.id, shell);
-      if (
-        entry.changed ||
-        !synced.has(shell.id) ||
-        now - (sentAt.get(shell.id) ?? 0) >= RESEND_AFTER_MS
-      ) {
-        send(shell, entry.sequence, now, out);
+      const held = shells.get(shell.id);
+      if (entry.changed || !synced.has(shell.id) || held === undefined) {
+        stale.delete(shell.id);
+        emit(
+          { kind: "thread.updated", sequence: entry.sequence, location: "active", thread: shell },
+          out,
+        );
+        shells.set(shell.id, shell);
+        heldThreads.add(shell.id);
+        synced.add(shell.id);
+      } else if (!sameInstant(shell.updatedAt, held.updatedAt)) {
+        stale.set(shell.id, { shell, sequence: entry.sequence });
+      } else {
+        stale.delete(shell.id);
       }
       return;
     }
+    const projectId = shell?.projectId ?? shells.get(entry.threadId)?.projectId;
     synced.delete(entry.threadId);
     shells.delete(entry.threadId);
-    latest.delete(entry.threadId);
-    sentAt.delete(entry.threadId);
+    stale.delete(entry.threadId);
     if (heldThreads.delete(entry.threadId) || removeUnheld) {
-      out.push({
-        kind: "thread.removed",
-        sequence: entry.sequence,
-        location: "active",
-        threadId: entry.threadId,
-      });
+      emit(
+        {
+          kind: "thread.removed",
+          sequence: entry.sequence,
+          location: "active",
+          threadId: entry.threadId,
+        },
+        out,
+      );
+    }
+    if (
+      actor !== null &&
+      projectId !== undefined &&
+      projects.has(projectId) &&
+      !input.feed.projectVisibleTo(projectId, actor)
+    ) {
+      hiddenProjects.add(projectId);
     }
   });
+
+  /** One hidden project's removal, on a sequence above everything sent so far. */
+  const removeHiddenProject = (sequence: number, out: Array<ActiveShellDelta>) => {
+    for (const projectId of hiddenProjects) {
+      hiddenProjects.delete(projectId);
+      if (actor === null || input.feed.projectVisibleTo(projectId, actor)) continue;
+      projects.delete(projectId);
+      emit({ kind: "project.removed", sequence, projectId }, out);
+      return;
+    }
+  };
 
   const record = (out: ReadonlyArray<ActiveShellDelta>, now: number) => {
     for (const item of out) lastSentSequence = Math.max(lastSentSequence, item.sequence);
     if (out.length > 0) lastSentAt = now;
-  };
-
-  /** A row whose newest shell the client lacks, else any row it holds exactly. */
-  const rowToResend = () => {
-    for (const [threadId, shell] of latest) {
-      if (shells.get(threadId) !== shell) return shell;
-    }
-    const held = shells.values().next();
-    return held.done === true ? undefined : held.value;
   };
 
   return {
@@ -207,34 +248,44 @@ export function makeActiveShellView(
       feedHighSequence = Math.max(feedHighSequence, batch.highSequence);
       const out: Array<ActiveShellDelta> = [];
       for (const entry of batch.entries) {
-        if (entry.sequence > input.afterSequence) yield* applyEntry(entry, now, out);
+        if (entry.sequence > input.afterSequence) yield* applyEntry(entry, out);
       }
-      record(out, now);
+      const lastOut = () => Math.max(lastSentSequence, out.at(-1)?.sequence ?? 0);
       if (
-        out.length === 0 &&
-        feedHighSequence > lastSentSequence &&
-        now - lastSentAt >= RESEND_AFTER_MS
+        hiddenProjects.size > 0 &&
+        feedHighSequence > lastOut() &&
+        ![...stale.values()].some((row) => row.sequence >= feedHighSequence)
       ) {
-        // Every entry up to feedHighSequence is applied or carries no change this client lacks
-        // beyond `updatedAt`, so one row can carry that sequence. A stale row's newest shell goes
-        // first; the client would drop a second row at the same sequence.
-        const shell = rowToResend();
-        if (shell !== undefined) {
-          send(shell, feedHighSequence, now, out);
-          record(out, now);
+        removeHiddenProject(feedHighSequence, out);
+      }
+      if (now - (out.length > 0 ? now : lastSentAt) >= IDLE_CONVERGE_MS) {
+        // Idle: deliver every pending row, then let one unchanged row carry the cursor to the
+        // feed's sequence. Every entry up to there is applied or held back in `stale`.
+        flushStale(Number.POSITIVE_INFINITY, out);
+        const held = shells.values().next();
+        if (held.done !== true && feedHighSequence > lastOut()) {
+          out.push({
+            kind: "thread.updated",
+            sequence: feedHighSequence,
+            location: "active",
+            thread: held.value,
+          });
         }
       }
+      record(out, now);
       return out as ReadonlyArray<ActiveShellDelta>;
     }),
     /** A resume gap's entries, all at or below the live start. */
     applyReplay: Effect.fnUntraced(function* (entries: ReadonlyArray<ShellFeedEntry>) {
       const out: Array<ActiveShellDelta> = [];
-      const now = yield* Clock.currentTimeMillis;
-      for (const entry of entries) yield* applyEntry(entry, now, out);
-      record(out, now);
+      for (const entry of entries) yield* applyEntry(entry, out);
+      record(out, yield* Clock.currentTimeMillis);
       return out as ReadonlyArray<ActiveShellDelta>;
     }),
-    /** Repository identity refreshes name only projects this client already sees or owns. */
+    /**
+     * Repository identity refreshes name only projects the user can see now, by the project's
+     * current audience and the threads it can see, so a revoked user gets nothing more.
+     */
     filterEnrichment: (
       item: Extract<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }>,
     ): Extract<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> =>
@@ -245,7 +296,7 @@ export function makeActiveShellView(
             snapshot: {
               ...item.snapshot,
               projects: item.snapshot.projects.filter(
-                (project) => projects.has(project.id) || owns(project, actor),
+                (project) => !hiddenProjects.has(project.id) && projectVisible(project),
               ),
             },
           },

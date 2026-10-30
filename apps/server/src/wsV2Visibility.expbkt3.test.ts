@@ -22,6 +22,7 @@ import {
 const owner = UserId.make("user:owner");
 const member = UserId.make("user:member");
 const stranger = UserId.make("user:stranger");
+const outsider = UserId.make("user:outsider");
 const projectId = ProjectId.make("project:fork");
 
 const project: OrchestrationProjectShell = {
@@ -104,7 +105,34 @@ const projectService = (reads: { count: number }) => ({
     }),
 });
 
-const noThreadAccess = { projectHasVisibleThread: () => false };
+// No thread grants project access; the fixture projects are the owner's own.
+const noThreadAccess = {
+  projectHasVisibleThread: () => false,
+  projectVisibleTo: (_projectId: ProjectId, actor: UserId) => actor === owner,
+};
+
+/** What the client reducer keeps: it drops a delta below its cursor, and at it unless new. */
+const reduce = (
+  rows: ReadonlyArray<OrchestrationV2ThreadShell>,
+  cursor: number,
+  items: ReadonlyArray<ActiveShellDelta>,
+) => {
+  const held = new Map(rows.map((row) => [row.id, row] as const));
+  let sequence = cursor;
+  for (const item of items) {
+    if (item.sequence < sequence) continue;
+    if (
+      item.sequence === sequence &&
+      (item.kind !== "thread.updated" || held.has(item.thread.id))
+    ) {
+      continue;
+    }
+    if (item.kind === "thread.updated") held.set(item.thread.id, item.thread);
+    if (item.kind === "thread.removed") held.delete(item.threadId);
+    sequence = item.sequence;
+  }
+  return { held, sequence };
+};
 
 const summary = (items: ReadonlyArray<ActiveShellDelta>) =>
   items.map((item) => {
@@ -231,8 +259,15 @@ describe("makeActiveShellView", () => {
         projectReads: 0,
       });
       // The member's sidebar lacks the owner's project, so it arrives once, before the thread.
+      // Losing its only thread there hides the owner's project too, on the next sequence.
       assert.deepEqual(yield* run(member), {
-        items: ["1:project:project:fork", "1:updated:a", "2:updated:a", "3:removed:a"],
+        items: [
+          "1:project:project:fork",
+          "1:updated:a",
+          "2:updated:a",
+          "3:removed:a",
+          "4:project-removed:project:fork",
+        ],
         projectReads: 1,
       });
       const strangerView = yield* run(stranger);
@@ -269,8 +304,97 @@ describe("makeActiveShellView", () => {
           batch({ kind: "project", sequence: 4, projectId: project.id, project }),
         )),
       ];
-      // The member lost the only thread that showed this project, so the project goes too.
-      assert.deepEqual(summary(items), ["1:removed:a", "4:project-removed:project:fork"]);
+      // The member lost the only thread that showed this project, so the project goes too, on
+      // the next sequence: the client would drop a second delta at the removal's sequence.
+      assert.deepEqual(summary(items), ["1:removed:a", "2:project-removed:project:fork"]);
+    }),
+  );
+
+  it.effect("a revoked user gets no repository refresh for a project it no longer sees", () =>
+    Effect.gen(function* () {
+      const a = shell("a");
+      // Mirrors the feed's index: the member sees the project only through thread a.
+      let memberSeesThread = true;
+      const throughThread = (actor: UserId) => actor === member && memberSeesThread;
+      const view = makeActiveShellView({
+        actor: member,
+        afterSequence: 0,
+        projects: [project],
+        threads: [a],
+        feed: {
+          projectHasVisibleThread: (_projectId, actor) => throughThread(actor),
+          projectVisibleTo: (_projectId, actor) => actor === owner || throughThread(actor),
+        },
+        projectService: projectService({ count: 0 }),
+      });
+      const refresh = {
+        kind: "snapshot" as const,
+        snapshot: {
+          schemaVersion: 1,
+          snapshotSequence: 1,
+          projects: [project],
+          threads: [],
+          archivedThreads: [],
+        },
+        resolvedRepositoryIdentityRoots: [project.workspaceRoot],
+      };
+      assert.deepEqual(view.filterEnrichment(refresh).snapshot.projects, [project]);
+      // The owner removes the member from the last shared thread in the project.
+      memberSeesThread = false;
+      const revoked = yield* view.apply(batch(threadEntry(1, shell("a", { memberUserIds: [] }))));
+      assert.deepEqual(summary(revoked), ["1:removed:a"]);
+      assert.deepEqual(view.filterEnrichment(refresh).snapshot.projects, []);
+      const later = yield* view.apply({ highSequence: 2, entries: [] });
+      assert.deepEqual(summary(later), ["2:project-removed:project:fork"]);
+      assert.deepEqual(view.filterEnrichment(refresh).snapshot.projects, []);
+      // Nothing more about the project reaches the member.
+      const update = yield* view.apply(
+        batch({ kind: "project", sequence: 3, projectId: project.id, project }),
+      );
+      assert.deepEqual(summary(update), []);
+    }),
+  );
+
+  it.effect("delivers every row changed only in updatedAt before its cursor passes them", () =>
+    Effect.gen(function* () {
+      const a = shell("a");
+      const b = shell("b");
+      const newestA = shell("a", { updatedAt: DateTime.makeUnsafe(10) });
+      const newestB = shell("b", { updatedAt: DateTime.makeUnsafe(11) });
+      const run = Effect.fnUntraced(function* (later: ShellFeedBatch) {
+        const view = makeActiveShellView({
+          actor: null,
+          afterSequence: 0,
+          projects: [project],
+          threads: [a, b],
+          feed: noThreadAccess,
+          projectService: projectService({ count: 0 }),
+        });
+        const items = [
+          ...(yield* view.apply(batch(threadEntry(1, a), threadEntry(2, b)))),
+          ...(yield* view.apply(
+            batch(
+              threadEntry(3, newestA, { changed: false }),
+              threadEntry(4, newestB, { changed: false }),
+            ),
+          )),
+        ];
+        yield* TestClock.adjust(Duration.seconds(5));
+        items.push(...(yield* view.apply(later)));
+        return reduce([a, b], 0, items);
+      });
+
+      // Idle: both pending rows go out at their own sequences before the cursor moves on.
+      const idle = yield* run({ highSequence: 6, entries: [] });
+      assert.strictEqual(idle.held.get(a.id), newestA);
+      assert.strictEqual(idle.held.get(b.id), newestB);
+      assert.equal(idle.sequence, 6);
+
+      // A later change elsewhere first delivers the pending rows below it.
+      const busy = yield* run(batch(threadEntry(5, shell("c"))));
+      assert.strictEqual(busy.held.get(a.id), newestA);
+      assert.strictEqual(busy.held.get(b.id), newestB);
+      assert.equal(busy.sequence, 5);
     }),
   );
 
@@ -282,13 +406,13 @@ describe("makeActiveShellView", () => {
         threadEntry(1, null, { threadId: "shared" }),
         // Another user's rows, changed or deleted during the gap.
         threadEntry(2, null, { threadId: "private" }),
-        threadEntry(3, shell("private", { ownerUserId: stranger, memberUserIds: [] })),
+        threadEntry(3, shell("private", { ownerUserId: outsider, memberUserIds: [] })),
         { kind: "project" as const, sequence: 4, projectId: otherProject, project: null },
         {
           kind: "project" as const,
           sequence: 5,
           projectId: otherProject,
-          project: { ...project, id: otherProject, ownerUserId: stranger },
+          project: { ...project, id: otherProject, ownerUserId: outsider },
         },
       ];
       const resume = (actor: UserId | null, held: ReadonlyArray<string>) =>

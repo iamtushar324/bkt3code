@@ -408,15 +408,25 @@ export function makeShellFeedCore(input: {
     return { highSequence, entries } satisfies ShellFeedBatch;
   });
 
+  /** Project access through threads, as `canAccessProject` grants it, without a shell scan. */
+  const projectHasVisibleThread = (projectId: ProjectId, actor: UserId): boolean => {
+    for (const threadId of threadsByProject.get(projectId) ?? []) {
+      const threadAccess = access.get(threadId);
+      if (threadAccess !== undefined && owns(threadAccess, actor)) return true;
+    }
+    return false;
+  };
+
   return {
     process,
-    /** Project access through threads, as `canAccessProject` grants it, without a shell scan. */
-    projectHasVisibleThread: (projectId: ProjectId, actor: UserId): boolean => {
-      for (const threadId of threadsByProject.get(projectId) ?? []) {
-        const threadAccess = access.get(threadId);
-        if (threadAccess !== undefined && owns(threadAccess, actor)) return true;
-      }
-      return false;
+    projectHasVisibleThread,
+    /** Whether `actor` can see the project now: its own audience, or a thread it can see. */
+    projectVisibleTo: (projectId: ProjectId, actor: UserId): boolean => {
+      const audience = projectAudience.get(projectId);
+      return (
+        (audience !== undefined && owns(audience, actor)) ||
+        projectHasVisibleThread(projectId, actor)
+      );
     },
     /**
      * Every active thread and project `actor` could see at `afterSequence`: the rows a client
@@ -458,6 +468,7 @@ export interface ShellFeed {
   /** Fails when the feed stops, so every subscriber ends and its client resynchronizes. */
   readonly failed: Effect.Effect<never, ShellFeedError>;
   readonly projectHasVisibleThread: (projectId: ProjectId, actor: UserId) => boolean;
+  readonly projectVisibleTo: (projectId: ProjectId, actor: UserId) => boolean;
   readonly visibleAt: (actor: UserId, afterSequence: number) => VisibleRows | undefined;
 }
 
@@ -527,6 +538,7 @@ export const makeShellFeed = Effect.fn("ShellFeed.make")(function* (
     subscribe: PubSub.subscribe(hub),
     failed: Deferred.await(failed),
     projectHasVisibleThread: core.projectHasVisibleThread,
+    projectVisibleTo: core.projectVisibleTo,
     visibleAt: core.visibleAt,
   } satisfies ShellFeed;
 });
