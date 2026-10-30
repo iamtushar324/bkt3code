@@ -353,15 +353,23 @@ describe("tapShellFeed", () => {
       yield* PubSub.publish(hub, batchOf(2, "a", "b"));
       yield* PubSub.publish(hub, batchOf(4, "b", "a"));
       yield* PubSub.publish(hub, { highSequence: 9, entries: [] });
-      const merged = yield* tap.take;
-      expect(merged.highSequence).toBe(9);
-      expect(
-        merged.entries.map((entry) => [entry.sequence, entry.kind === "thread" && entry.changed]),
-      ).toEqual([
-        [3, true],
-        // a's newest entry was unchanged, but the client never saw the change at sequence 1.
-        [4, true],
-      ]);
+      // How many batches merge before a take depends on fiber scheduling, so assert what the
+      // client ends up with: the newest entry per row, and no change lost when entries merge.
+      const newest = new Map<string, number>();
+      const changedRows = new Set<string>();
+      let highSequence = 0;
+      while (highSequence < 9) {
+        const batch = yield* tap.take;
+        highSequence = batch.highSequence;
+        for (const entry of batch.entries) {
+          if (entry.kind !== "thread") continue;
+          newest.set(entry.threadId, Math.max(newest.get(entry.threadId) ?? 0, entry.sequence));
+          if (entry.changed) changedRows.add(entry.threadId);
+        }
+      }
+      expect(Object.fromEntries(newest)).toEqual({ a: 4, b: 3 });
+      // a changed only at sequence 1; a merge into its unchanged sequence-4 entry keeps the change.
+      expect([...changedRows].sort()).toEqual(["a", "b"]);
     }).pipe(Effect.scoped),
   );
 
