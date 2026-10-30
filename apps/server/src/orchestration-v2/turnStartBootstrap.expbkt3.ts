@@ -25,6 +25,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
+  type OrchestrationThreadShell,
   type ProjectId,
   type ThreadId,
   type UserId,
@@ -108,31 +109,49 @@ function makeDetachedSingleFlight<A>() {
     token: string,
     work: Effect.Effect<A, OrchestrationDispatchCommandError>,
   ): Effect.Effect<A, OrchestrationDispatchCommandError> =>
-    Effect.suspend(() => {
-      const existing = running.get(key);
-      if (existing !== undefined) {
-        return existing.token === token
-          ? Deferred.await(existing.result)
-          : Effect.fail(
-              new OrchestrationDispatchCommandError({
-                message: `Another bootstrap for ${key} is still running.`,
-              }),
-            );
-      }
-      // Map writes stay synchronous, so no other fiber can slip in between the
-      // lookup above and this registration.
-      const entry = { token, result: Deferred.makeUnsafe<A, OrchestrationDispatchCommandError>() };
-      running.set(key, entry);
-      const release = Effect.sync(() => {
-        if (running.get(key) === entry) running.delete(key);
-      });
-      return work.pipe(
-        Effect.ensuring(release),
-        Deferred.into(entry.result),
-        Effect.forkDetach,
-        Effect.flatMap(() => Deferred.await(entry.result)),
-      );
-    });
+    // Reservation and fork are one uninterruptible step: a caller interrupted
+    // between them would leave a registered result no worker ever completes,
+    // and every retry would wait on it forever. Only the wait is interruptible.
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const existing = running.get(key);
+        if (existing !== undefined) {
+          return existing.token === token
+            ? restore(Deferred.await(existing.result))
+            : Effect.fail(
+                new OrchestrationDispatchCommandError({
+                  message: `Another bootstrap for ${key} is still running.`,
+                }),
+              );
+        }
+        // Map writes stay synchronous, so no other fiber can slip in between the
+        // lookup above and this registration.
+        const entry = {
+          token,
+          result: Deferred.makeUnsafe<A, OrchestrationDispatchCommandError>(),
+        };
+        running.set(key, entry);
+        const release = Effect.sync(() => {
+          if (running.get(key) === entry) running.delete(key);
+        });
+        // forkDetach starts the worker interruptible regardless of this mask.
+        return work.pipe(
+          Effect.ensuring(release),
+          Deferred.into(entry.result),
+          Effect.forkDetach,
+          Effect.flatMap(() => restore(Deferred.await(entry.result))),
+        );
+      }),
+    );
+}
+
+/** Team mode: an unrestricted caller, or the thread's owner or a member. */
+function isVisibleToActor(
+  thread: OrchestrationThreadShell,
+  options: TurnStartBootstrapDispatchOptions | undefined,
+): boolean {
+  const actor = options?.actorUserId ?? null;
+  return actor === null || thread.ownerUserId === actor || thread.memberUserIds.includes(actor);
 }
 
 export interface TurnStartBootstrapDispatchOptions {
@@ -476,6 +495,11 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
+  const readThread = (threadId: ThreadId) =>
+    projectionQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map((thread) => Option.getOrNull(thread)));
+
   const withThreadCleanup = <A, E>(
     threadId: ThreadId,
     createdThread: () => boolean,
@@ -511,25 +535,45 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * The thread an earlier, lost attempt of this bootstrap created: same
-   * project, no turn yet, and visible to the actor. Null when there is none, so
-   * the caller dispatches `thread.create`, which still fails for a thread that
-   * exists but does not qualify. One indexed single-thread read.
+   * Whether an existing thread is the one an earlier, lost attempt of this
+   * bootstrap created: same project, no turn yet, and visible to the actor.
+   * When it is not, the caller dispatches `thread.create`, which still fails
+   * for a thread that exists.
    */
-  const findResumableThread = Effect.fn("TurnStartBootstrap.findResumableThread")(function* (
-    threadId: ThreadId,
+  const isResumable = (
+    thread: OrchestrationThreadShell | null,
     projectId: ProjectId,
     options: TurnStartBootstrapDispatchOptions | undefined,
-  ) {
-    const existing = yield* projectionQuery.getThreadShellById(threadId);
-    if (Option.isNone(existing)) return null;
-    const thread = existing.value;
-    const actor = options?.actorUserId ?? null;
-    const visible =
-      actor === null || thread.ownerUserId === actor || thread.memberUserIds.includes(actor);
-    const untouched = thread.latestTurn === null && thread.latestUserMessageAt === null;
-    return thread.projectId === projectId && untouched && visible ? thread : null;
-  });
+  ): thread is OrchestrationThreadShell =>
+    thread !== null &&
+    thread.projectId === projectId &&
+    thread.latestTurn === null &&
+    thread.latestUserMessageAt === null &&
+    isVisibleToActor(thread, options);
+
+  /**
+   * A worktree an interrupted attempt added for this exact branch but never
+   * recorded on the thread. `git worktree add -b <branch>` would fail on every
+   * retry, so the resume adopts it. The main checkout never counts.
+   */
+  const findUnrecordedWorktree = Effect.fn("TurnStartBootstrap.findUnrecordedWorktree")(
+    function* (projectCwd: string, branch: string) {
+      const listed = yield* gitWorkflow.listRefs({
+        cwd: projectCwd,
+        query: branch,
+        refKind: "local",
+        refresh: true,
+      });
+      const match = listed.refs.find(
+        (ref) =>
+          !ref.isRemote &&
+          ref.name === branch &&
+          ref.worktreePath !== null &&
+          ref.worktreePath !== projectCwd,
+      );
+      return match?.worktreePath ?? null;
+    },
+  );
 
   const dispatchBootstrapTurnStart = Effect.fn("TurnStartBootstrap.dispatchBootstrapTurnStart")(
     function* (command: TurnStartCommand, options: TurnStartBootstrapDispatchOptions | undefined) {
@@ -541,16 +585,28 @@ export const make = Effect.gen(function* () {
       let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
 
       const bootstrapProgram = Effect.gen(function* () {
+        const existingThread = yield* readThread(command.threadId);
+
         // A retry whose turn already landed (the first attempt finished after
-        // its caller gave up): the engine replays the stored receipt.
+        // its caller gave up): the engine replays the stored receipt. Only this
+        // thread's own turn start, and only for an actor who may see the thread;
+        // any other receipt falls through and fails as before.
         const priorTurn = yield* commandReceipts.getByCommandId(command.commandId);
-        if (Option.isSome(priorTurn)) {
+        if (
+          Option.isSome(priorTurn) &&
+          priorTurn.value.threadId === command.threadId &&
+          priorTurn.value.commandType === "thread.turn.start" &&
+          existingThread !== null &&
+          isVisibleToActor(existingThread, options)
+        ) {
           return yield* dispatchWithOptions(finalTurnStartCommand, options);
         }
 
-        const resumable = bootstrap?.createThread
-          ? yield* findResumableThread(command.threadId, bootstrap.createThread.projectId, options)
-          : null;
+        const resumable =
+          bootstrap?.createThread &&
+          isResumable(existingThread, bootstrap.createThread.projectId, options)
+            ? existingThread
+            : null;
         if (resumable !== null) {
           yield* Effect.logInfo("bootstrap turn start resumed a thread left without a turn", {
             threadId: command.threadId,
@@ -566,6 +622,31 @@ export const make = Effect.gen(function* () {
             ? resumable.worktreePath
             : null;
         if (recordedWorktreePath !== null) targetWorktreePath = recordedWorktreePath;
+
+        const leftoverBranch = bootstrap?.prepareWorktree?.branch;
+        const adoptedWorktreePath =
+          resumable !== null &&
+          recordedWorktreePath === null &&
+          bootstrap?.prepareWorktree !== undefined &&
+          leftoverBranch !== undefined &&
+          options?.workspaceGroup === undefined
+            ? yield* findUnrecordedWorktree(bootstrap.prepareWorktree.projectCwd, leftoverBranch)
+            : null;
+        if (adoptedWorktreePath !== null && leftoverBranch !== undefined) {
+          yield* Effect.logInfo("bootstrap turn start adopted an unrecorded worktree", {
+            threadId: command.threadId,
+            worktreePath: adoptedWorktreePath,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+            threadId: command.threadId,
+            branch: leftoverBranch,
+            worktreePath: adoptedWorktreePath,
+          });
+          yield* refreshGitStatus(adoptedWorktreePath);
+          targetWorktreePath = adoptedWorktreePath;
+        }
 
         if (bootstrap?.createThread && resumable === null) {
           const created = yield* dispatchWithOptions(
@@ -584,7 +665,7 @@ export const make = Effect.gen(function* () {
         }
 
         const preparedPath =
-          recordedWorktreePath !== null
+          recordedWorktreePath !== null || adoptedWorktreePath !== null
             ? null
             : yield* prepareWorktreeFor({
                 threadId: command.threadId,

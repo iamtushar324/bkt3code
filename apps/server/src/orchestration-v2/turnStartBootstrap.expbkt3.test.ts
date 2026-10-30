@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  UserId,
   type OrchestrationCommand,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
@@ -73,14 +74,17 @@ interface FakeThread {
   readonly projectId: ProjectId;
   worktreePath: string | null;
   turns: number;
+  readonly ownerUserId?: UserId;
 }
 
 interface HarnessOptions {
   /** Hold `git worktree add` until the test releases it. */
   readonly holdWorktree?: boolean;
   readonly seedThread?: FakeThread;
-  /** A turn start that already landed under this command id. */
-  readonly seedTurnReceipt?: boolean;
+  /** A receipt already stored under the turn's command id. */
+  readonly seedReceipt?: { readonly threadId: ThreadId; readonly commandType: string };
+  /** A worktree `git worktree add` left for the branch before the path was recorded. */
+  readonly unrecordedWorktree?: string;
 }
 
 /**
@@ -94,9 +98,9 @@ const makeHarness = (options: HarnessOptions = {}) =>
     if (options.seedThread) threads.set(threadId, options.seedThread);
     const receipts = new Map<
       CommandId,
-      { readonly sequence: number; readonly threadId: ThreadId }
+      { readonly sequence: number; readonly threadId: ThreadId; readonly commandType: string }
     >();
-    if (options.seedTurnReceipt) receipts.set(turnCommandId, { sequence: 7, threadId });
+    if (options.seedReceipt) receipts.set(turnCommandId, { sequence: 7, ...options.seedReceipt });
     let sequence = 10;
     const commands: Array<OrchestrationCommand> = [];
     const createdWorktrees: Array<string> = [];
@@ -132,7 +136,11 @@ const makeHarness = (options: HarnessOptions = {}) =>
         if (command.type === "thread.turn.start") {
           const thread = threads.get(command.threadId);
           if (thread) thread.turns += 1;
-          receipts.set(command.commandId, { sequence, threadId: command.threadId });
+          receipts.set(command.commandId, {
+            sequence,
+            threadId: command.threadId,
+            commandType: command.type,
+          });
           yield* Deferred.succeed(turnStarted, undefined);
         }
         return { sequence };
@@ -146,6 +154,24 @@ const makeHarness = (options: HarnessOptions = {}) =>
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             isRepository: () => Effect.succeed(true),
             hasCommit: () => Effect.succeed(true),
+            listRefs: (input) =>
+              Effect.succeed({
+                refs:
+                  options.unrecordedWorktree === undefined || input.query !== "t3/ticket"
+                    ? []
+                    : [
+                        {
+                          name: "t3/ticket",
+                          current: false,
+                          isDefault: false,
+                          worktreePath: options.unrecordedWorktree,
+                        },
+                      ],
+                isRepo: true,
+                hasPrimaryRemote: true,
+                nextCursor: null,
+                totalCount: options.unrecordedWorktree === undefined ? 0 : 1,
+              }),
             createWorktree: (input) =>
               Effect.gen(function* () {
                 const path = `/worktrees/${input.newRefName ?? "detached"}`;
@@ -179,7 +205,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
                   : Option.some({
                       commandId,
                       threadId: receipt.threadId,
-                      commandType: "thread.turn.start",
+                      commandType: receipt.commandType,
                       acceptedAt: DateTime.makeUnsafe(0),
                       resultSequence: receipt.sequence,
                       status: "accepted" as const,
@@ -199,7 +225,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
                   worktreePath: thread.worktreePath,
                   latestTurn: thread.turns === 0 ? null : { turnId: "run:earlier" },
                   latestUserMessageAt: thread.turns === 0 ? null : "2026-10-30T00:00:00.000Z",
-                  ownerUserId: null,
+                  ownerUserId: thread.ownerUserId ?? null,
                   memberUserIds: [],
                 };
                 return Option.some(shell as unknown as OrchestrationThreadShell);
@@ -294,7 +320,7 @@ it.effect("answers a retry after the turn landed with the original result", () =
   Effect.gen(function* () {
     const harness = yield* makeHarness({
       seedThread: { projectId, worktreePath: "/worktrees/t3/ticket", turns: 1 },
-      seedTurnReceipt: true,
+      seedReceipt: { threadId, commandType: "thread.turn.start" },
     });
 
     const result = yield* harness.service.dispatch(bootstrapTurnStart);
@@ -332,5 +358,45 @@ it.effect("still rejects a thread that already has other turns", () =>
     assert.isTrue(Exit.isFailure(exit));
     assert.deepEqual(harness.createdWorktrees, []);
     assert.equal(harness.threads.get(threadId)?.turns, 1);
+  }),
+);
+
+it.effect("adopts a worktree an interrupted attempt added but never recorded", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      seedThread: { projectId, worktreePath: null, turns: 0 },
+      unrecordedWorktree: "/worktrees/leftover",
+    });
+
+    yield* harness.service.dispatch(bootstrapTurnStart);
+
+    assert.deepEqual(harness.createdWorktrees, []);
+    assert.equal(harness.threads.get(threadId)?.worktreePath, "/worktrees/leftover");
+    assert.deepEqual(harness.setupWorktrees, ["/worktrees/leftover"]);
+    assert.equal(harness.threads.get(threadId)?.turns, 1);
+  }),
+);
+
+it.effect("does not replay an unrelated receipt for a thread the actor cannot see", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      seedThread: {
+        projectId,
+        worktreePath: null,
+        turns: 0,
+        ownerUserId: UserId.make("user:owner"),
+      },
+      seedReceipt: { threadId: ThreadId.make("thread:unrelated"), commandType: "thread.create" },
+    });
+
+    const exit = yield* harness.service
+      .dispatch(bootstrapTurnStart, { actorUserId: UserId.make("user:intruder") })
+      .pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(harness.countCommands("thread.turn.start"), 0);
+    assert.equal(harness.countCommands("thread.meta.update"), 0);
+    assert.deepEqual(harness.createdWorktrees, []);
+    assert.equal(harness.threads.get(threadId)?.turns, 0);
   }),
 );
