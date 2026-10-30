@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -15,13 +16,17 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
+import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadWorkspaceGroups from "../persistence/ThreadWorkspaceGroups.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
@@ -70,6 +75,15 @@ const bootstrapTurnStart: Extract<OrchestrationCommand, { type: "thread.turn.sta
   createdAt: "2026-10-30T00:00:00.000Z",
 };
 
+/** The same bootstrap for a project checked out somewhere else. */
+const turnStartIn = (projectCwd: string): typeof bootstrapTurnStart => ({
+  ...bootstrapTurnStart,
+  bootstrap: {
+    ...bootstrapTurnStart.bootstrap,
+    prepareWorktree: { projectCwd, baseBranch: "main", branch: "t3/ticket" },
+  },
+});
+
 interface FakeThread {
   readonly projectId: ProjectId;
   worktreePath: string | null;
@@ -85,12 +99,16 @@ interface HarnessOptions {
   readonly seedReceipt?: { readonly threadId: ThreadId; readonly commandType: string };
   /** A worktree `git worktree add` left for the branch before the path was recorded. */
   readonly unrecordedWorktree?: string;
+  /** Where createWorktree puts new worktrees: `<worktreesDir>/<repo>/<dir>`. */
+  readonly worktreesDir?: string;
 }
 
 /**
  * The real bootstrap service over an in-memory engine: `thread.create` fails
  * on an existing thread like the orchestrator's invariant, and a repeated
- * command id replays its receipt.
+ * command id replays its receipt. Like the compatibility engine
+ * (`Layers/OrchestrationEngine.ts`), a turn start is recorded as the native
+ * `message.dispatch` under the turn's own command id.
  */
 const makeHarness = (options: HarnessOptions = {}) =>
   Effect.gen(function* () {
@@ -139,7 +157,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
           receipts.set(command.commandId, {
             sequence,
             threadId: command.threadId,
-            commandType: command.type,
+            commandType: "message.dispatch",
           });
           yield* Deferred.succeed(turnStarted, undefined);
         }
@@ -150,6 +168,11 @@ const makeHarness = (options: HarnessOptions = {}) =>
       Effect.provide(
         Layer.mergeAll(
           NodeCrypto.layer,
+          NodeServices.layer,
+          Layer.mock(ServerConfig.ServerConfig)({
+            worktreesDir: options.worktreesDir ?? "/synthetic-worktrees",
+          } as never),
+          ServerSettings.layerTest(),
           Layer.mock(OrchestrationEngine.OrchestrationEngineService)({ dispatch }),
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             isRepository: () => Effect.succeed(true),
@@ -320,7 +343,7 @@ it.effect("answers a retry after the turn landed with the original result", () =
   Effect.gen(function* () {
     const harness = yield* makeHarness({
       seedThread: { projectId, worktreePath: "/worktrees/t3/ticket", turns: 1 },
-      seedReceipt: { threadId, commandType: "thread.turn.start" },
+      seedReceipt: { threadId, commandType: "message.dispatch" },
     });
 
     const result = yield* harness.service.dispatch(bootstrapTurnStart);
@@ -365,14 +388,17 @@ it.effect("adopts a worktree an interrupted attempt added but never recorded", (
   Effect.gen(function* () {
     const harness = yield* makeHarness({
       seedThread: { projectId, worktreePath: null, turns: 0 },
-      unrecordedWorktree: "/worktrees/leftover",
+      unrecordedWorktree: "/synthetic-worktrees/bk-docs/leftover",
     });
 
     yield* harness.service.dispatch(bootstrapTurnStart);
 
     assert.deepEqual(harness.createdWorktrees, []);
-    assert.equal(harness.threads.get(threadId)?.worktreePath, "/worktrees/leftover");
-    assert.deepEqual(harness.setupWorktrees, ["/worktrees/leftover"]);
+    assert.equal(
+      harness.threads.get(threadId)?.worktreePath,
+      "/synthetic-worktrees/bk-docs/leftover",
+    );
+    assert.deepEqual(harness.setupWorktrees, ["/synthetic-worktrees/bk-docs/leftover"]);
     assert.equal(harness.threads.get(threadId)?.turns, 1);
   }),
 );
@@ -399,4 +425,72 @@ it.effect("does not replay an unrelated receipt for a thread the actor cannot se
     assert.deepEqual(harness.createdWorktrees, []);
     assert.equal(harness.threads.get(threadId)?.turns, 0);
   }),
+);
+
+it.effect("replays a retry of a bootstrap that already finished", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const first = yield* harness.service.dispatch(bootstrapTurnStart);
+
+    const retry = yield* harness.service.dispatch(bootstrapTurnStart);
+
+    assert.deepEqual(retry, first);
+    assert.equal(harness.countCommands("thread.create"), 1);
+    assert.deepEqual(harness.createdWorktrees, ["/worktrees/t3/ticket"]);
+    assert.equal(harness.threads.get(threadId)?.turns, 1);
+  }),
+);
+
+it.effect("does not adopt a worktree for the branch outside the managed worktrees folder", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      seedThread: { projectId, worktreePath: null, turns: 0 },
+      unrecordedWorktree: "/elsewhere/bk-docs/leftover",
+    });
+
+    yield* harness.service.dispatch(bootstrapTurnStart);
+
+    assert.deepEqual(harness.createdWorktrees, ["/worktrees/t3/ticket"]);
+    assert.equal(harness.threads.get(threadId)?.worktreePath, "/worktrees/t3/ticket");
+  }),
+);
+
+it.effect("does not adopt the source checkout spelled with a trailing slash", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      seedThread: { projectId, worktreePath: null, turns: 0 },
+      unrecordedWorktree: "/repos/bk-docs/",
+    });
+
+    yield* harness.service.dispatch(bootstrapTurnStart);
+
+    assert.deepEqual(harness.createdWorktrees, ["/worktrees/t3/ticket"]);
+    assert.equal(harness.threads.get(threadId)?.worktreePath, "/worktrees/t3/ticket");
+  }),
+);
+
+it.effect("does not adopt the source checkout behind a symlink in the worktrees folder", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-bootstrap-adopt-" });
+      const projectCwd = path.join(base, "repos", "bk-docs");
+      const worktreesDir = path.join(base, "worktrees");
+      const disguised = path.join(worktreesDir, "bk-docs", "main");
+      yield* fileSystem.makeDirectory(projectCwd, { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(disguised), { recursive: true });
+      yield* fileSystem.symlink(projectCwd, disguised);
+      const harness = yield* makeHarness({
+        seedThread: { projectId, worktreePath: null, turns: 0 },
+        unrecordedWorktree: disguised,
+        worktreesDir,
+      });
+
+      yield* harness.service.dispatch(turnStartIn(projectCwd));
+
+      assert.deepEqual(harness.createdWorktrees, ["/worktrees/t3/ticket"]);
+      assert.equal(harness.threads.get(threadId)?.worktreePath, "/worktrees/t3/ticket");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

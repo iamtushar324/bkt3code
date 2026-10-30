@@ -30,14 +30,17 @@ import {
   type ThreadId,
   type UserId,
 } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -46,6 +49,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import { withWorktreeCreationPermit } from "../workspace-groups/parentWorkspaceInheritance.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -216,6 +220,9 @@ export const make = Effect.gen(function* () {
   const workspaceGroups = yield* ThreadWorkspaceGroups.ThreadWorkspaceGroupRepository;
   const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const projectionQuery = yield* ProjectionSnapshotQuery;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const runTurnStartBootstrap = makeDetachedSingleFlight<{ readonly sequence: number }>();
   const runCreateThreadBootstrap = makeDetachedSingleFlight<{
     readonly sequence: number;
@@ -551,27 +558,36 @@ export const make = Effect.gen(function* () {
     thread.latestUserMessageAt === null &&
     isVisibleToActor(thread, options);
 
+  const realPathOf = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+
   /**
    * A worktree an interrupted attempt added for this exact branch but never
    * recorded on the thread. `git worktree add -b <branch>` would fail on every
-   * retry, so the resume adopts it. The main checkout never counts.
+   * retry, so the resume adopts it — but only a checkout that sits where
+   * createWorktree puts new ones (`<managed worktrees folder>/<repo>/<dir>`,
+   * compared by real path) and is not the project's own checkout under any
+   * spelling. A temporary branch is never on disk under its own name: the
+   * worktree takes a generated codename branch, so a retry allocates a fresh
+   * one instead of failing, and there is nothing to match here.
    */
   const findUnrecordedWorktree = Effect.fn("TurnStartBootstrap.findUnrecordedWorktree")(
     function* (projectCwd: string, branch: string) {
+      if (isTemporaryWorktreeBranch(branch)) return null;
       const listed = yield* gitWorkflow.listRefs({
         cwd: projectCwd,
         query: branch,
         refKind: "local",
         refresh: true,
       });
-      const match = listed.refs.find(
-        (ref) =>
-          !ref.isRemote &&
-          ref.name === branch &&
-          ref.worktreePath !== null &&
-          ref.worktreePath !== projectCwd,
-      );
-      return match?.worktreePath ?? null;
+      const candidate = listed.refs.find(
+        (ref) => !ref.isRemote && ref.name === branch && ref.worktreePath !== null,
+      )?.worktreePath;
+      if (candidate == null) return null;
+      const repoName = path.basename(path.resolve(projectCwd));
+      if (path.basename(path.dirname(path.resolve(candidate))) !== repoName) return null;
+      if ((yield* realPathOf(candidate)) === (yield* realPathOf(projectCwd))) return null;
+      return (yield* isManagedWorktreePath(candidate)) ? candidate : null;
     },
   );
 
@@ -589,13 +605,16 @@ export const make = Effect.gen(function* () {
 
         // A retry whose turn already landed (the first attempt finished after
         // its caller gave up): the engine replays the stored receipt. Only this
-        // thread's own turn start, and only for an actor who may see the thread;
+        // thread's own turn message, and only for an actor who may see the thread;
         // any other receipt falls through and fails as before.
         const priorTurn = yield* commandReceipts.getByCommandId(command.commandId);
         if (
           Option.isSome(priorTurn) &&
           priorTurn.value.threadId === command.threadId &&
-          priorTurn.value.commandType === "thread.turn.start" &&
+          // The compatibility engine (Layers/OrchestrationEngine.ts) runs a turn
+          // start as a native `message.dispatch` under the same command id, and
+          // the receipt carries that native type.
+          priorTurn.value.commandType === "message.dispatch" &&
           existingThread !== null &&
           isVisibleToActor(existingThread, options)
         ) {
