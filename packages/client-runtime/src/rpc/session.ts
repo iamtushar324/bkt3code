@@ -5,6 +5,8 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+// T3-CUSTOM(expbkt3): Clock stamps the session's frame liveness (TEC-1837).
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -26,6 +28,8 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+// T3-CUSTOM(expbkt3): frame liveness for late health probes (TEC-1837).
+import { layerSocketFrameLiveness } from "./frameLiveness.expbkt3.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -54,6 +58,10 @@ export interface RpcSession {
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
+  // T3-CUSTOM(expbkt3): BEGIN — clock millis of the last frame the socket received, any kind.
+  // Optional so test sessions without a socket read as "no frames" (TEC-1837).
+  readonly lastFrameAt?: Effect.Effect<number>;
+  // T3-CUSTOM(expbkt3): END
 }
 
 export interface RpcSessionOptions {
@@ -206,9 +214,16 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
-      openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    // T3-CUSTOM(expbkt3): BEGIN — stamp every received frame for the supervisor's probe (TEC-1837).
+    const lastFrameAt = yield* Ref.make(yield* Clock.currentTimeMillis);
+    const layerSocket = layerSocketFrameLiveness(lastFrameAt).pipe(
+      Layer.provide(
+        Socket.layerWebSocket(connection.socketUrl, {
+          openTimeout: SOCKET_OPEN_TIMEOUT,
+        }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor))),
+      ),
+    );
+    // T3-CUSTOM(expbkt3): END
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
@@ -412,6 +427,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.raceFirst(Deferred.await(disconnected)),
       ),
       probe,
+      // T3-CUSTOM(expbkt3): frame liveness for late health probes (TEC-1837).
+      lastFrameAt: Ref.get(lastFrameAt),
       closed: Effect.raceFirst(
         Deferred.await(disconnected),
         Deferred.await(configSubscriptionClosed),

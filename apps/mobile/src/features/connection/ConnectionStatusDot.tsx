@@ -80,10 +80,18 @@ export function ConnectionStatusDot(props: {
   readonly state: ConnectionStatusDotState;
   readonly pulse: boolean;
   readonly size?: number;
+  // T3-CUSTOM(expbkt3): a live but slow session shows the static warning tone (TEC-1837).
+  readonly slow?: boolean;
 }) {
   const pulseProgress = usePulseAnimation(props.pulse);
   const { themeAppearance, themeVariables } = useAppearancePreferences();
-  const tone = statusDotTone(props.state, themeVariables, themeAppearance === "dark");
+  // T3-CUSTOM(expbkt3): BEGIN — the warning tone for slow, without the reconnect pulse (TEC-1837).
+  const tone = statusDotTone(
+    props.slow === true && props.state === "connected" ? "connecting" : props.state,
+    themeVariables,
+    themeAppearance === "dark",
+  );
+  // T3-CUSTOM(expbkt3): END
   const dotSize = props.size ?? 10;
   const haloSize = dotSize + 4;
   const containerSize = haloSize + 4;

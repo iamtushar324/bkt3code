@@ -29,6 +29,8 @@ import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
+// T3-CUSTOM(expbkt3): resume the shell cursor on a replaced socket (TEC-1837).
+import { canResumeShellAcrossSessions, shellResumeServerIdentity } from "./shellResume.expbkt3.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
   applyShellStreamEvent,
@@ -93,6 +95,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const awaitingCompletion = yield* Ref.make(false);
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  // T3-CUSTOM(expbkt3): BEGIN — the server process behind each snapshot, and the socket that
+  // is resuming across sessions until its first item arrives (TEC-1837).
+  const activeSubscriptionIdentity = yield* Ref.make<string | null>(null);
+  const lastAuthoritativeIdentity = yield* Ref.make<string | null>(null);
+  const crossSessionResumeAttempt = yield* Ref.make<RpcSession | null>(null);
+  // T3-CUSTOM(expbkt3): END
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -229,6 +237,18 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       };
     }
     yield* Ref.set(awaitingCompletion, waiting);
+    // T3-CUSTOM(expbkt3): BEGIN — the first item of a cross-session resume proves the
+    // server accepted the cursor, so that socket now holds the authoritative state (TEC-1837).
+    const itemSession = yield* Ref.get(activeSubscriptionSession);
+    if (
+      items.length > 0 &&
+      itemSession !== null &&
+      itemSession === (yield* Ref.get(crossSessionResumeAttempt))
+    ) {
+      yield* Ref.set(lastAuthoritativeSession, itemSession);
+      yield* Ref.set(crossSessionResumeAttempt, null);
+    }
+    // T3-CUSTOM(expbkt3): END
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
       pendingLinkRows = new Set(
@@ -243,6 +263,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       const session = yield* Ref.get(activeSubscriptionSession);
       if (session !== null) {
         yield* Ref.set(lastAuthoritativeSession, session);
+        // T3-CUSTOM(expbkt3): remember the server process this snapshot came from (TEC-1837).
+        yield* Ref.set(lastAuthoritativeIdentity, yield* Ref.get(activeSubscriptionIdentity));
       }
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
@@ -335,11 +357,33 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
+        // T3-CUSTOM(expbkt3): BEGIN — a replaced socket to the same server process resumes from
+        // the in-memory cursor instead of loading the full snapshot again (TEC-1837).
+        const serverIdentity = yield* session.initialConfig.pipe(
+          Effect.map(shellResumeServerIdentity),
+          Effect.orElseSucceed(() => null),
+        );
+        yield* Ref.set(activeSubscriptionIdentity, serverIdentity);
+        const earlierAuthoritativeSession = yield* Ref.get(lastAuthoritativeSession);
+        const resumesAcrossSessions = canResumeShellAcrossSessions({
+          hasEarlierAuthoritativeSession:
+            earlierAuthoritativeSession !== null && earlierAuthoritativeSession !== session,
+          earlierServerIdentity: yield* Ref.get(lastAuthoritativeIdentity),
+          serverIdentity,
+          pendingLinkFill: pendingLinkRows.size > 0,
+          alreadyTriedOnThisSession: (yield* Ref.get(crossSessionResumeAttempt)) === session,
+        });
+        if (resumesAcrossSessions) {
+          yield* Ref.set(crossSessionResumeAttempt, session);
+        }
+        // T3-CUSTOM(expbkt3): END
 
         // Foreground resubscriptions on the same live session can resume from
         // the in-memory cursor. A new session reloads the authoritative HTTP
         // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
+        // T3-CUSTOM(expbkt3): `|| resumesAcrossSessions`, see above (TEC-1837).
+        const hasAuthoritativeSnapshot =
+          (yield* Ref.get(lastAuthoritativeSession)) === session || resumesAcrossSessions;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {

@@ -177,6 +177,10 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  // T3-CUSTOM(expbkt3): BEGIN — set only while connected: a health probe was late but the
+  // socket still delivers frames, so the server is slow, not gone (TEC-1837).
+  readonly degraded?: boolean;
+  // T3-CUSTOM(expbkt3): END
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";

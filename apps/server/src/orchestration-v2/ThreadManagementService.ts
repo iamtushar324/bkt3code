@@ -371,6 +371,8 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
+  // T3-CUSTOM(expbkt3): one read for every thread a shell feed batch touched.
+  readonly getThreadShells: Orchestrator.OrchestratorV2["Service"]["getThreadShells"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
@@ -1181,6 +1183,8 @@ const make = Effect.gen(function* () {
     getShellSnapshot: orchestrator.getShellSnapshot,
     readShellSnapshot: orchestrator.readShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
+    // T3-CUSTOM(expbkt3): batched shell feed read.
+    getThreadShells: orchestrator.getThreadShells,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,

@@ -27,7 +27,11 @@ import { environmentStatusText } from "./environmentStatusText";
 // T3-CUSTOM(expbkt3): shared host appearance entry point.
 import { EnvironmentAppearanceButton } from "../environments/EnvironmentAppearanceButton";
 
-function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
+// T3-CUSTOM(expbkt3): `slow` adds the slow-to-respond hint to a live session's label (TEC-1837).
+function connectionStatusLabel(
+  environment: ConnectedEnvironmentSummary,
+  slow: boolean,
+): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
     return "Off";
   }
@@ -35,6 +39,8 @@ function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string
     phase: environment.connectionState,
     error: environment.connectionError,
     traceId: environment.connectionErrorTraceId,
+    // T3-CUSTOM(expbkt3): see above.
+    ...(slow ? { slow: true } : {}),
   });
 }
 
@@ -66,7 +72,13 @@ export function ConnectionEnvironmentRow(props: {
     presentation,
   );
   const enabled = props.environment.isEnabled && !unsupported;
-  const statusLabel = connectionStatusLabel(props.environment);
+  // T3-CUSTOM(expbkt3): BEGIN — the slow hint comes from the live presentation (TEC-1837).
+  const slow =
+    enabled &&
+    presentation?.connection.phase === "connected" &&
+    presentation.connection.slow === true;
+  const statusLabel = connectionStatusLabel(props.environment, slow);
+  // T3-CUSTOM(expbkt3): END
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
   const freeze = enabled
@@ -110,6 +122,8 @@ export function ConnectionEnvironmentRow(props: {
               state={enabled || unsupported ? props.environment.connectionState : "available"}
               pulse={isRetrying}
               size={8}
+              // T3-CUSTOM(expbkt3): static warning tone while slow (TEC-1837).
+              slow={slow}
             />
             <EnvironmentMachineSymbol
               kind={resolveEnvironmentMachineKind(serverConfig)}
