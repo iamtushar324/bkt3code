@@ -452,6 +452,12 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  // T3-CUSTOM(expbkt3): BEGIN — one read for every thread a shell feed batch touched.
+  /** Same rows as `getThreadShell` for each id; a missing or deleted thread has no entry. */
+  readonly getThreadShells: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>, ProjectionStoreV2Error>;
+  // T3-CUSTOM(expbkt3): END
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
@@ -5740,6 +5746,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const selectShellThreadRows = (
       threadId?: ThreadId,
       { location, projectId, unsettledOnly = false }: ShellSnapshotOptions = {},
+      // T3-CUSTOM(expbkt3): a list reads a shell feed batch in one statement.
+      threadIds?: ReadonlyArray<ThreadId>,
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -5941,6 +5949,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               unsettledOnly
                 ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
                 : sql``
+              // T3-CUSTOM(expbkt3): BEGIN — a list reads a shell feed batch in one statement.
+            }${
+              threadIds === undefined ? sql`` : sql` AND t.thread_id IN ${sql.in(threadIds)}`
+              // T3-CUSTOM(expbkt3): END
             }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
@@ -6610,11 +6622,87 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
         );
 
+    // T3-CUSTOM(expbkt3): BEGIN — `getThreadShell` for a whole shell feed batch. Each statement
+    // reads every thread at once; fork sources load one chain level per statement.
+    const getThreadShells: ProjectionStoreV2Shape["getThreadShells"] = (threadIds) =>
+      threadIds.length === 0
+        ? Effect.succeed(new Map<ThreadId, OrchestrationV2ThreadShell>())
+        : sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const rowsByThreadId = new Map<ThreadId, ShellThreadRow>();
+                let pending: ReadonlyArray<ThreadId> = [...new Set(threadIds)];
+                while (pending.length > 0) {
+                  const rows = yield* selectShellThreadRows(undefined, {}, pending);
+                  for (const row of rows) rowsByThreadId.set(ThreadId.make(row.thread_id), row);
+                  pending = shellForkSourceIds(rows).filter((id) => !rowsByThreadId.has(id));
+                }
+                const shells = new Map<ThreadId, OrchestrationV2ThreadShell>();
+                if (rowsByThreadId.size === 0) return shells;
+                const rows = [...rowsByThreadId.values()];
+                const ids = [...rowsByThreadId.keys()];
+                const forkSourceIds = shellForkSourceIds(rows);
+                const [runRows, itemCountRows, providerThreadRows, pendingTurnItemRows] =
+                  yield* Effect.all([
+                    forkSourceIds.length === 0
+                      ? Effect.succeed([] as ReadonlyArray<ShellRunRow>)
+                      : selectShellRunRows(forkSourceIds),
+                    forkSourceIds.length === 0
+                      ? Effect.succeed([] as ReadonlyArray<ShellRunItemCountRow>)
+                      : selectShellRunItemCounts(forkSourceIds),
+                    selectShellProviderThreadRows(ids),
+                    selectShellPendingTurnItemRows(
+                      ids,
+                      rows.flatMap((row) =>
+                        row.active_run_id !== null && row.active_run_status === "running"
+                          ? [row.active_run_id]
+                          : [],
+                      ),
+                    ),
+                  ]);
+                const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
+                  runRows,
+                  itemCountRows,
+                });
+                const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
+                  yield* pendingBackgroundDataByThreadId({
+                    providerThreadRows,
+                    pendingTurnItemRows,
+                  });
+                const states = yield* Effect.forEach(rows, (row) =>
+                  shellThreadStateFromRow({
+                    row,
+                    runOrdinalsByThreadId,
+                    itemCountsByThreadId,
+                    providerThreadsByThreadId,
+                    pendingTurnItemsByThreadId,
+                  }),
+                );
+                const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
+                for (const threadId of new Set(threadIds)) {
+                  const state = statesByThreadId.get(threadId);
+                  if (state === undefined) continue;
+                  shells.set(
+                    threadId,
+                    shellFromState({
+                      state,
+                      visibleItemCount: visibleItemCountForShell({ threadId, statesByThreadId }),
+                    }),
+                  );
+                }
+                return shells;
+              }),
+            )
+            .pipe(NodeSqliteClient.readOnly, Effect.mapError(shellSnapshotReadError));
+    // T3-CUSTOM(expbkt3): END
+
     return {
       apply,
       getShellSnapshot,
       readShellSnapshot,
       getThreadShell,
+      // T3-CUSTOM(expbkt3): batched shell feed read.
+      getThreadShells,
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
@@ -6734,6 +6822,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           .pipe(Effect.map(threadShellFromProjection));
         return shell.deletedAt === null ? shell : null;
       }),
+      // T3-CUSTOM(expbkt3): BEGIN — batched shell feed read.
+      getThreadShells: Effect.fn("ProjectionStore.getThreadShells")(function* (threadIds) {
+        const shells = new Map<ThreadId, OrchestrationV2ThreadShell>();
+        for (const threadId of new Set(threadIds)) {
+          const shell = yield* service.getThreadShell(threadId);
+          if (shell !== null) shells.set(threadId, shell);
+        }
+        return shells;
+      }),
+      // T3-CUSTOM(expbkt3): END
       getThread: Effect.fn("ProjectionStore.getThread")(function* (threadId) {
         const projection = (yield* Ref.get(replayState)).projections.get(threadId);
         if (projection === undefined) {

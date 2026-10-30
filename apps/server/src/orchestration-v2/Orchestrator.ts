@@ -422,6 +422,11 @@ export interface OrchestratorV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
+  // T3-CUSTOM(expbkt3): BEGIN — one read for every thread a shell feed batch touched.
+  readonly getThreadShells: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>, OrchestratorV2Error>;
+  // T3-CUSTOM(expbkt3): END
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
@@ -12763,6 +12768,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    // T3-CUSTOM(expbkt3): batched shell feed read.
+    getThreadShells: (threadIds) =>
+      projectionStore.getThreadShells(threadIds).pipe(Effect.mapError(shellProjectionError)),
     getThreadEventSequence: (threadId) =>
       eventSink
         .latestSequence({ threadId })
@@ -12911,6 +12919,15 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
+    // T3-CUSTOM(expbkt3): BEGIN — batched shell feed read.
+    getThreadShells: () =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId: ThreadId.make("thread:shell"),
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    // T3-CUSTOM(expbkt3): END
     getThreadEventSequence: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({
