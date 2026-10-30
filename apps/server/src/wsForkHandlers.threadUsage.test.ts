@@ -18,8 +18,12 @@ import { makeForkWsHandlers, type ForkWsHandlerDeps } from "./wsForkHandlers.ts"
 
 const threadId = ThreadId.make("thread-usage");
 
-function makeHandlers(shell: Option.Option<OrchestrationThreadShell>) {
+function makeHandlers(
+  shell: Option.Option<OrchestrationThreadShell>,
+  nativeSessionIds: ReadonlyArray<string> = [],
+) {
   const shellReads: Array<ThreadId> = [];
+  const sessionIdReads: Array<ThreadId> = [];
   const usageReads: Array<{
     readonly sessionIds: ReadonlyArray<string>;
     readonly sinceMs: number;
@@ -33,6 +37,11 @@ function makeHandlers(shell: Option.Option<OrchestrationThreadShell>) {
         Effect.sync(() => {
           shellReads.push(id);
           return shell;
+        }),
+      getThreadNativeSessionIds: (id: ThreadId) =>
+        Effect.sync(() => {
+          sessionIdReads.push(id);
+          return nativeSessionIds;
         }),
     } as unknown as ForkWsHandlerDeps["projectionSnapshotQuery"],
     usage: {
@@ -49,6 +58,7 @@ function makeHandlers(shell: Option.Option<OrchestrationThreadShell>) {
   return {
     handlers: makeForkWsHandlers(deps as unknown as ForkWsHandlerDeps),
     shellReads,
+    sessionIdReads,
     usageReads,
   };
 }
@@ -58,17 +68,25 @@ const shellFor = (archivedAt: string | null) =>
     id: threadId,
     createdAt: "2026-10-21T10:00:00.000Z",
     archivedAt,
-    session: { providerThreadId: "provider-thread-1" },
+    // V2's legacy shell never carries the native session id.
+    session: { providerThreadId: null },
   }) as unknown as OrchestrationThreadShell;
 
 describe("threadUsage.get", () => {
-  it.effect("reads one thread shell and passes its provider session", () =>
+  it.effect("reads one thread and passes every native provider session", () =>
     Effect.gen(function* () {
-      const { handlers, shellReads, usageReads } = makeHandlers(Option.some(shellFor(null)));
+      const { handlers, shellReads, sessionIdReads, usageReads } = makeHandlers(
+        Option.some(shellFor(null)),
+        ["native-session-1", "native-session-2"],
+      );
       yield* handlers[WS_METHODS.threadUsageGet]({ threadId, timeZone: "UTC" });
       expect(shellReads).toEqual([threadId]);
+      expect(sessionIdReads).toEqual([threadId]);
       expect(usageReads).toEqual([
-        { sessionIds: ["provider-thread-1"], sinceMs: Date.parse("2026-10-21T10:00:00.000Z") },
+        {
+          sessionIds: ["native-session-1", "native-session-2"],
+          sinceMs: Date.parse("2026-10-21T10:00:00.000Z"),
+        },
       ]);
     }),
   );
@@ -76,8 +94,9 @@ describe("threadUsage.get", () => {
   it.effect("keeps the empty result for archived and missing threads", () =>
     Effect.gen(function* () {
       for (const shell of [Option.some(shellFor("2026-10-21T11:00:00.000Z")), Option.none()]) {
-        const { handlers, usageReads } = makeHandlers(shell);
+        const { handlers, sessionIdReads, usageReads } = makeHandlers(shell, ["native-session-1"]);
         yield* handlers[WS_METHODS.threadUsageGet]({ threadId, timeZone: "UTC" });
+        expect(sessionIdReads).toEqual([]);
         expect(usageReads).toEqual([{ sessionIds: [], sinceMs: 0 }]);
       }
     }),
