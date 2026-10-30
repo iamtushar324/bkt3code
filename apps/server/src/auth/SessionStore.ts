@@ -10,6 +10,8 @@ import {
   RuntimeMode,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): session cache TTLs follow the Effect clock.
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +30,11 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+// T3-CUSTOM(expbkt3): in-memory session row cache (TEC-1837 reconnect storm).
+import {
+  makeClientConnectionMemo,
+  makeVerifiedSessionCache,
+} from "./VerifiedSessionCache.expbkt3.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
   REUSABLE_DEV_SESSION_PREFIX,
@@ -479,6 +486,8 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+// T3-CUSTOM(expbkt3): a reconnect within this window keeps the stored last_connected_at.
+const LAST_CONNECTED_AT_WRITE_INTERVAL_MS = Duration.toMillis(Duration.minutes(5));
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -549,6 +558,27 @@ const make = Effect.gen(function* () {
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
+  // T3-CUSTOM(expbkt3): BEGIN — session rows are read through an in-memory cache.
+  // Every write below invalidates (or patches) the cache synchronously after it
+  // commits and before the change is published, so revocation stays instant.
+  const sessionCache = makeVerifiedSessionCache();
+  const clientConnections = makeClientConnectionMemo();
+  const readSessionRow = Effect.fnUntraced(function* (sessionId: AuthSessionId) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const cached = sessionCache.get(sessionId, nowMs);
+    if (cached !== undefined) return Option.fromNullishOr(cached);
+    const generation = sessionCache.generation();
+    // One SELECT by primary key: the reader, unless a write transaction is open.
+    const row = yield* authSessions.getById({ sessionId }).pipe(NodeSqliteClient.readOnly);
+    sessionCache.fill(sessionId, Option.getOrNull(row), generation, nowMs);
+    return row;
+  });
+  const invalidateSessions = (sessionIds: ReadonlyArray<AuthSessionId>) =>
+    Effect.sync(() => {
+      sessionCache.invalidate(sessionIds);
+      clientConnections.forget(sessionIds);
+    });
+  // T3-CUSTOM(expbkt3): END
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -604,7 +634,8 @@ const make = Effect.gen(function* () {
   const loadActiveSession = Effect.fn("SessionStore.loadActiveSession")(function* (
     sessionId: AuthSessionId,
   ) {
-    const row = yield* authSessions.getById({ sessionId });
+    // T3-CUSTOM(expbkt3): read through the session cache.
+    const row = yield* readSessionRow(sessionId);
     if (Option.isNone(row) || row.value.revokedAt !== null) {
       return Option.none<AuthClientSession>();
     }
@@ -631,6 +662,27 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — a reconnect storm must not rewrite the row on
+  // every connect. Write only when the stored time is unset or at least 5
+  // minutes old; Settings shows "connected" from the in-memory socket count,
+  // so the timestamp may trail a quick reconnect by up to 5 minutes.
+  const refreshLastConnectedAt = Effect.fnUntraced(function* (sessionId: AuthSessionId) {
+    const lastConnectedAt = yield* DateTime.now;
+    const row = yield* readSessionRow(sessionId);
+    if (Option.isNone(row) || row.value.revokedAt !== null) return;
+    const previous = row.value.lastConnectedAt;
+    if (
+      previous !== null &&
+      lastConnectedAt.epochMilliseconds - previous.epochMilliseconds <
+        LAST_CONNECTED_AT_WRITE_INTERVAL_MS
+    ) {
+      return;
+    }
+    yield* authSessions.setLastConnectedAt({ sessionId, lastConnectedAt });
+    sessionCache.patch(sessionId, (cached) => ({ ...cached, lastConnectedAt }));
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const markConnected: SessionStore["Service"]["markConnected"] = (sessionId) =>
     Ref.modify(connectedSessionsRef, (current) => {
       const next = new Map(current);
@@ -639,16 +691,8 @@ const make = Effect.gen(function* () {
       return [wasDisconnected, next] as const;
     }).pipe(
       Effect.flatMap((wasDisconnected) =>
-        wasDisconnected
-          ? DateTime.now.pipe(
-              Effect.flatMap((lastConnectedAt) =>
-                authSessions.setLastConnectedAt({
-                  sessionId,
-                  lastConnectedAt,
-                }),
-              ),
-            )
-          : Effect.void,
+        // T3-CUSTOM(expbkt3): coalesce reconnects; see refreshLastConnectedAt.
+        wasDisconnected ? refreshLastConnectedAt(sessionId) : Effect.void,
       ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
@@ -665,11 +709,14 @@ const make = Effect.gen(function* () {
       Effect.withSpan("SessionStore.markConnected"),
     );
 
+  // T3-CUSTOM(expbkt3): BEGIN — write only when the surface or app version changed,
+  // so a reconnect storm does not UPDATE the row on every connect.
   const recordClientConnection: SessionStore["Service"]["recordClientConnection"] = (
     sessionId,
     client,
-  ) =>
-    client.surface === undefined && client.appVersion === undefined
+  ) => {
+    const recorded = clientConnections.changes(sessionId, client);
+    return recorded === undefined
       ? Effect.void
       : authSessions
           .setClientConnection({
@@ -678,6 +725,18 @@ const make = Effect.gen(function* () {
             appVersion: client.appVersion ?? null,
           })
           .pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                clientConnections.remember(sessionId, recorded);
+                const appVersion = client.appVersion;
+                if (appVersion !== undefined) {
+                  sessionCache.patch(sessionId, (cached) => ({
+                    ...cached,
+                    client: { ...cached.client, appVersion },
+                  }));
+                }
+              }),
+            ),
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to record session client connection metadata.").pipe(
                 Effect.annotateLogs({ sessionId, cause }),
@@ -685,6 +744,8 @@ const make = Effect.gen(function* () {
             ),
             Effect.withSpan("SessionStore.recordClientConnection"),
           );
+  };
+  // T3-CUSTOM(expbkt3): END
 
   const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId) =>
     Ref.update(connectedSessionsRef, (current) => {
@@ -785,6 +846,8 @@ const make = Effect.gen(function* () {
             })
           : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
       ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      // T3-CUSTOM(expbkt3): drop a negative entry for the new id and the replaced rows.
+      yield* invalidateSessions([sessionId, ...replacedSessionIds]);
       if (replacedSessionIds.length > 0) {
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -829,14 +892,13 @@ const make = Effect.gen(function* () {
   const verify: SessionStore["Service"]["verify"] = Effect.fn("SessionStore.verify")(
     function* (token) {
       if (devAuth?.matches(token)) {
-        const row = yield* authSessions
-          .getById({ sessionId: devAuth.sessionId })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new SessionCredentialVerificationError({ sessionId: devAuth.sessionId, cause }),
-            ),
-          );
+        // T3-CUSTOM(expbkt3): read through the session cache.
+        const row = yield* readSessionRow(devAuth.sessionId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SessionCredentialVerificationError({ sessionId: devAuth.sessionId, cause }),
+          ),
+        );
         if (Option.isNone(row)) {
           return yield* new UnknownSessionTokenError({ sessionId: devAuth.sessionId });
         }
@@ -896,15 +958,12 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const row = yield* authSessions
-        .getById({ sessionId: claims.sid })
-        // T3-CUSTOM(expbkt3): one SELECT by primary key, so it need not wait behind writes on the writer.
-        .pipe(NodeSqliteClient.readOnly)
-        .pipe(
-          Effect.mapError(
-            (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
-          ),
-        );
+      // T3-CUSTOM(expbkt3): cached row, else one SELECT by primary key on the reader.
+      const row = yield* readSessionRow(claims.sid).pipe(
+        Effect.mapError(
+          (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
+        ),
+      );
       if (Option.isNone(row)) {
         return yield* new UnknownSessionTokenError({ sessionId: claims.sid });
       }
@@ -1003,13 +1062,12 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const row = yield* authSessions
-      .getById({ sessionId: claims.sid })
-      .pipe(
-        Effect.mapError(
-          (cause) => new WebSocketTokenVerificationError({ sessionId: claims.sid, cause }),
-        ),
-      );
+    // T3-CUSTOM(expbkt3): read through the session cache.
+    const row = yield* readSessionRow(claims.sid).pipe(
+      Effect.mapError(
+        (cause) => new WebSocketTokenVerificationError({ sessionId: claims.sid, cause }),
+      ),
+    );
     if (Option.isNone(row)) {
       return yield* new UnknownWebSocketSessionError({ sessionId: claims.sid });
     }
@@ -1076,6 +1134,8 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })));
       if (revoked) {
+        // T3-CUSTOM(expbkt3): drop the cached row before the removal is published.
+        yield* invalidateSessions([sessionId]);
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
           next.delete(sessionId);
@@ -1102,6 +1162,8 @@ const make = Effect.gen(function* () {
         ),
       );
     if (revokedSessionIds.length > 0) {
+      // T3-CUSTOM(expbkt3): drop the cached rows before the removal is published.
+      yield* invalidateSessions(revokedSessionIds);
       yield* Ref.update(connectedSessionsRef, (current) => {
         const next = new Map(current);
         for (const revokedSessionId of revokedSessionIds) {
@@ -1131,6 +1193,8 @@ const make = Effect.gen(function* () {
       .revokeByUserId({ userId, revokedAt })
       .pipe(Effect.mapError((cause) => new UserSessionsRevocationError({ userId, cause })));
     if (revokedSessionIds.length > 0) {
+      // Drop the cached rows before the removal is published.
+      yield* invalidateSessions(revokedSessionIds);
       yield* Ref.update(connectedSessionsRef, (current) => {
         const next = new Map(current);
         for (const sessionId of revokedSessionIds) next.delete(sessionId);
@@ -1151,6 +1215,8 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError((cause) => new SessionUserBindingError({ sessionId, userId, cause })),
         );
+      // The binding changes who the session acts as: drop the cached row.
+      yield* invalidateSessions([sessionId]);
       if (!updated) {
         return yield* new SessionUserBindingError({
           sessionId,
@@ -1171,13 +1237,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Subscribe before reading: revocation can race with the WebSocket upgrade.
         const subscription = yield* PubSub.subscribe(changesPubSub);
-        const row = yield* authSessions
-          .getById({ sessionId })
-          .pipe(
-            Effect.mapError(
-              (cause) => new SessionCredentialVerificationError({ sessionId, cause }),
-            ),
-          );
+        // T3-CUSTOM(expbkt3): read through the session cache.
+        const row = yield* readSessionRow(sessionId).pipe(
+          Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+        );
         if (Option.isNone(row) || row.value.revokedAt !== null) return;
         const now = yield* DateTime.now;
         const remaining = row.value.expiresAt.epochMilliseconds - now.epochMilliseconds;

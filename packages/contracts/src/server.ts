@@ -617,6 +617,11 @@ export const ServerConfig = Schema.Struct({
   observability: ServerObservability,
   settings: ServerSettings,
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  // T3-CUSTOM(expbkt3): BEGIN — a random id the server picks once per process start. A client
+  // resumes its shell cursor on a new socket only when this id is unchanged, so a restart
+  // or deploy still forces a full snapshot (TEC-1837).
+  serverInstanceId: Schema.optionalKey(TrimmedNonEmptyString),
+  // T3-CUSTOM(expbkt3): END
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),

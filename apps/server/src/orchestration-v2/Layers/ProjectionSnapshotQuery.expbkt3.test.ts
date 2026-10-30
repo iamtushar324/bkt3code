@@ -128,3 +128,47 @@ it.effect("imports a v1 transcript on the writer, then reads the session on the 
     }),
   ),
 );
+
+// Per-thread cost finds transcripts by these ids; the legacy shell no longer carries them.
+it.effect("lists every native session id of a thread's root provider threads", () =>
+  withSnapshotQuery(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const providerThread = (
+        id: string,
+        thread: string,
+        owner: string | null,
+        nativeThreadRef: unknown,
+      ) =>
+        sql`INSERT INTO orchestration_v2_projection_provider_threads (provider_thread_id,thread_id,owner_node_id,provider,status,updated_at,payload_json) VALUES (${id},${thread},${owner},'claudeAgent','active','2026-01-01T00:00:00Z',${JSON.stringify({ nativeThreadRef })})`;
+      const attempt = (id: string, thread: string, providerThreadId: string, nativeId?: string) =>
+        sql`INSERT INTO orchestration_v2_projection_run_attempts (attempt_id,thread_id,run_id,attempt_ordinal,root_node_id,provider,provider_thread_id,status,payload_json) VALUES (${id},${thread},${`run:${id}`},1,'node:root','claudeAgent',${providerThreadId},'completed',${JSON.stringify(nativeId === undefined ? {} : { nativeThreadId: nativeId })})`;
+      const native = (nativeId: string) => ({
+        driver: "claudeAgent",
+        nativeId,
+        strength: "strong",
+      });
+      // A failed resume replaced session-a with session-b on the same provider thread row.
+      yield* providerThread("pt:root", threadId, null, native("session-b"));
+      yield* attempt("attempt:1", threadId, "pt:root", "session-a");
+      yield* attempt("attempt:2", threadId, "pt:root", "session-b");
+      yield* attempt("attempt:3", threadId, "pt:root");
+      yield* providerThread("pt:switched", threadId, null, native("session-c"));
+      yield* providerThread("pt:unbound", threadId, null, null);
+      yield* providerThread("pt:subagent", threadId, "node:child", native("session-sub"));
+      yield* attempt("attempt:sub", threadId, "pt:subagent", "session-sub-old");
+      yield* providerThread("pt:other", "thread:other", null, native("session-other"));
+      yield* attempt("attempt:other", "thread:other", "pt:other", "session-other-old");
+
+      assert.sameMembers(
+        [...(yield* snapshots.getThreadNativeSessionIds(threadId))],
+        ["session-a", "session-b", "session-c"],
+      );
+      assert.deepEqual(
+        yield* snapshots.getThreadNativeSessionIds(ThreadId.make("thread:missing")),
+        [],
+      );
+    }),
+  ),
+);

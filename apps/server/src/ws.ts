@@ -1,7 +1,13 @@
 // T3-CUSTOM(expbkt3): source-control helpers use the same process service as upstream.
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 // T3-CUSTOM(expbkt3): native shell and command access preserve team boundaries.
-import { filterNativeShell, filterNativeShellStream } from "./wsV2Visibility.expbkt3.ts";
+import {
+  filterNativeShell,
+  makeActiveShellView,
+  makeArchivedShellView,
+} from "./wsV2Visibility.expbkt3.ts";
+// T3-CUSTOM(expbkt3): a per-process id lets clients tell a reconnect from a server restart.
+import { SERVER_INSTANCE_ID } from "./serverInstanceId.expbkt3.ts";
 import { checkCommandAccess } from "./orchestration-v2/commandAccess.ts";
 // T3-CUSTOM(expbkt3): native service dispatch reads the authenticated sender at execution.
 import { CurrentOrchestrationActorUserId } from "./orchestration-v2/forkActor.expbkt3.ts";
@@ -166,22 +172,24 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
-  archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
   bufferShellLiveStream,
-  coalesceShellApplicationEvents,
-  coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
-  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
-  skipUnchangedThreadShells,
-  toShellApplicationEvent,
-  type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
+// T3-CUSTOM(expbkt3): BEGIN — one shared shell feed per server (TEC-1837).
+import {
+  acquireShellFeed,
+  readShellReplay,
+  shellFeedSources,
+  tapShellFeed,
+  type ShellFeedBatch,
+} from "./orchestration-v2/ShellFeed.expbkt3.ts";
+// T3-CUSTOM(expbkt3): END
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import { bufferLiveStream } from "./orchestration-v2/LiveStreamBudget.ts";
 import { coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
@@ -1005,10 +1013,15 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
 );
 
 export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
-  function* (input: {
-    readonly afterSequence?: number;
-    readonly requestCompletionMarker?: boolean;
-  }) {
+  // T3-CUSTOM(expbkt3): BEGIN — the shared shell feed is filtered for this user inside the stream.
+  function* (
+    input: {
+      readonly afterSequence?: number;
+      readonly requestCompletionMarker?: boolean;
+    },
+    options: { readonly actor?: UserId | null } = {},
+  ) {
+    // T3-CUSTOM(expbkt3): END
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -1047,65 +1060,42 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
       };
     });
-    const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
-      stored: Extract<ShellApplicationEvent, { readonly aggregateKind: "project" }>,
-    ) {
-      if (stored.type === "project.deleted") {
-        return {
-          kind: "project.removed" as const,
-          sequence: stored.sequence,
-          projectId: stored.aggregateId,
-        };
-      }
-      const project = yield* projectService.getShell(stored.aggregateId);
-      return Option.match(project, {
-        onNone: () => ({
-          kind: "project.removed" as const,
-          sequence: stored.sequence,
-          projectId: stored.aggregateId,
-        }),
-        onSome: (value) => ({
-          kind: "project.updated" as const,
-          sequence: stored.sequence,
-          project: value,
-        }),
-      });
-    });
-
-    const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
-      events: ReadonlyArray<ShellApplicationEvent>,
-    ) {
-      return yield* Effect.forEach(
-        coalesceShellApplicationEvents(events),
-        (stored) =>
-          Effect.gen(function* () {
-            if ("aggregateKind" in stored) {
-              return yield* projectItem(stored);
-            }
-            const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-            return shellStreamItemFromThreadShell({ stored, shell });
+    // T3-CUSTOM(expbkt3): BEGIN — one shared shell feed per server (TEC-1837). Each touched thread
+    // is read once per batch for every client, not once per client, and text deltas read nothing.
+    const actor = options.actor ?? null;
+    const feedServices = {
+      sql,
+      eventStore: applicationEvents,
+      readThreadShells: threadManagement.getThreadShells,
+      getProject: projectService.getShell,
+      listProjects: projects.listShells,
+    };
+    const feed = yield* acquireShellFeed(feedServices).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationV2GetShellSnapshotError({
+            message: "Failed to start the application shell feed",
+            cause,
           }),
-        { concurrency: 8 },
-      );
-    });
-
-    const toShellStream = <E, R>(stream: Stream.Stream<ShellApplicationEvent, E, R>) =>
-      stream.pipe(
-        Stream.groupedWithin(512, Duration.millis(50)),
-        Stream.mapEffect((events) => projectShellItems(Array.from(events))),
-        Stream.flatMap(Stream.fromIterable),
-        skipUnchangedThreadShells,
-      );
-
-    const liveFrom = (afterSequence: number) =>
+      ),
+    );
+    // Subscribe before any snapshot load, so a batch published after this reaches the client.
+    // The tap drains into a bounded per-client buffer at once, so a client still receiving its
+    // snapshot, or withholding acknowledgements, cannot make the shared feed retain batches.
+    const tap = yield* tapShellFeed(feed);
+    // The tick lets an idle client converge on a shell that changed only its `updatedAt`, from
+    // memory: it reads nothing.
+    const idleTicks = Stream.tick(Duration.seconds(5)).pipe(
+      Stream.map((): ShellFeedBatch => ({ highSequence: 0, entries: [] })),
+    );
+    const liveFrom = (view: ReturnType<typeof makeActiveShellView>) =>
       bufferShellLiveStream(
-        toShellStream(
-          applicationEvents.streamProjectedApplicationEvents({
-            afterSequence,
-            project: toShellApplicationEvent,
-          }),
+        Stream.merge(Stream.fromEffectRepeat(tap.take), idleTicks).pipe(
+          Stream.mapEffect(view.apply),
+          Stream.flattenIterable,
         ),
       );
+    // T3-CUSTOM(expbkt3): END
 
     const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
       Stream.filter((change) => change.repositoryIdentityResolved),
@@ -1170,45 +1160,75 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     // Initial unmarked (+ optional same-load marked) always drains first.
     // Enrichment merges only with the post-prefix tail so a ready marked
     // refresh cannot interleave before the authoritative initial frame.
-    const completionThenLive = (afterSequence: number) =>
-      Stream.concat(completionMarker, liveFrom(afterSequence));
+    // T3-CUSTOM(expbkt3): BEGIN — snapshot and live tail share one per-user view of the feed.
+    const snapshotThenLive = Effect.gen(function* () {
+      const loaded = yield* loadSnapshot();
+      const snapshot = filterNativeShell(loaded.snapshot, actor);
+      const view = makeActiveShellView({
+        actor,
+        afterSequence: snapshot.snapshotSequence,
+        projects: snapshot.projects,
+        threads: snapshot.threads,
+        feed,
+        projectService,
+      });
+      return composeShellStreamWithEnrichment({
+        initial: initialSnapshotItems({ ...loaded, snapshot }),
+        tail: Stream.concat(completionMarker, liveFrom(view)),
+        enrichment: enrichmentRefreshes.pipe(Stream.map(view.filterEnrichment)),
+      });
+    });
 
     const stream = yield* Effect.gen(function* () {
       if (input.afterSequence === undefined) {
-        const loaded = yield* loadSnapshot();
-        return composeShellStreamWithEnrichment({
-          initial: initialSnapshotItems(loaded),
-          tail: completionThenLive(loaded.snapshot.snapshotSequence),
-          enrichment: enrichmentRefreshes,
-        });
+        return yield* snapshotThenLive;
+      }
+      const afterSequence = input.afterSequence;
+      const highWater = yield* applicationEvents.latestApplicationSequence;
+      if (!(yield* canReplayPersistedRange(afterSequence, highWater, SHELL_RESUME_MAX_GAP))) {
+        return yield* snapshotThenLive;
       }
 
-      const highWater = yield* applicationEvents.latestApplicationSequence;
-      if (!(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP))) {
-        const loaded = yield* loadSnapshot();
-        return composeShellStreamWithEnrichment({
-          initial: initialSnapshotItems(loaded),
-          tail: completionThenLive(loaded.snapshot.snapshotSequence),
-          enrichment: enrichmentRefreshes,
-        });
+      // A filtered user may only be told to remove rows it could see at its cursor. When the
+      // feed cannot prove which rows those were (it started, or forgot a change, after that
+      // cursor), resend a filtered snapshot instead of replaying the gap.
+      const held = actor === null ? undefined : feed.visibleAt(actor, afterSequence);
+      if (actor !== null && held === undefined) {
+        return yield* snapshotThenLive;
       }
 
       const loaded = yield* loadProjectMetadataSnapshot(highWater);
-      const replay = toShellStream(
-        applicationEvents.readApplicationEvents({
-          afterSequence: input.afterSequence,
-          throughSequence: highWater,
-          // A row a newer build wrote (e.g. after a downgrade) must not fail
-          // every shell resubscribe. The live tail below resumes from
-          // highWater, so a dropped row never hides later events.
-          skipUnknownEventTypes: true,
-        }),
+      const snapshot = filterNativeShell(loaded.snapshot, actor);
+      const view = makeActiveShellView({
+        actor,
+        afterSequence: highWater,
+        projects: snapshot.projects,
+        threads: [],
+        // An unrestricted operator may hold any row, so it gets every removal.
+        ...(held === undefined ? { removeUnheld: true } : { held }),
+        feed,
+        projectService,
+      });
+      // One batched read of the distinct threads in the gap, not one read per event.
+      const replay = Stream.unwrap(
+        readShellReplay({
+          events: applicationEvents.readApplicationEvents({
+            afterSequence,
+            throughSequence: highWater,
+            // A row a newer build wrote (e.g. after a downgrade) must not fail
+            // every shell resubscribe. The live tail below resumes from
+            // highWater, so a dropped row never hides later events.
+            skipUnknownEventTypes: true,
+          }),
+          reads: shellFeedSources(feedServices),
+        }).pipe(Effect.flatMap(view.applyReplay), Effect.map(rpcInitialItems)),
       );
       return composeShellStreamWithEnrichment({
-        initial: initialEnrichmentItems(loaded),
-        tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater)),
-        enrichment: enrichmentRefreshes,
+        initial: initialEnrichmentItems({ ...loaded, snapshot }),
+        tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(view)),
+        enrichment: enrichmentRefreshes.pipe(Stream.map(view.filterEnrichment)),
       });
+      // T3-CUSTOM(expbkt3): END
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -1886,6 +1906,8 @@ export const layerWsRpc = (
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
           settings,
+          // T3-CUSTOM(expbkt3): clients resume the shell cursor only on the same server instance.
+          serverInstanceId: SERVER_INSTANCE_ID,
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -1936,36 +1958,47 @@ export const layerWsRpc = (
       const subscribeOrchestrationV2ArchivedShell = Effect.fn(
         "ws.orchestrationV2.subscribeArchivedShell",
       )(function* () {
-        const snapshot = yield* getOrchestrationV2ArchivedShellSnapshot;
-        const live = threadManagement
-          .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
-          .pipe(
-            Stream.groupedWithin(512, Duration.millis(50)),
-            Stream.mapEffect((events) =>
-              Effect.forEach(
-                coalesceStoredThreadEvents(Array.from(events)),
-                (stored) =>
-                  threadManagement
-                    .getThreadShell(stored.event.threadId)
-                    .pipe(
-                      Effect.map((shell) =>
-                        archivedShellStreamItemFromThreadShell({ stored, shell }),
-                      ),
-                    ),
-                { concurrency: 8 },
-              ),
-            ),
-            Stream.flatMap(Stream.fromIterable),
-            Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
-            (stream) => bufferLiveStream(stream),
-            Stream.mapError(
-              (cause) =>
-                new OrchestrationV2GetShellSnapshotError({
-                  message: "Failed while streaming archived threads",
-                  cause,
-                }),
-            ),
-          );
+        // T3-CUSTOM(expbkt3): BEGIN — archived rows come from the shared shell feed (TEC-1837),
+        // subscribed before the snapshot load and filtered for this user in memory.
+        const feed = yield* acquireShellFeed({
+          sql,
+          eventStore: applicationEvents,
+          readThreadShells: threadManagement.getThreadShells,
+          getProject: projectService.getShell,
+          listProjects: projectStore.listShells,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed to start the application shell feed",
+                cause,
+              }),
+          ),
+        );
+        // Drained into a bounded buffer from the start, as on the active stream.
+        const tap = yield* tapShellFeed(feed);
+        const snapshot = filterNativeShell(
+          yield* getOrchestrationV2ArchivedShellSnapshot,
+          actorUserId,
+        );
+        const view = makeArchivedShellView({
+          actor: actorUserId,
+          afterSequence: snapshot.snapshotSequence,
+          threads: snapshot.threads,
+        });
+        const live = Stream.fromEffectRepeat(tap.take).pipe(
+          Stream.map(view.apply),
+          Stream.flattenIterable,
+          (stream) => bufferLiveStream(stream),
+          Stream.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed while streaming archived threads",
+                cause,
+              }),
+          ),
+        );
+        // T3-CUSTOM(expbkt3): END
         return Stream.concat(rpcInitialItems([{ kind: "snapshot" as const, snapshot }]), live);
       });
 
@@ -2570,23 +2603,11 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
-          Stream.unwrap(
-            // T3-CUSTOM(expbkt3): archived shell obeys team visibility.
-            subscribeOrchestrationV2ArchivedShell().pipe(
-              Effect.map((stream) =>
-                filterNativeShellStream(stream, actorUserId, accessControl, projectService),
-              ),
-            ),
-          ),
+          // T3-CUSTOM(expbkt3): archived shell obeys team visibility inside the stream.
+          Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(
-            // T3-CUSTOM(expbkt3): live shell obeys team visibility.
-            subscribeOrchestrationV2Shell(input).pipe(
-              Effect.map((stream) =>
-                filterNativeShellStream(stream, actorUserId, accessControl, projectService),
-              ),
-            ),
-          ),
+          // T3-CUSTOM(expbkt3): live shell obeys team visibility inside the stream.
+          Stream.unwrap(subscribeOrchestrationV2Shell(input, { actor: actorUserId })),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -3916,6 +3937,8 @@ export const layer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const sql = yield* SqlClient.SqlClient;
+    // T3-CUSTOM(expbkt3): one server-wide Clerk directory, so every connection shares its member cache.
+    const clerkDirectory = yield* ClerkDirectory;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -4007,7 +4030,8 @@ export const layer = Layer.unwrap(
               Layer.provide(AgentSessionScanner.layer),
               // T3-CUSTOM(expbkt3): websocket team access shares the same services as MCP.
               Layer.provide(OrchestrationAccessControlLive),
-              Layer.provide(ClerkDirectoryLive),
+              // T3-CUSTOM(expbkt3): reuse the server's directory; a per-connection build would start an empty Clerk cache.
+              Layer.provide(Layer.succeed(ClerkDirectory, clerkDirectory)),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS

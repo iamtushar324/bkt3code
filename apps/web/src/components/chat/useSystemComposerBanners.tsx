@@ -8,7 +8,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { WifiOffIcon } from "lucide-react";
+// T3-CUSTOM(expbkt3): WifiLowIcon marks a slow but live connection (TEC-1837).
+import { WifiLowIcon, WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -238,6 +239,23 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         ),
       });
     }
+    // T3-CUSTOM(expbkt3): BEGIN — a live session whose health probe was late: the server is busy,
+    // not gone. A quiet notice, not "reconnecting", and no action to take (TEC-1837).
+    if (
+      activeEnvironment !== null &&
+      activeEnvironment.connection.phase === "connected" &&
+      activeEnvironment.connection.slow === true
+    ) {
+      items.push({
+        id: `environment-slow:${activeEnvironment.environmentId}`,
+        variant: "default",
+        priority: "notice",
+        icon: <WifiLowIcon />,
+        title: `${activeEnvironment.label} is slow to respond`,
+        description: "Still connected. Updates can arrive late.",
+      });
+    }
+    // T3-CUSTOM(expbkt3): END
     if (
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&

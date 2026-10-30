@@ -132,6 +132,21 @@ const make = Effect.gen(function* () {
           ),
         ),
     );
+  // T3-CUSTOM(expbkt3): per-thread cost. A failed resume gives a provider thread row a new
+  // native session, so run attempts keep the earlier ids. Both halves seek thread_id indexes.
+  const threadNativeSessionIds = (threadId: ThreadId) =>
+    wrap(
+      sql<{ nativeId: unknown }>`
+    SELECT json_extract(payload_json, '$.nativeThreadRef.nativeId') AS nativeId FROM orchestration_v2_projection_provider_threads WHERE thread_id = ${threadId} AND owner_node_id IS NULL
+    UNION SELECT json_extract(attempt.payload_json, '$.nativeThreadId') FROM orchestration_v2_projection_run_attempts AS attempt JOIN orchestration_v2_projection_provider_threads AS provider ON provider.provider_thread_id = attempt.provider_thread_id WHERE attempt.thread_id = ${threadId} AND provider.owner_node_id IS NULL
+  `.pipe(
+        Effect.map((rows) =>
+          rows.flatMap((row) =>
+            typeof row.nativeId === "string" && row.nativeId.length > 0 ? [row.nativeId] : [],
+          ),
+        ),
+      ),
+    );
   const retainedPlanRows = () =>
     wrap(
       sql<{
@@ -284,6 +299,7 @@ const make = Effect.gen(function* () {
     getShellSnapshot: (options) => shell("active", options?.unsettledOnly),
     getArchivedShellSnapshot: () => shell("archive"),
     getThreadShellById: threadShell,
+    getThreadNativeSessionIds: threadNativeSessionIds,
     getThreadDetailById: (threadId, query) =>
       detail(threadId).pipe(
         Effect.map(

@@ -476,13 +476,30 @@ export const makeForkWsHandlers = ({
             const thread = Option.getOrUndefined(
               Option.filter(shell, (candidate) => candidate.archivedAt === null),
             );
-            const providerThreadId = thread?.session?.providerThreadId ?? null;
-            return usage.readThreadUsage({
-              threadId: input.threadId,
-              sessionIds: providerThreadId === null ? [] : [providerThreadId],
-              sinceMs: thread === undefined ? 0 : Date.parse(thread.createdAt),
-              timeZone: input.timeZone,
-            });
+            // Every root provider thread counts, so a session that resumed under a
+            // new native id (account switch, provider restart) keeps its earlier cost.
+            const sessionIds =
+              thread === undefined
+                ? Effect.succeed<ReadonlyArray<string>>([])
+                : projectionSnapshotQuery.getThreadNativeSessionIds(input.threadId);
+            return sessionIds.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new UsageReadError({
+                    reason: "scanFailed",
+                    detail: "Thread provider sessions could not be read.",
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((ids) =>
+                usage.readThreadUsage({
+                  threadId: input.threadId,
+                  sessionIds: ids,
+                  sinceMs: thread === undefined ? 0 : Date.parse(thread.createdAt),
+                  timeZone: input.timeZone,
+                }),
+              ),
+            );
           }),
         ),
         { "rpc.aggregate": "usage" },

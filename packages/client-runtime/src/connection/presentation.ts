@@ -18,6 +18,9 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  // T3-CUSTOM(expbkt3): connected, but the server answers slowly. A quiet hint,
+  // never "reconnecting" (TEC-1837).
+  readonly slow?: boolean;
 }
 
 /**
@@ -48,7 +51,10 @@ export function presentConnectionState(
         traceId: state.lastFailure?.traceId ?? null,
       };
     case "connected":
-      return { phase: "connected", error: null, traceId: null };
+      // T3-CUSTOM(expbkt3): a degraded live session presents as connected and slow (TEC-1837).
+      return state.degraded === true
+        ? { phase: "connected", error: null, traceId: null, slow: true }
+        : { phase: "connected", error: null, traceId: null };
     case "backoff":
       return {
         phase: "reconnecting",
@@ -77,7 +83,8 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
         ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
         : "Reconnecting...";
     case "connected":
-      return "Connected";
+      // T3-CUSTOM(expbkt3): the slow hint for a degraded live session (TEC-1837).
+      return connection.slow === true ? "Connected · slow to respond" : "Connected";
     case "unsupported":
       return "Client not supported";
     case "error":

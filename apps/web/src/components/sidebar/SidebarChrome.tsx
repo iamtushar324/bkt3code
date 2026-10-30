@@ -10,6 +10,8 @@ import {
   LoaderIcon,
   SettingsIcon,
   TriangleAlertIcon,
+  // T3-CUSTOM(expbkt3): slow-connection hint (TEC-1837).
+  WifiLowIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 // T3-CUSTOM(expbkt3): useEffect/useState back the lifecycle counters.
@@ -152,6 +154,13 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       environment.connection.phase === "connecting" ||
       environment.connection.phase === "reconnecting",
   );
+  // A live session with a late health probe: a static hint, never the sync spinner (TEC-1837).
+  const slowEnvironment = syncing
+    ? undefined
+    : environments.find(
+        (environment) =>
+          environment.connection.phase === "connected" && environment.connection.slow === true,
+      );
   // T3-CUSTOM(expbkt3): END
 
   return (
@@ -273,6 +282,34 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
           </span>
         </div>
       ) : null}
+      {/* T3-CUSTOM(expbkt3): BEGIN — slow-connection hint, static so it never repaints (TEC-1837). */}
+      {slowEnvironment !== undefined ? (
+        <div className="flex h-7 max-w-full shrink-0 items-center gap-1.5 overflow-hidden">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  aria-label={`${slowEnvironment.label} is slow to respond`}
+                  className="inline-flex shrink-0"
+                  data-testid="sidebar-connection-slow"
+                  role="status"
+                >
+                  <WifiLowIcon
+                    className={cn(
+                      "size-3",
+                      onBackdrop ? "text-white/70" : "text-muted-foreground/70",
+                    )}
+                  />
+                </span>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {`${slowEnvironment.label} is slow to respond. Still connected.`}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
+      ) : null}
+      {/* T3-CUSTOM(expbkt3): END */}
     </div>
   );
 }
