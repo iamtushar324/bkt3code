@@ -100,6 +100,8 @@ const layerManagement = Layer.unwrap(
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
       getThreadShell: (id) => projections.getThreadShell(id).pipe(Effect.orDie),
+      // T3-CUSTOM(expbkt3): the shared shell feed reads every touched thread in one call.
+      getThreadShells: (ids) => projections.getThreadShells(ids).pipe(Effect.orDie),
       getShellSnapshot: (options) => projections.getShellSnapshot(options).pipe(Effect.orDie),
       readShellSnapshot: (options) =>
         projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),

@@ -20,12 +20,14 @@ import {
   UserId,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as RcRef from "effect/RcRef";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,7 @@ import * as Stream from "effect/Stream";
 import { owns } from "../wsV2Visibility.expbkt3.ts";
 import type { OrchestrationEventStore } from "../persistence/OrchestrationEventStore.ts";
 import type { ProjectService } from "../project/ProjectService.ts";
+import type { ProjectStoreV2 } from "./ProjectStore.ts";
 import type { ThreadManagementService } from "./ThreadManagementService.ts";
 
 export class ShellFeedError extends Schema.TaggedError<ShellFeedError>()("ShellFeedError", {
@@ -45,10 +48,6 @@ export class ShellFeedError extends Schema.TaggedError<ShellFeedError>()("ShellF
 
 const shellFeedError = (message: string) => (cause: unknown) =>
   new ShellFeedError({ message, cause });
-
-// ---------------------------------------------------------------------------
-// Events and the shell relevance filter
-// ---------------------------------------------------------------------------
 
 /** A committed application event without its payload body. */
 export type ShellFeedEvent =
@@ -69,6 +68,8 @@ export type ShellFeedEvent =
         readonly status: string;
         readonly runId: string | null;
       };
+      /** Set for `message.updated`. */
+      readonly messageRole?: string;
     };
 
 export function toShellFeedEvent(stored: ApplicationStoredEvent): ShellFeedEvent {
@@ -81,12 +82,15 @@ export function toShellFeedEvent(stored: ApplicationStoredEvent): ShellFeedEvent
     };
   }
   const event = stored.event;
+  const base = {
+    aggregate: "thread" as const,
+    sequence: stored.sequence,
+    threadId: event.threadId,
+    type: event.type,
+  };
   if (event.type === "turn-item.updated") {
     return {
-      aggregate: "thread",
-      sequence: stored.sequence,
-      threadId: event.threadId,
-      type: event.type,
+      ...base,
       turnItem: {
         id: event.payload.id,
         type: event.payload.type,
@@ -95,12 +99,8 @@ export function toShellFeedEvent(stored: ApplicationStoredEvent): ShellFeedEvent
       },
     };
   }
-  return {
-    aggregate: "thread",
-    sequence: stored.sequence,
-    threadId: event.threadId,
-    type: event.type,
-  };
+  if (event.type === "message.updated") return { ...base, messageRole: event.payload.role };
+  return base;
 }
 
 /**
@@ -114,6 +114,18 @@ const SHELL_INERT_EVENT_TYPES: ReadonlySet<string> = new Set([
   "node.updated",
   "provider-turn.updated",
 ]);
+
+/**
+ * True for an event that cannot change any thread shell, whatever came before it. Besides the
+ * inert types, a message only reaches the shell through `latestUserMessageAt` and
+ * `latestUserAuthoredMessageAt`, which read `role = 'user'` rows; assistant and system messages
+ * (re-sent by the ACP, Cursor, OpenCode and Pi adapters on every text flush) change neither.
+ */
+export function isShellInertEvent(event: ShellFeedEvent): boolean {
+  if (event.aggregate === "project") return false;
+  if (SHELL_INERT_EVENT_TYPES.has(event.type)) return true;
+  return event.type === "message.updated" && event.messageRole !== "user";
+}
 
 /**
  * Turn items whose body never reaches a shell. The shell reads turn items only as counts per run
@@ -139,7 +151,7 @@ export function makeShellEventFilter(maxTrackedItems = MAX_TRACKED_TEXT_ITEMS) {
   const seen = new Map<string, string>();
   const relevant = (event: ShellFeedEvent): boolean => {
     if (event.aggregate === "project") return true;
-    if (SHELL_INERT_EVENT_TYPES.has(event.type)) return false;
+    if (isShellInertEvent(event)) return false;
     const item = event.turnItem;
     if (item === undefined || !TEXT_TURN_ITEM_TYPES.has(item.type)) return true;
     const signature = `${item.status}\u0000${item.runId ?? ""}`;
@@ -155,14 +167,14 @@ export function makeShellEventFilter(maxTrackedItems = MAX_TRACKED_TEXT_ITEMS) {
   return Object.assign(relevant, { reset: () => seen.clear() });
 }
 
-// ---------------------------------------------------------------------------
-// Feed state: last shells, thread access and access history
-// ---------------------------------------------------------------------------
-
-export interface ThreadAccess {
-  readonly projectId: ProjectId;
+/** Who may see a thread or a project: its owner and tagged members. */
+export interface Audience {
   readonly ownerUserId: UserId | null;
   readonly memberUserIds: ReadonlyArray<UserId>;
+}
+
+export interface ThreadAccess extends Audience {
+  readonly projectId: ProjectId;
 }
 
 export type ShellFeedEntry =
@@ -181,17 +193,18 @@ export type ShellFeedEntry =
       readonly shell: OrchestrationV2ThreadShell | null;
       /** False only when the feed already published an equal shell (ignoring `updatedAt`). */
       readonly changed: boolean;
-      /**
-       * The active-thread access before this entry: who could have had the thread in an active
-       * sidebar. `null` when it was not active; `"unknown"` when the feed cannot tell.
-       */
-      readonly previousAccess: ThreadAccess | null | "unknown";
     };
 
 export interface ShellFeedBatch {
   /** The highest committed sequence in the batch, filtered events included. */
   readonly highSequence: number;
   readonly entries: ReadonlyArray<ShellFeedEntry>;
+}
+
+/** Every thread and project one user could see at a sequence. */
+export interface VisibleRows {
+  readonly threadIds: ReadonlySet<ThreadId>;
+  readonly projectIds: ReadonlySet<ProjectId>;
 }
 
 export interface ShellFeedReads {
@@ -206,8 +219,8 @@ export interface ShellFeedReads {
 const sameThreadShell = Schema.toEquivalence(ThreadShellSchema);
 
 const MAX_CACHED_SHELLS = 5_000;
-const MAX_ACCESS_HISTORY_THREADS = 10_000;
-const MAX_ACCESS_CHANGES_PER_THREAD = 8;
+const MAX_HISTORY_KEYS = 10_000;
+const MAX_CHANGES_PER_KEY = 8;
 
 export function accessOfShell(shell: OrchestrationV2ThreadShell): ThreadAccess {
   return {
@@ -217,14 +230,22 @@ export function accessOfShell(shell: OrchestrationV2ThreadShell): ThreadAccess {
   };
 }
 
-function sameAccess(left: ThreadAccess | null, right: ThreadAccess | null): boolean {
+export function audienceOfProject(project: OrchestrationProjectShell): Audience {
+  return { ownerUserId: project.ownerUserId ?? null, memberUserIds: project.memberUserIds ?? [] };
+}
+
+function sameAudience(left: Audience | null, right: Audience | null): boolean {
   if (left === null || right === null) return left === right;
   return (
-    left.projectId === right.projectId &&
     left.ownerUserId === right.ownerUserId &&
     left.memberUserIds.length === right.memberUserIds.length &&
     left.memberUserIds.every((member) => right.memberUserIds.includes(member))
   );
+}
+
+function sameAccess(left: ThreadAccess | null, right: ThreadAccess | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.projectId === right.projectId && sameAudience(left, right);
 }
 
 /** Insert or refresh a key at the newest end of an insertion-ordered map, then trim the oldest. */
@@ -246,6 +267,32 @@ function setNewest<K, V>(
 }
 
 /**
+ * The values a key had before each recorded change. `knownFrom` rises when a change is
+ * forgotten; callers must not ask about an earlier sequence, because the answer would be a guess.
+ */
+function makeChangeHistory<K, V>(coveredFromSequence: number) {
+  const changes = new Map<K, Array<{ readonly sequence: number; readonly previous: V | null }>>();
+  let knownFrom = coveredFromSequence;
+  const forget = (dropped: ReadonlyArray<{ readonly sequence: number }>) => {
+    for (const change of dropped) knownFrom = Math.max(knownFrom, change.sequence);
+  };
+  return {
+    record: (key: K, sequence: number, previous: V | null) => {
+      const next = [...(changes.get(key) ?? []), { sequence, previous }];
+      if (next.length > MAX_CHANGES_PER_KEY) forget(next.splice(0, 1));
+      setNewest(changes, key, next, MAX_HISTORY_KEYS, forget);
+    },
+    knownFrom: () => knownFrom,
+    keys: () => changes.keys(),
+    /** The value at `afterSequence`: the one before the first later change, else `current`. */
+    at: (key: K, afterSequence: number, current: V | null): V | null => {
+      const change = changes.get(key)?.find((entry) => entry.sequence > afterSequence);
+      return change !== undefined ? change.previous : current;
+    },
+  };
+}
+
+/**
  * The feed's pure state. One instance per server; `process` turns a batch of committed events
  * into one batched shell read and the entries every subscriber filters.
  */
@@ -253,6 +300,8 @@ export function makeShellFeedCore(input: {
   readonly reads: ShellFeedReads;
   /** Active threads and their access when the feed started. */
   readonly access: Iterable<readonly [ThreadId, ThreadAccess]>;
+  /** Projects and their audience when the feed started. */
+  readonly projects: Iterable<readonly [ProjectId, Audience]>;
   /** The feed knows every access change after this sequence. */
   readonly coveredFromSequence: number;
 }) {
@@ -260,11 +309,9 @@ export function makeShellFeedCore(input: {
   const shells = new Map<ThreadId, OrchestrationV2ThreadShell>();
   const access = new Map<ThreadId, ThreadAccess>();
   const threadsByProject = new Map<ProjectId, Set<ThreadId>>();
-  const history = new Map<
-    ThreadId,
-    Array<{ readonly sequence: number; readonly previous: ThreadAccess | null }>
-  >();
-  let historyKnownFrom = input.coveredFromSequence;
+  const projectAudience = new Map<ProjectId, Audience>(input.projects);
+  const threadHistory = makeChangeHistory<ThreadId, ThreadAccess>(input.coveredFromSequence);
+  const projectHistory = makeChangeHistory<ProjectId, Audience>(input.coveredFromSequence);
 
   const setAccess = (threadId: ThreadId, next: ThreadAccess | null) => {
     const previous = access.get(threadId);
@@ -280,15 +327,6 @@ export function makeShellFeedCore(input: {
   };
   for (const [threadId, threadAccess] of input.access) setAccess(threadId, threadAccess);
 
-  const forget = (changes: ReadonlyArray<{ readonly sequence: number }>) => {
-    for (const change of changes) historyKnownFrom = Math.max(historyKnownFrom, change.sequence);
-  };
-  const remember = (threadId: ThreadId, sequence: number, previous: ThreadAccess | null) => {
-    const changes = [...(history.get(threadId) ?? []), { sequence, previous }];
-    if (changes.length > MAX_ACCESS_CHANGES_PER_THREAD) forget(changes.splice(0, 1));
-    setNewest(history, threadId, changes, MAX_ACCESS_HISTORY_THREADS, forget);
-  };
-
   const recordThread = (
     threadId: ThreadId,
     sequence: number,
@@ -303,9 +341,24 @@ export function makeShellFeedCore(input: {
     else setNewest(shells, threadId, shell, MAX_CACHED_SHELLS);
     const previousAccess = access.get(threadId) ?? null;
     const nextAccess = shell !== null && shell.archivedAt === null ? accessOfShell(shell) : null;
-    if (!sameAccess(previousAccess, nextAccess)) remember(threadId, sequence, previousAccess);
+    if (!sameAccess(previousAccess, nextAccess)) {
+      threadHistory.record(threadId, sequence, previousAccess);
+    }
     setAccess(threadId, nextAccess);
-    return { kind: "thread", sequence, threadId, shell, changed, previousAccess };
+    return { kind: "thread", sequence, threadId, shell, changed };
+  };
+
+  const recordProject = (
+    projectId: ProjectId,
+    sequence: number,
+    project: OrchestrationProjectShell | null,
+  ): ShellFeedEntry => {
+    const previous = projectAudience.get(projectId) ?? null;
+    const next = project === null ? null : audienceOfProject(project);
+    if (!sameAudience(previous, next)) projectHistory.record(projectId, sequence, previous);
+    if (next === null) projectAudience.delete(projectId);
+    else projectAudience.set(projectId, next);
+    return { kind: "project", sequence, projectId, project };
   };
 
   const process = Effect.fnUntraced(function* (events: Iterable<ShellFeedEvent>) {
@@ -345,13 +398,8 @@ export function makeShellFeedCore(input: {
       // of this batch keeps them again.
       Effect.tapError(() => Effect.sync(filter.reset)),
     );
-    const entries: Array<ShellFeedEntry> = projectEntries.map(
-      ([projectId, { sequence }], index) => ({
-        kind: "project" as const,
-        sequence,
-        projectId,
-        project: projectShells[index] ?? null,
-      }),
+    const entries = projectEntries.map(([projectId, { sequence }], index) =>
+      recordProject(projectId, sequence, projectShells[index] ?? null),
     );
     for (const [threadId, sequence] of threads) {
       entries.push(recordThread(threadId, sequence, read.get(threadId) ?? null));
@@ -370,29 +418,47 @@ export function makeShellFeedCore(input: {
       }
       return false;
     },
-    /** The active-thread access a thread had at `afterSequence`, for a resume replay. */
-    accessAt: (threadId: ThreadId, afterSequence: number): ThreadAccess | null | "unknown" => {
-      if (afterSequence < historyKnownFrom) return "unknown";
-      const change = history.get(threadId)?.find((entry) => entry.sequence > afterSequence);
-      return change !== undefined ? change.previous : (access.get(threadId) ?? null);
+    /**
+     * Every active thread and project `actor` could see at `afterSequence`: the rows a client
+     * resuming from that cursor may hold. `undefined` when the feed cannot prove it, because it
+     * started after that sequence or has since forgotten a change.
+     */
+    visibleAt: (actor: UserId, afterSequence: number): VisibleRows | undefined => {
+      if (afterSequence < threadHistory.knownFrom() || afterSequence < projectHistory.knownFrom()) {
+        return undefined;
+      }
+      const threadIds = new Set<ThreadId>();
+      const projectIds = new Set<ProjectId>();
+      for (const threadId of new Set([...access.keys(), ...threadHistory.keys()])) {
+        const then = threadHistory.at(threadId, afterSequence, access.get(threadId) ?? null);
+        if (then === null || !owns(then, actor)) continue;
+        threadIds.add(threadId);
+        projectIds.add(then.projectId);
+      }
+      for (const projectId of new Set([...projectAudience.keys(), ...projectHistory.keys()])) {
+        const then = projectHistory.at(
+          projectId,
+          afterSequence,
+          projectAudience.get(projectId) ?? null,
+        );
+        if (then !== null && owns(then, actor)) projectIds.add(projectId);
+      }
+      return { threadIds, projectIds };
     },
   };
 }
 
-// ---------------------------------------------------------------------------
-// The shared feed
-// ---------------------------------------------------------------------------
-
 export interface ShellFeed {
   /**
    * Subscribe before loading a snapshot: every batch published after this returns reaches the
-   * subscription, so a snapshot read afterwards misses nothing.
+   * subscription, so a snapshot read afterwards misses nothing. Prefer `tapShellFeed`, which
+   * bounds what one subscriber can retain.
    */
   readonly subscribe: Effect.Effect<PubSub.Subscription<ShellFeedBatch>, never, Scope.Scope>;
   /** Fails when the feed stops, so every subscriber ends and its client resynchronizes. */
   readonly failed: Effect.Effect<never, ShellFeedError>;
   readonly projectHasVisibleThread: (projectId: ProjectId, actor: UserId) => boolean;
-  readonly accessAt: (threadId: ThreadId, afterSequence: number) => ThreadAccess | null | "unknown";
+  readonly visibleAt: (actor: UserId, afterSequence: number) => VisibleRows | undefined;
 }
 
 export interface ShellFeedSources extends ShellFeedReads {
@@ -402,6 +468,11 @@ export interface ShellFeedSources extends ShellFeedReads {
   /** Every active thread's access, read once when the feed starts. */
   readonly loadAccess: Effect.Effect<
     ReadonlyArray<readonly [ThreadId, ThreadAccess]>,
+    ShellFeedError
+  >;
+  /** Every project's audience, read once when the feed starts. */
+  readonly loadProjects: Effect.Effect<
+    ReadonlyArray<readonly [ProjectId, Audience]>,
     ShellFeedError
   >;
 }
@@ -419,10 +490,10 @@ export const makeShellFeed = Effect.fn("ShellFeed.make")(function* (
   yield* Effect.addFinalizer(() => PubSub.shutdown(hub));
   const failed = yield* Deferred.make<never, ShellFeedError>();
   const startSequence = yield* sources.latestSequence;
-  const access = yield* sources.loadAccess;
-  // Changes between the first read and the access load are replayed but not recorded as history.
+  const [access, projects] = yield* Effect.all([sources.loadAccess, sources.loadProjects]);
+  // Changes between the first read and the loads are replayed but not recorded as history.
   const coveredFromSequence = yield* sources.latestSequence;
-  const core = makeShellFeedCore({ reads: sources, access, coveredFromSequence });
+  const core = makeShellFeedCore({ reads: sources, access, projects, coveredFromSequence });
   let lastSequence = startSequence;
 
   yield* Stream.suspend(() => sources.events(lastSequence)).pipe(
@@ -456,13 +527,114 @@ export const makeShellFeed = Effect.fn("ShellFeed.make")(function* (
     subscribe: PubSub.subscribe(hub),
     failed: Deferred.await(failed),
     projectHasVisibleThread: core.projectHasVisibleThread,
-    accessAt: core.accessAt,
+    visibleAt: core.visibleAt,
   } satisfies ShellFeed;
 });
 
-// ---------------------------------------------------------------------------
-// One feed per server
-// ---------------------------------------------------------------------------
+/** Distinct threads and projects one subscriber may hold undelivered. */
+export const SHELL_TAP_MAX_KEYS = 5_000;
+
+export interface ShellFeedTap {
+  /**
+   * The batches published since the last take, merged: the newest entry per thread and project,
+   * ordered by sequence. Fails when the feed stops or this subscriber fell too far behind.
+   */
+  readonly take: Effect.Effect<ShellFeedBatch, ShellFeedError>;
+  /** Fails once this subscriber is detached from the feed. */
+  readonly stopped: Effect.Effect<never, ShellFeedError>;
+  /** Distinct rows waiting for the next take. */
+  readonly retained: Effect.Effect<number>;
+}
+
+const entryKey = (entry: ShellFeedEntry) =>
+  entry.kind === "project" ? `project:${entry.projectId}` : `thread:${entry.threadId}`;
+
+/**
+ * One subscriber's bounded buffer on the shared feed, drained by its own fiber from the moment it
+ * subscribes. The shared PubSub therefore never holds batches for a client that is still loading
+ * its snapshot or withholding acknowledgements. Past `maxKeys` distinct rows the subscriber is
+ * detached and its `take` fails, so only that client resynchronizes.
+ */
+export const tapShellFeed = Effect.fnUntraced(function* (
+  feed: Pick<ShellFeed, "subscribe" | "failed">,
+  maxKeys: number = SHELL_TAP_MAX_KEYS,
+) {
+  const subscriptionScope = yield* Scope.fork(yield* Effect.scope);
+  const subscription = yield* feed.subscribe.pipe(Scope.provide(subscriptionScope));
+  const ready = yield* Queue.bounded<void>(1);
+  const stopped = yield* Deferred.make<never, ShellFeedError>();
+  const pending = new Map<string, ShellFeedEntry>();
+  let highSequence = 0;
+  let hasPending = false;
+  let stopCause: Cause.Cause<ShellFeedError> | undefined;
+
+  // At most one wake-up token is ever queued, so this offer never waits.
+  const wake = Effect.suspend(() => {
+    if (hasPending) return Effect.void;
+    hasPending = true;
+    return Queue.offer(ready, undefined).pipe(Effect.asVoid);
+  });
+
+  const merge = (batch: ShellFeedBatch) =>
+    Effect.suspend(() => {
+      for (const entry of batch.entries) {
+        const key = entryKey(entry);
+        const previous = pending.get(key);
+        if (previous !== undefined && previous.sequence > entry.sequence) continue;
+        // The client never saw the replaced entry, so a change in it is still a change.
+        pending.set(
+          key,
+          entry.kind === "thread" && previous?.kind === "thread" && previous.changed
+            ? { ...entry, changed: true }
+            : entry,
+        );
+      }
+      if (pending.size > maxKeys) {
+        return Effect.fail(
+          new ShellFeedError({
+            message: "This shell subscriber fell too far behind. Resynchronize.",
+          }),
+        );
+      }
+      highSequence = Math.max(highSequence, batch.highSequence);
+      return wake;
+    });
+
+  yield* PubSub.take(subscription).pipe(
+    Effect.flatMap(merge),
+    Effect.forever,
+    Effect.raceFirst(feed.failed),
+    Effect.catchCause((cause) =>
+      Effect.sync(() => {
+        stopCause = cause;
+        pending.clear();
+      }).pipe(
+        Effect.andThen(Scope.close(subscriptionScope, Exit.void)),
+        Effect.andThen(Deferred.failCause(stopped, cause)),
+        Effect.andThen(wake),
+      ),
+    ),
+    Effect.forkScoped,
+  );
+
+  const takeBatch = Effect.suspend(() => {
+    if (stopCause !== undefined) return Effect.failCause(stopCause);
+    const entries = [...pending.values()].sort((left, right) => left.sequence - right.sequence);
+    pending.clear();
+    hasPending = false;
+    return Effect.succeed({ highSequence, entries } satisfies ShellFeedBatch);
+  });
+
+  return {
+    take: Effect.suspend(() =>
+      stopCause !== undefined
+        ? Effect.failCause(stopCause)
+        : Queue.take(ready).pipe(Effect.andThen(takeBatch)),
+    ),
+    stopped: Deferred.await(stopped),
+    retained: Effect.sync(() => pending.size),
+  } satisfies ShellFeedTap;
+});
 
 export interface ShellFeedServices {
   readonly sql: SqlClient.SqlClient;
@@ -472,6 +644,7 @@ export interface ShellFeedServices {
   >;
   readonly readThreadShells: ThreadManagementService["Service"]["getThreadShells"];
   readonly getProject: ProjectService["Service"]["getShell"];
+  readonly listProjects: ProjectStoreV2["Service"]["listShells"];
 }
 
 const decodeMemberUserIds = Schema.decodeUnknownOption(
@@ -530,6 +703,12 @@ export const shellFeedSources = (services: ShellFeedServices): ShellFeedSources 
       .streamProjectedApplicationEvents({ afterSequence, project: toShellFeedEvent })
       .pipe(Stream.mapError(shellFeedError("Failed while streaming application events"))),
   loadAccess: loadActiveThreadAccess(services.sql),
+  loadProjects: services.listProjects().pipe(
+    Effect.map((projects) =>
+      projects.map((project) => [project.id, audienceOfProject(project)] as const),
+    ),
+    Effect.mapError(shellFeedError("Failed to read project audiences for the shell feed")),
+  ),
   readThreadShells: (threadIds) =>
     services
       .readThreadShells(threadIds)
@@ -542,9 +721,16 @@ export const shellFeedSources = (services: ShellFeedServices): ShellFeedSources 
 
 /**
  * The event store is one object per server, so it keys the server's feed without a new layer in
- * server wiring. The feed starts with its first subscriber and stops with its last.
+ * server wiring. The feed starts with its first subscriber.
  */
 const feeds = new WeakMap<object, RcRef.RcRef<ShellFeed, ShellFeedError>>();
+
+/**
+ * A feed outlives its last subscriber this long. A restarted feed knows no access history before
+ * its start, so every filtered client resuming across the restart needs a full snapshot; a brief
+ * moment with no subscribers (a network blip that drops every socket) must not cause that.
+ */
+const FEED_IDLE_TIME_TO_LIVE = Duration.minutes(2);
 
 /** Borrow the server's shell feed for the current scope, starting it when needed. */
 export const acquireShellFeed = Effect.fnUntraced(function* (services: ShellFeedServices) {
@@ -555,6 +741,7 @@ export const acquireShellFeed = Effect.fnUntraced(function* (services: ShellFeed
       acquire: Effect.suspend(() =>
         makeShellFeed(shellFeedSources(services), RcRef.invalidate(created)),
       ),
+      idleTimeToLive: FEED_IDLE_TIME_TO_LIVE,
     }).pipe(Scope.provide(scope));
     const raced = feeds.get(services.eventStore);
     if (raced === undefined) {
@@ -568,15 +755,10 @@ export const acquireShellFeed = Effect.fnUntraced(function* (services: ShellFeed
   return yield* RcRef.get(ref);
 });
 
-/**
- * Distinct threads and projects a resume gap touched, read once each. Entries carry the access
- * the thread had at `afterSequence`, so a replay can remove a thread the client may hold.
- */
+/** Distinct threads and projects a resume gap touched, read once each. */
 export const readShellReplay = Effect.fnUntraced(function* <E>(input: {
   readonly events: Stream.Stream<ApplicationStoredEvent, E>;
   readonly reads: ShellFeedReads;
-  readonly accessAt: ShellFeed["accessAt"];
-  readonly afterSequence: number;
 }) {
   const threads = new Map<ThreadId, number>();
   const projects = new Map<ProjectId, { readonly sequence: number; readonly deleted: boolean }>();
@@ -591,7 +773,7 @@ export const readShellReplay = Effect.fnUntraced(function* <E>(input: {
             deleted: event.projectDeleted,
           });
         }
-      } else if (!SHELL_INERT_EVENT_TYPES.has(event.type)) {
+      } else if (!isShellInertEvent(event)) {
         threads.set(event.threadId, Math.max(threads.get(event.threadId) ?? 0, event.sequence));
       }
     }),
@@ -623,7 +805,6 @@ export const readShellReplay = Effect.fnUntraced(function* <E>(input: {
       threadId,
       shell: shells.get(threadId) ?? null,
       changed: true,
-      previousAccess: input.accessAt(threadId, input.afterSequence),
     });
   }
   return entries.sort((left, right) => left.sequence - right.sequence);

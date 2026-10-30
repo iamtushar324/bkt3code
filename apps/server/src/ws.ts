@@ -186,8 +186,9 @@ import {
   acquireShellFeed,
   readShellReplay,
   shellFeedSources,
+  tapShellFeed,
+  type ShellFeedBatch,
 } from "./orchestration-v2/ShellFeed.expbkt3.ts";
-import * as PubSub from "effect/PubSub";
 // T3-CUSTOM(expbkt3): END
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import { bufferLiveStream } from "./orchestration-v2/LiveStreamBudget.ts";
@@ -1067,6 +1068,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       eventStore: applicationEvents,
       readThreadShells: threadManagement.getThreadShells,
       getProject: projectService.getShell,
+      listProjects: projects.listShells,
     };
     const feed = yield* acquireShellFeed(feedServices).pipe(
       Effect.mapError(
@@ -1077,12 +1079,18 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           }),
       ),
     );
-    // Subscribe before any snapshot load: a batch published after this reaches the client.
-    const subscription = yield* feed.subscribe;
+    // Subscribe before any snapshot load, so a batch published after this reaches the client.
+    // The tap drains into a bounded per-client buffer at once, so a client still receiving its
+    // snapshot, or withholding acknowledgements, cannot make the shared feed retain batches.
+    const tap = yield* tapShellFeed(feed);
+    // The tick lets an idle client converge on a shell that changed only its `updatedAt`, from
+    // memory: it reads nothing.
+    const idleTicks = Stream.tick(Duration.seconds(5)).pipe(
+      Stream.map((): ShellFeedBatch => ({ highSequence: 0, entries: [] })),
+    );
     const liveFrom = (view: ReturnType<typeof makeActiveShellView>) =>
       bufferShellLiveStream(
-        Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
-          Stream.interruptWhen(feed.failed),
+        Stream.merge(Stream.fromEffectRepeat(tap.take), idleTicks).pipe(
           Stream.mapEffect(view.apply),
           Stream.flattenIterable,
         ),
@@ -1159,7 +1167,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       const view = makeActiveShellView({
         actor,
         afterSequence: snapshot.snapshotSequence,
-        complete: true,
         projects: snapshot.projects,
         threads: snapshot.threads,
         feed,
@@ -1182,14 +1189,23 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         return yield* snapshotThenLive;
       }
 
+      // A filtered user may only be told to remove rows it could see at its cursor. When the
+      // feed cannot prove which rows those were (it started, or forgot a change, after that
+      // cursor), resend a filtered snapshot instead of replaying the gap.
+      const held = actor === null ? undefined : feed.visibleAt(actor, afterSequence);
+      if (actor !== null && held === undefined) {
+        return yield* snapshotThenLive;
+      }
+
       const loaded = yield* loadProjectMetadataSnapshot(highWater);
       const snapshot = filterNativeShell(loaded.snapshot, actor);
       const view = makeActiveShellView({
         actor,
         afterSequence: highWater,
-        complete: false,
         projects: snapshot.projects,
         threads: [],
+        // An unrestricted operator may hold any row, so it gets every removal.
+        ...(held === undefined ? { removeUnheld: true } : { held }),
         feed,
         projectService,
       });
@@ -1205,8 +1221,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             skipUnknownEventTypes: true,
           }),
           reads: shellFeedSources(feedServices),
-          accessAt: feed.accessAt,
-          afterSequence,
         }).pipe(Effect.flatMap(view.applyReplay), Effect.map(rpcInitialItems)),
       );
       return composeShellStreamWithEnrichment({
@@ -1951,6 +1965,7 @@ export const layerWsRpc = (
           eventStore: applicationEvents,
           readThreadShells: threadManagement.getThreadShells,
           getProject: projectService.getShell,
+          listProjects: projectStore.listShells,
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -1960,7 +1975,8 @@ export const layerWsRpc = (
               }),
           ),
         );
-        const subscription = yield* feed.subscribe;
+        // Drained into a bounded buffer from the start, as on the active stream.
+        const tap = yield* tapShellFeed(feed);
         const snapshot = filterNativeShell(
           yield* getOrchestrationV2ArchivedShellSnapshot,
           actorUserId,
@@ -1970,8 +1986,7 @@ export const layerWsRpc = (
           afterSequence: snapshot.snapshotSequence,
           threads: snapshot.threads,
         });
-        const live = Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
-          Stream.interruptWhen(feed.failed),
+        const live = Stream.fromEffectRepeat(tap.take).pipe(
           Stream.map(view.apply),
           Stream.flattenIterable,
           (stream) => bufferLiveStream(stream),

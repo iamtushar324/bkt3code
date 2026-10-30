@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ThreadShell,
+  ProjectId,
   ThreadId,
   UserId,
 } from "@t3tools/contracts";
@@ -16,7 +17,6 @@ import type {
   ShellFeed,
   ShellFeedBatch,
   ShellFeedEntry,
-  ThreadAccess,
 } from "./orchestration-v2/ShellFeed.expbkt3.ts";
 import type { ProjectService } from "./project/ProjectService.ts";
 
@@ -67,38 +67,67 @@ interface ShellViewInput {
   readonly projectService: Pick<ProjectService["Service"], "getShell">;
 }
 
-/** A synchronized client gets no live delta for an unchanged shell; this resend moves its cursor. */
-const CURSOR_ADVANCE_MS = 5_000;
+/**
+ * A synchronized client gets no delta for a shell that changed only its `updatedAt`. After this
+ * long a row is resent anyway, so the client converges on the newest shell and its cursor moves.
+ */
+const RESEND_AFTER_MS = 5_000;
 
 /**
  * One active-shell subscriber's view of the shared feed: the same team visibility as the
- * snapshot filter, evaluated in memory. A thread the client never held is not sent at all, so a
- * member never learns another user's thread id; a thread it held is removed once.
+ * snapshot filter, evaluated in memory. A removal goes only to a client that could hold the row,
+ * so a member never learns another user's thread or project id.
  */
 export function makeActiveShellView(
   input: ShellViewInput & {
     /**
-     * True when the client state came from this stream's own snapshot. A resumed client holds a
-     * cache this server never saw, so removals also go to anyone who may have held the thread.
+     * Rows a resumed client may hold beyond its snapshot: everything the user could see at its
+     * cursor (`ShellFeed.visibleAt`). Its cache is one this stream never sent.
      */
-    readonly complete: boolean;
+    readonly held?: {
+      readonly threadIds: Iterable<ThreadId>;
+      readonly projectIds: Iterable<ProjectId>;
+    };
+    /**
+     * An unrestricted operator's resume: it may hold any row, so every removal is sent. Never set
+     * for a filtered user; their removals must name a row they could see.
+     */
+    readonly removeUnheld?: boolean;
   },
 ) {
   const { actor } = input;
-  const threads = new Map(input.threads.map((thread) => [thread.id, thread] as const));
+  const removeUnheld = actor === null && input.removeUnheld === true;
+  // The exact shell the client has for each row, and the newest one the feed has read for it.
+  const shells = new Map(input.threads.map((thread) => [thread.id, thread] as const));
+  const latest = new Map(shells);
+  const sentAt = new Map<ThreadId, number>();
+  const heldThreads = new Set<ThreadId>([...shells.keys(), ...(input.held?.threadIds ?? [])]);
   const synced = new Set<ThreadId>();
-  const projects = new Set(input.projects.map((project) => project.id));
+  const projects = new Set<ProjectId>([
+    ...input.projects.map((project) => project.id),
+    ...(input.held?.projectIds ?? []),
+  ]);
   let lastSentSequence = input.afterSequence;
   let lastSentAt: number | undefined;
+  let feedHighSequence = input.afterSequence;
 
-  const mayHaveHeld = (previousAccess: ThreadAccess | null | "unknown") =>
-    !input.complete &&
-    (actor === null ||
-      previousAccess === "unknown" ||
-      (previousAccess !== null && owns(previousAccess, actor)));
+  const send = (
+    shell: OrchestrationV2ThreadShell,
+    sequence: number,
+    now: number,
+    out: Array<ActiveShellDelta>,
+  ) => {
+    shells.set(shell.id, shell);
+    latest.set(shell.id, shell);
+    heldThreads.add(shell.id);
+    synced.add(shell.id);
+    sentAt.set(shell.id, now);
+    out.push({ kind: "thread.updated", sequence, location: "active", thread: shell });
+  };
 
   const applyEntry = Effect.fnUntraced(function* (
     entry: ShellFeedEntry,
+    now: number,
     out: Array<ActiveShellDelta>,
   ) {
     if (entry.kind === "project") {
@@ -113,7 +142,7 @@ export function makeActiveShellView(
         out.push({ kind: "project.updated", sequence: entry.sequence, project });
         return;
       }
-      if (projects.delete(entry.projectId) || actor === null || !input.complete) {
+      if (projects.delete(entry.projectId) || removeUnheld) {
         out.push({ kind: "project.removed", sequence: entry.sequence, projectId: entry.projectId });
       }
       return;
@@ -129,20 +158,21 @@ export function makeActiveShellView(
           out.push({ kind: "project.updated", sequence: entry.sequence, project: project.value });
         }
       }
-      if (entry.changed || !synced.has(shell.id)) {
-        threads.set(shell.id, shell);
-        synced.add(shell.id);
-        out.push({
-          kind: "thread.updated",
-          sequence: entry.sequence,
-          location: "active",
-          thread: shell,
-        });
+      latest.set(shell.id, shell);
+      if (
+        entry.changed ||
+        !synced.has(shell.id) ||
+        now - (sentAt.get(shell.id) ?? 0) >= RESEND_AFTER_MS
+      ) {
+        send(shell, entry.sequence, now, out);
       }
       return;
     }
     synced.delete(entry.threadId);
-    if (threads.delete(entry.threadId) || mayHaveHeld(entry.previousAccess)) {
+    shells.delete(entry.threadId);
+    latest.delete(entry.threadId);
+    sentAt.delete(entry.threadId);
+    if (heldThreads.delete(entry.threadId) || removeUnheld) {
       out.push({
         kind: "thread.removed",
         sequence: entry.sequence,
@@ -157,30 +187,40 @@ export function makeActiveShellView(
     if (out.length > 0) lastSentAt = now;
   };
 
+  /** A row whose newest shell the client lacks, else any row it holds exactly. */
+  const rowToResend = () => {
+    for (const [threadId, shell] of latest) {
+      if (shells.get(threadId) !== shell) return shell;
+    }
+    const held = shells.values().next();
+    return held.done === true ? undefined : held.value;
+  };
+
   return {
+    /**
+     * One merged feed batch. An empty batch with `highSequence` 0 is a timer tick: it applies
+     * nothing and only lets an idle client converge.
+     */
     apply: Effect.fnUntraced(function* (batch: ShellFeedBatch) {
-      const out: Array<ActiveShellDelta> = [];
-      for (const entry of batch.entries) {
-        if (entry.sequence > input.afterSequence) yield* applyEntry(entry, out);
-      }
       const now = yield* Clock.currentTimeMillis;
       lastSentAt ??= now;
+      feedHighSequence = Math.max(feedHighSequence, batch.highSequence);
+      const out: Array<ActiveShellDelta> = [];
+      for (const entry of batch.entries) {
+        if (entry.sequence > input.afterSequence) yield* applyEntry(entry, now, out);
+      }
       record(out, now);
       if (
         out.length === 0 &&
-        batch.highSequence > lastSentSequence &&
-        now - lastSentAt >= CURSOR_ADVANCE_MS
+        feedHighSequence > lastSentSequence &&
+        now - lastSentAt >= RESEND_AFTER_MS
       ) {
-        // Every entry up to highSequence is applied or provably unchanged for this client, so an
-        // unchanged row it already holds can carry that sequence.
-        const held = threads.values().next();
-        if (held.done !== true) {
-          out.push({
-            kind: "thread.updated",
-            sequence: batch.highSequence,
-            location: "active",
-            thread: held.value,
-          });
+        // Every entry up to feedHighSequence is applied or carries no change this client lacks
+        // beyond `updatedAt`, so one row can carry that sequence. A stale row's newest shell goes
+        // first; the client would drop a second row at the same sequence.
+        const shell = rowToResend();
+        if (shell !== undefined) {
+          send(shell, feedHighSequence, now, out);
           record(out, now);
         }
       }
@@ -189,8 +229,9 @@ export function makeActiveShellView(
     /** A resume gap's entries, all at or below the live start. */
     applyReplay: Effect.fnUntraced(function* (entries: ReadonlyArray<ShellFeedEntry>) {
       const out: Array<ActiveShellDelta> = [];
-      for (const entry of entries) yield* applyEntry(entry, out);
-      record(out, yield* Clock.currentTimeMillis);
+      const now = yield* Clock.currentTimeMillis;
+      for (const entry of entries) yield* applyEntry(entry, now, out);
+      record(out, now);
       return out as ReadonlyArray<ActiveShellDelta>;
     }),
     /** Repository identity refreshes name only projects this client already sees or owns. */

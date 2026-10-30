@@ -82,7 +82,6 @@ const threadEntry = (
   options: {
     readonly threadId?: string;
     readonly changed?: boolean;
-    readonly previousAccess?: Extract<ShellFeedEntry, { kind: "thread" }>["previousAccess"];
   } = {},
 ): ShellFeedEntry => ({
   kind: "thread",
@@ -90,7 +89,6 @@ const threadEntry = (
   threadId: value?.id ?? ThreadId.make(options.threadId ?? "missing"),
   shell: value,
   changed: options.changed ?? true,
-  previousAccess: options.previousAccess ?? null,
 });
 
 const batch = (...entries: ReadonlyArray<ShellFeedEntry>): ShellFeedBatch => ({
@@ -129,7 +127,6 @@ describe("makeActiveShellView", () => {
       const view = makeActiveShellView({
         actor: null,
         afterSequence: 10,
-        complete: true,
         projects: [project],
         threads: [a],
         feed: noThreadAccess,
@@ -159,7 +156,6 @@ describe("makeActiveShellView", () => {
       const view = makeActiveShellView({
         actor: null,
         afterSequence: 0,
-        complete: true,
         projects: [project],
         threads: [a],
         feed: noThreadAccess,
@@ -181,6 +177,30 @@ describe("makeActiveShellView", () => {
     }),
   );
 
+  it.effect("converges on a shell that changed only its updatedAt, without a new event", () =>
+    Effect.gen(function* () {
+      const a = shell("a");
+      const view = makeActiveShellView({
+        actor: null,
+        afterSequence: 0,
+        projects: [project],
+        threads: [a],
+        feed: noThreadAccess,
+        projectService: projectService({ count: 0 }),
+      });
+      assert.deepEqual(summary(yield* view.apply(batch(threadEntry(1, a)))), ["1:updated:a"]);
+      const newest = shell("a", { updatedAt: DateTime.makeUnsafe(10) });
+      // The feed saw no change beyond updatedAt, so nothing is sent at once.
+      const unchanged = yield* view.apply(batch(threadEntry(2, newest, { changed: false })));
+      assert.deepEqual(summary(unchanged), []);
+      yield* TestClock.adjust(Duration.seconds(5));
+      // The idle tick (an empty batch at sequence 0) sends the newest shell at the feed's sequence.
+      const resent = yield* view.apply({ highSequence: 0, entries: [] });
+      assert.deepEqual(summary(resent), ["2:updated:a"]);
+      assert.strictEqual(resent[0]?.kind === "thread.updated" ? resent[0].thread : null, newest);
+    }),
+  );
+
   it.effect("an owner and a member see the thread; a stranger never sees its id", () =>
     Effect.gen(function* () {
       const a = shell("a");
@@ -190,7 +210,6 @@ describe("makeActiveShellView", () => {
           const view = makeActiveShellView({
             actor,
             afterSequence: 0,
-            complete: true,
             projects: actor === null || actor === owner ? [project] : [],
             threads: [],
             feed: noThreadAccess,
@@ -229,7 +248,6 @@ describe("makeActiveShellView", () => {
       const view = makeActiveShellView({
         actor: member,
         afterSequence: 0,
-        complete: true,
         projects: [project],
         threads: [a],
         feed: noThreadAccess,
@@ -256,30 +274,47 @@ describe("makeActiveShellView", () => {
     }),
   );
 
-  it.effect("a resumed client loses rows it may hold, and only those", () =>
+  it.effect("a resumed client loses only rows it could see at its cursor", () =>
     Effect.gen(function* () {
-      const view = makeActiveShellView({
-        actor: member,
-        afterSequence: 0,
-        complete: false,
-        projects: [],
-        threads: [],
-        feed: noThreadAccess,
-        projectService: projectService({ count: 0 }),
-      });
-      const items = yield* view.applyReplay([
-        threadEntry(1, null, {
-          threadId: "shared",
-          previousAccess: { projectId, ownerUserId: owner, memberUserIds: [member] },
-        }),
-        threadEntry(2, null, {
-          threadId: "private",
-          previousAccess: { projectId, ownerUserId: stranger, memberUserIds: [] },
-        }),
+      const otherProject = ProjectId.make("project:other");
+      const gap = [
+        // Revoked during the gap: the member saw it at its cursor.
+        threadEntry(1, null, { threadId: "shared" }),
+        // Another user's rows, changed or deleted during the gap.
+        threadEntry(2, null, { threadId: "private" }),
         threadEntry(3, shell("private", { ownerUserId: stranger, memberUserIds: [] })),
-        threadEntry(4, null, { threadId: "before-the-feed", previousAccess: "unknown" }),
+        { kind: "project" as const, sequence: 4, projectId: otherProject, project: null },
+        {
+          kind: "project" as const,
+          sequence: 5,
+          projectId: otherProject,
+          project: { ...project, id: otherProject, ownerUserId: stranger },
+        },
+      ];
+      const resume = (actor: UserId | null, held: ReadonlyArray<string>) =>
+        makeActiveShellView({
+          actor,
+          afterSequence: 10,
+          projects: [],
+          threads: [],
+          ...(actor === null
+            ? { removeUnheld: true }
+            : { held: { threadIds: held.map((id) => ThreadId.make(id)), projectIds: [] } }),
+          feed: noThreadAccess,
+          projectService: projectService({ count: 0 }),
+        }).applyReplay(gap);
+
+      assert.deepEqual(summary(yield* resume(member, ["shared"])), ["1:removed:shared"]);
+      // A stranger never receives another user's thread or project id, removed or not.
+      assert.deepEqual(summary(yield* resume(stranger, [])), []);
+      // An unrestricted operator may hold any row, so it gets every removal.
+      assert.deepEqual(summary(yield* resume(null, [])), [
+        "1:removed:shared",
+        "2:removed:private",
+        "3:updated:private",
+        "4:project-removed:project:other",
+        "5:project:project:other",
       ]);
-      assert.deepEqual(summary(items), ["1:removed:shared", "4:removed:before-the-feed"]);
     }),
   );
 });
@@ -354,7 +389,6 @@ it.effect(
       const view = makeActiveShellView({
         actor: member,
         afterSequence: 0,
-        complete: true,
         projects: [],
         threads: [],
         feed: noThreadAccess,
