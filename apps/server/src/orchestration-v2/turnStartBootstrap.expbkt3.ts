@@ -10,6 +10,14 @@
  * This service mirrors upstream's closure step for step — when merging
  * upstream, diff the two — and adds the one fork extension: a child session
  * may share its parent's worktree group (see `../workspace-groups/`).
+ *
+ * Bootstraps also outlive their caller. The Linear bridge gives up on an HTTP
+ * dispatch after 20 s, while `git worktree add` plus a setup script can take
+ * longer; an interrupted bootstrap used to leave a thread with no turn, and
+ * every retry then failed on the `thread.create` invariant. So the work runs
+ * in a detached fiber the caller only waits on, a retry of the same command
+ * joins the running bootstrap, and a retry after a lost bootstrap resumes the
+ * thread it left behind.
  */
 import {
   CommandId,
@@ -17,17 +25,22 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
+  type OrchestrationThreadShell,
   type ProjectId,
   type ThreadId,
   type UserId,
 } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -36,7 +49,10 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import { withWorktreeCreationPermit } from "../workspace-groups/parentWorkspaceInheritance.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -75,6 +91,71 @@ function toDispatchCommandError(cause: unknown, fallbackMessage: string) {
         message: cause instanceof Error ? cause.message : fallbackMessage,
         cause,
       });
+}
+
+/**
+ * Runs each keyed bootstrap once, in a fiber detached from the caller. The
+ * caller only awaits the result, so its interruption (an HTTP client that gave
+ * up) never stops a half-done bootstrap. A caller that arrives with the same
+ * key and token while the work runs joins it; a different token for the same
+ * key fails, because two bootstraps of one thread would race on its worktree.
+ */
+function makeDetachedSingleFlight<A>() {
+  const running = new Map<
+    string,
+    {
+      readonly token: string;
+      readonly result: Deferred.Deferred<A, OrchestrationDispatchCommandError>;
+    }
+  >();
+  return (
+    key: string,
+    token: string,
+    work: Effect.Effect<A, OrchestrationDispatchCommandError>,
+  ): Effect.Effect<A, OrchestrationDispatchCommandError> =>
+    // Reservation and fork are one uninterruptible step: a caller interrupted
+    // between them would leave a registered result no worker ever completes,
+    // and every retry would wait on it forever. Only the wait is interruptible.
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const existing = running.get(key);
+        if (existing !== undefined) {
+          return existing.token === token
+            ? restore(Deferred.await(existing.result))
+            : Effect.fail(
+                new OrchestrationDispatchCommandError({
+                  message: `Another bootstrap for ${key} is still running.`,
+                }),
+              );
+        }
+        // Map writes stay synchronous, so no other fiber can slip in between the
+        // lookup above and this registration.
+        const entry = {
+          token,
+          result: Deferred.makeUnsafe<A, OrchestrationDispatchCommandError>(),
+        };
+        running.set(key, entry);
+        const release = Effect.sync(() => {
+          if (running.get(key) === entry) running.delete(key);
+        });
+        // forkDetach starts the worker interruptible regardless of this mask.
+        return work.pipe(
+          Effect.ensuring(release),
+          Deferred.into(entry.result),
+          Effect.forkDetach,
+          Effect.flatMap(() => restore(Deferred.await(entry.result))),
+        );
+      }),
+    );
+}
+
+/** Team mode: an unrestricted caller, or the thread's owner or a member. */
+function isVisibleToActor(
+  thread: OrchestrationThreadShell,
+  options: TurnStartBootstrapDispatchOptions | undefined,
+): boolean {
+  const actor = options?.actorUserId ?? null;
+  return actor === null || thread.ownerUserId === actor || thread.memberUserIds.includes(actor);
 }
 
 export interface TurnStartBootstrapDispatchOptions {
@@ -137,6 +218,16 @@ export const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const effectWorker = yield* OrchestrationEffectWorkerV2;
   const workspaceGroups = yield* ThreadWorkspaceGroups.ThreadWorkspaceGroupRepository;
+  const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const projectionQuery = yield* ProjectionSnapshotQuery;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const runTurnStartBootstrap = makeDetachedSingleFlight<{ readonly sequence: number }>();
+  const runCreateThreadBootstrap = makeDetachedSingleFlight<{
+    readonly sequence: number;
+    readonly worktreePath: string | null;
+  }>();
 
   const randomUUID = crypto
     .randomUUIDv4()
@@ -411,6 +502,11 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
+  const readThread = (threadId: ThreadId) =>
+    projectionQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map((thread) => Option.getOrNull(thread)));
+
   const withThreadCleanup = <A, E>(
     threadId: ThreadId,
     createdThread: () => boolean,
@@ -445,6 +541,57 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * Whether an existing thread is the one an earlier, lost attempt of this
+   * bootstrap created: same project, no turn yet, and visible to the actor.
+   * When it is not, the caller dispatches `thread.create`, which still fails
+   * for a thread that exists.
+   */
+  const isResumable = (
+    thread: OrchestrationThreadShell | null,
+    projectId: ProjectId,
+    options: TurnStartBootstrapDispatchOptions | undefined,
+  ): thread is OrchestrationThreadShell =>
+    thread !== null &&
+    thread.projectId === projectId &&
+    thread.latestTurn === null &&
+    thread.latestUserMessageAt === null &&
+    isVisibleToActor(thread, options);
+
+  const realPathOf = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+
+  /**
+   * A worktree an interrupted attempt added for this exact branch but never
+   * recorded on the thread. `git worktree add -b <branch>` would fail on every
+   * retry, so the resume adopts it — but only a checkout that sits where
+   * createWorktree puts new ones (`<managed worktrees folder>/<repo>/<dir>`,
+   * compared by real path) and is not the project's own checkout under any
+   * spelling. A temporary branch is never on disk under its own name: the
+   * worktree takes a generated codename branch, so a retry allocates a fresh
+   * one instead of failing, and there is nothing to match here.
+   */
+  const findUnrecordedWorktree = Effect.fn("TurnStartBootstrap.findUnrecordedWorktree")(function* (
+    projectCwd: string,
+    branch: string,
+  ) {
+    if (isTemporaryWorktreeBranch(branch)) return null;
+    const listed = yield* gitWorkflow.listRefs({
+      cwd: projectCwd,
+      query: branch,
+      refKind: "local",
+      refresh: true,
+    });
+    const candidate = listed.refs.find(
+      (ref) => !ref.isRemote && ref.name === branch && ref.worktreePath !== null,
+    )?.worktreePath;
+    if (candidate == null) return null;
+    const repoName = path.basename(path.resolve(projectCwd));
+    if (path.basename(path.dirname(path.resolve(candidate))) !== repoName) return null;
+    if ((yield* realPathOf(candidate)) === (yield* realPathOf(projectCwd))) return null;
+    return (yield* isManagedWorktreePath(candidate)) ? candidate : null;
+  });
+
   const dispatchBootstrapTurnStart = Effect.fn("TurnStartBootstrap.dispatchBootstrapTurnStart")(
     function* (command: TurnStartCommand, options: TurnStartBootstrapDispatchOptions | undefined) {
       const bootstrap = command.bootstrap;
@@ -455,7 +602,73 @@ export const make = Effect.gen(function* () {
       let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
 
       const bootstrapProgram = Effect.gen(function* () {
-        if (bootstrap?.createThread) {
+        const existingThread = yield* readThread(command.threadId);
+
+        // A retry whose turn already landed (the first attempt finished after
+        // its caller gave up): the engine replays the stored receipt. Only this
+        // thread's own turn message, and only for an actor who may see the thread;
+        // any other receipt falls through and fails as before.
+        const priorTurn = yield* commandReceipts.getByCommandId(command.commandId);
+        if (
+          Option.isSome(priorTurn) &&
+          priorTurn.value.threadId === command.threadId &&
+          // The compatibility engine (Layers/OrchestrationEngine.ts) runs a turn
+          // start as a native `message.dispatch` under the same command id, and
+          // the receipt carries that native type.
+          priorTurn.value.commandType === "message.dispatch" &&
+          existingThread !== null &&
+          isVisibleToActor(existingThread, options)
+        ) {
+          return yield* dispatchWithOptions(finalTurnStartCommand, options);
+        }
+
+        const resumable =
+          bootstrap?.createThread &&
+          isResumable(existingThread, bootstrap.createThread.projectId, options)
+            ? existingThread
+            : null;
+        if (resumable !== null) {
+          yield* Effect.logInfo("bootstrap turn start resumed a thread left without a turn", {
+            threadId: command.threadId,
+            worktreePath: resumable.worktreePath,
+          });
+        }
+        // A worktree path other than the one the create asked for was recorded
+        // by an earlier attempt's prepare step: reuse it, never add a second one.
+        const recordedWorktreePath =
+          resumable !== null &&
+          resumable.worktreePath !== null &&
+          resumable.worktreePath !== (bootstrap?.createThread?.worktreePath ?? null)
+            ? resumable.worktreePath
+            : null;
+        if (recordedWorktreePath !== null) targetWorktreePath = recordedWorktreePath;
+
+        const leftoverBranch = bootstrap?.prepareWorktree?.branch;
+        const adoptedWorktreePath =
+          resumable !== null &&
+          recordedWorktreePath === null &&
+          bootstrap?.prepareWorktree !== undefined &&
+          leftoverBranch !== undefined &&
+          options?.workspaceGroup === undefined
+            ? yield* findUnrecordedWorktree(bootstrap.prepareWorktree.projectCwd, leftoverBranch)
+            : null;
+        if (adoptedWorktreePath !== null && leftoverBranch !== undefined) {
+          yield* Effect.logInfo("bootstrap turn start adopted an unrecorded worktree", {
+            threadId: command.threadId,
+            worktreePath: adoptedWorktreePath,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+            threadId: command.threadId,
+            branch: leftoverBranch,
+            worktreePath: adoptedWorktreePath,
+          });
+          yield* refreshGitStatus(adoptedWorktreePath);
+          targetWorktreePath = adoptedWorktreePath;
+        }
+
+        if (bootstrap?.createThread && resumable === null) {
           const created = yield* dispatchWithOptions(
             {
               type: "thread.create",
@@ -471,11 +684,14 @@ export const make = Effect.gen(function* () {
           createdThread = true;
         }
 
-        const preparedPath = yield* prepareWorktreeFor({
-          threadId: command.threadId,
-          prepareWorktree: bootstrap?.prepareWorktree,
-          options,
-        });
+        const preparedPath =
+          recordedWorktreePath !== null || adoptedWorktreePath !== null
+            ? null
+            : yield* prepareWorktreeFor({
+                threadId: command.threadId,
+                prepareWorktree: bootstrap?.prepareWorktree,
+                options,
+              });
         if (preparedPath !== null) targetWorktreePath = preparedPath;
 
         if (bootstrap?.runSetupScript && targetWorktreePath) {
@@ -506,13 +722,16 @@ export const make = Effect.gen(function* () {
               toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
             ),
           );
-    return startup
+    const queued = startup
       .enqueueCommand(dispatchEffect)
       .pipe(
         Effect.mapError((cause) =>
           toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
         ),
       );
+    return command.type === "thread.turn.start" && command.bootstrap
+      ? runTurnStartBootstrap(`thread ${command.threadId}`, command.commandId, queued)
+      : queued;
   };
 
   const createThread: TurnStartBootstrap["Service"]["createThread"] = (input, options) => {
@@ -537,13 +756,17 @@ export const make = Effect.gen(function* () {
       }
       return { sequence: created.sequence, worktreePath };
     });
-    return startup
-      .enqueueCommand(withThreadCleanup(input.create.threadId, () => createdThread, program))
-      .pipe(
-        Effect.mapError((cause) =>
-          toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+    return runCreateThreadBootstrap(
+      `thread ${input.create.threadId}`,
+      input.create.commandId,
+      startup
+        .enqueueCommand(withThreadCleanup(input.create.threadId, () => createdThread, program))
+        .pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+          ),
         ),
-      );
+    );
   };
 
   return TurnStartBootstrap.of({ dispatch, createThread });
@@ -568,5 +791,11 @@ export const passthroughLayer = Layer.effect(
   }),
 );
 
-/** Needs `ThreadWorkspaceGroups.layer` (shared child worktrees) from the caller. */
-export const layer = Layer.effect(TurnStartBootstrap, make);
+/**
+ * Needs `ThreadWorkspaceGroups.layer` (shared child worktrees) and the
+ * projection query from the caller. The production runtime exposes the shared
+ * application receipt repository, not its V2 adapter, so adapt it here.
+ */
+export const layer = Layer.effect(TurnStartBootstrap, make).pipe(
+  Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),
+);
