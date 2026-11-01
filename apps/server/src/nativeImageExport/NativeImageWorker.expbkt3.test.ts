@@ -99,6 +99,11 @@ mac("refuses malformed locators without launching a worker", async () => {
       { ...job, step_id: "x".repeat(201) },
       { ...job, action_id: "../../x" },
       { ...job, item_id: "weak-image" },
+      { ...job, run_key: job.run_key + "\n" },
+      { ...job, claim_owner: job.claim_owner + "\n" },
+      { ...job, step_id: job.step_id + "\n" },
+      { ...job, action_id: job.action_id + "\n" },
+      { ...job, item_id: job.item_id + "\n" },
     ]) {
       await expect(new NativeImageWorkerLauncher(f.pin).run(f.port, changed)).rejects.toThrow(
         NativeImageRpcClosed,
