@@ -68,6 +68,23 @@ function fixture() {
 }
 
 describe("native image turn binding", () => {
+  it("signals revocation immediately without waiting for another port operation", () => {
+    const f = fixture();
+    expect(f.port.signal.aborted).toBe(false);
+    f.lease.close();
+    expect(f.port.signal.aborted).toBe(true);
+  });
+
+  it("signals the replaced port without aborting the replacement", () => {
+    const f = fixture();
+    f.bindings.open({ ...f.turn, runtimeIdentity: {} });
+    const next = f.bindings.bind(f.caller, f.host, ITEM, f.rpc);
+    expect(f.port.signal.aborted).toBe(true);
+    f.lease.close();
+    f.bindings.closeSession(f.turn.runtimeIdentity);
+    expect(next.signal.aborted).toBe(false);
+  });
+
   it("uses the registered provider-turn identity and permits one pinned image", async () => {
     const f = fixture();
     expect(f.port.execution()).toEqual({

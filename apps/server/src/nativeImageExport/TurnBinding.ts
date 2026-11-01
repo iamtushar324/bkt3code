@@ -11,6 +11,8 @@ export interface NativeImageTurn {
   readonly runtimeIdentity: object;
 }
 
+type ActiveNativeImageTurn = NativeImageTurn & { readonly revocation: AbortController };
+
 export interface NativeImageCaller {
   readonly principal: string;
   readonly backgroundGrantHash?: string | undefined;
@@ -65,7 +67,7 @@ const hasKeys = (value: RecordValue, keys: ReadonlyArray<string>) =>
  * Capture the actual startTurn.runId, not a latest-run query or a background-session liveness check.
  */
 export class NativeImageTurnBindings {
-  readonly #active = new Map<string, NativeImageTurn>();
+  readonly #active = new Map<string, ActiveNativeImageTurn>();
 
   open(turn: NativeImageTurn) {
     if (
@@ -77,19 +79,25 @@ export class NativeImageTurnBindings {
     ) {
       refuse();
     }
-    const current = Object.freeze({ ...turn });
+    const current = Object.freeze({ ...turn, revocation: new AbortController() });
+    const previous = this.#active.get(turn.threadId);
     this.#active.set(turn.threadId, current);
+    previous?.revocation.abort();
     // An old terminal callback must not revoke a replacement turn.
     return Object.freeze({
       close: () => {
         if (this.#active.get(turn.threadId) === current) this.#active.delete(turn.threadId);
+        current.revocation.abort();
       },
     });
   }
 
   closeSession(runtimeIdentity: object) {
-    for (const [threadId, turn] of this.#active) {
-      if (turn.runtimeIdentity === runtimeIdentity) this.#active.delete(threadId);
+    for (const [threadId, turn] of Array.from(this.#active)) {
+      if (turn.runtimeIdentity === runtimeIdentity) {
+        if (this.#active.get(threadId) === turn) this.#active.delete(threadId);
+        turn.revocation.abort();
+      }
     }
   }
 
@@ -129,14 +137,14 @@ class NativeImageBoundPort {
   #sourceVerified = false;
   #mintAttempted = false;
   #busy = false;
-  readonly #turn: NativeImageTurn;
+  readonly #turn: ActiveNativeImageTurn;
   readonly #host: NativeImageHost;
   readonly #itemId: string;
   readonly #rpc: Rpc;
   readonly #assertCurrent: () => void;
 
   constructor(
-    turn: NativeImageTurn,
+    turn: ActiveNativeImageTurn,
     host: NativeImageHost,
     itemId: string,
     rpc: Rpc,
@@ -151,6 +159,10 @@ class NativeImageBoundPort {
 
   toJSON(): never {
     return refuse();
+  }
+
+  get signal(): AbortSignal {
+    return this.#turn.revocation.signal;
   }
 
   execution() {

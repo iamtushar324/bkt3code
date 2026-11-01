@@ -112,9 +112,8 @@ it("suppresses the original private RPC exception and closes after failure", asy
 it("returns no context after the real provider turn is closed", async () => {
   const f = fixture();
   f.lease.close();
-  expect(
-    JSON.parse(
-      await f.channel.request(JSON.stringify({ schema: SCHEMA, id: 1, method: "execution" })),
-    ).ok,
-  ).toBe(false);
+  expect(f.channel.closed).toBe(true);
+  await expect(
+    f.channel.request(JSON.stringify({ schema: SCHEMA, id: 1, method: "execution" })),
+  ).rejects.toThrow(NativeImageRpcClosed);
 });

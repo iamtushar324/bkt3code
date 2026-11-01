@@ -8,10 +8,10 @@ const request = new TextEncoder().encode(
   JSON.stringify({ schema: "fiverr-native-rpc-ipc.v1", id: 1, method: "execution" }) + "\n",
 );
 
-function fixture(chunks: Uint8Array[], readError?: Error) {
+function fixture(chunks: Uint8Array[], readError?: Error, dispatch?: () => Promise<unknown>) {
   const thread = "6825b7cc-4b34-48c0-9713-42b95cb866c3";
   const bindings = new NativeImageTurnBindings();
-  bindings.open({
+  const lease = bindings.open({
     threadId: thread,
     runId: `run:thread:${thread}:ordinal:1`,
     providerInstanceId: "codex",
@@ -32,9 +32,10 @@ function fixture(chunks: Uint8Array[], readError?: Error) {
       origin: "http://127.0.0.1:13773",
     },
     "turn-item:provider:codex:native-item:call_0123456789abcdef",
-    async () => {
-      throw new Error("No RPC expected");
-    },
+    dispatch ??
+      (async () => {
+        throw new Error("No RPC expected");
+      }),
   );
   const output: string[] = [];
   let destroyed = false;
@@ -51,8 +52,39 @@ function fixture(chunks: Uint8Array[], readError?: Error) {
       destroyed = true;
     },
   };
-  return { pipe, rpc: new NativeImageRpc(port), output, destroyed: () => destroyed };
+  return { pipe, rpc: new NativeImageRpc(port), output, destroyed: () => destroyed, lease };
 }
+
+it("closes an idle private pipe immediately when its turn is revoked", async () => {
+  const f = fixture([]);
+  const reading = Promise.withResolvers<void>();
+  const pending = Promise.withResolvers<IteratorResult<Uint8Array>>();
+  let destroys = 0;
+  const pipe = {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          reading.resolve();
+          return pending.promise;
+        },
+      };
+    },
+    write() {
+      throw new Error("No response is expected on an idle revoked pipe");
+    },
+    destroy() {
+      destroys++;
+      pending.resolve({ done: true, value: undefined });
+    },
+  };
+  const serving = serveNativeImagePipe(pipe, f.rpc);
+  await reading.promise;
+  f.lease.close();
+  expect(destroys).toBe(1);
+  expect(f.rpc.closed).toBe(true);
+  await serving;
+  expect(destroys).toBe(1);
+});
 
 it("handles fragmented request frames on the private channel", async () => {
   const f = fixture([request.subarray(0, 11), request.subarray(11)]);
@@ -82,6 +114,74 @@ it("does not expose the original stream error", async () => {
   const secret = "synthetic-private-pipe-secret";
   const f = fixture([], new Error(secret));
   const error = await serveNativeImagePipe(f.pipe, f.rpc).catch((value: unknown) => value);
+  expect(error).toBeInstanceOf(NativeImageRpcClosed);
+  expect((error as Error).stack).not.toContain(secret);
+  expect((error as Error).cause).toBeUndefined();
+});
+
+it("does not start reading an already revoked pipe", async () => {
+  const f = fixture([]);
+  let reads = 0;
+  f.lease.close();
+  await serveNativeImagePipe(
+    {
+      ...f.pipe,
+      [Symbol.asyncIterator]() {
+        reads++;
+        throw new Error("A revoked pipe must not be read");
+      },
+    },
+    f.rpc,
+  );
+  expect(reads).toBe(0);
+  expect(f.destroyed()).toBe(true);
+  expect(f.output).toEqual([]);
+});
+
+it("destroys the channel before an in-flight private result settles and discards that result", async () => {
+  const called = Promise.withResolvers<void>();
+  const result = Promise.withResolvers<unknown>();
+  const secret = "synthetic-private-asset-path";
+  const frame = new TextEncoder().encode(
+    JSON.stringify({
+      schema: "fiverr-native-rpc-ipc.v1",
+      id: 1,
+      method: "call",
+      tool: "t3_ui_orchestration_get_turn_item",
+      input: {
+        threadId: "6825b7cc-4b34-48c0-9713-42b95cb866c3",
+        itemId: "turn-item:provider:codex:native-item:call_0123456789abcdef",
+      },
+    }) + "\n",
+  );
+  const f = fixture([frame], undefined, async () => {
+    called.resolve();
+    return result.promise;
+  });
+  const serving = serveNativeImagePipe(f.pipe, f.rpc);
+  await called.promise;
+  f.lease.close();
+  expect(f.destroyed()).toBe(true);
+  expect(f.rpc.closed).toBe(true);
+  result.resolve({ relativeUrl: secret });
+  const error = await serving.catch((value: unknown) => value);
+  expect(error).toBeInstanceOf(NativeImageRpcClosed);
+  expect((error as Error).stack).not.toContain(secret);
+  expect(f.output).toEqual([]);
+});
+
+it("does not expose the original destroy failure", async () => {
+  const f = fixture([]);
+  const secret = "synthetic-destroy-failure";
+  const error = await serveNativeImagePipe(
+    {
+      ...f.pipe,
+      destroy() {
+        throw new Error(secret);
+      },
+    },
+    f.rpc,
+  ).catch((value: unknown) => value);
   expect(error).toBeInstanceOf(NativeImageRpcClosed);
   expect((error as Error).stack).not.toContain(secret);
   expect((error as Error).cause).toBeUndefined();

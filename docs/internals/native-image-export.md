@@ -22,6 +22,11 @@ runtime object together. It never queries for the latest run. A terminal callbac
 its own lease; stopping an old process cannot revoke a replacement process's lease. A bound port
 checks that exact lease before and after each asynchronous operation.
 
+Revocation also emits a code-owned abort signal. The private channel closes immediately and
+destroys its owned pipe, including while its reader is idle. A dispatched operation can still
+finish; its late result is discarded. The future worker launcher must use the same signal and
+reconcile any dispatched export through the existing journal rather than retrying it.
+
 The start wrapper retains its actual runtime; a later session-map lookup cannot select a
 replacement runtime for the old start. The same entry supplies its credential. A code-owned
 predicate checks both identities synchronously when the lease is published, so a suspension

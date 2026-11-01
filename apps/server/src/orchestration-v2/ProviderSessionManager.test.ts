@@ -789,7 +789,9 @@ it.effect("binds native image authority to the real start and revokes it on proc
         })
         .pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, scope!));
       assert.equal(port.execution().run_id, runId);
+      assert.isFalse(port.signal.aborted);
       yield* manager.close(providerSessionId);
+      assert.isTrue(port.signal.aborted);
       assert.throws(() => port.execution(), NativeImageBindingRefused);
     }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, nativeImageLayer })));
   }),

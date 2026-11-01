@@ -3,6 +3,7 @@ import { NativeImageRpcClosed, type NativeImageRpc } from "./NativeImageRpc.ts";
 
 interface PrivatePipe extends AsyncIterable<Uint8Array> {
   write(value: string, callback: (error?: Error | null) => void): unknown;
+  // The owned adapter must stop both directions and settle any pending read.
   destroy(): unknown;
 }
 
@@ -12,7 +13,27 @@ export async function serveNativeImagePipe(pipe: PrivatePipe, rpc: NativeImageRp
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let fragments: Uint8Array[] = [];
   let size = 0;
+  let destroyed = false;
+  let destroyFailed = false;
+  const destroy = () => {
+    if (destroyed) return;
+    destroyed = true;
+    try {
+      pipe.destroy();
+    } catch {
+      destroyFailed = true;
+    }
+  };
+  const revoke = () => {
+    rpc.close();
+    destroy();
+  };
+  rpc.signal.addEventListener("abort", revoke, { once: true });
   try {
+    if (rpc.signal.aborted) {
+      revoke();
+      return;
+    }
     for await (const chunk of pipe) {
       size += chunk.byteLength;
       if (size > MAX_FRAME) throw new NativeImageRpcClosed();
@@ -29,6 +50,7 @@ export async function serveNativeImagePipe(pipe: PrivatePipe, rpc: NativeImageRp
         offset += part.byteLength;
       }
       const response = await rpc.request(decoder.decode(frame));
+      if (rpc.signal.aborted) throw new NativeImageRpcClosed();
       await new Promise<void>((resolve, reject) => {
         pipe.write(response, (error) => (error ? reject(new NativeImageRpcClosed()) : resolve()));
       });
@@ -41,7 +63,9 @@ export async function serveNativeImagePipe(pipe: PrivatePipe, rpc: NativeImageRp
     // Neither pipe errors nor private response bytes may escape into an agent-visible error.
     throw new NativeImageRpcClosed();
   } finally {
+    rpc.signal.removeEventListener("abort", revoke);
     rpc.close();
-    pipe.destroy();
+    destroy();
+    if (destroyFailed) throw new NativeImageRpcClosed();
   }
 }

@@ -20,17 +20,25 @@ export class NativeImageRpc {
   #nextId = 1;
   #pending = false;
   #closed = false;
+  readonly #onRevoke = () => this.close();
 
   constructor(port: Port) {
     this.#port = port;
+    if (port.signal.aborted) this.close();
+    else port.signal.addEventListener("abort", this.#onRevoke, { once: true });
   }
 
   close() {
     this.#closed = true;
+    this.#port.signal.removeEventListener("abort", this.#onRevoke);
   }
 
   get closed() {
     return this.#closed;
+  }
+
+  get signal(): AbortSignal {
+    return this.#port.signal;
   }
 
   async request(line: string): Promise<string> {
