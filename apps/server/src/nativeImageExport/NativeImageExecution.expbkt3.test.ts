@@ -71,7 +71,12 @@ it.effect("refuses a caller without an actual provider start, then binds its exa
     expect(yield* service.bind(itemId, unusedRpc).pipe(Effect.flip)).toBeInstanceOf(
       NativeImageExecution.NativeImageExecutionRefused,
     );
-    yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => true,
+    });
     const port = yield* service.bind(itemId, unusedRpc);
     expect(port.execution().run_id).toBe(f.input.runId);
     yield* service.terminal({
@@ -90,13 +95,23 @@ it.effect("does not let a late terminal event revoke the next run", () => {
   const f = fixture();
   return Effect.gen(function* () {
     const service = yield* NativeImageExecution.NativeImageExecution;
-    yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => true,
+    });
     const next = {
       ...f.input,
       runId: `run:thread:${threadId}:ordinal:12`,
       runOrdinal: 12,
     } as Input;
-    yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: next });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: next,
+      isCurrent: () => true,
+    });
     yield* service.terminal({
       runtime: f.runtime,
       providerThreadId: f.input.providerThread.id,
@@ -114,8 +129,18 @@ it.effect("stops only the actual process, not a replacement with the same logica
   return Effect.gen(function* () {
     const service = yield* NativeImageExecution.NativeImageExecution;
     const replacement = { ...f.runtime };
-    yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
-    yield* service.started({ runtime: replacement, credentialId: "credential-a", input: f.input });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => true,
+    });
+    yield* service.started({
+      runtime: replacement,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => true,
+    });
     yield* service.stopped(f.runtime);
     const port = yield* service.bind(itemId, unusedRpc);
     yield* service.stopped(replacement);
@@ -126,11 +151,47 @@ it.effect("stops only the actual process, not a replacement with the same logica
   );
 });
 
+it.effect("a replaced runtime cannot publish its delayed lease over the current run", () => {
+  const f = fixture();
+  return Effect.gen(function* () {
+    const service = yield* NativeImageExecution.NativeImageExecution;
+    const replacement = { ...f.runtime };
+    const next = {
+      ...f.input,
+      runId: `run:thread:${threadId}:ordinal:12`,
+      runOrdinal: 12,
+    } as Input;
+    yield* service.started({
+      runtime: replacement,
+      credentialId: "credential-a",
+      input: next,
+      isCurrent: () => true,
+    });
+    const port = yield* service.bind(itemId, unusedRpc);
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => false,
+    });
+    yield* service.stopped(f.runtime);
+    expect(port.execution().run_id).toBe(next.runId);
+  }).pipe(
+    Effect.provide(testLayer()),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, f.scope),
+  );
+});
+
 it.effect("does not register a start without its actual MCP credential", () => {
   const f = fixture();
   return Effect.gen(function* () {
     const service = yield* NativeImageExecution.NativeImageExecution;
-    yield* service.started({ runtime: f.runtime, credentialId: undefined, input: f.input });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: undefined,
+      input: f.input,
+      isCurrent: () => true,
+    });
     expect(yield* service.bind(itemId, unusedRpc).pipe(Effect.flip)).toBeInstanceOf(
       NativeImageExecution.NativeImageExecutionRefused,
     );
@@ -144,7 +205,12 @@ it.effect("uses the actual listener port instead of an origin supplied by the ca
   const f = fixture();
   return Effect.gen(function* () {
     const service = yield* NativeImageExecution.NativeImageExecution;
-    yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
+    yield* service.started({
+      runtime: f.runtime,
+      credentialId: "credential-a",
+      input: f.input,
+      isCurrent: () => true,
+    });
     expect(yield* service.bind(itemId, unusedRpc).pipe(Effect.flip)).toBeInstanceOf(
       NativeImageExecution.NativeImageExecutionRefused,
     );
@@ -160,7 +226,12 @@ it.effect.each(["0.0.0.0", "::"])(
     const f = fixture();
     return Effect.gen(function* () {
       const service = yield* NativeImageExecution.NativeImageExecution;
-      yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
+      yield* service.started({
+        runtime: f.runtime,
+        credentialId: "credential-a",
+        input: f.input,
+        isCurrent: () => true,
+      });
       expect(yield* service.bind(itemId, unusedRpc).pipe(Effect.flip)).toBeInstanceOf(
         NativeImageExecution.NativeImageExecutionRefused,
       );

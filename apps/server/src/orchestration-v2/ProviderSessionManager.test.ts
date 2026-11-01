@@ -709,24 +709,27 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
 });
 
 // T3-CUSTOM(expbkt3): actual provider-start inputs bind the optional native-image context.
+const nativeImageTestLayer = () =>
+  NativeImageExecution.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 13773),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+    ),
+    Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+    Layer.provide(Layer.succeed(HostProcess.Username, "beknown")),
+    Layer.provide(Layer.succeed(HostProcess.Hostname, "synthetic-usm")),
+    Layer.provide(Layer.succeed(HostProcess.UserId, 501)),
+  );
+
 it.effect("binds native image authority to the real start and revokes it on process close", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const nativeImageLayer = NativeImageExecution.layer.pipe(
-      Layer.provide(
-        Layer.succeed(
-          HttpServer.HttpServer,
-          HttpServer.HttpServer.of({
-            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 13773),
-            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
-          }),
-        ),
-      ),
-      Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
-      Layer.provide(Layer.succeed(HostProcess.Username, "beknown")),
-      Layer.provide(Layer.succeed(HostProcess.Hostname, "synthetic-usm")),
-      Layer.provide(Layer.succeed(HostProcess.UserId, 501)),
-    );
+    const nativeImageLayer = nativeImageTestLayer();
     yield* Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const image = yield* NativeImageExecution.NativeImageExecution;
@@ -789,6 +792,199 @@ it.effect("binds native image authority to the real start and revokes it on proc
       yield* manager.close(providerSessionId);
       assert.throws(() => port.execution(), NativeImageBindingRefused);
     }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, nativeImageLayer })));
+  }),
+);
+
+// T3-CUSTOM(expbkt3): a stale wrapper must not open authority on the replacement runtime.
+it.effect("does not bind native image authority for a replaced runtime's failed start", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const nativeImageLayer = nativeImageTestLayer();
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const image = yield* NativeImageExecution.NativeImageExecution;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = ThreadId.make("c6c8a6eb-281e-458e-98dc-33776c680f5a");
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+      });
+      const providerSessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      const stale = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.release({ providerSessionId, reason: "runtime_error" });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      const runId = ids.derive.run({ threadId, ordinal: 1 });
+      const result = yield* stale
+        .startTurn({
+          appThread: (yield* projections.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: ids.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: ids.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId,
+            now,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* ids.allocate.message({ threadId, ordinal: 1 }),
+            text: "stale runtime start",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+
+      const config = yield* sessions.read(threadId);
+      assert.isDefined(config);
+      const scope = yield* registry.resolve(config!.authorizationHeader.replace(/^Bearer\s+/, ""));
+      assert.isDefined(scope);
+      const binding = yield* image
+        .bind("turn-item:provider:codex:native-item:call_0123456789abcdef", async () => {
+          throw new Error("No native RPC expected");
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope!),
+          Effect.exit,
+        );
+      assert.isTrue(Exit.isFailure(binding));
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          nativeImageLayer,
+          startTurn: Effect.die("stale start failed"),
+        }),
+      ),
+    );
+  }),
+);
+
+// T3-CUSTOM(expbkt3): replacement can occur while the optional start callback is suspended.
+it.effect("keeps the replacement's native image lease when an older start callback resumes", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const hold = yield* Ref.make(true);
+    const paused = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const nativeImageLayer = Layer.effect(
+      NativeImageExecution.NativeImageExecution,
+      Effect.gen(function* () {
+        const service = yield* NativeImageExecution.NativeImageExecution;
+        return NativeImageExecution.NativeImageExecution.of({
+          ...service,
+          started: (input) =>
+            Ref.get(hold).pipe(
+              Effect.flatMap((held) =>
+                held
+                  ? Deferred.succeed(paused, undefined).pipe(
+                      Effect.andThen(Deferred.await(resume)),
+                      Effect.andThen(service.started(input)),
+                    )
+                  : service.started(input),
+              ),
+            ),
+        });
+      }),
+    ).pipe(Layer.provide(nativeImageTestLayer()));
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const image = yield* NativeImageExecution.NativeImageExecution;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = ThreadId.make("866ad091-008c-41de-8ea7-f66bb216fb19");
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+      });
+      const providerSessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      const first = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const input = (ordinal: number) =>
+        Effect.gen(function* () {
+          const runId = ids.derive.run({ threadId, ordinal });
+          return {
+            appThread: (yield* projections.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: ids.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: ids.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({
+              idAllocator: ids,
+              threadId,
+              providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              messageId: yield* ids.allocate.message({ threadId, ordinal }),
+              text: "synthetic replacement during start",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          };
+        });
+      const oldStart = yield* first
+        .startTurn(yield* input(1))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(paused);
+      yield* Ref.set(hold, false);
+      yield* manager.release({ providerSessionId, reason: "runtime_error" });
+      const replacement = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const next = yield* input(2);
+      yield* replacement.startTurn(next);
+      const config = yield* sessions.read(threadId);
+      assert.isDefined(config);
+      const scope = yield* registry.resolve(config!.authorizationHeader.replace(/^Bearer\s+/, ""));
+      assert.isDefined(scope);
+      const port = yield* image
+        .bind("turn-item:provider:codex:native-item:call_0123456789abcdef", async () => {
+          throw new Error("No native RPC expected");
+        })
+        .pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, scope!));
+      assert.equal(port.execution().run_id, next.runId);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(oldStart);
+      assert.equal(port.execution().run_id, next.runId);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, nativeImageLayer })));
   }),
 );
 

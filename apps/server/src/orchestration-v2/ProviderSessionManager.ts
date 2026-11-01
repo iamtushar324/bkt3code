@@ -1652,6 +1652,7 @@ export const layerWithOptions = (
         providerSessionId: ProviderSessionId,
         turnKey: string,
         nativeTurn: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ) =>
         withActivityError(
           providerSessionId,
@@ -1677,11 +1678,20 @@ export const layerWithOptions = (
             // T3-CUSTOM(expbkt3): only the real provider start supplies run and credential identity.
             if (Option.isSome(nativeImageExecution)) {
               const entry = (yield* Ref.get(sessions)).get(key);
-              if (entry !== undefined) {
+              if (entry?.runtime === runtime) {
+                const credentialId = entry.mcpCredentialIdByThread.get(nativeTurn.threadId);
                 yield* nativeImageExecution.value.started({
-                  runtime: entry.runtime,
-                  credentialId: entry.mcpCredentialIdByThread.get(nativeTurn.threadId),
+                  runtime,
+                  credentialId,
                   input: nativeTurn,
+                  // T3-CUSTOM(expbkt3): check at synchronous lease publication, after any suspension.
+                  isCurrent: () => {
+                    const current = Ref.getUnsafe(sessions).get(key);
+                    return (
+                      current?.runtime === runtime &&
+                      current.mcpCredentialIdByThread.get(nativeTurn.threadId) === credentialId
+                    );
+                  },
                 });
               }
             }
@@ -2093,6 +2103,7 @@ export const layerWithOptions = (
                       providerSessionId,
                       busyTurnKey(input.providerThread.id, input.runOrdinal),
                       input,
+                      runtime,
                     ),
                   ),
                   () =>

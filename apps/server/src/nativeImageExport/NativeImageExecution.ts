@@ -19,6 +19,7 @@ type Started = {
   readonly runtime: Runtime;
   readonly credentialId: string | undefined;
   readonly input: TurnInput;
+  readonly isCurrent: () => boolean;
 };
 type Terminal = {
   readonly runtime: Runtime;
@@ -67,9 +68,15 @@ const make = Effect.gen(function* () {
   const key = (providerThreadId: string, ordinal: number) => `${providerThreadId}\0${ordinal}`;
 
   // Lifecycle callbacks already run inside provider-session spans and do no I/O.
-  const started = Effect.fnUntraced(function* ({ runtime, credentialId, input }: Started) {
+  const started = Effect.fnUntraced(function* ({
+    runtime,
+    credentialId,
+    input,
+    isCurrent,
+  }: Started) {
     yield* Effect.sync(() => {
       if (
+        !isCurrent() ||
         runtime.instanceId !== "codex" ||
         credentialId === undefined ||
         !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(input.threadId)
