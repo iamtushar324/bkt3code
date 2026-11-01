@@ -82,7 +82,7 @@ it("closes an idle private pipe immediately when its turn is revoked", async () 
   f.lease.close();
   expect(destroys).toBe(1);
   expect(f.rpc.closed).toBe(true);
-  await serving;
+  await expect(serving).rejects.toThrow(NativeImageRpcClosed);
   expect(destroys).toBe(1);
 });
 
@@ -123,16 +123,18 @@ it("does not start reading an already revoked pipe", async () => {
   const f = fixture([]);
   let reads = 0;
   f.lease.close();
-  await serveNativeImagePipe(
-    {
-      ...f.pipe,
-      [Symbol.asyncIterator]() {
-        reads++;
-        throw new Error("A revoked pipe must not be read");
+  await expect(
+    serveNativeImagePipe(
+      {
+        ...f.pipe,
+        [Symbol.asyncIterator]() {
+          reads++;
+          throw new Error("A revoked pipe must not be read");
+        },
       },
-    },
-    f.rpc,
-  );
+      f.rpc,
+    ),
+  ).rejects.toThrow(NativeImageRpcClosed);
   expect(reads).toBe(0);
   expect(f.destroyed()).toBe(true);
   expect(f.output).toEqual([]);
@@ -185,4 +187,58 @@ it("does not expose the original destroy failure", async () => {
   expect(error).toBeInstanceOf(NativeImageRpcClosed);
   expect((error as Error).stack).not.toContain(secret);
   expect((error as Error).cause).toBeUndefined();
+});
+
+it("does not write a valid response when revocation runs before the pipe continuation", async () => {
+  const f = fixture([request]);
+  const original = f.rpc.request.bind(f.rpc);
+  let completedWhileCurrent = false;
+  f.rpc.request = (line) => {
+    const pending = original(line);
+    void pending.then(
+      (response) => {
+        completedWhileCurrent = JSON.parse(response).ok === true && !f.rpc.signal.aborted;
+        f.lease.close();
+      },
+      () => undefined,
+    );
+    return pending;
+  };
+  await expect(serveNativeImagePipe(f.pipe, f.rpc)).rejects.toThrow(NativeImageRpcClosed);
+  expect(completedWhileCurrent).toBe(true);
+  expect(f.output).toEqual([]);
+  expect(f.destroyed()).toBe(true);
+});
+
+it("settles a pending write callback when revocation destroys the pipe", async () => {
+  const f = fixture([request]);
+  const writing = Promise.withResolvers<void>();
+  let callback: ((error?: Error | null) => void) | undefined;
+  let callbacks = 0;
+  let destroys = 0;
+  const secret = "synthetic-pending-write-error";
+  const pipe = {
+    ...f.pipe,
+    write(_value: string, done: (error?: Error | null) => void) {
+      callback = done;
+      writing.resolve();
+    },
+    destroy() {
+      destroys++;
+      if (callback) {
+        callbacks++;
+        callback(new Error(secret));
+        callback = undefined;
+      }
+    },
+  };
+  const serving = serveNativeImagePipe(pipe, f.rpc);
+  await writing.promise;
+  f.lease.close();
+  const error = await serving.catch((value: unknown) => value);
+  expect(error).toBeInstanceOf(NativeImageRpcClosed);
+  expect((error as Error).stack).not.toContain(secret);
+  expect((error as Error).cause).toBeUndefined();
+  expect(callbacks).toBe(1);
+  expect(destroys).toBe(1);
 });

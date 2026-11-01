@@ -26,6 +26,9 @@ Revocation also emits a code-owned abort signal. The private channel closes imme
 destroys its owned pipe, including while its reader is idle. A dispatched operation can still
 finish; its late result is discarded. The future worker launcher must use the same signal and
 reconcile any dispatched export through the existing journal rather than retrying it.
+Every revocation ends the pipe operation with the same fixed closed-channel error. An owned
+adapter must settle pending reads and write callbacks when destroyed; closing only its read side
+can leave the worker waiting for a write that will never complete.
 
 The start wrapper retains its actual runtime; a later session-map lookup cannot select a
 replacement runtime for the old start. The same entry supplies its credential. A code-owned

@@ -3,7 +3,7 @@ import { NativeImageRpcClosed, type NativeImageRpc } from "./NativeImageRpc.ts";
 
 interface PrivatePipe extends AsyncIterable<Uint8Array> {
   write(value: string, callback: (error?: Error | null) => void): unknown;
-  // The owned adapter must stop both directions and settle any pending read.
+  // Destruction must stop both directions, settle pending reads, and invoke pending write callbacks.
   destroy(): unknown;
 }
 
@@ -66,6 +66,6 @@ export async function serveNativeImagePipe(pipe: PrivatePipe, rpc: NativeImageRp
     rpc.signal.removeEventListener("abort", revoke);
     rpc.close();
     destroy();
-    if (destroyFailed) throw new NativeImageRpcClosed();
+    if (rpc.signal.aborted || destroyFailed) throw new NativeImageRpcClosed();
   }
 }
