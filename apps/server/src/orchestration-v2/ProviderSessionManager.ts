@@ -18,6 +18,8 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+// T3-CUSTOM(expbkt3): an optional, closed-by-default native-image execution hook.
+import * as NativeImageExecution from "../nativeImageExport/NativeImageExecution.ts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -358,6 +360,10 @@ export const layerWithOptions = (
       // T3-CUSTOM(expbkt3): production always supplies both identity services.
       const identityService = yield* Effect.serviceOption(SessionIdentityEnvironmentService);
       const sourceControlProfiles = yield* Effect.serviceOption(SourceControlProfileService);
+      // T3-CUSTOM(expbkt3): absent unless the native-image integration is explicitly composed.
+      const nativeImageExecution = yield* Effect.serviceOption(
+        NativeImageExecution.NativeImageExecution,
+      );
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1189,6 +1195,10 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  // T3-CUSTOM(expbkt3): revoke export contexts before awaiting process cleanup.
+                  if (Option.isSome(nativeImageExecution)) {
+                    yield* nativeImageExecution.value.stopped(entry.runtime);
+                  }
                   const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
                     entry,
                     reason: input.reason,
@@ -1638,7 +1648,11 @@ export const layerWithOptions = (
             .pipe(Effect.ensuring(Effect.sync(dropReservation)));
         });
 
-      const markBusy = (providerSessionId: ProviderSessionId, turnKey: string) =>
+      const markBusy = (
+        providerSessionId: ProviderSessionId,
+        turnKey: string,
+        nativeTurn: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+      ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
@@ -1660,6 +1674,17 @@ export const layerWithOptions = (
               return [entry.idleFiber, updated] as const;
             });
             yield* cancelIdleFiber(idleFiber);
+            // T3-CUSTOM(expbkt3): only the real provider start supplies run and credential identity.
+            if (Option.isSome(nativeImageExecution)) {
+              const entry = (yield* Ref.get(sessions)).get(key);
+              if (entry !== undefined) {
+                yield* nativeImageExecution.value.started({
+                  runtime: entry.runtime,
+                  credentialId: entry.mcpCredentialIdByThread.get(nativeTurn.threadId),
+                  input: nativeTurn,
+                });
+              }
+            }
           }),
         );
 
@@ -1667,6 +1692,7 @@ export const layerWithOptions = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
         runOrdinal: number,
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ) =>
         withActivityError(
           providerSessionId,
@@ -1688,6 +1714,10 @@ export const layerWithOptions = (
               });
               return updated;
             });
+            // T3-CUSTOM(expbkt3): the exact runtime object fences a replaced provider process.
+            if (Option.isSome(nativeImageExecution)) {
+              yield* nativeImageExecution.value.terminal({ runtime, providerThreadId, runOrdinal });
+            }
             yield* scheduleIdleReleaseInternal(providerSessionId);
             yield* scheduleThreadUnload(providerSessionId, providerThreadId);
           }),
@@ -2062,6 +2092,7 @@ export const layerWithOptions = (
                     markBusy(
                       providerSessionId,
                       busyTurnKey(input.providerThread.id, input.runOrdinal),
+                      input,
                     ),
                   ),
                   () =>
@@ -2070,7 +2101,12 @@ export const layerWithOptions = (
                     Exit.isFailure(exit)
                       ? observeActivity(
                           providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                          markIdle(
+                            providerSessionId,
+                            input.providerThread.id,
+                            input.runOrdinal,
+                            runtime,
+                          ),
                         )
                       : Effect.void,
                 ),
@@ -2162,6 +2198,7 @@ export const layerWithOptions = (
                     entry.runtime.providerSessionId,
                     event.providerThreadId,
                     event.runOrdinal,
+                    entry.runtime,
                   )
                 : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(

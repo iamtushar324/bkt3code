@@ -2,6 +2,11 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+// T3-CUSTOM(expbkt3): synthetic native-export lifecycle integration.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NativeImageExecution from "../nativeImageExport/NativeImageExecution.ts";
+import { NativeImageBindingRefused } from "../nativeImageExport/TurnBinding.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import {
   MessageId,
   UserId, // T3-CUSTOM(expbkt3): queued sender and runtime credential isolation.
@@ -606,6 +611,8 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  // T3-CUSTOM(expbkt3): absent in normal production composition.
+  readonly nativeImageLayer?: Layer.Layer<NativeImageExecution.NativeImageExecution>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -683,9 +690,11 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.nativeImageLayer === undefined ? [] : [input.nativeImageLayer]),
         ),
       ),
     ),
+    ...(input.nativeImageLayer === undefined ? [] : [input.nativeImageLayer]),
   ).pipe(Layer.provide(NodeServices.layer));
 }
 
@@ -698,6 +707,90 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-provider-session-manager")),
   getDescriptor: Effect.die("unused"),
 });
+
+// T3-CUSTOM(expbkt3): actual provider-start inputs bind the optional native-image context.
+it.effect("binds native image authority to the real start and revokes it on process close", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const nativeImageLayer = NativeImageExecution.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          HttpServer.HttpServer,
+          HttpServer.HttpServer.of({
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 13773),
+            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+          }),
+        ),
+      ),
+      Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+      Layer.provide(Layer.succeed(HostProcess.Username, "beknown")),
+      Layer.provide(Layer.succeed(HostProcess.Hostname, "synthetic-usm")),
+      Layer.provide(Layer.succeed(HostProcess.UserId, 501)),
+    );
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const image = yield* NativeImageExecution.NativeImageExecution;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = ThreadId.make("b016ac03-bb26-42ca-9921-510fa3a4165a");
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator: ids,
+            threadId,
+            now,
+            projectId: ProjectId.make("native-image-lifecycle"),
+          }),
+        ],
+      });
+      const providerSessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const config = yield* sessions.read(threadId);
+      assert.isDefined(config);
+      const scope = yield* registry.resolve(config!.authorizationHeader.replace(/^Bearer\s+/, ""));
+      assert.isDefined(scope);
+      const runId = ids.derive.run({ threadId, ordinal: 1 });
+      yield* runtime.startTurn({
+        appThread: (yield* projections.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: ids.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: ids.derive.rootNode({ runId }),
+        providerThread: makeProviderThread({ idAllocator: ids, threadId, providerSessionId, now }),
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* ids.allocate.message({ threadId, ordinal: 1 }),
+          text: "synthetic native lifecycle",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const port = yield* image
+        .bind("turn-item:provider:codex:native-item:call_0123456789abcdef", async () => {
+          throw new Error("No native RPC expected");
+        })
+        .pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, scope!));
+      assert.equal(port.execution().run_id, runId);
+      yield* manager.close(providerSessionId);
+      assert.throws(() => port.execution(), NativeImageBindingRefused);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, nativeImageLayer })));
+  }),
+);
 
 const layerTestMcpRegistry = Layer.effect(
   McpSessionRegistry.McpSessionRegistry,
