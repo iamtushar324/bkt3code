@@ -24,6 +24,7 @@ checks that exact lease before and after each asynchronous operation.
 
 The host facts come from `HostProcess` and the actual HTTP listener, independently of the MCP
 request origin. The measured consumer permits Darwin user `beknown` and loopback port `13773`.
+Wildcard IPv4 and IPv6 listeners are refused, even if they also accept loopback connections.
 Another listener or host must fail rather than reuse those measured assumptions.
 
 ## A private worker channel is not another MCP client
@@ -32,8 +33,10 @@ The proposed worker transport uses an inherited private Unix-stream descriptor. 
 binds the port before attaching the descriptor. The child must independently verify its socket
 peer, parent process and fixed application listener before accepting the execution facts. A plain
 JSON frame, an environment variable or an arbitrary descriptor does not establish application
-ownership. Worker-entry/source pins and the weekly claim's process ownership remain separate
-prerequisites; the protocol does not transfer or replace a claim.
+ownership. Worker-entry/source pins and the original weekly claim remain separate prerequisites;
+the protocol does not transfer or replace a claim. The worker must reconstruct the real mode/store
+and recheck the original claim token, epoch and open action through the existing validators. The
+durable UI lock holder has a separate PID; it must not be replaced with the child worker's PID.
 
 The protocol has one outstanding request, strictly increasing IDs and two operations: execution
 facts, or a call to the existing native-item reader or asset-URL issuer. The bound port restricts

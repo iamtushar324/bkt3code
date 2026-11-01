@@ -45,15 +45,15 @@ function fixture() {
   return { runtime, input, scope };
 }
 
-const server = (port: number) =>
+const server = (port: number, host: string) =>
   HttpServer.HttpServer.of({
-    address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", port),
+    address: NetAddress.inetAddressFromIpStringUnsafe(host, port),
     serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
   });
 
-const testLayer = (port = 13773) =>
+const testLayer = (port = 13773, host = "127.0.0.1") =>
   NativeImageExecution.layer.pipe(
-    Layer.provide(Layer.succeed(HttpServer.HttpServer, server(port))),
+    Layer.provide(Layer.succeed(HttpServer.HttpServer, server(port, host))),
     Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
     Layer.provide(Layer.succeed(HostProcess.Username, "beknown")),
     Layer.provide(Layer.succeed(HostProcess.Hostname, "synthetic-usm")),
@@ -153,3 +153,20 @@ it.effect("uses the actual listener port instead of an origin supplied by the ca
     Effect.provideService(McpInvocationContext.McpInvocationContext, f.scope),
   );
 });
+
+it.effect.each(["0.0.0.0", "::"])(
+  "refuses the wildcard listener %s instead of asserting loopback ownership",
+  (host) => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const service = yield* NativeImageExecution.NativeImageExecution;
+      yield* service.started({ runtime: f.runtime, credentialId: "credential-a", input: f.input });
+      expect(yield* service.bind(itemId, unusedRpc).pipe(Effect.flip)).toBeInstanceOf(
+        NativeImageExecution.NativeImageExecutionRefused,
+      );
+    }).pipe(
+      Effect.provide(testLayer(13773, host)),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, f.scope),
+    );
+  },
+);

@@ -60,9 +60,7 @@ const make = Effect.gen(function* () {
   const uid = yield* HostProcess.UserId;
   const address = server.address;
   const local =
-    NetAddress.isInetAddress(address) &&
-    (NetAddress.isUnspecified(address.address) ||
-      NetAddress.formatIp(address.address) === "127.0.0.1");
+    NetAddress.isInetAddress(address) && NetAddress.formatIp(address.address) === "127.0.0.1";
   const origin = local ? `http://127.0.0.1:${address.port}` : "";
   const bindings = new NativeImageTurnBindings();
   const leases = new WeakMap<Runtime, Map<string, { readonly close: () => void }>>();
