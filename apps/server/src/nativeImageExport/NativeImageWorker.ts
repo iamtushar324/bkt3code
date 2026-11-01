@@ -127,9 +127,13 @@ function encodeJob(job: NativeImageWorkerJob) {
     !fields.every((name) => Object.hasOwn(job, name)) ||
     !Number.isSafeInteger(job.claim_epoch) ||
     job.claim_epoch < 1 ||
-    ![job.run_key, job.claim_owner, job.step_id, job.action_id].every(
-      (value) => typeof value === "string" && /^[A-Za-z0-9_.:@-]{1,256}$/.test(value),
+    ![job.run_key, job.claim_owner, job.step_id, job.action_id, job.item_id].every(
+      (value) => typeof value === "string",
     ) ||
+    !/^fws1:[0-9a-f]{32}$/.test(job.run_key) ||
+    !/^[\x21-\x7e]{1,256}$/.test(job.claim_owner) ||
+    !/^[\x21-\x7e]{1,200}$/.test(job.step_id) ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(job.action_id) ||
     !/^turn-item:provider:codex:native-item:call_[0-9a-f]{16,64}$/.test(job.item_id)
   )
     refused();

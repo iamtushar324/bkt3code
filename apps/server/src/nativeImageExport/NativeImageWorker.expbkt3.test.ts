@@ -12,11 +12,11 @@ import { NativeImageTurnBindings } from "./TurnBinding.ts";
 const thread = "6825b7cc-4b34-48c0-9713-42b95cb866c3";
 const item = "turn-item:provider:codex:native-item:call_0123456789abcdef";
 const job = {
-  run_key: "synthetic-week",
+  run_key: "fws1:0123456789abcdef0123456789abcdef",
   claim_owner: "synthetic-owner",
   claim_epoch: 1,
-  step_id: "synthetic-step",
-  action_id: "synthetic-action",
+  step_id: "seller/organic",
+  action_id: "read1",
   item_id: item,
 };
 
@@ -88,6 +88,28 @@ it("keeps the production worker registration closed", () => {
 // BKG-571: this integration exercises Darwin's actual inherited Unix socket; Linux CI cannot qualify it.
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Select the real host for native subprocess integration.
 const mac = it.runIf(NodeOS.platform() === "darwin");
+
+mac("refuses malformed locators without launching a worker", async () => {
+  const f = await fixture(worker);
+  try {
+    for (const changed of [
+      { ...job, run_key: "../../other" },
+      { ...job, claim_epoch: 0 },
+      { ...job, claim_owner: "contains a space" },
+      { ...job, step_id: "x".repeat(201) },
+      { ...job, action_id: "../../x" },
+      { ...job, item_id: "weak-image" },
+    ]) {
+      await expect(new NativeImageWorkerLauncher(f.pin).run(f.port, changed)).rejects.toThrow(
+        NativeImageRpcClosed,
+      );
+    }
+    // Refusal before launch must not consume the one dispatch opportunity for this port.
+    await new NativeImageWorkerLauncher(f.pin).run(f.port, job);
+  } finally {
+    await f.clean();
+  }
+});
 
 mac("runs one pinned isolated Python entry over private FD3 and FD4", async () => {
   const f = await fixture(worker);
