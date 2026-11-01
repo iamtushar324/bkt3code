@@ -42,7 +42,7 @@ Another listener or host must fail rather than reuse those measured assumptions.
 
 ## A private worker channel is not another MCP client
 
-The proposed worker transport uses an inherited private Unix-stream descriptor. The application
+The worker transport uses an inherited private Unix-stream descriptor. The application
 binds the port before attaching the descriptor. The child must independently verify its socket
 peer, parent process and fixed application listener before accepting the execution facts. A plain
 JSON frame, an environment variable or an arbitrary descriptor does not establish application
@@ -61,6 +61,35 @@ Frames are UTF-8 NDJSON. Requests are bounded to 16 KiB and responses to 50 MiB.
 pipelined, partial and replayed frames close the channel. Errors are fixed messages: no original
 exception, signed asset path or native output is included. The private pipe must never be
 connected to agent-visible stdout, stderr or a public endpoint.
+
+## Trusted Mac account and fixed worker
+
+The source plan approved on BKG-571 trusts other programs with access to the `beknown` Mac
+account. It does not establish isolation from those programs, nor prove a JavaScript bundle's
+identity from its PID. The trusted application launcher instead pins the interpreter, its actual
+executable and the complete worker bundle. Symlinks, writable or foreign-owned paths, missing
+files and extra bundle files are refused. Python starts directly with isolated imports, no site
+initialization and no bytecode writes. The production registration remains null.
+
+FD3 carries only the existing private RPC protocol. FD4 supplies bounded job locators; it never
+supplies a serialized mode, context or replacement claim. The fixed Python entry must open the
+real mode/store and revalidate the original saved claim. Stdout and stderr are discarded. A zero
+exit status proves process completion only; the existing journal remains the source of export
+receipts. Revocation kills only the captured child handle and closes both channels. It does not
+wait for an uncertain native dispatch or retry it.
+
+`NativeImagePeer.c` uses the installed public Darwin SDK rather than copied structure offsets.
+It retains the direct parent, UID, peer audit token, process start time, executable path and both
+socketpair handles. Rechecks use the audit-token path API and confirm the same channel. This
+fences accidental process, executable and descriptor replacement within the approved trust model.
+
+The HTTP check is deliberately a positive connection proof, not a global listener inventory.
+Before sending a signed path, the consumer must check the **same connected socket** that will
+send it. Its literal loopback IPv4 tuple must match an already-accepted ESTABLISHED socket in
+the retained parent's descriptor table. A different listener, including a wildcard or IPv6
+listener, cannot take over an established connection. A missing or not-yet-accepted match is a
+refusal; this verifier sends no bytes and performs no retry. The consumer's pre-send hook and
+production binding remain unimplemented. Synthetic connections do not qualify a live download.
 
 This boundary supplies neither a native capture nor a Google operation. Production construction,
 the fixed worker entry, source pin, Python port registration and full runtime qualification must

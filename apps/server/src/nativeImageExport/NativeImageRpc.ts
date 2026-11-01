@@ -37,6 +37,10 @@ export class NativeImageRpc {
     return this.#closed;
   }
 
+  get pending() {
+    return this.#pending;
+  }
+
   get signal(): AbortSignal {
     return this.#port.signal;
   }
