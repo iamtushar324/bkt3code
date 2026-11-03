@@ -1377,10 +1377,10 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // on a thread that is blocked on the user (hiding a pending request would
   // defeat it).
   // A clock read in render would stay frozen in the compiler's cache, so the
-  // snooze checks read a snapshot that moves when the wake time changes or passes.
-  const snoozeClock = new Date(
-    useNowAfter(Date.parse(row.thread.snoozedUntil ?? "") || null),
-  ).toISOString();
+  // snooze checks read a snapshot that moves each minute and exactly at the wake time.
+  const nowMinute = useNowMinute();
+  const wakeClock = useNowAfter(Date.parse(row.thread.snoozedUntil ?? "") || null);
+  const snoozeClock = new Date(Math.max(Date.parse(`${nowMinute}Z`), wakeClock)).toISOString();
   const canSnoozeRow = row.snoozeSupported && canSnooze(row.thread, { now: snoozeClock });
   const snoozeMenuOpen = snoozeMenuOpenRaw && canSnoozeRow;
   useEffect(() => {
