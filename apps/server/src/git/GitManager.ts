@@ -2680,10 +2680,10 @@ export const make = Effect.gen(function* () {
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
+    // T3-CUSTOM(expbkt3): fingerprint is taken before any git read; null keeps the state TTL.
     options: {
       readonly refresh: boolean;
       readonly freshGitState: boolean;
-      // T3-CUSTOM(expbkt3): taken before any git read; null keeps the remembered-state TTL.
       readonly fingerprint: GitStateFingerprint | null;
     },
   ) {
