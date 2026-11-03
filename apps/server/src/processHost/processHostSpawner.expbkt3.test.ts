@@ -1,20 +1,29 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { TEST_HOLD_SPAWNED_ENV } from "./processHostProtocol.expbkt3.ts";
 import * as ProcessHostSpawner from "./processHostSpawner.expbkt3.ts";
 
 const hostSupported = HostProcess.Platform.defaultValue() === "linux";
 
 const layerTest = Layer.mergeAll(
-  ProcessHostSpawner.layerProcessRunner(),
-  ProcessHostSpawner.layerSpawner(),
-).pipe(Layer.provide(NodeServices.layer));
+  Layer.mergeAll(ProcessHostSpawner.layerProcessRunner(), ProcessHostSpawner.layerSpawner()).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+  NodeFileSystem.layer,
+);
 
 const run = (input: ProcessRunner.ProcessRunInput) =>
   ProcessRunner.ProcessRunner.use((runner) => runner.run(input));
@@ -27,6 +36,27 @@ const isAlive = (pid: number) => {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 };
+
+// A zombie has died already; only its new parent's wait is left.
+const isGone = Effect.fn("isGone")(function* (pid: number) {
+  const fs = yield* FileSystem.FileSystem;
+  const stat = yield* fs.readFileString(`/proc/${pid}/stat`).pipe(Effect.option);
+  if (Option.isNone(stat)) return true;
+  const state = stat.value.slice(stat.value.lastIndexOf(")") + 2).split(" ")[0];
+  return state === "Z" || state === "X";
+});
+
+const firstLine = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+  handle.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
+
+const killHost = () => {
+  const hostPid = ProcessHostSpawner.currentProcessHostPid();
+  assert.isDefined(hostPid);
+  if (hostPid !== undefined) process.kill(hostPid, "SIGKILL");
+};
+
+// The leader prints the pid of a background child that keeps stdout open after the leader exits.
+const leaderWithDescendant = ChildProcess.make("sh", ["-c", "sleep 30 & echo $!"]);
 
 describe("process host spawner", () => {
   it.live("returns output and exit code", () =>
@@ -109,9 +139,73 @@ describe("process host spawner", () => {
   );
 
   it.live.skipIf(!hostSupported)(
+    "ends what an exited leader left running when its scope closes",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const descendant = yield* Effect.gen(function* () {
+          const handle = yield* spawner.spawn(leaderWithDescendant);
+          const line = yield* firstLine(handle);
+          assert.strictEqual(yield* handle.exitCode, 0);
+          return Number(Option.getOrThrow(line));
+        }).pipe(Effect.scoped);
+        assert.isAbove(descendant, 0);
+        assert.isTrue(yield* isGone(descendant));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(!hostSupported)(
+    "kills what an exited leader left running when its host dies",
+    () =>
+      Effect.gen(function* () {
+        ProcessHostSpawner.resetProcessHostRestartDelay();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const handle = yield* spawner.spawn(leaderWithDescendant);
+        const descendant = Number(Option.getOrThrow(yield* firstLine(handle)));
+        assert.strictEqual(yield* handle.exitCode, 0);
+        killHost();
+
+        // The descendant holds stdout open, so only the host's cleanup ends this stream.
+        yield* handle.stdout.pipe(Stream.runDrain, Effect.flip);
+        assert.isAbove(descendant, 0);
+        assert.isTrue(yield* isGone(descendant));
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(!hostSupported)(
+    "kills the children of a host that dies before it reports their spawn",
+    () =>
+      Effect.gen(function* () {
+        ProcessHostSpawner.resetProcessHostRestartDelay();
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-process-host-" });
+        const fifo = `${directory}/pids`;
+        assert.strictEqual((yield* run({ command: "mkfifo", args: [fifo] })).code, 0);
+        const spawning = yield* spawner
+          .spawn(
+            ChildProcess.make("sh", ["-c", 'sleep 30 & echo "$$ $!" > "$1"; wait', "sh", fifo], {
+              env: { [TEST_HOLD_SPAWNED_ENV]: "1" },
+              extendEnv: true,
+            }),
+          )
+          .pipe(Effect.scoped, Effect.forkChild);
+        // Opening the FIFO waits for the child to write its own pid and its background child's.
+        const pids = (yield* fs.readFileString(fifo)).trim().split(" ").map(Number);
+        assert.strictEqual(pids.length, 2);
+        killHost();
+
+        // The spawn fails only after the host's cleanup has run.
+        assert.isTrue(Exit.isFailure(yield* Fiber.await(spawning)));
+        for (const pid of pids) assert.isTrue(yield* isGone(pid));
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(!hostSupported)(
     "fails children of a killed host and starts the next command without it",
     () =>
       Effect.gen(function* () {
+        ProcessHostSpawner.resetProcessHostRestartDelay();
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const handle = yield* spawner.spawn(ChildProcess.make("sleep", ["30"]));
         const hostPid = ProcessHostSpawner.currentProcessHostPid();

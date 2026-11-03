@@ -1,5 +1,11 @@
 // T3-CUSTOM(expbkt3): IPC messages between the server and its process host (process-host.expbkt3.ts).
-// Both sides import these as types only, so the host stays a plain Node script.
+// The host imports only these types and the constants below, so it stays a plain Node script.
+
+/** Set on every child the host starts; the server finds the host's leftovers by it. */
+export const HOST_INSTANCE_ENV = "T3_PROCESS_HOST_INSTANCE";
+
+/** Tests only: a child with this set to "1" never gets a "spawned" reply. */
+export const TEST_HOLD_SPAWNED_ENV = "T3_PROCESS_HOST_TEST_HOLD_SPAWNED";
 
 /** 1 is stdout, 2 is stderr. */
 export type HostStreamId = 1 | 2;

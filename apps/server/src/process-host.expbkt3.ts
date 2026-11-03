@@ -5,12 +5,13 @@
 import * as NodeChildProcess from "node:child_process";
 import type * as NodeStream from "node:stream";
 
-import type {
-  HostEvent,
-  HostRequest,
-  HostSpawnRequest,
-  HostStreamId,
-  SerializedError,
+import {
+  type HostEvent,
+  type HostRequest,
+  type HostSpawnRequest,
+  type HostStreamId,
+  type SerializedError,
+  TEST_HOLD_SPAWNED_ENV,
 } from "./processHost/processHostProtocol.expbkt3.ts";
 
 // Unacknowledged output per stream before the host pauses the child's pipe.
@@ -170,16 +171,20 @@ const spawnChild = (request: HostSpawnRequest): void => {
     unacked: [0, 0],
     readables: [child.stdout, child.stderr],
   };
+  // Registered before the "spawned" reply, so a closed IPC channel still kills this child.
+  if (child.pid !== undefined) entries.set(id, entry);
+  const holdSpawned = request.env[TEST_HOLD_SPAWNED_ENV] === "1";
   let spawned = false;
   child.on("error", (error) => {
-    if (!spawned) send({ t: "spawnError", id, error: serializeError(error) });
+    if (spawned) return;
+    entries.delete(id);
+    send({ t: "spawnError", id, error: serializeError(error) });
   });
   // Write failures reach the server through each write's callback.
   child.stdin?.on("error", () => {});
   child.once("spawn", () => {
     spawned = true;
-    entries.set(id, entry);
-    send({ t: "spawned", id, pid: child.pid! });
+    if (!holdSpawned) send({ t: "spawned", id, pid: child.pid! });
     forwardOutput(id, entry, 1, child.stdout);
     forwardOutput(id, entry, 2, child.stderr);
     child.once("exit", (code, signal) => {
@@ -277,8 +282,9 @@ process.on("message", (message) => {
 // The server is gone: nobody can read these children any more.
 process.on("disconnect", () => {
   for (const entry of entries.values()) {
+    if (entry.child.pid === undefined) continue;
     try {
-      if (entry.detached) process.kill(-entry.child.pid!, "SIGKILL");
+      if (entry.detached) process.kill(-entry.child.pid, "SIGKILL");
       else if (!hasExited(entry.child)) entry.child.kill("SIGKILL");
     } catch {
       // The group is already gone.

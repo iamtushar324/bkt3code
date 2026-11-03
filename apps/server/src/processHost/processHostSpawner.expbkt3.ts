@@ -3,6 +3,7 @@
 // of the multi-GB server and then takes copy-on-write faults, blocking the event loop each time.
 // git and gh therefore start from one small long-lived host process (process-host.expbkt3.ts).
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -24,11 +25,13 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner, CommandLine } from "effect/process";
 
 import * as ProcessRunner from "../processRunner.ts";
-import type {
-  HostEvent,
-  HostRequest,
-  HostStreamId,
-  SerializedError,
+import { killMarkedProcesses } from "./processHostCleanup.expbkt3.ts";
+import {
+  HOST_INSTANCE_ENV,
+  type HostEvent,
+  type HostRequest,
+  type HostStreamId,
+  type SerializedError,
 } from "./processHostProtocol.expbkt3.ts";
 
 // A host that reads a spawn request later than this declines it, and the server spawns directly.
@@ -40,6 +43,8 @@ const RESTART_BACKOFF_MIN_MS = 1_000;
 const RESTART_BACKOFF_MAX_MS = 60_000;
 const HEALTHY_UPTIME_MS = 60_000;
 const STOP_GRACE_MS = 5_000;
+// Cleanup scans /proc only after the host has exited, so it can start no more children.
+const HOST_EXIT_WAIT_MS = STOP_GRACE_MS + 1_000;
 // Layers built per connection or per test come and go; an idle host costs nothing to keep.
 const IDLE_STOP_MS = 30_000;
 
@@ -80,6 +85,8 @@ interface HandleState {
 
 interface HostConnection {
   readonly child: NodeChildProcess.ChildProcess;
+  readonly instanceId: string;
+  readonly exited: Promise<void>;
   readonly startedAt: number;
   readonly ready: Deferred.Deferred<boolean>;
   readonly handles: Map<number, HandleState>;
@@ -108,6 +115,7 @@ const manager = {
   backoffMs: RESTART_BACKOFF_MIN_MS,
   nextId: 1,
   idleStopTimer: undefined as NodeJS.Timeout | undefined,
+  runFork: undefined as ((effect: Effect.Effect<void>) => void) | undefined,
   status: undefined as HostStatus | undefined,
   loggedStatusKey: undefined as string | undefined,
 };
@@ -200,8 +208,8 @@ const outputQueue = (state: HandleState, stream: HostStreamId) =>
 
 const failHandle = (state: HandleState, reason: string) => {
   state.onSpawnReply?.({ _tag: "HostGone", reason });
-  if (state.pid > 0 && !state.exitObserved) {
-    // Nobody can read or reap these children any more.
+  // A detached group can outlive its leader, so it is signalled even after the leader's exit.
+  if (state.pid > 0 && (state.detached || !state.exitObserved)) {
     try {
       process.kill(state.detached ? -state.pid : state.pid, "SIGKILL");
     } catch {
@@ -221,25 +229,51 @@ const failHandle = (state: HandleState, reason: string) => {
   state.replies.clear();
 };
 
-const detachHost = (host: HostConnection, reason: string) => {
+const waitForHostExit = (host: HostConnection) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, HOST_EXIT_WAIT_MS);
+    timer.unref();
+    void host.exited.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+// Handles fail only after cleanup, so a failed handle means its processes are gone.
+const cleanUpHost = async (host: HostConnection, reason: string) => {
+  await waitForHostExit(host);
+  const exclude = new Set([process.pid, host.child.pid ?? 0]);
+  const killed = await killMarkedProcesses(host.instanceId, exclude).catch(() => 0);
+  for (const state of host.handles.values()) failHandle(state, reason);
+  host.handles.clear();
+  const message = `Process host exited; ${killed} leftover processes killed.`;
+  manager.runFork?.(
+    (killed > 0 ? Effect.logWarning(message) : Effect.logInfo(message)).pipe(
+      Effect.annotateLogs({ reason, killed }),
+    ),
+  );
+};
+
+const retireHost = (host: HostConnection, reason: string, stop: "kill" | "disconnect") => {
   host.gone = true;
   clearTimeout(host.startupTimer);
   Deferred.doneUnsafe(host.ready, Exit.succeed(false));
-  for (const state of host.handles.values()) failHandle(state, reason);
-  host.handles.clear();
   host.child.channel?.unref();
   if (manager.current === host) manager.current = undefined;
+  if (stop === "disconnect" && host.child.connected) {
+    // The host kills its children and exits once its IPC channel closes.
+    host.child.disconnect();
+    setTimeout(() => host.child.kill("SIGKILL"), STOP_GRACE_MS).unref();
+  } else {
+    host.child.kill("SIGKILL");
+  }
+  void cleanUpHost(host, reason);
 };
 
 const hostGone = (host: HostConnection, reason: string) => {
   if (host.gone) return;
   const wasCurrent = manager.current === host;
-  detachHost(host, reason);
-  try {
-    host.child.kill("SIGKILL");
-  } catch {
-    // Already exited.
-  }
+  retireHost(host, reason, "kill");
   if (!wasCurrent) return;
   const now = Date.now();
   if (now - host.startedAt >= HEALTHY_UPTIME_MS) manager.backoffMs = RESTART_BACKOFF_MIN_MS;
@@ -254,10 +288,7 @@ const hostGone = (host: HostConnection, reason: string) => {
 };
 
 const stopHost = (host: HostConnection) => {
-  detachHost(host, "stopped");
-  // The host kills its children and exits once its IPC channel closes.
-  if (host.child.connected) host.child.disconnect();
-  setTimeout(() => host.child.kill("SIGKILL"), STOP_GRACE_MS).unref();
+  if (!host.gone) retireHost(host, "stopped", "disconnect");
 };
 
 const onHostEvent = (host: HostConnection, event: HostEvent) => {
@@ -346,6 +377,14 @@ const startHost = (launch: HostLaunch): HostConnection | undefined => {
   child.unref();
   const host: HostConnection = {
     child,
+    instanceId: NodeCrypto.randomBytes(16).toString("hex"),
+    exited: new Promise<void>((resolve) => {
+      child.once("exit", () => resolve());
+      // A host that never started has no children to wait for.
+      child.once("error", () => {
+        if (child.pid === undefined) resolve();
+      });
+    }),
     startedAt: Date.now(),
     ready: Deferred.makeUnsafe<boolean>(),
     handles: new Map(),
@@ -531,7 +570,8 @@ const requestSpawn = Effect.fnUntraced(function* (
       command: command.command,
       args: command.args.map(unwrap),
       cwd,
-      env: resolveEnvironment(command.options),
+      // The only difference from a direct spawn: cleanup finds this host's processes by it.
+      env: { ...resolveEnvironment(command.options), [HOST_INSTANCE_ENV]: host.instanceId },
       shell: command.options.shell,
       detached: state.detached,
       killSignal: command.options.killSignal ?? "SIGTERM",
@@ -727,6 +767,11 @@ const makeSpawner = Effect.gen(function* () {
   const base = yield* ChildProcessSpawner.ChildProcessSpawner;
   const launch = yield* resolveLaunch;
   if (launch === undefined) return base;
+  // Host exits arrive in Node callbacks; their log lines use the server's logger.
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  manager.runFork ??= (effect) => {
+    runFork(effect);
+  };
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       manager.refs += 1;
@@ -750,6 +795,12 @@ const makeSpawner = Effect.gen(function* () {
     isHostable(command) ? spawnThroughHost(base, command) : base.spawn(command),
   );
 });
+
+/** Tests only: lets the next spawn start a new host at once after a test killed one. */
+export const resetProcessHostRestartDelay = () => {
+  manager.retryAt = 0;
+  manager.backoffMs = RESTART_BACKOFF_MIN_MS;
+};
 
 /** The running host's pid, for tests and diagnostics. */
 export const currentProcessHostPid = (): number | undefined =>
