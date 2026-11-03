@@ -61,6 +61,10 @@ function nonNegative(value: unknown): number | undefined {
   return number !== undefined && number >= 0 ? number : undefined;
 }
 
+function text(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 function iso(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
   const at = Date.parse(value);
@@ -74,14 +78,15 @@ function put<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V 
 
 export function paceFrom(raw: unknown): ClaudeAccountPace | undefined {
   const fields = asObject(raw);
-  if (fields === undefined || typeof fields.known !== "boolean") return undefined;
+  const known = fields?.known;
+  if (fields === undefined || typeof known !== "boolean") return undefined;
   const status = oneOf(fields.status, PACE_STATUSES);
   if (status === undefined) return undefined;
   const used = finite(fields.used_pct);
   return {
-    known: fields.known,
-    ...put("why", typeof fields.why === "string" ? fields.why : undefined),
-    ...put("cap", typeof fields.cap === "string" && fields.cap ? fields.cap : undefined),
+    known,
+    ...put("why", text(fields.why)),
+    ...put("cap", text(fields.cap) || undefined),
     ...put("elapsedDays", nonNegative(fields.elapsed_days)),
     ...put("usedPercent", used === undefined ? undefined : Math.min(100, Math.max(0, used))),
     ...put("drrPercentPerDay", nonNegative(fields.drr_pct_per_day)),
@@ -96,13 +101,11 @@ export function creditsFrom(raw: unknown): ClaudeAccountCredits | undefined {
   const state = oneOf(fields.state, CREDITS_STATES);
   if (state === undefined) return undefined;
   const fetchedAtMs = nonNegative(fields.fetched_at_ms);
-  const cycleStart =
-    typeof fields.cycle_start === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fields.cycle_start)
-      ? fields.cycle_start
-      : undefined;
+  const cycle = text(fields.cycle_start);
+  const cycleStart = cycle !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(cycle) ? cycle : undefined;
   return {
     state,
-    ...put("detail", typeof fields.detail === "string" ? fields.detail : undefined),
+    ...put("detail", text(fields.detail)),
     ...put(
       "fetchedAtMs",
       fetchedAtMs !== undefined && Number.isInteger(fetchedAtMs) ? fetchedAtMs : undefined,
