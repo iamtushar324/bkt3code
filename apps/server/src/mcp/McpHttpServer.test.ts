@@ -1244,6 +1244,8 @@ it.effect("lists pull request watch tools only to threads that are not delegated
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+            // T3-CUSTOM(expbkt3): unrestricted fixture for the fork target-access dependency.
+            Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
             NodeServices.layer,
             NodeCrypto.layer,
           ),

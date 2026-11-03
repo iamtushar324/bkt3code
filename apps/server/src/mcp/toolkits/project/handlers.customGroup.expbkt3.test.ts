@@ -20,6 +20,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -82,6 +83,8 @@ it.effect("passes a launched thread's custom group to the launch, trimmed and va
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      // Project tools now read attached documents; the launch path never does.
+      Layer.mock(DocumentText.DocumentText)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-custom-group-" }).pipe(
         Layer.provide(NodeServices.layer),

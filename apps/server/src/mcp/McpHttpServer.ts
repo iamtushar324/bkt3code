@@ -1229,6 +1229,7 @@ export const layerPreviewToolkit = Layer.mergeAll(
 // T3-CUSTOM(expbkt3): BEGIN — the fork's toolkits. Their handlers are McpToolAccess
 // declarations like every other toolkit's; the control and web UI toolkits
 // register by hand only because their tool lists are dynamic.
+type T3ControlTools = Effect.Success<typeof makeT3ControlToolkit>["toolkit"]["tools"];
 const t3ControlToolkitRegistration = Layer.effectDiscard(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -1236,17 +1237,19 @@ const t3ControlToolkitRegistration = Layer.effectDiscard(
     yield* McpServer.registerToolkit(withCallerToolLists(control.toolkit));
     yield* control.watchPolicy(server.notifications["notifications/tools/list_changed"]({}));
   }),
-).pipe(Layer.provide(McpServer.McpServer.layer));
-// As in `toolkitRegistration`, registration must not capture a caller.
-const t3ControlToolkitRegistered = t3ControlToolkitRegistration as Layer.Layer<
-  never,
-  never,
-  Exclude<
-    Layer.Services<typeof t3ControlToolkitRegistration>,
-    McpInvocationContext.McpInvocationContext
-  >
->;
-export const T3ControlToolkitRegistrationLive = t3ControlToolkitRegistered.pipe(
+).pipe(
+  // As in `toolkitRegistration`: handler services come from the server, the caller from the transport.
+  Layer.provide(
+    provideRegistrationServices<
+      Exclude<
+        Tool.Requirements<T3ControlTools[keyof T3ControlTools]>,
+        McpInvocationContext.McpInvocationContext
+      >
+    >().layer,
+  ),
+  Layer.provide(McpServer.McpServer.layer),
+);
+export const T3ControlToolkitRegistrationLive = t3ControlToolkitRegistration.pipe(
   Layer.provide(McpToolAccess.HandlersLayer.layer(T3ControlToolkitHandlers)),
   // Session lifecycle no-op receipts (TEC-1819); the runtime keeps its store private.
   Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),

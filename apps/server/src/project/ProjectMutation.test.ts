@@ -33,6 +33,9 @@ describe("mutateProjectWithClone", () => {
           create: () => Effect.die("unused"),
           update: () => Effect.die("unused"),
           delete: () => Effect.fail(rejected),
+          // T3-CUSTOM(expbkt3): the fork's access mutations also dispatch and re-read.
+          dispatch: () => Effect.die("unused"),
+          getById: () => Effect.die("unused"),
         },
         { discard: () => Effect.die("must not discard a project that still exists") },
         { type: "project.delete", commandId: CommandId.make("rejected-delete"), projectId },
@@ -56,6 +59,9 @@ describe("mutateProjectWithClone", () => {
             Effect.andThen(Deferred.await(finishDelete)),
             Effect.as(deletedProject),
           ),
+        // T3-CUSTOM(expbkt3): the fork's access mutations also dispatch and re-read.
+        dispatch: () => Effect.die("unused"),
+        getById: () => Effect.die("unused"),
       };
       const clones = {
         discard: (id: ProjectId) => Effect.sync(() => void discarded.push(id)),

@@ -56,7 +56,12 @@ const request = (headers: Record<string, string> = {}) =>
   HttpServerRequest.fromWeb(new Request(`${ORIGIN}/oauth/mcp/decision`, { headers }));
 
 const authorization: McpOAuth.AuthorizationRequest = {
-  client: { clientId: "client-approval-policy", name: "Test agent", redirectUris: [REDIRECT] },
+  client: {
+    clientId: "client-approval-policy",
+    name: "Test agent",
+    redirectUris: [REDIRECT],
+    peerLink: false,
+  },
   redirectUri: REDIRECT,
   codeChallenge: "c".repeat(43),
   state: undefined,

@@ -2004,7 +2004,8 @@ it.effect.each([
           "",
         );
         assert.isDefined(token);
-        assert.equal((yield* registry.resolve(token!))?.thread.subagent, subagent);
+        // T3-CUSTOM(expbkt3): fork scopes may have no thread (external callers).
+        assert.equal((yield* registry.resolve(token!))?.thread?.subagent, subagent);
         yield* manager.close(providerSessionId);
       });
 

@@ -50,7 +50,7 @@ const project: OrchestrationProjectShell = {
       remoteName: "origin",
       remoteUrl: "https://github.com/acme/web.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "acme/web",
   },
   defaultModelSelection: null,

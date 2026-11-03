@@ -57,7 +57,7 @@ const handlers = makeWebUiRpcHandlers((_scope, requests) => {
 });
 const TestLayer = McpHttpServer.toolkitRegistration(WebUiRpcToolkit, handlers).pipe(
   Layer.provide(liveThreadsLayer),
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
 );
 
 const withInvocation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

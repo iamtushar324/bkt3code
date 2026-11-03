@@ -205,19 +205,19 @@ it.effect("changes plan tool visibility for existing HTTP sessions without a res
   Effect.scoped(
     Effect.gen(function* () {
       const fixture = yield* makeFixture;
-      const serverLayer = Layer.mergeAll(
-        McpServer.layerHttp({
-          name: "Plan policy test",
-          version: "1.0.0",
-          path: "/mcp",
-          protocols: [McpProtocol.v2025_06_18],
-        }),
-        T3ControlToolkitRegistrationLive,
-      ).pipe(Layer.provide(fixture.dependencies));
+      // The transport turns the registration's request-level dependencies into
+      // router requirements, which the fixture meets around the served router.
+      const serverLayer = McpServer.layerHttp({
+        name: "Plan policy test",
+        version: "1.0.0",
+        path: "/mcp",
+        protocols: [McpProtocol.v2025_06_18],
+        registrations: T3ControlToolkitRegistrationLive,
+      });
       yield* HttpRouter.serve(serverLayer, {
         disableListenLog: true,
         disableLogger: true,
-      }).pipe(Layer.build);
+      }).pipe(Layer.provide(fixture.dependencies), Layer.build);
       expect(fixture.subscriptions).toBe(1);
       const http = yield* HttpClient.HttpClient;
       let requestId = 0;

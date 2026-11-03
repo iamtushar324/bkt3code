@@ -4225,6 +4225,8 @@ export const makeAuthenticatedWsRpcHandlerLayer = (
     Layer.provide(ClerkDirectoryLive),
     Layer.provide(ProviderMaintenanceRunner.layer),
     Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+    // The /ws route builds its own NpmRelease below; the bridge needs one too.
+    Layer.provide(NpmRelease.layer),
     Layer.provide(OtlpEndpointCheck.layer),
     // Same source-control composition as the /ws route below (upstream builtInDrivers).
     Layer.provide(

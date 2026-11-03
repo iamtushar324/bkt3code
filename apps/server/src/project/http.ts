@@ -63,15 +63,15 @@ export const layer = HttpApiBuilder.group(
           // T3-CUSTOM(expbkt3): list only projects accessible to this operator.
           const actor = yield* currentActor;
           return yield* projects.snapshot.pipe(
-            Effect.flatMap((snapshot) =>
-              actor === null
-                ? Effect.succeed(snapshot)
-                : Effect.forEach(snapshot.projects, (project) =>
-                    access.canAccessProject(actor, project.id).pipe(
-                      Effect.orElseSucceed(() => false),
-                      Effect.map((allowed) => (allowed ? [project] : [])),
-                    ),
-                  ).pipe(Effect.map((visible) => ({ ...snapshot, projects: visible.flat() }))),
+            Effect.filterOrElse(
+              () => actor === null,
+              (snapshot) =>
+                Effect.forEach(snapshot.projects, (project) =>
+                  access.canAccessProject(actor!, project.id).pipe(
+                    Effect.orElseSucceed(() => false),
+                    Effect.map((allowed) => (allowed ? [project] : [])),
+                  ),
+                ).pipe(Effect.map((visible) => ({ ...snapshot, projects: visible.flat() }))),
             ),
             traceLocalHandlerWork,
             Effect.catch((cause) => failEnvironmentInternal("project_snapshot_failed", cause)),

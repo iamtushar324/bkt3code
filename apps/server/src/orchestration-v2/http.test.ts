@@ -312,6 +312,9 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
           new Request(`http://localhost/api/orchestration/shell${query}`, {
             headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
           }),
+          // T3-CUSTOM(expbkt3): the fork's dispatch route types carry services the shell
+          // route never reads; every service it does read is provided above.
+          Context.empty() as never,
         );
         return (await response.json()) as {
           readonly threads: ReadonlyArray<{ readonly id: string }>;

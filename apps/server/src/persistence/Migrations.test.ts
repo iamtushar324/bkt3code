@@ -190,7 +190,7 @@ it.effect("registers every migration file", () =>
     assert.deepStrictEqual(
       files
         .map(([, name]) => name)
-        .filter((name) => !unregistered.has(name))
+        .filter((name) => name !== undefined && !unregistered.has(name))
         .toSorted(),
       migrationManifest.map(([, name]) => name).toSorted(),
     );

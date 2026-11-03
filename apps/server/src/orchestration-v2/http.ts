@@ -286,9 +286,7 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             return {
-              users: yield* clerkDirectory
-                .listOrgMembers()
-                .pipe(Effect.catch(() => Effect.succeed([]))),
+              users: yield* clerkDirectory.listOrgMembers().pipe(Effect.orElseSucceed(() => [])),
             };
           }),
         )

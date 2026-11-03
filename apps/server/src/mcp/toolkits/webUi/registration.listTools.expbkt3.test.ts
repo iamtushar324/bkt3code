@@ -44,7 +44,7 @@ const client = McpSchema.McpServerClient.of({
 const handlers = makeWebUiRpcHandlers(() => Effect.die("no virtual call runs in these tests"));
 const TestLayer = McpHttpServer.toolkitRegistration(WebUiRpcToolkit, handlers).pipe(
   Layer.provide(liveThreadsLayer),
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
 );
 
 const withInvocation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
