@@ -43,7 +43,8 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
-import budget from "./agentContextBudget.json" with { type: "json" };
+// T3-CUSTOM(expbkt3): the fork measures against its own budget (fork agent text included).
+import budget from "./agentContextBudget.expbkt3.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
