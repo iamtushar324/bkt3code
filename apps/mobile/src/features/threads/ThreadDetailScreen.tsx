@@ -277,9 +277,9 @@ export interface ThreadDetailScreenProps {
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   // T3-CUSTOM(expbkt3): durable outbox — a rejected queued message stays visible until retry/edit.
-  readonly failedOutboxDetail: string | null;
-  readonly onRetryFailedOutbox: () => void;
-  readonly onEditFailedOutbox: () => void;
+  readonly failedOutboxDetail?: string | null;
+  readonly onRetryFailedOutbox?: () => void;
+  readonly onEditFailedOutbox?: () => void;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly serverConfig: T3ServerConfig | null;

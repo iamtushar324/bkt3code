@@ -107,6 +107,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
           threadLaunch,
           Layer.mock(GitVcsDriver.GitVcsDriver)({
             resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            resolveDefaultBranchName: () => Effect.succeed("main"),
           }),
           ServerSettings.layerTest(),
         ),

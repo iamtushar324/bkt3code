@@ -47,6 +47,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { usePendingNewTasks, type PendingDraftTask } from "../../state/use-pending-new-tasks";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadListV2PendingRow } from "../threads/thread-list-v2-items";
 import { useEnvironmentAppearances } from "../environments/useEnvironmentAppearance";
@@ -135,7 +136,10 @@ export function PhaseSidebarPane(props: {
     () => selectPhaseSidebarDrafts(pendingTasks, props.homeFilters),
     [pendingTasks, props.homeFilters],
   );
-  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
+  const selectDetail = useSelectWorkspaceDetail();
+  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions((params) =>
+    selectDetail({ name: "Thread", params }),
+  );
   const { savedConnectionsById } = useSavedRemoteConnections();
   const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
   // One draft row stays swiped open at a time, as in the thread sidebar.
@@ -350,6 +354,7 @@ export function PhaseSidebarPane(props: {
           event: actionId,
           displayedPresets: resolveSnoozePresets(new Date()),
           now: new Date(),
+          presets: undefined,
         });
         if (selection._tag === "selected") {
           void snoozeThread(thread, selection.preset.snoozedUntil);
