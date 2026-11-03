@@ -75,8 +75,22 @@ it.layer(NodeServices.layer)("git state fingerprint", (it) => {
     yield* fileSystem.writeFileString(path.join(commonDir, "refs", "heads", "feature", "a"), sha);
     const remoteRef = path.join(commonDir, "refs", "remotes", "origin", "feature", "a");
     yield* fileSystem.writeFileString(remoteRef, sha);
-    const fingerprints = yield* makeGitStateFingerprints({ fileSystem, path });
-    return { fileSystem, path, commonDir, worktree, remoteRef, fingerprints };
+    // No HOME and no system config path: only the files this fixture writes count.
+    const fingerprintsFor = (environment: NodeJS.ProcessEnv) =>
+      makeGitStateFingerprints({ fileSystem, path, environment });
+    const fingerprints = yield* fingerprintsFor({ GIT_CONFIG_NOSYSTEM: "1" });
+    return {
+      fileSystem,
+      path,
+      root,
+      commonDir,
+      gitDir,
+      worktree,
+      sha,
+      remoteRef,
+      fingerprints,
+      fingerprintsFor,
+    };
   });
 
   it.effect("follows the branch's own config section and refs, not other branches", () =>
@@ -121,6 +135,76 @@ it.layer(NodeServices.layer)("git state fingerprint", (it) => {
       expect(yield* fingerprints.read(path.join(worktree, "nested"), "feature/a")).toBeNull();
 
       yield* fileSystem.makeDirectory(path.join(commonDir, "reftable"));
+      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
+    }),
+  );
+
+  it.effect("has no fingerprint while replace refs or grafts rewrite history", () =>
+    Effect.gen(function* () {
+      const { fileSystem, path, commonDir, worktree, sha, fingerprints } = yield* linkedWorktree;
+      const replaceRefs = path.join(commonDir, "refs", "replace");
+      yield* fileSystem.makeDirectory(replaceRefs);
+      expect(yield* fingerprints.read(worktree, "feature/a")).not.toBeNull();
+
+      yield* fileSystem.writeFileString(path.join(replaceRefs, sha.trim()), sha);
+      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
+
+      yield* fileSystem.remove(replaceRefs, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(commonDir, "info"));
+      yield* fileSystem.writeFileString(path.join(commonDir, "info", "grafts"), sha);
+      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
+    }),
+  );
+
+  it.effect("follows a remote that only config.worktree declares", () =>
+    Effect.gen(function* () {
+      const { fileSystem, path, commonDir, gitDir, worktree, sha, fingerprints } =
+        yield* linkedWorktree;
+      yield* fileSystem.writeFileString(
+        path.join(gitDir, "config.worktree"),
+        '[remote "fork"]\n\turl = git@github.com:fork/repository.git\n',
+      );
+      const forkRef = path.join(commonDir, "refs", "remotes", "fork", "feature", "a");
+      yield* fileSystem.makeDirectory(path.dirname(forkRef), { recursive: true });
+      yield* fileSystem.writeFileString(forkRef, sha);
+      const before = yield* fingerprints.read(worktree, "feature/a");
+      expect(before).not.toBeNull();
+
+      yield* fileSystem.utimes(forkRef, 1_700_000_300, 1_700_000_300);
+      expect((yield* fingerprints.read(worktree, "feature/a"))?.branch).not.toBe(before?.branch);
+
+      yield* fileSystem.writeFileString(
+        path.join(gitDir, "config.worktree"),
+        "[include]\n\tpath = more.config\n",
+      );
+      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
+    }),
+  );
+
+  it.effect("follows the global config the environment names", () =>
+    Effect.gen(function* () {
+      const { fileSystem, path, root, worktree, fingerprintsFor } = yield* linkedWorktree;
+      const globalConfig = path.join(root, "global.config");
+      const fingerprints = yield* fingerprintsFor({
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: globalConfig,
+      });
+      const missing = yield* fingerprints.read(worktree, "feature/a");
+      expect(missing).not.toBeNull();
+
+      yield* fileSystem.writeFileString(globalConfig, "[core]\n\tabbrev = 12\n");
+      const written = yield* fingerprints.read(worktree, "feature/a");
+      expect(written?.repository).not.toBe(missing?.repository);
+
+      yield* fileSystem.writeFileString(globalConfig, '[includeIf "gitdir:~/work/"]\n\tpath = x\n');
+      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
+    }),
+  );
+
+  it.effect("has no fingerprint when the environment points git at another repository", () =>
+    Effect.gen(function* () {
+      const { commonDir, worktree, fingerprintsFor } = yield* linkedWorktree;
+      const fingerprints = yield* fingerprintsFor({ GIT_DIR: commonDir });
       expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
     }),
   );

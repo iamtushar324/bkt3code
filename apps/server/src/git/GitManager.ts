@@ -711,7 +711,11 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // T3-CUSTOM(expbkt3): stats instead of git processes for unchanged worktrees.
-  const gitStateFingerprints = yield* makeGitStateFingerprints({ fileSystem, path });
+  const gitStateFingerprints = yield* makeGitStateFingerprints({
+    fileSystem,
+    path,
+    environment: process.env,
+  });
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
@@ -1953,12 +1957,12 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => null));
   });
 
-  // T3-CUSTOM(expbkt3): BEGIN a PR cache miss reuses the git-derived lookup decision while the
-  // files it was read from are unchanged, so an expired PR state queries only the host.
+  // T3-CUSTOM(expbkt3): BEGIN a PR cache miss reuses the git-derived head context while the
+  // files it was read from are unchanged, so an expired PR state queries only the host. The
+  // unpublished check reads every remote-tracking ref, which no fingerprint covers, so it reruns.
   interface PrLookupDecision {
     readonly headContext: BranchHeadContext;
     readonly lookup: boolean;
-    readonly skipReason: "no-remote" | "unpublished" | null;
   }
   const prLookupDecisionByKey = new Map<
     string,
@@ -1978,29 +1982,31 @@ export const make = Effect.gen(function* () {
     const fingerprint = yield* gitStateFingerprints.read(cwd, details.branch);
     const readAtMs = yield* Clock.currentTimeMillis;
     const remembered = prLookupDecisionByKey.get(key);
-    if (
+    const reusable =
       fingerprint !== null &&
       remembered !== undefined &&
       remembered.token === fingerprint.branch &&
-      readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE)
-    ) {
-      return remembered.decision;
+      readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE);
+    const decision: PrLookupDecision =
+      reusable && remembered !== undefined
+        ? remembered.decision
+        : yield* resolveLookupHeadContext(cwd, details);
+    if (!reusable) {
+      prLookupDecisionByKey.delete(key);
+      if (fingerprint !== null && (yield* fingerprint.unchanged)) {
+        if (prLookupDecisionByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+          const oldestKey = prLookupDecisionByKey.keys().next().value;
+          if (oldestKey !== undefined) prLookupDecisionByKey.delete(oldestKey);
+        }
+        prLookupDecisionByKey.set(key, { token: fingerprint.branch, readAtMs, decision });
+      }
     }
-    const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+    const { headContext, lookup } = decision;
     const skipReason =
       lookup && details.localBranchExists && details.upstreamRef === null
         ? yield* isUnpublishedBranch(cwd, headContext)
         : null;
-    const decision: PrLookupDecision = { headContext, lookup, skipReason };
-    prLookupDecisionByKey.delete(key);
-    if (fingerprint !== null && (yield* fingerprint.unchanged)) {
-      if (prLookupDecisionByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
-        const oldestKey = prLookupDecisionByKey.keys().next().value;
-        if (oldestKey !== undefined) prLookupDecisionByKey.delete(oldestKey);
-      }
-      prLookupDecisionByKey.set(key, { token: fingerprint.branch, readAtMs, decision });
-    }
-    return decision;
+    return { headContext, lookup, skipReason };
   });
   // T3-CUSTOM(expbkt3): END
 
@@ -2594,7 +2600,8 @@ export const make = Effect.gen(function* () {
       !fresh &&
       remembered !== undefined &&
       (token === null
-        ? readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+        ? remembered.token === null &&
+          readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
         : remembered.token === token &&
           readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE))
     ) {
