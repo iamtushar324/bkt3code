@@ -1114,7 +1114,7 @@ export const make = Effect.gen(function* () {
             .pipe(Effect.andThen(electronWindow.sendAll(IpcChannels.UPDATE_REVEAL_CHANNEL, null))),
       }),
     ),
-    Effect.catchCause(() => Effect.void),
+    Effect.ignoreCause,
     Effect.withSpan("desktop.updates.revealUpdateReady"),
   );
   // T3-CUSTOM(expbkt3): END

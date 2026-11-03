@@ -17,6 +17,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -163,6 +164,11 @@ describe("periodic pull-request sweep rotation", () => {
                   lookups.set(root, (lookups.get(root) ?? 0) + 1);
                   return null;
                 }),
+            }),
+            // A client holds an activity lease, so the sweep runs every pass.
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              shouldRunScopeWork: () => Effect.succeed(true),
+              shouldRunOpportunisticWork: Effect.succeed(true),
             }),
             Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
             Layer.succeed(

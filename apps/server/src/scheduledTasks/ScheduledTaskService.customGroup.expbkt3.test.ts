@@ -25,6 +25,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -92,6 +93,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
         Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({

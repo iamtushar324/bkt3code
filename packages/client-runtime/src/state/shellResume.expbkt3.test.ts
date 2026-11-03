@@ -56,14 +56,14 @@ const synchronizedThenOpen: Stream.Stream<OrchestrationV2ShellStreamItem> = Stre
 );
 
 const NO_CACHE = Persistence.EnvironmentCacheStore.of({
-  loadShell: () => Effect.succeed(Option.none()),
+  loadShell: () => Effect.succeedNone,
   saveShell: () => Effect.void,
-  loadThread: () => Effect.succeed(Option.none()),
+  loadThread: () => Effect.succeedNone,
   saveThread: () => Effect.void,
   removeThread: () => Effect.void,
-  loadServerConfig: () => Effect.succeed(Option.none()),
+  loadServerConfig: () => Effect.succeedNone,
   saveServerConfig: () => Effect.void,
-  loadVcsRefs: () => Effect.succeed(Option.none()),
+  loadVcsRefs: () => Effect.succeedNone,
   saveVcsRefs: () => Effect.void,
   removeVcsRefs: () => Effect.void,
   clearVcsRefs: () => Effect.void,
@@ -97,9 +97,10 @@ const makeHarness = Effect.fn("ShellResumeHarness.make")(function* (
       shellResumeCompletionMarker: true,
       ...(serverInstanceId === undefined ? {} : { serverInstanceId }),
     } as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   });
   const activeSession = yield* SubscriptionRef.make(Option.some(sessionFor("instance-a")));

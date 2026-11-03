@@ -71,7 +71,7 @@ export const readManagedPrimaryDpopAuthorization: Effect.Effect<
   never
 > = Effect.suspend(() => {
   if (!isBkManagedPrimary()) {
-    return Effect.succeed(Option.none());
+    return Effect.succeedNone;
   }
   return Effect.promise(readManagedPrimaryCredential).pipe(
     Effect.map((credential) =>

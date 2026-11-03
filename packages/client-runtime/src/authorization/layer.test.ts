@@ -276,6 +276,8 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
         }),
         Layer.succeed(ClientCapabilities.PrimaryEnvironmentAuth, {
           bearerToken: Effect.succeedNone,
+          // T3-CUSTOM(expbkt3): fork PrimaryEnvironmentAuth carries the managed DPoP path.
+          dpopAuthorization: Effect.succeedNone,
         }),
         Layer.succeed(ClientCapabilities.SshEnvironmentGateway, {
           provision: unused,

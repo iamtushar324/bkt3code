@@ -340,12 +340,10 @@ export function createThreadEnvironmentAtoms<R, E>(
       ) {
         const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
         if (Option.isNone(cacheOption) || cacheOption.value.saveOutbox === undefined) {
-          return yield* Effect.fail(
-            new ThreadOutboxPersistenceError({
-              operation: "save-before-send",
-              cause: "Outbox storage unavailable",
-            }),
-          );
+          return yield* new ThreadOutboxPersistenceError({
+            operation: "save-before-send",
+            cause: "Outbox storage unavailable",
+          });
         }
         yield* cacheOption.value.saveOutbox(message);
         bumpOutboxRevision(
