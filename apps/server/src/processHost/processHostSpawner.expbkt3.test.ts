@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -199,6 +200,37 @@ describe("process host spawner", () => {
         assert.isTrue(Exit.isFailure(yield* Fiber.await(spawning)));
         for (const pid of pids) assert.isTrue(yield* isGone(pid));
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(!hostSupported)(
+    "finishes kill and release only after a dead host's cleanup has killed the child",
+    () =>
+      Effect.gen(function* () {
+        ProcessHostSpawner.resetProcessHostRestartDelay();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const scope = yield* Scope.make();
+        const handle = yield* spawner
+          .spawn(ChildProcess.make("sleep", ["30"]))
+          .pipe(Scope.provide(scope));
+        const pid = Number(handle.pid);
+        const hold = ProcessHostSpawner.holdNextProcessHostCleanup();
+        killHost();
+        yield* Effect.promise(() => hold.reached);
+
+        // The host is gone and its cleanup is held, so the child still runs.
+        assert.isTrue(isAlive(pid));
+        const killing = yield* handle.kill().pipe(Effect.forkChild({ startImmediately: true }));
+        const releasing = yield* Scope.close(scope, Exit.void).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        assert.isUndefined(killing.pollUnsafe());
+        assert.isUndefined(releasing.pollUnsafe());
+
+        hold.release();
+        yield* Fiber.join(killing);
+        yield* Fiber.join(releasing);
+        assert.isTrue(yield* isGone(pid));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live.skipIf(!hostSupported)(

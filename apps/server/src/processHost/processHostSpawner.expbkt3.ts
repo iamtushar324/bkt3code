@@ -92,6 +92,8 @@ interface HostConnection {
   readonly handles: Map<number, HandleState>;
   startupTimer: NodeJS.Timeout | undefined;
   gone: boolean;
+  // Set together with `gone`; settles once the host's processes are gone and its handles failed.
+  cleanedUp: Promise<void> | undefined;
 }
 
 interface HostLaunch {
@@ -119,6 +121,9 @@ const manager = {
   status: undefined as HostStatus | undefined,
   loggedStatusKey: undefined as string | undefined,
 };
+
+// Tests only: holds the next cleanup before its scan. Production code never sets it.
+let cleanupHold: { readonly reached: () => void; readonly released: Promise<void> } | undefined;
 
 const setStatus = (status: HostStatus) => {
   manager.status = status;
@@ -242,6 +247,12 @@ const waitForHostExit = (host: HostConnection) =>
 // Handles fail only after cleanup, so a failed handle means its processes are gone.
 const cleanUpHost = async (host: HostConnection, reason: string) => {
   await waitForHostExit(host);
+  const hold = cleanupHold;
+  cleanupHold = undefined;
+  if (hold !== undefined) {
+    hold.reached();
+    await hold.released;
+  }
   const exclude = new Set([process.pid, host.child.pid ?? 0]);
   const killed = await killMarkedProcesses(host.instanceId, exclude).catch(() => 0);
   for (const state of host.handles.values()) failHandle(state, reason);
@@ -267,7 +278,7 @@ const retireHost = (host: HostConnection, reason: string, stop: "kill" | "discon
   } else {
     host.child.kill("SIGKILL");
   }
-  void cleanUpHost(host, reason);
+  host.cleanedUp = cleanUpHost(host, reason);
 };
 
 const hostGone = (host: HostConnection, reason: string) => {
@@ -390,6 +401,7 @@ const startHost = (launch: HostLaunch): HostConnection | undefined => {
     handles: new Map(),
     startupTimer: undefined,
     gone: false,
+    cleanedUp: undefined,
   };
   manager.current = host;
   host.startupTimer = setTimeout(
@@ -427,7 +439,9 @@ const hostRequest = (
 ) =>
   Effect.callback<Reply>((resume) => {
     if (state.host.gone) {
-      resume(Effect.succeed({ _tag: "HostGone", reason: "exited" }));
+      // The host's processes can outlive it until cleanup kills them.
+      const settled = () => resume(Effect.succeed<Reply>({ _tag: "HostGone", reason: "exited" }));
+      void (state.host.cleanedUp ?? Promise.resolve()).then(settled, settled);
       return;
     }
     const seq = state.nextSeq++;
@@ -800,6 +814,14 @@ const makeSpawner = Effect.gen(function* () {
 export const resetProcessHostRestartDelay = () => {
   manager.retryAt = 0;
   manager.backoffMs = RESTART_BACKOFF_MIN_MS;
+};
+
+/** Tests only: holds the next host cleanup before its scan, until `release` is called. */
+export const holdNextProcessHostCleanup = () => {
+  const reached = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  cleanupHold = { reached: reached.resolve, released: released.promise };
+  return { reached: reached.promise, release: released.resolve };
 };
 
 /** The running host's pid, for tests and diagnostics. */
