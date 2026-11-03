@@ -101,6 +101,7 @@
               "packages/provider-testing/**"
             ],
             "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
+            // T3-CUSTOM(expbkt3): separator for the fork override below.
           },
           // T3-CUSTOM(expbkt3): fork-owned files that predate upstream's 2026-11 Effect style
           // rules. A ratchet: drop a file once it passes; never add an upstream-owned file.
