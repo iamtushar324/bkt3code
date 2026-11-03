@@ -37,6 +37,7 @@ export class ScratchThreadPromotion extends Context.Service<
      * Turns a No project thread's folder into a project, in place, and moves every
      * thread working in that folder into it. Running it again finishes a partial move.
      */
+    // T3-CUSTOM(expbkt3): promote takes the fork's authorization options.
     readonly promote: (
       input: {
         readonly threadId: ThreadId;

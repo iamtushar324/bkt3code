@@ -505,6 +505,7 @@ export const layer = HttpApiBuilder.group(
               failEnvironmentInternal("internal_error", error),
             ),
           ),
+          // T3-CUSTOM(expbkt3): upstream handlers re-indented inside the fork's deeper handler chain.
         )
         .handle("logout", logoutHandler) // T3-CUSTOM(expbkt3): Server-backed web logout.
         .handle(
