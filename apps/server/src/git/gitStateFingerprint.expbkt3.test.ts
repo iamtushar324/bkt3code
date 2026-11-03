@@ -6,15 +6,16 @@ import * as Path from "effect/Path";
 
 import { makeGitStateFingerprints, splitGitConfig } from "./gitStateFingerprint.expbkt3.ts";
 
+// Ends with a newline as git writes it, so an appended section moves the trailing blank line.
 const repositoryConfig = (branchSections: string) =>
-  [
+  `${[
     "[core]",
     "\trepositoryformatversion = 0",
     '[remote "origin"]',
     "\turl = git@github.com:owner/repository.git",
     "\tfetch = +refs/heads/*:refs/remotes/origin/*",
     branchSections,
-  ].join("\n");
+  ].join("\n")}\n`;
 
 describe("splitGitConfig", () => {
   it("keeps another branch's section out of this branch and the shared part", () => {

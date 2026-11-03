@@ -48,6 +48,8 @@ export const splitGitConfig = (text: string): SplitGitConfig | null => {
   const remoteNames: Array<string> = [];
   let current = shared;
   for (const line of text.split("\n")) {
+    // Appending a section moves the file's trailing blank line, so blank lines must not count.
+    if (line.trim() === "") continue;
     if (/\\\s*$/u.test(line)) return null;
     if (/^\s*\[/u.test(line)) {
       const header = SECTION_HEADER.exec(line);
