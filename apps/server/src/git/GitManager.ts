@@ -85,6 +85,13 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
+// T3-CUSTOM(expbkt3): sweep lookups reuse git state while the files it was read from are unchanged.
+import {
+  GIT_STATE_FINGERPRINT_MAX_AGE,
+  gitStateFingerprintToken,
+  makeGitStateFingerprints,
+  type GitStateFingerprint,
+} from "./gitStateFingerprint.expbkt3.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -703,6 +710,12 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // T3-CUSTOM(expbkt3): stats instead of git processes for unchanged worktrees.
+  const gitStateFingerprints = yield* makeGitStateFingerprints({
+    fileSystem,
+    path,
+    environment: process.env,
+  });
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
@@ -1299,18 +1312,15 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        // T3-CUSTOM(expbkt3): preserve the no-remote lookup decision in the PR cache.
-        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
-        if (!lookup) {
-          return { latest: null, headContext, skipReason: null };
-        }
-        // T3-CUSTOM(expbkt3): BEGIN — keep why the lookup was skipped ("no-remote"
-        // vs "unpublished") for the PR-badge fallback in lookupStatusPr.
-        const skipReason =
-          details.localBranchExists && details.upstreamRef === null
-            ? yield* isUnpublishedBranch(cwd, headContext)
-            : null;
-        if (skipReason !== null) {
+        // T3-CUSTOM(expbkt3): BEGIN the git-derived decision is reused while its files are
+        // unchanged. skipReason keeps why the lookup was skipped ("no-remote" vs
+        // "unpublished") for the PR-badge fallback in lookupStatusPr.
+        const { headContext, lookup, skipReason } = yield* resolvePrLookupDecision(
+          key,
+          cwd,
+          details,
+        );
+        if (!lookup || skipReason !== null) {
           return { latest: null, headContext, skipReason };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
@@ -1947,6 +1957,59 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => null));
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN a PR cache miss reuses the git-derived head context while the
+  // files it was read from are unchanged, so an expired PR state queries only the host. The
+  // unpublished check reads every remote-tracking ref, which no fingerprint covers, so it reruns.
+  interface PrLookupDecision {
+    readonly headContext: BranchHeadContext;
+    readonly lookup: boolean;
+  }
+  const prLookupDecisionByKey = new Map<
+    string,
+    { readonly token: string; readonly readAtMs: number; readonly decision: PrLookupDecision }
+  >();
+  const resolvePrLookupDecision = Effect.fn("resolvePrLookupDecision")(function* (
+    key: string,
+    cwd: string,
+    details: {
+      readonly branch: string;
+      readonly upstreamRef: string | null;
+      readonly defaultBranch: string | null;
+      readonly localBranchExists: boolean;
+      readonly remoteName?: string;
+    },
+  ) {
+    const fingerprint = yield* gitStateFingerprints.read(cwd, details.branch);
+    const readAtMs = yield* Clock.currentTimeMillis;
+    const remembered = prLookupDecisionByKey.get(key);
+    const reusable =
+      fingerprint !== null &&
+      remembered !== undefined &&
+      remembered.token === fingerprint.branch &&
+      readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE);
+    const decision: PrLookupDecision =
+      reusable && remembered !== undefined
+        ? remembered.decision
+        : yield* resolveLookupHeadContext(cwd, details);
+    if (!reusable) {
+      prLookupDecisionByKey.delete(key);
+      if (fingerprint !== null && (yield* fingerprint.unchanged)) {
+        if (prLookupDecisionByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+          const oldestKey = prLookupDecisionByKey.keys().next().value;
+          if (oldestKey !== undefined) prLookupDecisionByKey.delete(oldestKey);
+        }
+        prLookupDecisionByKey.set(key, { token: fingerprint.branch, readAtMs, decision });
+      }
+    }
+    const { headContext, lookup } = decision;
+    const skipReason =
+      lookup && details.localBranchExists && details.upstreamRef === null
+        ? yield* isUnpublishedBranch(cwd, headContext)
+        : null;
+    return { headContext, lookup, skipReason };
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const findOpenPr = Effect.fn("findOpenPr")(function* (
     cwd: string,
     headContext: Pick<
@@ -2517,28 +2580,40 @@ export const make = Effect.gen(function* () {
   // Closed PR results can settle threads or remove worktrees; confirm fresh git state before persisting.
   const prLookupGitStateByKey = new Map<
     string,
-    { readonly readAtMs: number; readonly value: string | null }
+    // T3-CUSTOM(expbkt3): token is the fingerprint the value was read under, if any.
+    { readonly readAtMs: number; readonly value: string | null; readonly token: string | null }
   >();
   const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(
     cwd: string,
     key: string,
     fresh: boolean,
     read: Effect.Effect<string | null, E>,
+    // T3-CUSTOM(expbkt3): validates remembered state by its files; null keeps the TTL.
+    fingerprint: GitStateFingerprint | null = null,
   ) {
     const entryKey = `${cwd}\u0000${key}`;
     const readAtMs = yield* Clock.currentTimeMillis;
     const remembered = prLookupGitStateByKey.get(entryKey);
+    // T3-CUSTOM(expbkt3): BEGIN an unchanged fingerprint keeps state past the TTL.
+    const token = fingerprint === null ? null : gitStateFingerprintToken(fingerprint, key);
     if (
       !fresh &&
       remembered !== undefined &&
-      readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+      (token === null
+        ? remembered.token === null &&
+          readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+        : remembered.token === token &&
+          readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE))
     ) {
       return remembered.value;
     }
+    // T3-CUSTOM(expbkt3): END
     // invalidateStatus bumps the epoch. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
     const epoch = prLookupEpoch(cwd);
     const value = yield* read;
+    // T3-CUSTOM(expbkt3): config rewritten during the read must not be stored under the old token.
+    const storedToken = fingerprint !== null && (yield* fingerprint.unchanged) ? token : null;
     const latest = prLookupGitStateByKey.get(entryKey);
     if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
       return value;
@@ -2548,7 +2623,8 @@ export const make = Effect.gen(function* () {
       const oldestKey = prLookupGitStateByKey.keys().next().value;
       if (oldestKey !== undefined) prLookupGitStateByKey.delete(oldestKey);
     }
-    prLookupGitStateByKey.set(entryKey, { readAtMs, value });
+    // T3-CUSTOM(expbkt3): see storedToken above.
+    prLookupGitStateByKey.set(entryKey, { readAtMs, value, token: storedToken });
     return value;
   });
   const forgetPrLookupGitState = (cwd: string) =>
@@ -2558,6 +2634,14 @@ export const make = Effect.gen(function* () {
         for (const key of prLookupGitStateByKey.keys()) {
           if (key.startsWith(prefix)) prLookupGitStateByKey.delete(key);
         }
+        // T3-CUSTOM(expbkt3): BEGIN fingerprint-validated decisions and confirmations go too.
+        for (const key of prLookupDecisionByKey.keys()) {
+          if (key.startsWith(prefix)) prLookupDecisionByKey.delete(key);
+        }
+        for (const key of confirmedClosedPrByBranchKey.keys()) {
+          if (key.startsWith(prefix)) confirmedClosedPrByBranchKey.delete(key);
+        }
+        // T3-CUSTOM(expbkt3): END
       }),
     );
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
@@ -2566,6 +2650,8 @@ export const make = Effect.gen(function* () {
       branch: string,
       remoteNameOverride: string | undefined,
       fresh: boolean,
+      // T3-CUSTOM(expbkt3): validates the remembered config reads.
+      fingerprint: GitStateFingerprint | null = null,
     ) {
       const readConfig = (key: string) =>
         rememberPrLookupGitState(
@@ -2573,6 +2659,8 @@ export const make = Effect.gen(function* () {
           `config\u0000${key}`,
           fresh,
           gitCore.readConfigValue(cwd, key),
+          // T3-CUSTOM(expbkt3): see the fingerprint parameter.
+          fingerprint,
         ).pipe(Effect.orElseSucceed(() => null));
       const readRemoteUrlKey = (remoteName: string | null) =>
         remoteName === null
@@ -2599,10 +2687,16 @@ export const make = Effect.gen(function* () {
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
-    options: { readonly refresh: boolean; readonly freshGitState: boolean },
+    // T3-CUSTOM(expbkt3): fingerprint is taken before any git read; null keeps the state TTL.
+    options: {
+      readonly refresh: boolean;
+      readonly freshGitState: boolean;
+      readonly fingerprint: GitStateFingerprint | null;
+    },
   ) {
     const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
-      rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read);
+      // T3-CUSTOM(expbkt3): validated by the lookup's fingerprint.
+      rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read, options.fingerprint);
     const remotes = yield* remember(
       "remotes",
       gitCore
@@ -2711,6 +2805,8 @@ export const make = Effect.gen(function* () {
       );
       if (Option.isSome(cached)) yield* Cache.invalidate(prLookupCache, cacheKey);
     }
+    // T3-CUSTOM(expbkt3): a refresh or fresh lookup decides from git, not a remembered decision.
+    if (options.freshGitState) prLookupDecisionByKey.delete(cacheKey);
     let cached = yield* getPrLookup(cacheKey);
     // Lookup may use a fork instead of the saved upstream; verify the remote actually queried.
     const identityRemoteName = (headContext: BranchHeadContext) =>
@@ -2720,6 +2816,8 @@ export const make = Effect.gen(function* () {
       branch,
       identityRemoteName(cached.headContext),
       options.freshGitState,
+      // T3-CUSTOM(expbkt3): validated by the lookup's fingerprint.
+      options.fingerprint,
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
@@ -2738,12 +2836,16 @@ export const make = Effect.gen(function* () {
     }
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
       yield* Cache.invalidate(prLookupCache, cacheKey);
+      // T3-CUSTOM(expbkt3): the mismatch proves the remembered decision stale; read git again.
+      prLookupDecisionByKey.delete(cacheKey);
       cached = yield* getPrLookup(cacheKey);
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
         identityRemoteName(cached.headContext),
         true,
+        // T3-CUSTOM(expbkt3): store the fresh reads under the lookup's fingerprint.
+        options.fingerprint,
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
@@ -2774,21 +2876,101 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+  // T3-CUSTOM(expbkt3): BEGIN a closed or merged result that fresh git state confirmed under the
+  // same fingerprint is not confirmed again, so a settled PR's idle worktree starts no git.
+  const confirmedClosedPrByBranchKey = new Map<
+    string,
+    {
+      readonly token: string;
+      readonly epoch: number;
+      readonly confirmedAtMs: number;
+      readonly pullRequest: string;
+    }
+  >();
+  const closedPrIdentity = (pullRequest: GitBranchPullRequest) =>
+    [pullRequest.number, pullRequest.url, pullRequest.state, pullRequest.repositoryKey ?? ""].join(
+      "\u0000",
+    );
+  const confirmedClosedPrKey = (cacheCwd: string, branch: string, profileId: string | null) =>
+    `${cacheCwd}\u0000${branch}\u0000${profileId ?? "machine"}`;
+  const isConfirmedClosedPr = Effect.fn("isConfirmedClosedPr")(function* (
+    cacheCwd: string,
+    branch: string,
+    fingerprint: GitStateFingerprint | null,
+    pullRequest: GitBranchPullRequest,
+  ) {
+    if (fingerprint === null) return false;
+    const environment = yield* CurrentSourceControlExecutionEnvironment;
+    const confirmed = confirmedClosedPrByBranchKey.get(
+      confirmedClosedPrKey(cacheCwd, branch, environment?.profileId ?? null),
+    );
+    const nowMs = yield* Clock.currentTimeMillis;
+    return (
+      confirmed !== undefined &&
+      confirmed.token === fingerprint.branch &&
+      confirmed.epoch === prLookupEpoch(cacheCwd) &&
+      nowMs - confirmed.confirmedAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE) &&
+      confirmed.pullRequest === closedPrIdentity(pullRequest)
+    );
+  });
+  const rememberConfirmedClosedPr = Effect.fn("rememberConfirmedClosedPr")(function* (
+    cacheCwd: string,
+    branch: string,
+    started: { readonly fingerprint: GitStateFingerprint | null; readonly epoch: number },
+    confirmedAtMs: number,
+    pullRequest: GitBranchPullRequest | null,
+  ) {
+    const environment = yield* CurrentSourceControlExecutionEnvironment;
+    const key = confirmedClosedPrKey(cacheCwd, branch, environment?.profileId ?? null);
+    confirmedClosedPrByBranchKey.delete(key);
+    const { fingerprint, epoch } = started;
+    if (fingerprint === null || pullRequest === null || pullRequest.state === "open") return;
+    if (prLookupEpoch(cacheCwd) !== epoch || !(yield* fingerprint.unchanged)) return;
+    if (confirmedClosedPrByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+      const oldestKey = confirmedClosedPrByBranchKey.keys().next().value;
+      if (oldestKey !== undefined) confirmedClosedPrByBranchKey.delete(oldestKey);
+    }
+    confirmedClosedPrByBranchKey.set(key, {
+      token: fingerprint.branch,
+      epoch,
+      confirmedAtMs,
+      pullRequest: closedPrIdentity(pullRequest),
+    });
+  });
+  // T3-CUSTOM(expbkt3): END
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const refresh = options?.refresh === true;
     const freshGitState = refresh || options?.freshGitState === true;
+    // T3-CUSTOM(expbkt3): BEGIN taken before any git read, so a change during the lookup shows next time.
+    const started = {
+      fingerprint: yield* gitStateFingerprints.read(cacheCwd, branch),
+      epoch: prLookupEpoch(cacheCwd),
+    };
+    const startedAtMs = yield* Clock.currentTimeMillis;
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
+      fingerprint: started.fingerprint,
     });
-    if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
-    return yield* lookupBranchPullRequest(cacheCwd, branch, {
+    if (freshGitState) {
+      yield* rememberConfirmedClosedPr(cacheCwd, branch, started, startedAtMs, pullRequest);
+      return pullRequest;
+    }
+    if (pullRequest === null || pullRequest.state === "open") return pullRequest;
+    if (yield* isConfirmedClosedPr(cacheCwd, branch, started.fingerprint, pullRequest)) {
+      return pullRequest;
+    }
+    const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
+      fingerprint: started.fingerprint,
     });
+    yield* rememberConfirmedClosedPr(cacheCwd, branch, started, startedAtMs, confirmed);
+    return confirmed;
+    // T3-CUSTOM(expbkt3): END
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",

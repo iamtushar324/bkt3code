@@ -20,6 +20,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -740,6 +741,44 @@ function makeManager(input?: {
     return { manager, providerCalls };
   });
 }
+
+// A pushed linked worktree with one PR, as the periodic pull-request sweep looks it up.
+function sweepWorktreeFixture(branch: string, state: "open" | "merged") {
+  return Effect.gen(function* () {
+    const repoDir = yield* makeTempDir("t3code-git-manager-");
+    yield* initRepo(repoDir);
+    const remoteDir = yield* createBareRemote();
+    yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+    yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+    const worktreeDir = NodePath.join(yield* makeTempDir("t3code-git-worktree-"), "worktree");
+    yield* runGit(repoDir, ["worktree", "add", "-b", branch, worktreeDir]);
+    yield* runGit(worktreeDir, ["push", "-u", "origin", branch]);
+    const gitCommands: string[] = [];
+    const { manager, providerCalls } = yield* makeManager({
+      gitCommands,
+      providerScenario: {
+        prListByHeadSelector: {
+          [branch]: [
+            {
+              number: 501,
+              title: branch,
+              url: "https://github.com/pingdotgg/codething-mvp/pull/501",
+              baseRefName: "main",
+              headRefName: branch,
+              state,
+              updatedAt: "2026-11-01T00:00:00Z",
+            },
+          ],
+        },
+      },
+    });
+    const sweepLookup = manager.branchPullRequest({ cwd: worktreeDir, branch });
+    return { repoDir, worktreeDir, gitCommands, manager, providerCalls, sweepLookup };
+  });
+}
+
+const readsBranchRef = (branch: string) => (command: string) =>
+  command.startsWith("for-each-ref ") && command.endsWith(` refs/heads/${branch}`);
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
@@ -1786,6 +1825,253 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(second).toBeNull();
       expect(listed(providerCalls)).toHaveLength(2);
+    }),
+  );
+
+  it.effect("a sweep lookup of an unchanged worktree starts no git and asks only the host", () =>
+    Effect.gen(function* () {
+      const { gitCommands, providerCalls, sweepLookup } = yield* sweepWorktreeFixture(
+        "feature/sweep-unchanged",
+        "open",
+      );
+      const first = yield* sweepLookup;
+      expect(first?.number).toBe(501);
+      expect(gitCommands.length).toBeGreaterThan(0);
+
+      // Past both the open-PR TTL and the 5-minute git-state TTL the old cache relied on.
+      yield* TestClock.adjust("6 minutes");
+      gitCommands.length = 0;
+      const hostCallsBefore = listed(providerCalls).length;
+      const second = yield* sweepLookup;
+
+      expect(second).toEqual(first);
+      expect(gitCommands).toEqual([]);
+      expect(listed(providerCalls).length).toBe(hostCallsBefore + 1);
+    }),
+  );
+
+  it.effect("a sweep lookup reads git again after HEAD, the branch ref or its config changes", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-changed";
+      const { repoDir, worktreeDir, gitCommands, sweepLookup } = yield* sweepWorktreeFixture(
+        branch,
+        "open",
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const gitDir = (yield* runGit(worktreeDir, [
+        "rev-parse",
+        "--absolute-git-dir",
+      ])).stdout.trim();
+      const commonDir = NodePath.resolve(
+        worktreeDir,
+        (yield* runGit(worktreeDir, ["rev-parse", "--git-common-dir"])).stdout.trim(),
+      );
+      yield* sweepLookup;
+
+      yield* fileSystem.utimes(NodePath.join(gitDir, "HEAD"), 1_700_000_000, 1_700_000_000);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands.length).toBeGreaterThan(0);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands).toEqual([]);
+
+      const branchRef = NodePath.join(commonDir, "refs", "heads", ...branch.split("/"));
+      yield* fileSystem.utimes(branchRef, 1_700_000_100, 1_700_000_100);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands.length).toBeGreaterThan(0);
+
+      // Another branch's section rewrites the shared config file but not this branch's state.
+      yield* runGit(repoDir, ["config", "branch.someone-else.remote", "origin"]);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands).toEqual([]);
+
+      yield* runGit(repoDir, ["config", `branch.${branch}.description`, "changed"]);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands.some(readsBranchRef(branch))).toBe(true);
+      expect(gitCommands).not.toContain("remote");
+    }),
+  );
+
+  it.effect("a refresh and invalidateStatus still read git for an unchanged worktree", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-refresh";
+      const { worktreeDir, gitCommands, manager, sweepLookup } = yield* sweepWorktreeFixture(
+        branch,
+        "open",
+      );
+      yield* sweepLookup;
+
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest({ cwd: worktreeDir, branch }, { refresh: true });
+      expect(gitCommands.length).toBeGreaterThan(0);
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands).toEqual([]);
+
+      yield* manager.invalidateStatus(worktreeDir);
+      gitCommands.length = 0;
+      expect((yield* sweepLookup)?.number).toBe(501);
+      expect(gitCommands.length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("a sweep lookup without a git-state fingerprint keeps the 5-minute TTL", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-subdirectory";
+      const { worktreeDir, gitCommands, manager } = yield* sweepWorktreeFixture(branch, "open");
+      // A project rooted below the checkout has no .git of its own to fingerprint.
+      const projectDir = NodePath.join(worktreeDir, "packages", "app");
+      yield* makeDirectory(projectDir);
+      const lookup = manager.branchPullRequest({ cwd: projectDir, branch });
+      expect((yield* lookup)?.number).toBe(501);
+
+      gitCommands.length = 0;
+      yield* lookup;
+      expect(gitCommands).toEqual([]);
+
+      yield* TestClock.adjust("6 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.number).toBe(501);
+      expect(gitCommands).toContain("remote");
+    }),
+  );
+
+  it.effect("a merged PR confirmed under unchanged git files is not confirmed again", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-merged";
+      const { repoDir, worktreeDir, gitCommands, manager, sweepLookup } =
+        yield* sweepWorktreeFixture(branch, "merged");
+      const first = yield* sweepLookup;
+      expect(first?.state).toBe("merged");
+      // The first lookup confirms the closed result with a second, fresh read of git state.
+      expect(gitCommands.filter((command) => command === "remote")).toHaveLength(2);
+
+      gitCommands.length = 0;
+      expect(yield* sweepLookup).toEqual(first);
+      expect(gitCommands).toEqual([]);
+
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest({ cwd: worktreeDir, branch }, { freshGitState: true });
+      expect(gitCommands).toContain("remote");
+
+      yield* runGit(repoDir, ["config", `branch.${branch}.description`, "changed"]);
+      gitCommands.length = 0;
+      expect(yield* sweepLookup).toEqual(first);
+      expect(gitCommands.some(readsBranchRef(branch))).toBe(true);
+      expect(gitCommands.filter((command) => command === "remote")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("a sweep lookup reads git again after the global git config changes", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-global-config";
+      const { gitCommands, sweepLookup } = yield* sweepWorktreeFixture(branch, "open");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const globalConfig = NodePath.join(yield* makeTempDir("t3code-git-global-"), "gitconfig");
+      yield* fileSystem.writeFileString(globalConfig, "[t3code]\n\tsweep = 1\n");
+      const lookup = withSourceControlExecutionEnvironment(sweepLookup, {
+        profileId: SourceControlProfileId.make("sweep-global-config"),
+        environment: { GIT_CONFIG_GLOBAL: globalConfig },
+      });
+      expect((yield* lookup)?.number).toBe(501);
+      gitCommands.length = 0;
+      yield* lookup;
+      expect(gitCommands).toEqual([]);
+
+      yield* fileSystem.writeFileString(globalConfig, "[t3code]\n\tsweep = 22\n");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.number).toBe(501);
+      expect(gitCommands.length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("a sweep lookup reads git again once config.worktree includes another file", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-worktree-include";
+      const { repoDir, worktreeDir, gitCommands, sweepLookup } = yield* sweepWorktreeFixture(
+        branch,
+        "open",
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* runGit(repoDir, ["config", "extensions.worktreeConfig", "true"]);
+      yield* sweepLookup;
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands).toEqual([]);
+
+      const included = NodePath.join(repoDir, "worktree-extra.config");
+      yield* fileSystem.writeFileString(included, "[t3code]\n\tsweep = 1\n");
+      yield* runGit(worktreeDir, ["config", "--worktree", "include.path", included]);
+      gitCommands.length = 0;
+      expect((yield* sweepLookup)?.number).toBe(501);
+      expect(gitCommands.length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("a sweep lookup checks again whether a branch without upstream is unpublished", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-unpublished";
+      const unpublishedProbe = "for-each-ref --count=1 --format=%(refname) refs/remotes";
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      // A ref added inside an existing remote directory leaves refs/remotes itself untouched.
+      yield* makeDirectory(NodePath.join(repoDir, ".git", "refs", "remotes", "origin"));
+      const gitCommands: string[] = [];
+      const { manager, providerCalls } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          prListByHeadSelector: {
+            [branch]: [
+              {
+                number: 501,
+                title: branch,
+                url: "https://github.com/pingdotgg/codething-mvp/pull/501",
+                baseRefName: "main",
+                headRefName: branch,
+                state: "open",
+                updatedAt: "2026-11-01T00:00:00Z",
+              },
+            ],
+          },
+        },
+      });
+      const lookup = manager.branchPullRequest({ cwd: repoDir, branch });
+      expect((yield* lookup)?.number).toBe(501);
+      expect(gitCommands).toContain(unpublishedProbe);
+
+      yield* runGit(repoDir, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      yield* TestClock.adjust("6 minutes");
+      gitCommands.length = 0;
+      const hostCallsBefore = listed(providerCalls).length;
+      expect(yield* lookup).toBeNull();
+      expect(gitCommands).toContain(unpublishedProbe);
+      expect(listed(providerCalls)).toHaveLength(hostCallsBefore);
+    }),
+  );
+
+  it.effect("a sweep lookup reads git again after the shallow boundary changes", () =>
+    Effect.gen(function* () {
+      const branch = "feature/sweep-shallow";
+      const { repoDir, gitCommands, sweepLookup } = yield* sweepWorktreeFixture(branch, "open");
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* sweepLookup;
+      gitCommands.length = 0;
+      yield* sweepLookup;
+      expect(gitCommands).toEqual([]);
+
+      // The root commit has no parents, so marking it shallow hides no history.
+      const root = (yield* runGit(repoDir, ["rev-list", "--max-parents=0", "HEAD"])).stdout.trim();
+      yield* fileSystem.writeFileString(NodePath.join(repoDir, ".git", "shallow"), `${root}\n`);
+      gitCommands.length = 0;
+      expect((yield* sweepLookup)?.number).toBe(501);
+      expect(gitCommands.length).toBeGreaterThan(0);
     }),
   );
 
