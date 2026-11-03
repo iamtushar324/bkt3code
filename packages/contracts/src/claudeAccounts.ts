@@ -59,6 +59,76 @@ export const ClaudeAccountScopedWindow = Schema.Struct({
 });
 export type ClaudeAccountScopedWindow = typeof ClaudeAccountScopedWindow.Type;
 
+const NonNegativeNumber = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** How a seat's binding weekly cap is used against the time left until it resets. */
+export const ClaudeAccountPaceStatus = Schema.Literals([
+  "untouched",
+  "underused",
+  "on_pace",
+  "overused",
+  "spent",
+  "unknown",
+]);
+export type ClaudeAccountPaceStatus = typeof ClaudeAccountPaceStatus.Type;
+
+/**
+ * Pace to reset for a subscription seat: where the binding cap ends at the
+ * current daily run rate. `projectedPercent` may pass 100 (overused).
+ */
+export const ClaudeAccountPace = Schema.Struct({
+  known: Schema.Boolean,
+  why: Schema.optionalKey(Schema.String),
+  /** `weekly`, or the scoped cap's label (`Fable`). */
+  cap: Schema.optionalKey(Schema.String),
+  elapsedDays: Schema.optionalKey(NonNegativeNumber),
+  usedPercent: Schema.optionalKey(Percent),
+  drrPercentPerDay: Schema.optionalKey(NonNegativeNumber),
+  projectedPercent: Schema.optionalKey(NonNegativeNumber),
+  status: ClaudeAccountPaceStatus,
+});
+export type ClaudeAccountPace = typeof ClaudeAccountPace.Type;
+
+export const ClaudeAccountCreditsState = Schema.Literals([
+  "ok",
+  "error",
+  "pending",
+  "no_admin_key",
+]);
+export type ClaudeAccountCreditsState = typeof ClaudeAccountCreditsState.Type;
+
+export const ClaudeAccountCreditsStatus = Schema.Literals([
+  "underused",
+  "on_pace",
+  "overused",
+  "spent",
+  "unknown",
+]);
+export type ClaudeAccountCreditsStatus = typeof ClaudeAccountCreditsStatus.Type;
+
+/**
+ * The API-credit fallback's monthly dollar budget: what is left, until when,
+ * the daily allowance (left / days left) and the 7-day average spend.
+ */
+export const ClaudeAccountCredits = Schema.Struct({
+  state: ClaudeAccountCreditsState,
+  detail: Schema.optionalKey(Schema.String),
+  fetchedAtMs: Schema.optionalKey(NonNegativeInt),
+  budgetUsd: Schema.optionalKey(Schema.Number),
+  spentUsd: Schema.optionalKey(Schema.Number),
+  leftUsd: Schema.optionalKey(Schema.Number),
+  /** `YYYY-MM-DD`. */
+  cycleStart: Schema.optionalKey(Schema.String),
+  expiresAt: Schema.optionalKey(IsoDateTime),
+  daysLeft: Schema.optionalKey(NonNegativeNumber),
+  allowedUsdPerDay: Schema.optionalKey(Schema.Number),
+  drrUsdPerDay: Schema.optionalKey(NonNegativeNumber),
+  /** When the budget hits zero at the run rate; absent when it lasts past expiry. */
+  runsOutAt: Schema.optionalKey(IsoDateTime),
+  status: Schema.optionalKey(ClaudeAccountCreditsStatus),
+});
+export type ClaudeAccountCredits = typeof ClaudeAccountCredits.Type;
+
 export const ClaudeAccountAuthState = Schema.Literals(["ok", "logged_out", "unknown"]);
 export type ClaudeAccountAuthState = typeof ClaudeAccountAuthState.Type;
 
@@ -103,6 +173,10 @@ export const ClaudeAccountStatus = Schema.Struct({
    * accounts they may use, without this flag.
    */
   allowed: Schema.optionalKey(Schema.Boolean),
+  /** Pace to reset of a subscription seat; absent from older switchers and the API fallback. */
+  pace: Schema.optionalKey(ClaudeAccountPace),
+  /** The dollar budget of the API-credit fallback (`kind: api_fallback`) only. */
+  credits: Schema.optionalKey(ClaudeAccountCredits),
 });
 export type ClaudeAccountStatus = typeof ClaudeAccountStatus.Type;
 
