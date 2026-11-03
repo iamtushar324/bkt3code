@@ -339,7 +339,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     notifications: () => notifications,
     channels: () => channels,
     allowPrerelease: () => allowPrerelease,
-    allowDowngrade: () => allowDowngrade,
     autoDownload: () => autoDownload,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,

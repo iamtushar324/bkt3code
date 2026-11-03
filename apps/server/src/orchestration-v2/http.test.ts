@@ -322,10 +322,9 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
     const full = yield* shell("");
     expect(full.threads).toHaveLength(27);
     expect(full.olderSettled).toBeUndefined();
+    // T3-CUSTOM(expbkt3): the fork never trims settled threads, so the flag changes nothing.
     const cut = yield* shell("?omitOlderSettled=1");
-    expect(cut.threads.map((row) => row.id).toSorted()).toEqual(
-      [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 1}`)].toSorted(),
-    );
-    expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
+    expect(cut.threads).toHaveLength(27);
+    expect(cut.olderSettled).toBeUndefined();
   }),
 );

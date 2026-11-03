@@ -67,11 +67,9 @@ describe("DesktopUpdates", () => {
 
   // T3-CUSTOM(expbkt3): BEGIN
   it.effect("keeps prerelease handling tied to the contract channel, not the provider one", () => {
-    // The trap this guards: `allowsPrerelease` is computed from the contract
-    // channel ("latest" | "nightly"). If it were ever computed from the string
-    // handed to the provider, a fork build's "staging-nightly" would make
-    // `=== "nightly"` false, allowPrerelease would go off, and every prerelease
-    // — which is all the fork publishes — would become invisible. Silently.
+    // `allowsPrerelease` must come from the contract channel ("latest" | "nightly"), not
+    // the provider string: a fork build's "staging-nightly" would turn it off and hide
+    // every prerelease, which is all the fork publishes.
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -82,7 +80,9 @@ describe("DesktopUpdates", () => {
         yield* updates.setChannel("nightly");
         assert.equal(harness.allowPrerelease(), true);
         assert.equal(harness.fullChangelog(), true);
-        assert.equal(harness.allowDowngrade(), true);
+        // Downgrades are allowed only during the track switch's own check, then restored.
+        assert.deepEqual(harness.checkAllowedDowngrade.slice(-1), [true]);
+        assert.equal(harness.allowDowngrade(), false);
 
         yield* updates.setChannel("latest");
         assert.equal(harness.allowPrerelease(), false);

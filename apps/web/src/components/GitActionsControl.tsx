@@ -82,7 +82,12 @@ import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/compone
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
-import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import {
+  stackedThreadToast,
+  toastManager,
+  // T3-CUSTOM(expbkt3): typed SSH-remote conversion toast data.
+  type ThreadToastData,
+} from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
@@ -964,6 +969,7 @@ export default function GitActionsControl({
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
   );
+  // T3-CUSTOM(expbkt3): an SSH-remote failure offers to convert origin to HTTPS.
   const convertRemote = useAtomCommand(sourceControlEnvironment.convertRemote, {
     reportFailure: false,
   });
@@ -980,6 +986,55 @@ export default function GitActionsControl({
     serverConfig?.availableEditors ?? [],
   );
   const threadToastData = activeThreadRef ? { threadRef: activeThreadRef } : undefined;
+  // T3-CUSTOM(expbkt3): BEGIN — "Convert origin to HTTPS" on an SSH-remote failure.
+  const convertOriginRemoteToHttps = async () => {
+    if (activeThreadRef === null || gitCwd === null) return;
+    const result = await convertRemote({
+      environmentId: activeThreadRef.environmentId,
+      input: { threadId: activeThreadRef.threadId, cwd: gitCwd, remoteName: "origin" },
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Remote conversion failed",
+        description: error instanceof Error ? error.message : "The origin remote was not changed.",
+        data: threadToastData,
+      });
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: "GitHub remote converted to HTTPS",
+      description: result.value.remoteUrl,
+      data: threadToastData,
+    });
+  };
+  const sourceControlErrorToastData = (error: unknown): ThreadToastData | undefined => {
+    if (
+      activeThreadRef === null ||
+      gitCwd === null ||
+      typeof error !== "object" ||
+      error === null ||
+      !("reason" in error) ||
+      error.reason !== "ssh-remote"
+    ) {
+      return threadToastData;
+    }
+    return {
+      ...threadToastData,
+      additionalActions: [
+        {
+          id: "convert-github-origin-to-https",
+          props: {
+            children: "Convert origin to HTTPS",
+            onClick: () => void convertOriginRemoteToHttps(),
+          },
+        },
+      ],
+    };
+  };
+  // T3-CUSTOM(expbkt3): END
   const activeServerThreadShell = useQuietThreadShell(activeThreadRef);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
@@ -1183,8 +1238,8 @@ export default function GitActionsControl({
   useAtomMount(
     vcsStatusRevalidation(
       activeEnvironmentId !== null && gitCwd !== null
-        // T3-CUSTOM(expbkt3): revalidation target carries the thread.
-        ? {
+        ? // T3-CUSTOM(expbkt3): revalidation target carries the thread.
+          {
             environmentId: activeEnvironmentId,
             cwd: gitCwd,
             // T3-CUSTOM(expbkt3): revalidate with the thread so its source-control profile is used.
@@ -1265,13 +1320,16 @@ export default function GitActionsControl({
 
       const error = squashAtomCommandFailure(result);
       const errorToastTiming = resolveGitActionResultToastTiming("error");
+      // T3-CUSTOM(expbkt3): an SSH-remote failure carries the HTTPS conversion action.
+      const errorToastData = sourceControlErrorToastData(error) ?? scopedToastData;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Action failed",
           description: error instanceof Error ? error.message : "An error occurred.",
           timeout: errorToastTiming.timeout,
-          ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
+          // T3-CUSTOM(expbkt3): errorToastData replaces scopedToastData.
+          ...(errorToastData !== undefined ? { data: errorToastData } : {}),
         }),
       );
       return;

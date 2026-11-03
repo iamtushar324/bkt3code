@@ -168,11 +168,9 @@ function LocalVersionStatusLabel() {
 /** Environments lists the machines this app connects to; access covers who may reach this one. */
 export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
   const desktopBridge = window.desktopBridge;
-  // T3-CUSTOM(expbkt3): this flag really means "the primary environment is the
-  // desktop's own local backend", which grants the admin surfaces below. In a
-  // managed BK build the primary is the remote central server, so it stays
-  // false even though a bundled backend runs as a *secondary* local
-  // environment (surfaced through the environments list, not managed here).
+  // T3-CUSTOM(expbkt3): true only when the primary environment is the desktop's own
+  // local backend, which grants the admin surfaces below. In a managed BK build the
+  // primary is the remote server, so it stays false even with a bundled secondary backend.
   const hasDesktopLocalBackend = desktopBridge !== undefined && !isBkManagedPrimary();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -323,7 +321,9 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   );
   const desktopNetworkAccess = useEnvironmentQuery(
     // T3-CUSTOM(expbkt3): managed primary has no local-backend admin controls.
-    showsAccess && canManageLocalBackend && hasDesktopLocalBackend ? desktopNetworkAccessStateAtom : null,
+    showsAccess && canManageLocalBackend && hasDesktopLocalBackend
+      ? desktopNetworkAccessStateAtom
+      : null,
   );
   const desktopWsl = useEnvironmentQuery(
     // T3-CUSTOM(expbkt3): managed primary has no local-backend admin controls.

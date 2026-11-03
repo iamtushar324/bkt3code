@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -94,7 +95,8 @@ const resolvePrimary = (
   }).pipe(
     Effect.provide(makeBackendLayer(runtimeBrand, env, overrides)),
     Effect.scoped,
-    Effect.provide(NodeServices.layer),
+    // The backend configuration draws its bootstrap secrets from SecureRandom.
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 describe("BK desktop state integration", () => {

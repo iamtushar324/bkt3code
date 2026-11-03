@@ -5861,6 +5861,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // thread lock, using the live session's capabilities. A question queued
     // behind a long parent turn is never seen. Never interrupt/restart a turn
     // for a notification.
+
     // T3-CUSTOM(expbkt3): a queued scheduled prompt (steerWhenSupported) takes the
     // same route, and steers even where steering interrupts a running tool, as a
     // person's steer from the composer does.
@@ -5987,11 +5988,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Proposed plan ${sourcePlan.id} is not active.`,
       });
     }
-    // Continuing a thread ends its open plan in every interaction mode: the
-    // plan this turn implements is completed, any other is superseded, so an
-    // earlier plan can never become actionable again. A background-task wake
-    // or a maintenance command (`/compact`) is not a continuation, and a
-    // queued message waits for its run, so those leave an open plan alone.
+    // Continuing a thread ends its open plan in every interaction mode: the plan
+    // this turn implements is completed, any other is superseded. A background-task
+    // wake, a maintenance command (`/compact`) or a queued message is not a
+    // continuation, so it leaves an open plan alone.
     const continuesThread =
       delegatedCompletion === undefined &&
       command.notification === undefined &&
@@ -14768,9 +14768,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     // T3-CUSTOM(expbkt3): batched shell feed read.
     getThreadShells: Effect.fn("OrchestratorV2.getThreadShells")(function (threadIds) {
-      return projectionStore
-        .getThreadShells(threadIds)
-        .pipe(Effect.mapError(shellProjectionError));
+      return projectionStore.getThreadShells(threadIds).pipe(Effect.mapError(shellProjectionError));
     }),
     findGuestShareThreadId: Effect.fn("OrchestratorV2.findGuestShareThreadId")(function (shareId) {
       return projectionStore

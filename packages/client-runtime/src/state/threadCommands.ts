@@ -116,8 +116,7 @@ const startThreadTurnDurably = Effect.fn("ThreadCommands.startThreadTurnDurably"
   const cacheOption = yield* Effect.serviceOption(EnvironmentCacheStore);
   const cache = Option.getOrUndefined(cacheOption);
   const commandId =
-    serverInput.commandId ??
-    CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
+    serverInput.commandId ?? CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
   const createdAt =
     serverInput.createdAt ?? (yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const queuedMessage: QueuedThreadMessage = {

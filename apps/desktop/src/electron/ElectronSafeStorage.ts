@@ -99,9 +99,7 @@ export const make = Effect.gen(function* () {
     }),
     decryptStringWithMetadata,
     decryptString: Effect.fn("ElectronSafeStorage.decryptString")(function (value) {
-      return decryptStringWithMetadata(value).pipe(
-        Effect.map(({ value: decrypted }) => decrypted),
-      );
+      return decryptStringWithMetadata(value).pipe(Effect.map(({ value: decrypted }) => decrypted));
     }),
     selectedStorageBackend: Effect.sync(() => {
       if (platform !== "linux") {

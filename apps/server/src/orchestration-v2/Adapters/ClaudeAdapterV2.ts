@@ -8452,19 +8452,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // T3-CUSTOM(expbkt3) BEGIN: a subagent that ends between turns completes its card at once.
-        // Subagent ends already shown on their cards while the root was idle.
-        // Each frame still waits in the wake buffer for its continuation, and
-        // the drain does not apply it to the card a second time. Like
-        // upstream's confirmed idle outcomes, a shown end does not pin the
-        // session.
+        // Each shown end still waits in the wake buffer for its continuation; the drain does
+        // not apply it to the card a second time, and it does not pin the session.
         const subagentEndsShownBetweenTurns = new WeakSet<SDKMessage>();
-        // A running subagent's end reaches its card at once, through the turn
-        // that settled last, as its progress does. That covers a nested
-        // subagent too, whose end never wakes the root. Call it after
-        // bufferWakeMessage, which reads the running status to name the wake
-        // and offer the continuation. A subagent with work still in the wake
-        // buffer (its resume's task_started, or its own frames) ends only when
-        // the drain replays that work, in order.
+        // Call after bufferWakeMessage, which reads the running status to name the wake. A
+        // subagent with work still in the wake buffer ends only when the drain replays that
+        // work, in order.
         const showSubagentEndBetweenTurns = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
@@ -10554,7 +10547,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           // T3-CUSTOM(expbkt3): snapshot the credential environment with the policy key before any asynchronous query close.
-          const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const { T3_MCP_BEARER_TOKEN: _staleMcpToken, ...baseEnvironment } = sessionEnvironment;
           const providerEnvironment = {
             ...McpProviderSession.withAgentDeviceEnvironment(baseEnvironment, mcpSession),

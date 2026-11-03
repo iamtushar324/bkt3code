@@ -715,10 +715,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
   // T3-CUSTOM(expbkt3): BEGIN bounded admission. The gate closes while the checkpoint cannot
-  // catch up: a reader pins WAL frames, or the checkpoint itself is slow. Once a write has
-  // waited admission.timeoutMs, writes stop waiting ("open") and the WAL grows, until the
-  // worker reports the WAL back under its limits or the WAL reaches OPEN_MAX_FRAMES. A
-  // pending truncate still pauses writes, and it ends within the truncate busy timeout.
+  // catch up. Once a write has waited admission.timeoutMs, writes stop waiting ("open") and
+  // the WAL grows until it is back under its limits or reaches OPEN_MAX_FRAMES. A pending
+  // truncate still pauses writes; it ends within the truncate busy timeout.
   const OPEN_MAX_FRAMES = 10 * CHECKPOINT_BACKPRESSURE_FRAMES;
   const clock = yield* Clock.Clock;
   let failOpen = false;
@@ -1291,8 +1290,8 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
-      // T3-CUSTOM(expbkt3): reader count is configurable.
-      ? yield* Effect.forEach(
+      ? // T3-CUSTOM(expbkt3): reader count is configurable.
+        yield* Effect.forEach(
           // T3-CUSTOM(expbkt3): the pool size is configurable (`readerWorkers`).
           Array.from({
             length: Number.isFinite(options.readerWorkers)

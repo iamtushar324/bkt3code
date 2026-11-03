@@ -1,11 +1,7 @@
 // T3-CUSTOM(expbkt3): source-control helpers use the same process service as upstream.
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 // T3-CUSTOM(expbkt3): native shell and command access preserve team boundaries.
-import {
-  filterNativeShell,
-  makeActiveShellView,
-  owns,
-} from "./wsV2Visibility.expbkt3.ts";
+import { filterNativeShell, makeActiveShellView, owns } from "./wsV2Visibility.expbkt3.ts";
 // T3-CUSTOM(expbkt3): a per-process id lets clients tell a reconnect from a server restart.
 import { SERVER_INSTANCE_ID } from "./serverInstanceId.expbkt3.ts";
 import { checkCommandAccess } from "./orchestration-v2/commandAccess.ts";
@@ -14,9 +10,14 @@ import { CurrentOrchestrationActorUserId } from "./orchestration-v2/forkActor.ex
 // T3-CUSTOM(expbkt3): preserve caller-controlled metadata on native launches.
 import { forkThreadLaunchMetadata } from "./orchestration-v2/forkThreadLaunch.expbkt3.ts";
 // T3-CUSTOM(expbkt3): BEGIN team, credential, MCP, review and archive seams.
-import * as Scope from "effect/Scope";
 import { HttpClient } from "effect/http";
-import { UserId, SourceControlProfileError, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  UserId,
+  SourceControlProfileError,
+  type SourceControlCloneRepositoryInput,
+  type SourceControlPublishRepositoryInput,
+  type SourceControlRepositoryLookupInput,
+} from "@t3tools/contracts";
 import * as OrchestrationEngine from "./orchestration-v2/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration-v2/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationAccessControl } from "./orchestration-v2/Services/AccessControl.ts";
@@ -681,6 +682,7 @@ const NativeWsRpcGroup = WsRpcGroup.omit(...FORK_WS_RPCS.map((rpc) => rpc._tag))
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
+
 // T3-CUSTOM(expbkt3): the split covers the native group; fork RPCs register through ForkWsRpcGroup.
 type ServerWsRpc = RpcGroup.Rpcs<typeof NativeWsRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
@@ -1166,7 +1168,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         latestSequence: applicationEvents.latestApplicationSequence,
         options: {
           omitIdleSubagents: input.omitIdleSubagents === true,
-          omitOlderSettled: input.omitOlderSettled === true,
+          // T3-CUSTOM(expbkt3): the per-user view needs every settled thread; trimmed counts and
+          // pages are computed across all users, and the fork sidebar has no settled pager.
+          omitOlderSettled: false,
         },
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;
@@ -1272,11 +1276,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
         }),
       );
-    // T3-CUSTOM(expbkt3): shared per-user shell feed replaces the upstream concat.
-    // Initial unmarked (+ optional same-load marked) always drains first.
-    // Enrichment merges only with the post-prefix tail so a ready marked
-    // refresh cannot interleave before the authoritative initial frame.
     // T3-CUSTOM(expbkt3): BEGIN — snapshot and live tail share one per-user view of the feed.
+    // The initial frame always drains first; enrichment merges only with the post-prefix
+    // tail, so a marked refresh cannot interleave before the authoritative initial frame.
     const snapshotThenLive = Effect.gen(function* () {
       const loaded = yield* loadSnapshot();
       const snapshot = filterNativeShell(loaded.snapshot, actor);
@@ -1330,16 +1332,17 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       // One batched read of the distinct threads in the gap, not one read per event.
       const replay = Stream.unwrap(
         readShellReplay({
-          events: applicationEvents.readApplicationEvents({
-            afterSequence,
-            throughSequence: highWater,
-            // A row a newer build wrote (e.g. after a downgrade) must not fail
-            // every shell resubscribe. The live tail below resumes from
-            // highWater, so a dropped row never hides later events.
-            skipUnknownEventTypes: true,
-          })
-          // Upstream's subagent-transcript filter, applied to the fork's batched replay.
-          .pipe(Stream.filter(filterSubagentTranscript)),
+          events: applicationEvents
+            .readApplicationEvents({
+              afterSequence,
+              throughSequence: highWater,
+              // A row a newer build wrote (e.g. after a downgrade) must not fail
+              // every shell resubscribe. The live tail below resumes from
+              // highWater, so a dropped row never hides later events.
+              skipUnknownEventTypes: true,
+            })
+            // Upstream's subagent-transcript filter, applied to the fork's batched replay.
+            .pipe(Stream.filter(filterSubagentTranscript)),
           reads: shellFeedSources(feedServices),
         }).pipe(Effect.flatMap(view.applyReplay), Effect.map(rpcInitialItems)),
       );
@@ -2635,8 +2638,13 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
-            // T3-CUSTOM(expbkt3): a page lists only the threads this user may see.
-            Effect.map((page) => ({ ...page, threads: visibleShellThreads(page.threads) })),
+            // T3-CUSTOM(expbkt3): a page lists only the threads this user may see. Counts span
+            // every user's threads, so a filtered user gets none; fork shells never omit settled rows.
+            Effect.map((page) => ({
+              ...page,
+              threads: visibleShellThreads(page.threads),
+              counts: actorUserId === null ? page.counts : [],
+            })),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -3406,10 +3414,44 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
-        [WS_METHODS.sourceControlLookupRepository]: (input) =>
-          sourceControlRepositories.lookupRepository(input),
-        [WS_METHODS.sourceControlCloneRepository]: (input) =>
-          sourceControlRepositories.cloneRepository(input),
+        // T3-CUSTOM(expbkt3): BEGIN — lookup and clone run under the selected source-control profile.
+        [WS_METHODS.sourceControlLookupRepository]: Effect.fn("ws.sourceControl.lookupRepository")(
+          function* (input: SourceControlRepositoryLookupInput) {
+            const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+              input.sourceControlProfileId,
+            );
+            return yield* withSourceControlExecutionEnvironment(
+              sourceControlRepositories.lookupRepository(input),
+              executionEnvironment,
+            );
+          },
+        ),
+        [WS_METHODS.sourceControlCloneRepository]: Effect.fn("ws.sourceControl.cloneRepository")(
+          function* (input: SourceControlCloneRepositoryInput) {
+            const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+              input.sourceControlProfileId,
+            );
+            if (
+              executionEnvironment !== null &&
+              input.remoteUrl !== undefined &&
+              githubSshRemoteToHttps(input.remoteUrl) !== null
+            ) {
+              return yield* new SourceControlProfileError({
+                operation: "clone-repository",
+                reason: "ssh-remote",
+                detail: "Use the repository's HTTPS clone URL with a GitHub profile.",
+                profileId: executionEnvironment.profileId,
+              });
+            }
+            const cloneInput =
+              executionEnvironment === null ? input : { ...input, protocol: "https" as const };
+            return yield* withSourceControlExecutionEnvironment(
+              sourceControlRepositories.cloneRepository(cloneInput),
+              executionEnvironment,
+            );
+          },
+        ),
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
         [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
         [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
@@ -3469,7 +3511,20 @@ export const layerWsRpc = (
             ),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
           scratchThreadPromotion
-            .promote(input)
+            // T3-CUSTOM(expbkt3): promotion moves threads, so each one needs this user's access.
+            .promote(input, {
+              authorize: (threadIds) =>
+                Effect.forEach(threadIds, (threadId) => requireThreadAccess(threadId), {
+                  discard: true,
+                }).pipe(
+                  Effect.mapError(
+                    () =>
+                      new ScratchThreadPromotion.ScratchThreadPromotionError({
+                        reason: "Thread not found.",
+                      }),
+                  ),
+                ),
+            })
             .pipe(
               Effect.mapError(
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
@@ -3480,11 +3535,24 @@ export const layerWsRpc = (
         [WS_METHODS.projectCloneRetry]: (input) =>
           projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
-        [WS_METHODS.sourceControlPublishRepository]: (input) =>
-          sourceControlRepositories.publishRepository(input).pipe(
-            Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
-            Effect.tap(() => refreshGitStatus(input.cwd)),
-          ),
+        // T3-CUSTOM(expbkt3): BEGIN — publish runs under the selected source-control profile.
+        [WS_METHODS.sourceControlPublishRepository]: Effect.fn(
+          "ws.sourceControl.publishRepository",
+        )(function* (input: SourceControlPublishRepositoryInput) {
+          const executionEnvironment = yield* resolveSelectedSourceControlEnvironment(
+            input.sourceControlProfileId,
+          );
+          const publishInput =
+            executionEnvironment === null ? input : { ...input, protocol: "https" as const };
+          return yield* withSourceControlExecutionEnvironment(
+            sourceControlRepositories.publishRepository(publishInput).pipe(
+              Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
+            executionEnvironment,
+          );
+        }),
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.projectsSearchEntries]: (input) =>
           workspaceEntries.search(input).pipe(
             Effect.mapError(

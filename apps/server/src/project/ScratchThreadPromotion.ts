@@ -37,9 +37,17 @@ export class ScratchThreadPromotion extends Context.Service<
      * Turns a No project thread's folder into a project, in place, and moves every
      * thread working in that folder into it. Running it again finishes a partial move.
      */
-    readonly promote: (input: {
-      readonly threadId: ThreadId;
-    }) => Effect.Effect<{ readonly projectId: ProjectId }, ScratchThreadPromotionError>;
+    readonly promote: (
+      input: {
+        readonly threadId: ThreadId;
+      },
+      // T3-CUSTOM(expbkt3): the caller authorizes every thread that would move, before any write.
+      options?: {
+        readonly authorize?: (
+          threadIds: ReadonlyArray<ThreadId>,
+        ) => Effect.Effect<void, ScratchThreadPromotionError>;
+      },
+    ) => Effect.Effect<{ readonly projectId: ProjectId }, ScratchThreadPromotionError>;
   }
 >()("t3/project/ScratchThreadPromotion") {}
 
@@ -56,7 +64,10 @@ const make = Effect.gen(function* () {
 
   const promote: ScratchThreadPromotion["Service"]["promote"] = Effect.fn(
     "ScratchThreadPromotion.promote",
-  )(function* (input) {
+    // T3-CUSTOM(expbkt3): fork authorization hook.
+  )(function* (input, options) {
+    // T3-CUSTOM(expbkt3): a hidden thread reads as missing before any folder detail leaks.
+    if (options?.authorize !== undefined) yield* options.authorize([input.threadId]);
     const thread = yield* threads.getThreadShell(input.threadId).pipe(
       Effect.mapError(fail("Could not read the thread.")),
       Effect.filterOrFail(
@@ -95,6 +106,8 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // T3-CUSTOM(expbkt3): every thread in the folder moves, so the caller must own them all.
+    if (options?.authorize !== undefined) yield* options.authorize([...moveSet.keys()]);
     for (const candidate of moveSet.values()) {
       const records = yield* threads
         .getThreadRecords(candidate.id, ["runs", "runtimeRequests"], { turnItemTypes: [] })

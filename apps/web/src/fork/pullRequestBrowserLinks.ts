@@ -1,21 +1,14 @@
 /**
- * T3-CUSTOM(expbkt3): open pull request links in the integrated browser.
- *
- * Upstream opens a change request link in its own pull request view (the right-panel PR
- * surface, or the /pull-requests page). With `nativePullRequestViewEnabled` off — the fork's
- * default — the same click loads the host's own page in a browser tab beside the thread
- * instead, whatever "Open links in" says: the setting is about where PRs go, not links in
- * general. Without a thread there is nowhere to put that tab, so the link stays an ordinary
- * link and the caller opens it the way it opens any other.
- *
- * @module fork/pullRequestBrowserLinks
+ * T3-CUSTOM(expbkt3): with `nativePullRequestViewEnabled` off (the fork default), a pull
+ * request link opens the host's page in a browser tab beside the thread, whatever "Open
+ * links in" says. Without a thread the link stays an ordinary link.
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useCallback } from "react";
 
 import { isWebUrl } from "~/browser/browserLinkTarget";
@@ -42,7 +35,7 @@ export function resolvePullRequestBrowserTarget(input: {
 }): PullRequestBrowserTarget {
   if (input.nativeViewEnabled) return "native";
   // Not a change request: upstream already treats it as a plain link, nothing to take over.
-  if (parseChangeRequestUrl(input.url) === null) return "native";
+  if (sourceControlClients.parseChangeRequestUrl(input.url) === null) return "native";
   if (!input.hasThread || !input.previewSupported || !isWebUrl(input.url)) return "link";
   return "app";
 }

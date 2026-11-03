@@ -185,8 +185,8 @@ export function useSelectedThreadGitActions() {
   useAtomMount(
     selectedThreadStatusRevalidation(
       selectedThread && selectedThreadProject && selectedThreadCwd
-        // T3-CUSTOM(expbkt3): revalidation target carries the selected thread.
-        ? {
+        ? // T3-CUSTOM(expbkt3): revalidation target carries the selected thread.
+          {
             environmentId: selectedThread.environmentId,
             cwd: selectedThreadCwd,
             // T3-CUSTOM(expbkt3): the fork scopes VCS status to the selected thread.

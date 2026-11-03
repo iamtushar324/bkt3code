@@ -64,8 +64,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
-// T3-CUSTOM(expbkt3): the saved new-thread defaults (project, then host), one resolver.
-import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -118,12 +116,6 @@ export function DraftHeroHeadline({
   );
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  // T3-CUSTOM(expbkt3): BEGIN — retargeting an empty draft resets its modes to
-  // the new project's saved defaults; Plan only while its toggle exists.
-  const setRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
-  const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
-  const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
-  // T3-CUSTOM(expbkt3): END
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
@@ -172,11 +164,9 @@ export function DraftHeroHeadline({
             (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
           ),
         ) ?? null);
-  // T3-CUSTOM(expbkt3): BEGIN — a logical project can exist on more than one
-  // machine, and the picker previously collapsed those into one row that silently
-  // chose an environment for you. Offer each environment explicitly, so starting a
-  // session says where it will run. Groups that live on a single environment are
-  // untouched, which is every group on a single-environment client.
+  // T3-CUSTOM(expbkt3): BEGIN — a logical project on more than one machine gets one
+  // picker row per environment, so starting a session says where it will run. Groups
+  // on a single environment are untouched.
   const appearances = useEnvironmentAppearances();
   // Named apart from upstream's combobox `pickerItems`, which these rows feed.
   const projectPickerItems: ReadonlyArray<ProjectPickerItem> = projectPickerEntries.flatMap(
@@ -403,7 +393,9 @@ export function DraftHeroHeadline({
           onKeyDown={(event) => {
             const highlighted = highlightedPickerValueRef.current;
             // T3-CUSTOM(expbkt3): a machine row's value is not a project key.
-            const group = highlighted ? projectPickerItemByValue.get(highlighted)?.group : undefined;
+            const group = highlighted
+              ? projectPickerItemByValue.get(highlighted)?.group
+              : undefined;
             if (!group || !canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) {
               return;
             }
@@ -544,6 +536,13 @@ export function DraftHeroHeadline({
           )}
         </h1>
       )}
+      {/* T3-CUSTOM(expbkt3): which machine this draft will run on. */}
+      {activeEnvironmentAppearance ? (
+        <span className="pointer-events-none mt-2 inline-flex items-center gap-1.5 text-muted-foreground text-xs">
+          <EnvironmentBadgeView appearance={activeEnvironmentAppearance} variant="glyph" />
+          <span>on {activeEnvironmentAppearance.name}</span>
+        </span>
+      ) : null}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

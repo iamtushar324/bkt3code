@@ -318,7 +318,8 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             return yield* loadShellSnapshot({
               omitIdleSubagents: args.query.omitIdleSubagents === "1",
-              omitOlderSettled: args.query.omitOlderSettled === "1",
+              // T3-CUSTOM(expbkt3): never trim settled threads; see subscribeOrchestrationV2Shell.
+              omitOlderSettled: false,
             }).pipe(
               traceLocalHandlerWork,
               Effect.catch((cause) =>

@@ -129,7 +129,15 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 // T3-CUSTOM(expbkt3): fork code still uses Suspense.
-import { type SetStateAction, Suspense, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type SetStateAction,
+  Suspense,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";

@@ -662,14 +662,13 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       withoutChildren?.threads.map((thread) => thread.id),
       ["parent", "live", ...recent, "old"],
     );
+    // T3-CUSTOM(expbkt3): the fork never trims settled threads, so "old" stays and no counts exist.
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent],
+      ["parent", "live", ...recent, "old"],
     );
-    assert.deepEqual(withoutOld?.olderSettled?.counts, [
-      { projectId: ProjectId.make("project"), count: 1 },
-    ]);
+    assert.isUndefined(withoutOld?.olderSettled);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
