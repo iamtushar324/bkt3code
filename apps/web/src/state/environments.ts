@@ -16,6 +16,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -89,6 +90,18 @@ export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
 }
 
+export function readPrimaryEnvironmentId(): EnvironmentId | null {
+  return appAtomRegistry.get(primaryEnvironmentIdAtom);
+}
+
+/** The environment's state now, for handlers that should not re-render on every change. */
+export function readEnvironment(environmentId: EnvironmentId): EnvironmentPresentation | null {
+  const presentation = appAtomRegistry
+    .get(environmentPresentations.presentationsAtom)
+    .get(environmentId);
+  return presentation ? projectEnvironmentPresentation(environmentId, presentation) : null;
+}
+
 export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
@@ -111,10 +124,6 @@ export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscov
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
 
-export function useEnvironmentIds() {
-  return useAtomValue(environmentSummaries.environmentIdsAtom);
-}
-
 export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
@@ -131,7 +140,7 @@ export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
 
-// T3-CUSTOM(expbkt3): upstream removed this as unused (#10225); the fork's
+// T3-CUSTOM(expbkt3): upstream removed this as unused; the fork's
 // thread context actions control still reads per-environment connection state.
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
   return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
@@ -162,13 +171,9 @@ export function useEnvironmentAppearances(): ReadonlyMap<string, ResolvedEnviron
 }
 
 /**
- * Whether this client knows about more than one environment at all.
- *
- * Surfaces that always show everything (settings lists) use this. Surfaces that
- * show a filtered set — the sidebar above all — must instead ask whether *the rows
- * they are about to render* span more than one environment, because a second
- * environment with nothing in view is not a reason to add a column of badges to
- * every row. See `hasMultipleEnvironments` for that case.
+ * Whether this client knows about more than one environment at all, for surfaces
+ * that show everything (settings lists). Filtered surfaces such as the sidebar ask
+ * whether the rows they render span environments: see `hasMultipleEnvironments`.
  */
 export function useHasMultipleEnvironments(): boolean {
   const { environments } = useEnvironments();
@@ -184,3 +189,7 @@ export function hasMultipleEnvironments(
   return rows.some((row) => row.environmentId !== first);
 }
 // T3-CUSTOM(expbkt3): END
+
+export function useEnvironmentConnectionSummaries() {
+  return useAtomValue(environmentSummaries.environmentsAtom);
+}

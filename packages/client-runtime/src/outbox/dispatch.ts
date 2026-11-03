@@ -10,6 +10,6 @@ export function dispatchPersistedOutboxItem<A, EPersist, EDispatch, ERemove, R>(
     Effect.andThen(input.dispatch),
     // An accepted receipt is authoritative. A failed local deletion leaves a
     // harmless duplicate that the server will deduplicate by commandId.
-    Effect.tap(() => input.remove.pipe(Effect.catch(() => Effect.void))),
+    Effect.tap(() => input.remove.pipe(Effect.ignore)),
   );
 }

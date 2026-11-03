@@ -1,4 +1,5 @@
 // T3-CUSTOM(expbkt3): bkt3 analytics identity, allowlist and key gating (TEC-1631).
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -15,6 +16,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -91,6 +93,8 @@ const captureEvents = <A>(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "linux"),
           Layer.succeed(HostProcess.Architecture, "arm64"),
+          // Upstream's AnalyticsService now reads the managed policy.
+          ManagedPolicy.layerTest(),
         ),
       ),
       Layer.provideMerge(NodeHttpServer.layerTest),
@@ -105,7 +109,9 @@ const captureEvents = <A>(
     return { sent, requests: () => requests, installId: () => installId };
   });
 
-it.layer(NodeServices.layer)("AnalyticsService bkt3 identity", (it) => {
+const layerPlatform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+
+it.layer(layerPlatform)("AnalyticsService bkt3 identity", (it) => {
   it.effect("sends nothing when no PostHog key is set, even with telemetry enabled", () =>
     Effect.gen(function* () {
       const { sent, requests } = yield* captureEvents(

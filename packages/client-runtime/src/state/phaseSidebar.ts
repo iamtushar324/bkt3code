@@ -39,7 +39,7 @@ import {
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
   resolveThreadPullRequestChains,
-} from "@t3tools/shared/threadPullRequests";
+} from "../threadPullRequests.ts";
 // T3-CUSTOM(expbkt3): memorable worktree codenames.
 import {
   disambiguateWorktreeCodenames,

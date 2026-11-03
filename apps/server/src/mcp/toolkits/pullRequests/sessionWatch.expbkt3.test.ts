@@ -8,7 +8,7 @@ import {
   UserId,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -76,11 +76,8 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
         ),
     }),
     Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size).fill(7),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      }),
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(7)),
     ),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(

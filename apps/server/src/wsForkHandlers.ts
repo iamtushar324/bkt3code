@@ -12,7 +12,6 @@
  * built, so behaviour is identical to the previously inlined handlers.
  */
 import {
-  ORCHESTRATION_WS_METHODS,
   WS_FORK_METHODS,
   WS_METHODS,
   WsRpcGroup,
@@ -155,15 +154,12 @@ export const makeForkWsHandlers = ({
   actorLabel,
   usage,
   projectionSnapshotQuery,
-  orchestrationEngine,
   gitVcsDriver,
   sessionArchive,
   sourceControlActionLock,
-  enrichOrchestrationEvents,
   observeRpcEffect,
   observeRpcStream,
   requireThreadAccess,
-  visibleAggregateIdsForActor,
   // T3-CUSTOM(expbkt3): Claude account profiles per thread.
   claudeAccounts,
   actorIsAdmin,

@@ -33,11 +33,7 @@ function resolveDesktopReleaseRepository(repository: string | undefined): string
 }
 // T3-CUSTOM(expbkt3): END
 
-/**
- * The main process fills `downloadedVersion` from the updater's `update-downloaded`
- * event, which is dispatched on its own fiber. A download RPC can therefore resolve
- * before that write lands, so fall back to the version the download was started for.
- */
+/** The download RPC can beat the updater's downloadedVersion event; fall back to the requested version. */
 export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): string | null {
   return state.downloadedVersion ?? state.availableVersion;
 }
@@ -164,17 +160,21 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   );
 }
 
+/** `managedDenial` is this machine's policy refusing updates (`managedUpdatesDenial`); it wins. */
 export function getDesktopUpdateDisabledReason(
   state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+  managedDenial?: string,
 ): string | null {
+  if (managedDenial !== undefined) return managedDenial;
   if (!state || (state.enabled && state.status !== "disabled")) return null;
   return state.message?.trim() || "Automatic updates are not available in this build.";
 }
 
 export function getDesktopUpdateIdleTooltip(
   state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+  managedDenial?: string,
 ) {
-  const disabledReason = getDesktopUpdateDisabledReason(state);
+  const disabledReason = getDesktopUpdateDisabledReason(state, managedDenial);
   return disabledReason
     ? { title: "Updates unavailable", detail: disabledReason }
     : { title: "Check for updates", detail: null };

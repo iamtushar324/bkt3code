@@ -9,10 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  applyAssignedSourceControlProfile,
-  creationSourceControlProfileId,
-} from "./ThreadSourceControlProfileSelection.ts";
+import { applyAssignedSourceControlProfile } from "./ThreadSourceControlProfileSelection.ts";
 
 const assignedProfileId = SourceControlProfileId.make("github_alice");
 const explicitProfileId = SourceControlProfileId.make("github_bob");

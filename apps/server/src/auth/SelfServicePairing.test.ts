@@ -7,6 +7,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
  * removing the boundary they were enforcing, so the tests come in pairs: what a
  * member can now do, and what they still cannot.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAccessReadScope,
@@ -31,6 +32,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import { issuePairingCredentialForPrincipal } from "./OperatorIdentity.ts";
 import {
@@ -53,6 +55,8 @@ const MEMBER = { subject: clerkSubjectForUser(MEMBER_ID), userId: null } as cons
 const ANONYMOUS = { subject: "one-time-token", userId: null } as const;
 
 const environmentAuthLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-self-pairing-test-" })),
@@ -230,7 +234,7 @@ describe("who the self-service path admits", () => {
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

@@ -16,14 +16,13 @@ import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
+// T3-CUSTOM(expbkt3): the lease change feed user presence reads.
+import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
 
 export class BackgroundPolicy extends Context.Service<
@@ -38,20 +37,11 @@ export class BackgroundPolicy extends Context.Service<
       sessionId: AuthSessionId,
       rpcClientId: RpcClientId,
     ) => Effect.Effect<void>;
-    readonly reportHostPowerState: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
-    readonly streamChanges: Stream.Stream<BackgroundPolicySnapshot>;
-    readonly subscribe: Effect.Effect<
-      {
-        readonly latest: BackgroundPolicySnapshot;
-        readonly changes: Stream.Stream<BackgroundPolicySnapshot>;
-      },
-      never,
-      Scope.Scope
-    >;
-    readonly hasDemand: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
+    /** T3-CUSTOM(expbkt3): a snapshot after each lease change, for user presence. */
+    readonly streamChanges: Stream.Stream<BackgroundPolicySnapshot>;
   }
 >()("t3/background/BackgroundPolicy") {}
 
@@ -158,8 +148,7 @@ function isClientConstrained(
   lease: ClientActivityLease,
   settings: ResolvedBackgroundActivitySettings,
 ): boolean {
-  if (settings.pauseWhenClientLowPower && lease.lowPowerMode === "true") return true;
-  return settings.pauseWhenOnBattery && lease.batteryState === "unplugged";
+  return settings.pauseWhenClientLowPower && lease.lowPowerMode === "true";
 }
 
 function leaseMayRunScopedWork(
@@ -208,13 +197,11 @@ function computeSnapshot(input: {
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
-  const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
-  const publishMutex = yield* Semaphore.make(1);
 
   const backgroundActivitySettings = serverSettings.getSettings.pipe(
     Effect.map(resolveServerBackgroundActivitySettings),
@@ -231,50 +218,50 @@ export const make = Effect.fn("background.policy.make")(function* () {
     return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
   });
 
-  const publishSnapshotUnlocked = snapshot.pipe(
-    Effect.flatMap((next) => PubSub.publish(changes, next)),
-  );
-  const publishSnapshot = publishMutex.withPermits(1)(publishSnapshotUnlocked);
-
-  const reportClientActivity: BackgroundPolicy["Service"]["reportClientActivity"] = (
-    sessionId,
-    rpcClientId,
-    input,
-  ) =>
+  // T3-CUSTOM(expbkt3): BEGIN — lease changes publish one snapshot each, in order.
+  const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
+  const publishMutex = yield* Semaphore.make(1);
+  const publishAfter = <A>(update: Effect.Effect<A>) =>
     publishMutex.withPermits(1)(
-      Effect.gen(function* () {
-        const ttlMs = Math.min(
-          Math.max(input.ttlMs ?? DEFAULT_LEASE_TTL_MS, 1_000),
-          MAX_LEASE_TTL_MS,
-        );
-        const now = yield* DateTime.now;
-        const expiresAt = DateTime.add(now, { milliseconds: ttlMs });
-        const lease: ClientActivityLease = {
-          sessionId,
-          rpcClientId,
-          clientId: input.clientId,
-          clientKind: input.clientKind,
-          visible: input.visible,
-          focused: input.focused,
-          recentlyInteracted: input.recentlyInteracted,
-          ...(input.appState !== undefined ? { appState: input.appState } : {}),
-          ...(input.lowPowerMode !== undefined ? { lowPowerMode: input.lowPowerMode } : {}),
-          ...(input.batteryState !== undefined ? { batteryState: input.batteryState } : {}),
-          ...(input.networkType !== undefined ? { networkType: input.networkType } : {}),
-          scopes: input.scopes,
-          updatedAt: now,
-          expiresAt,
-        };
-        yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
-        yield* publishSnapshotUnlocked;
-      }),
+      update.pipe(
+        Effect.andThen(snapshot),
+        Effect.flatMap((next) => PubSub.publish(changes, next)),
+      ),
     );
+  // T3-CUSTOM(expbkt3): END
+
+  const reportClientActivity: BackgroundPolicy["Service"]["reportClientActivity"] = Effect.fn(
+    "BackgroundPolicy.reportClientActivity",
+  )(function* (sessionId, rpcClientId, input) {
+    const ttlMs = Math.min(Math.max(input.ttlMs ?? DEFAULT_LEASE_TTL_MS, 1_000), MAX_LEASE_TTL_MS);
+    const now = yield* DateTime.now;
+    const expiresAt = DateTime.add(now, { milliseconds: ttlMs });
+    const lease: ClientActivityLease = {
+      sessionId,
+      rpcClientId,
+      clientId: input.clientId,
+      clientKind: input.clientKind,
+      visible: input.visible,
+      focused: input.focused,
+      recentlyInteracted: input.recentlyInteracted,
+      ...(input.appState !== undefined ? { appState: input.appState } : {}),
+      ...(input.lowPowerMode !== undefined ? { lowPowerMode: input.lowPowerMode } : {}),
+      scopes: input.scopes,
+      updatedAt: now,
+      expiresAt,
+    };
+    // T3-CUSTOM(expbkt3): publish the change for user presence.
+    yield* publishAfter(
+      Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now)),
+    );
+  });
 
   const removeRpcClient: BackgroundPolicy["Service"]["removeRpcClient"] = (
     sessionId,
     rpcClientId,
   ) =>
-    publishMutex.withPermits(1)(
+    // T3-CUSTOM(expbkt3): publish the change for user presence.
+    publishAfter(
       Ref.update(leasesRef, (leases) => {
         const next = new Map(leases);
         for (const [key, lease] of next) {
@@ -283,11 +270,8 @@ export const make = Effect.fn("background.policy.make")(function* () {
           }
         }
         return next;
-      }).pipe(Effect.andThen(publishSnapshotUnlocked), Effect.asVoid),
+      }),
     );
-
-  const hasDemand: BackgroundPolicy["Service"]["hasDemand"] = (scope) =>
-    Effect.map(snapshot, (current) => current.activeScopeKeys.includes(scopeKey(scope)));
 
   const shouldRunScopeWork: BackgroundPolicy["Service"]["shouldRunScopeWork"] = Effect.fn(
     "BackgroundPolicy.shouldRunScopeWork",
@@ -306,20 +290,14 @@ export const make = Effect.fn("background.policy.make")(function* () {
     (current) => current.shouldRunOpportunisticWork,
   );
 
-  yield* Stream.runForEach(hostPowerMonitor.streamChanges, () => publishSnapshot).pipe(
-    Effect.forkScoped,
-  );
-  yield* Stream.runForEach(serverSettings.streamChanges, () => publishSnapshot).pipe(
-    Effect.forkScoped,
-  );
-
   yield* Effect.forever(
     Effect.sleep("15 seconds").pipe(
       Effect.andThen(
-        publishMutex.withPermits(1)(
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            yield* Ref.update(leasesRef, (leases) => {
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          // T3-CUSTOM(expbkt3): publish expiries for user presence.
+          yield* publishAfter(
+            Ref.update(leasesRef, (leases) => {
               const next = new Map(leases);
               for (const [key, lease] of next) {
                 if (!isLeaseActive(lease, now)) {
@@ -327,10 +305,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
                 }
               }
               return next;
-            });
-            yield* publishSnapshotUnlocked;
-          }),
-        ),
+            }),
+          );
+        }),
       ),
     ),
   ).pipe(Effect.forkScoped);
@@ -338,13 +315,10 @@ export const make = Effect.fn("background.policy.make")(function* () {
   return BackgroundPolicy.of({
     reportClientActivity,
     removeRpcClient,
-    reportHostPowerState: hostPowerMonitor.report,
     snapshot,
-    streamChanges: Stream.fromPubSub(changes),
-    subscribe: subscribeBeforeSnapshot(changes, snapshot, publishMutex),
-    hasDemand,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
+    streamChanges: Stream.fromPubSub(changes), // T3-CUSTOM(expbkt3): user presence feed.
   });
 });
 

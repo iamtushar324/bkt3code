@@ -15,7 +15,7 @@
  * classify tool rows by those substrings (see t3_show_ui).
  */
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -83,7 +83,7 @@ const dependencies = [
   OrchestrationAccessControl,
   Project.ProjectService,
   ClerkDirectory,
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
 ];
 
 const readOnly = <T extends Tool.Any>(tool: T): T =>

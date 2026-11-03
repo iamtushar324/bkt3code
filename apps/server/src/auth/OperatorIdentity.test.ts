@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthCreatePairingCredentialInput,
@@ -13,6 +14,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import {
   ANONYMOUS_PAIRING_SUBJECT,
@@ -27,6 +29,8 @@ import * as SessionStore from "./SessionStore.ts";
 const OPERATOR_USER_ID = UserId.make("user_2abcDEF");
 
 const environmentAuthLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-operator-identity-test-" })),
@@ -111,7 +115,7 @@ describe("pairing credential payload", () => {
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

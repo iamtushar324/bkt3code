@@ -83,6 +83,7 @@ import {
   phaseSidebarRowActionsToMenu,
 } from "./usePhaseSidebarRowActions";
 import { usePhaseSidebarDrag } from "./usePhaseSidebarDrag";
+import { useThreadListNow } from "../threads/use-thread-list-now";
 import type { PendingDraftTask } from "../../state/pending-new-tasks-model";
 import { PhaseSidebarDraftHeader } from "./PhaseSidebarDraftHeader";
 // T3-CUSTOM(expbkt3): Linear tags on a session.
@@ -264,9 +265,10 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
     onScrollBeginDrag: handleScrollBeginDrag,
   });
 
-  // "Now" is fixed per row set so labels and presets stay stable across a
-  // scroll — the same cadence the stock list uses.
-  const nowIso = useMemo(() => new Date().toISOString(), [props.rows]);
+  // The stock list's clock: it advances each minute and when a snooze wakes,
+  // so labels and presets stay stable across a scroll.
+  const rowThreads = useMemo(() => props.rows.map((row) => row.thread), [props.rows]);
+  const nowIso = useThreadListNow(rowThreads);
 
   // T3-CUSTOM(expbkt3): BEGIN — Linear status for every issue tag on screen.
   const linearStatusRequests = useMemo(

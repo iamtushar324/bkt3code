@@ -1,43 +1,28 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "@fontsource-variable/inter";
 import "./index.css";
 
-import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
 // T3-CUSTOM(expbkt3): browser-only public setup continuation, without tokens.
 import { prepareToolyardSettingsContinuation } from "./fork/toolyardSettingsContinuation";
-import { isElectron } from "./env";
 // T3-CUSTOM(expbkt3): standalone identity mode also loads the lazy auth shell.
 import { resolveAppClerkMode, resolveClerkPublishableKey } from "./cloud/publicConfig";
-import { getRouter } from "./router";
-import {
-  syncDocumentElectronPlatformClasses,
-  syncDocumentWindowControlsOverlayClass,
-} from "./lib/windowControlsOverlay";
+import { isElectron } from "./env";
+import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
-prepareProviderAuthDelivery();
-// T3-CUSTOM(expbkt3): preserve public Toolyard setup drafts before authentication redirects.
+// T3-CUSTOM(expbkt3): preserve public Toolyard setup drafts before authentication redirects
+// and before the router reads the address.
 prepareToolyardSettingsContinuation();
 
-// Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
-
-const router = getRouter(history);
-
-if (isElectron) {
-  syncDocumentElectronPlatformClasses(navigator.platform);
-  syncDocumentWindowControlsOverlayClass();
-}
+const router = startAppServices();
 
 // T3-CUSTOM(expbkt3): identity-only mode also needs the publishable key/mode split.
 const clerkPublishableKey = resolveClerkPublishableKey();
 const clerkMode = resolveAppClerkMode();
 
-// A failed split-chunk fetch usually means the hashed assets went stale under
-// a deploy; one guarded reload picks up the fresh index.html.
 let chunkLoadFailed = false;
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
@@ -51,9 +36,7 @@ window.addEventListener("vite:preloadError", (event) => {
 const app = <AppRoot router={router} />;
 
 // T3-CUSTOM(expbkt3): managed or identity-only auth uses the selected lazy runtime.
-// Loading only the selected runtime as a split chunk keeps every Clerk byte out
-// of the startup graph for local-mode users, and keeps the bundled clerk-js out
-// of the browser build entirely.
+// Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
 const managedAuthShellModule =
   clerkPublishableKey && clerkMode !== "disabled"
     ? isElectron
@@ -66,8 +49,7 @@ export const startup = Promise.all([
   router.load(),
 ])
   .then(([ManagedAuthShell]) => {
-    // A route chunk failure still resolves router.load(): the error is parked in
-    // the lazy component and surfaces through the route error boundary.
+    // Route chunk failures resolve router.load() and surface later through the error boundary.
     if (reloadScheduled) return;
     if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

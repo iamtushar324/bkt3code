@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
@@ -26,6 +27,7 @@ import { SourceControlProfileService } from "../sourceControl/SourceControlProfi
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestService from "./PullRequestService.ts";
@@ -48,7 +50,7 @@ const project: OrchestrationProjectShell = {
       remoteName: "origin",
       remoteUrl: "https://github.com/acme/web.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "acme/web",
   },
   defaultModelSelection: null,
@@ -182,6 +184,8 @@ it.effect(
             ),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => undefined,
+              // No web-host resolver, so the remote's own host stands, as upstream's tests mock it.
+              get: () => Effect.succeed({} as SourceControlProvider["Service"]),
             }),
             Layer.mock(ProjectService.ProjectService)({
               listShells: () => Effect.succeed([project]),
@@ -196,7 +200,7 @@ it.effect(
             SourceControlRateLimit.layer,
             Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
               Layer.provide(KeyValueStore.layerMemory),
-              Layer.provide(NodeServices.layer),
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ),
         );

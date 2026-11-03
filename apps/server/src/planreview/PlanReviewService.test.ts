@@ -5,6 +5,7 @@
  * approval stops re-sending the plan and feedback carries anchors instead of a
  * document — so every test asserts the exact text handed to the agent.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId, UserId, type OrchestrationCommand } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -118,7 +119,7 @@ const runWithService = <A, E>(
       Layer.provide(harness.queryLayer),
       Layer.provide(MigrationsLive),
       Layer.provide(SqlitePersistenceMemory),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
     return yield* Effect.gen(function* () {

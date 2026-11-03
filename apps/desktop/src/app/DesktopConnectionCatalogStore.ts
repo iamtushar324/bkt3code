@@ -13,7 +13,7 @@ import {
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
@@ -167,7 +167,6 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       boolean,
       DesktopConnectionCatalogStoreWriteError | DesktopConnectionCatalogStoreProtectionError
     >;
-    readonly clear: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopConnectionCatalogStore") {}
 
@@ -386,12 +385,11 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
-  // T3-CUSTOM(expbkt3): encrypt the catalog document before asynchronous Electron safe-storage writes.
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   // T3-CUSTOM(expbkt3): desktop catalog migration remains a fork-owned dependency.
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   // T3-CUSTOM(expbkt3): encryption is asynchronous, so a rotating read must
-  // serialize with saves and clears before it can replace the catalog file.
+  // serialize with saves before it can replace the catalog file.
   const catalogOperationLock = yield* Semaphore.make(1);
   // T3-CUSTOM(expbkt3): staging and production use different safe-storage keys,
   // so they must never attempt to decrypt one shared environment catalog.
@@ -411,14 +409,10 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // T3-CUSTOM(expbkt3): BEGIN - the OS keyring can still be locked when the app
-  // launches (typically Linux), and safe storage reports unavailable until it
-  // opens. Answering "no catalog" then hides every saved connection — and the
-  // cached threads that render while a host is down — for the whole run, because
-  // the renderer reads this catalog once at startup. Wait a bounded moment for
-  // the keyring rather than reporting an empty catalog we know is wrong. Nothing
-  // waits when there is no catalog on disk: the check runs only once a document
-  // exists to decrypt.
+  // T3-CUSTOM(expbkt3): BEGIN - the OS keyring can still be locked at launch, and
+  // the renderer reads this catalog once, so "no catalog" would hide every saved
+  // connection for the whole run. Wait a bounded moment for the keyring; this
+  // only runs once a catalog document exists on disk.
   const CATALOG_ENCRYPTION_WAIT_ATTEMPTS = 12;
   const CATALOG_ENCRYPTION_WAIT_INTERVAL = "500 millis";
 
@@ -448,16 +442,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-    const suffix = (yield* crypto.randomUUIDv4().pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopConnectionCatalogStoreWriteError({
-            operation: "create-temporary-file-name",
-            path: catalogPath,
-            cause,
-          }),
-      ),
-    )).replace(/-/g, "");
+    const suffix = (yield* random.uuidV4()).replace(/-/g, "");
     yield* writeDocument({
       fileSystem,
       path,
@@ -508,9 +493,9 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
-  // T3-CUSTOM(expbkt3): BEGIN serialize catalog reads, rotation rewrites, saves, and clears.
+  // T3-CUSTOM(expbkt3): BEGIN serialize catalog reads, rotation rewrites, and saves.
   return DesktopConnectionCatalogStore.of({
-    // T3-CUSTOM(expbkt3): one permit fences a rotating async read with saves and clears.
+    // T3-CUSTOM(expbkt3): one permit fences a rotating async read with saves.
     get: catalogOperationLock
       .withPermits(1)(
         Effect.gen(function* () {
@@ -572,20 +557,8 @@ export const make = Effect.gen(function* () {
         }),
       );
     }),
-    clear: catalogOperationLock
-      .withPermits(1)(
-        fileSystem.remove(catalogPath, { force: true }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not clear the desktop connection catalog.", {
-              catalogPath,
-              error,
-            }),
-          ),
-        ),
-      )
-      .pipe(Effect.withSpan("desktop.connectionCatalogStore.clear")),
   });
-  // T3-CUSTOM(expbkt3): END serialize catalog reads, rotation rewrites, saves, and clears.
+  // T3-CUSTOM(expbkt3): END serialize catalog reads, rotation rewrites, and saves.
 });
 
 export const layer = Layer.effect(DesktopConnectionCatalogStore, make);

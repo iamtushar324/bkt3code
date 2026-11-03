@@ -19,8 +19,9 @@ import * as NodeCrypto from "node:crypto";
 // T3-CUSTOM(expbkt3): END
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime"; // T3-CUSTOM(expbkt3): login expiry math.
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream"; // T3-CUSTOM(expbkt3): watch auth session changes to revoke credentials on logout.
@@ -41,24 +42,20 @@ import { settingsCredentialClientScope } from "./clientAccess.expbkt3.ts"; // T3
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  // T3-CUSTOM(expbkt3): BEGIN — actor identity for control-plane capabilities, and the
-  // caller-gated capability set made optional for pre-existing fork call sites.
+  // T3-CUSTOM(expbkt3): BEGIN — actor identity for control-plane capabilities.
   readonly actorUserId?: UserId | null;
   /** T3-CUSTOM(expbkt3): accepted only through the authenticated manager route. */
   readonly backgroundGrantHash?: string | undefined;
+  // T3-CUSTOM(expbkt3): END
+  /** False omits the preview capability wherever the token is honored. Defaults to full access. */
+  readonly browserToolsAvailable?: boolean;
   /**
    * Capabilities the caller gates ("preview", "device").
-   * T3-CUSTOM(expbkt3): optional — fork call sites that predate upstream's
-   * caller-side gate keep the fork's previous unconditional preview grant.
+   * T3-CUSTOM(expbkt3): fork call sites that predate upstream's caller-side gate
+   * omit it and keep the fork's previous unconditional preview grant.
    */
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
-  // T3-CUSTOM(expbkt3): END
-  /**
-   * When false, the credential is minted without the "preview" capability so
-   * the user's choice to withhold agent browser access holds everywhere the
-   * token is honored (#7083). Defaults to full access.
-   */
-  readonly browserToolsAvailable?: boolean;
+  readonly subagent?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -157,18 +154,10 @@ export interface McpSessionRegistryOptions {
   // T3-CUSTOM(expbkt3): END
 }
 
-// T3-CUSTOM(expbkt3): BEGIN — idle timeout for external-user credentials and the absolute
-// backstop lifetime for credentials no login governs (single-user/unrestricted local mode).
-
-// External-user credentials are resolved from persistent settings on every
-// request, so their invocation scope can remain short-lived.
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
-// Provider MCP credentials are static headers injected when the provider
-// process starts. They cannot be rotated underneath a running process, so an
-// inactivity timeout would permanently disconnect otherwise-healthy sessions.
-// A user-bound credential instead lives exactly as long as the authenticated
-// login that produced it; this backstop only bounds credentials that no login
-// governs (single-user/unrestricted local mode).
+// T3-CUSTOM(expbkt3): BEGIN — the absolute backstop lifetime for credentials no login
+// governs (single-user/unrestricted local mode). Provider credentials are static headers a
+// running process cannot rotate, so no idle timeout; a user-bound credential lives as long
+// as the login that produced it.
 const DEFAULT_MAXIMUM_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 // T3-CUSTOM(expbkt3): END
 
@@ -203,7 +192,8 @@ const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
@@ -216,13 +206,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
-    crypto
-      .digest("SHA-256", new TextEncoder().encode(token))
+    digest
+      .digest(Digest.sha256, new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
   // T3-CUSTOM(expbkt3): BEGIN — drop credentials whose backing login has ended.
-  // Idle records stay (upstream #19491): resolve() refuses them and touch() can
-  // restore them until revocation. A passed login expiry never comes back.
+  // Idle records stay: resolve() refuses them and touch() can restore them until
+  // revocation. A passed login expiry never comes back.
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
     const next = new Map(Array.from(records).filter(([, record]) => timestamp <= record.expiresAt));
     return next.size === records.size ? records : next;
@@ -241,8 +231,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-      const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
+      const providerSessionId = yield* random.uuidV4();
+      const rawToken = yield* random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const actorUserId = request.actorUserId ?? null; // T3-CUSTOM(expbkt3): control-plane actor identity.
       // T3-CUSTOM(expbkt3): A user-bound credential is an extension of the
@@ -324,6 +314,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: ThreadId.make(request.threadId),
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+          subagent: request.subagent === true,
         },
         client: undefined,
         capabilities, // T3-CUSTOM(expbkt3): fork capability policy computed above.
@@ -632,20 +623,13 @@ export const layer = Layer.effect(McpSessionRegistry, make);
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
-const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
-
-const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
-
 // T3-CUSTOM(expbkt3): HTTP routes and provider startup must use the exact same
 // registry instance. Missing startup state fails closed instead of creating a
 // second route-local credential universe.
 export const resolveActiveMcpCredential = (
   rawToken: string,
 ): Effect.Effect<McpInvocationContext.McpInvocationScope | undefined> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.resolve(rawToken) : Effect.succeed(undefined);
-
+  activeMcpSessionRegistry ? activeMcpSessionRegistry.resolve(rawToken) : Effect.undefined;
 export const __testing = {
   make: makeWithOptions,
 };

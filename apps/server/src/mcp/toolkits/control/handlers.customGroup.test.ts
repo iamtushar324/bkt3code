@@ -4,6 +4,7 @@
 // way a client's is before it reaches the projection, `t3_update_session`
 // forwards it (null clears), and `t3_list_sessions` reports and filters on it
 // case-insensitively.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -16,6 +17,7 @@ import {
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
@@ -161,50 +163,53 @@ it.effect("reports each session's custom group and filters the list by it", () =
   }),
 );
 
-it.layer(NodeServices.layer)("t3_update_session custom group", (it) => {
-  const dispatched: OrchestrationCommand[] = [];
-  const dispatcher = TurnStartBootstrap.of({
-    dispatch: (command) => {
-      dispatched.push(command);
-      return Effect.succeed({ sequence: dispatched.length });
-    },
-    createThread: () => Effect.die("createThread should not be called"),
-  });
-  const update = (input: Parameters<typeof __testing.updateSession>[0]) =>
-    __testing
-      .updateSession(input)
-      .pipe(Effect.provideService(TurnStartBootstrap, dispatcher), provideReads);
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "t3_update_session custom group",
+  (it) => {
+    const dispatched: OrchestrationCommand[] = [];
+    const dispatcher = TurnStartBootstrap.of({
+      dispatch: (command) => {
+        dispatched.push(command);
+        return Effect.succeed({ sequence: dispatched.length });
+      },
+      createThread: () => Effect.die("createThread should not be called"),
+    });
+    const update = (input: Parameters<typeof __testing.updateSession>[0]) =>
+      __testing
+        .updateSession(input)
+        .pipe(Effect.provideService(TurnStartBootstrap, dispatcher), provideReads);
 
-  it.effect("forwards a trimmed label and null to thread.meta.update", () =>
-    Effect.gen(function* () {
-      dispatched.length = 0;
-      yield* update({ sessionId, customGroup: "  Sprint 42 " });
-      yield* update({ sessionId, customGroup: null });
-      const metaUpdates = dispatched.filter(
-        (command): command is Extract<OrchestrationCommand, { type: "thread.meta.update" }> =>
-          command.type === "thread.meta.update",
-      );
-      expect(metaUpdates.map((command) => command.customGroup)).toEqual(["Sprint 42", null]);
-      expect(metaUpdates.every((command) => command.threadId === sessionId)).toBe(true);
-    }),
-  );
+    it.effect("forwards a trimmed label and null to thread.meta.update", () =>
+      Effect.gen(function* () {
+        dispatched.length = 0;
+        yield* update({ sessionId, customGroup: "  Sprint 42 " });
+        yield* update({ sessionId, customGroup: null });
+        const metaUpdates = dispatched.filter(
+          (command): command is Extract<OrchestrationCommand, { type: "thread.meta.update" }> =>
+            command.type === "thread.meta.update",
+        );
+        expect(metaUpdates.map((command) => command.customGroup)).toEqual(["Sprint 42", null]);
+        expect(metaUpdates.every((command) => command.threadId === sessionId)).toBe(true);
+      }),
+    );
 
-  it.effect("leaves the group alone when the call does not mention it", () =>
-    Effect.gen(function* () {
-      dispatched.length = 0;
-      yield* update({ sessionId, title: "Renamed" });
-      const command = dispatched[0];
-      expect(command?.type).toBe("thread.meta.update");
-      expect(command && "customGroup" in command).toBe(false);
-    }),
-  );
+    it.effect("leaves the group alone when the call does not mention it", () =>
+      Effect.gen(function* () {
+        dispatched.length = 0;
+        yield* update({ sessionId, title: "Renamed" });
+        const command = dispatched[0];
+        expect(command?.type).toBe("thread.meta.update");
+        expect(command && "customGroup" in command).toBe(false);
+      }),
+    );
 
-  it.effect("rejects a blank label before anything is dispatched", () =>
-    Effect.gen(function* () {
-      dispatched.length = 0;
-      const error = yield* update({ sessionId, customGroup: " " }).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(T3ControlToolError);
-      expect(dispatched).toHaveLength(0);
-    }),
-  );
-});
+    it.effect("rejects a blank label before anything is dispatched", () =>
+      Effect.gen(function* () {
+        dispatched.length = 0;
+        const error = yield* update({ sessionId, customGroup: " " }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(T3ControlToolError);
+        expect(dispatched).toHaveLength(0);
+      }),
+    );
+  },
+);

@@ -82,6 +82,7 @@ export function makeForkCompatibilityTestLayer(name: string) {
         getById: () => Effect.die("unused"),
         getByWorkspaceRoot: () => Effect.die("unused"),
         snapshot: Effect.die("unused"),
+        listPage: () => Effect.die("unused"),
         getShell: (projectId) =>
           store.getShell(projectId).pipe(
             Effect.flatMap((project) =>

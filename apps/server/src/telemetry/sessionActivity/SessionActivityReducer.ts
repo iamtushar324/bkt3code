@@ -766,7 +766,8 @@ export function makeSessionActivityTracker(
     decisionFor: (planId: string) => string,
     out: Array<SessionActivityEmission>,
   ) => {
-    for (const [planId, plan] of [...t.plans]) {
+    // A snapshot: deciding a plan deletes it from `t.plans`.
+    for (const [planId, plan] of Array.from(t.plans)) {
       decidePlan(t, planId, plan, atMs, decisionFor(planId), out);
     }
   };

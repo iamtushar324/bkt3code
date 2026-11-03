@@ -59,14 +59,9 @@ export class ClientPresentation extends Context.Service<
 >()("@t3tools/client-runtime/platform/capabilities/ClientPresentation") {}
 // T3-CUSTOM(expbkt3): BEGIN — team-mode Clerk identity for remote pairing.
 /**
- * The operator's own Clerk session token, when this client runs in team mode.
- *
- * Distinct from {@link CloudSession}, whose token belongs to the T3 Connect relay
- * and is issued by a different Clerk instance. A remote environment running the
- * fork verifies this one against its own Clerk secret, so pairing can bind the
- * operator to the session it creates.
- *
- * Read it with `Effect.serviceOption` — clients outside team mode never provide it.
+ * The operator's own Clerk session token in team mode, distinct from the relay's
+ * {@link CloudSession} token. A fork environment verifies it so pairing can bind
+ * the operator. Read it with `Effect.serviceOption`: other clients never provide it.
  */
 export class EnvironmentIdentity extends Context.Service<
   EnvironmentIdentity,
@@ -76,11 +71,9 @@ export class EnvironmentIdentity extends Context.Service<
 >()("@t3tools/client-runtime/platform/capabilities/EnvironmentIdentity") {}
 
 // T3-CUSTOM(expbkt3): END
-// T3-CUSTOM(expbkt3): BEGIN - a managed BK build's primary environment is a central
-// server paired with a proof-of-possession credential, so its token is DPoP-bound: it
-// is presented as `DPoP <token>` with a proof signed per request rather than as a
-// static bearer header. `createProof` is supplied by the client that owns the device
-// key; the runtime never sees the key itself.
+// T3-CUSTOM(expbkt3): BEGIN - a managed BK build's primary token is DPoP-bound: it is
+// presented as `DPoP <token>` with a proof signed per request. `createProof` comes
+// from the client that owns the device key; the runtime never sees the key.
 export interface PrimaryDpopAuthorization {
   readonly accessToken: string;
   readonly expiresAtEpochMs: number;

@@ -30,6 +30,18 @@ const pendingV2Migrations = [
   [1058, "RepairClientSettlementTimestamps"],
   // Upstream 67, remapped into the 1000+ lane.
   [1059, "WebhookDedupe"],
+  // Upstream 68-78, remapped into the 1000+ lane.
+  [1060, "ShellStopRequestIndex"],
+  [1061, "ThreadMessageSearch"],
+  [1062, "PeerLinks"],
+  [1063, "PeerLinkFence"],
+  [1064, "WaitingLinkRequestIndex"],
+  [1065, "ActiveTurnItemIndexes"],
+  [1066, "ExcludeAttachmentPlaceholdersFromSearch"],
+  [1067, "SubagentDeliveryState"],
+  [1068, "ProjectionProjectsPinArchive"],
+  [1069, "RepairBooleanSettledOverride"],
+  [1070, "DropOrchestrationEventCorrelationIndex"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {

@@ -14,6 +14,7 @@ import {
   UserId,
   ClientWebDeployment,
 } from "./baseSchemas.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
@@ -106,8 +107,7 @@ const authScopeResponseFields = {
   permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
 };
 
-// Only clients talking to an old server use these parent checks. Servers never
-// expand stored grants, and an explicitly empty permissions array grants nothing.
+// Client-only fallback for old servers. Servers never expand grants; empty permissions grant nothing.
 const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
   [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
   [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
@@ -159,9 +159,7 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
   );
 }
 
-// Access and relay management are included because terminal:operate and
-// orchestration:operate already reach that authority through a shell or a
-// full-access agent. Narrowing a grant means choosing explicit scopes.
+// Shell and full-access agent scopes already confer access and relay authority.
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -181,15 +179,13 @@ export const AuthStandardClientScopes = [
   AuthRelayWriteScope,
 ] as const;
 // T3-CUSTOM(expbkt3): BEGIN — upstream folded the administrative scopes into
-// AuthStandardClientScopes (#20432); fork-owned callers keep the old name.
+// AuthStandardClientScopes; fork-owned callers keep the old name.
 export const AuthAdministrativeScopes = AuthStandardClientScopes;
 /**
  * What a team member's own sessions carry: the standard set without access and
- * relay management. Upstream's argument for granting those by default (a shell
- * or full-access agent reaches them anyway) holds for the machine's owner, but in
- * team mode `access:write` is what separates an environment administrator from a
- * member, so Clerk sign-ins, self-issued pairings and member MCP clients stay on
- * this narrower set.
+ * relay management. In team mode `access:write` separates an administrator from
+ * a member, so Clerk sign-ins, self-issued pairings and member MCP clients stay
+ * on this narrower set.
  */
 export const AuthMemberClientScopes = AuthStandardClientScopes.filter(
   (scope) =>
@@ -221,12 +217,10 @@ export type ServerAuthClerkDescriptor = typeof ServerAuthClerkDescriptor.Type;
 
 export const ServerAuthDescriptor = Schema.Struct({
   policy: ServerAuthPolicy,
-  // T3-CUSTOM(expbkt3): bootstrap methods grow over time, so drop ones this
-  // build does not know rather than failing the whole descriptor decode — the
-  // same treatment `ServerConfig` already gives `issues` and `availableEditors`.
-  // Without it, a server advertising a method the client has never heard of
-  // makes `server.getConfig` undecodable and the client closes the socket, which
-  // is what a fork-only `clerk-session` value did to stock T3 Code clients.
+  // T3-CUSTOM(expbkt3): drop bootstrap methods this build does not know rather
+  // than failing the whole decode (as `ServerConfig` does for `issues`). An
+  // unknown method otherwise makes `server.getConfig` undecodable and the client
+  // closes the socket, as a fork-only `clerk-session` did to stock clients.
   bootstrapMethods: ForwardCompatibleArray(ServerAuthBootstrapMethod),
   sessionMethods: Schema.Array(ServerAuthSessionMethod),
   sessionCookieName: TrimmedNonEmptyString,
@@ -335,10 +329,21 @@ export const AuthAccessTokenResult = Schema.Struct({
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
 export const AuthWebSocketTicketResult = Schema.Struct({
-  ticket: TrimmedNonEmptyString,
+  ticket: Schema.RedactedFromValue(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
+
+/**
+ * Media routes share a ticket across requests; RPC uses a separate ticket.
+ * Use a path segment so the DPoP mint proof covers it; `htu` excludes query parameters,
+ * which could be stripped to change the ticket's use.
+ * Older clients mint at the bare path and receive tickets valid for either use.
+ */
+export const AuthWebSocketTicketUse = Schema.Literals(["rpc", "media"]);
+export type AuthWebSocketTicketUse = typeof AuthWebSocketTicketUse.Type;
+
+export const AuthWebSocketTicketParams = Schema.Struct({ use: AuthWebSocketTicketUse });
 
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -476,13 +481,10 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
-  // T3-CUSTOM(expbkt3): BEGIN - mint a credential that can only be redeemed with a
-  // DPoP proof, and that lives for 2 hours instead of 5 minutes. Off by default, so
-  // every existing caller keeps producing exactly the credential it produces today.
-  //
-  // Safe to accept from a client, unlike a subject: it only *restricts* who can
-  // redeem the credential and binds the issued token to the redeemer's key. There is
-  // still deliberately no `subject` field — see apps/server/src/auth/OperatorIdentity.ts.
+  // T3-CUSTOM(expbkt3): BEGIN - mint a credential redeemable only with a DPoP proof,
+  // living 2 hours instead of 5 minutes. Off by default. Safe from a client because
+  // it only restricts who can redeem; there is still deliberately no `subject` field
+  // (see apps/server/src/auth/OperatorIdentity.ts).
   requireProofOfPossession: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): END
 });
@@ -511,6 +513,19 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
+/** The scopes an agent session gets for an access level, and a pairing code must carry. */
+export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
+  access === "read-only"
+    ? [AuthOrchestrationReadScope]
+    : access === "full-access"
+      ? [
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthSettingsWriteScope,
+          AuthSourceControlWriteScope,
+        ]
+      : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
   authorization_servers: Schema.Array(Schema.String),
@@ -534,8 +549,16 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
 });
 export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
 
+/**
+ * The `software_id` another T3 Code environment registers with when it links
+ * to this one. Its session is then a peer link: the work it starts here stays
+ * within that link. Claiming it only ever adds limits.
+ */
+export const MCP_PEER_LINK_SOFTWARE_ID = "t3code-peer-link";
+
 export const AuthMcpClientRegistration = Schema.Struct({
   client_name: Schema.optionalKey(Schema.String),
+  software_id: Schema.optionalKey(Schema.String),
   redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
   token_endpoint_auth_method: Schema.optionalKey(Schema.String),
 });
@@ -565,35 +588,31 @@ export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationEr
   }
 }
 
-/**
- * Every field is checked by the server, so all are optional here.
- */
+/** Fields are optional here because the server validates them. */
 export const AuthMcpAuthorizationRequest = Schema.Struct({
   response_type: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
   redirect_uri: Schema.optionalKey(Schema.String),
   code_challenge: Schema.optionalKey(Schema.String),
   code_challenge_method: Schema.optionalKey(Schema.String),
-  state: Schema.optionalKey(Schema.String),
+  state: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
-/**
- * The server has already validated the request; nothing here is trusted by the
- * client except for display.
- */
+/** Server-validated request details, trusted by the client only for display. */
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
   redirectHost: Schema.String,
   environmentHost: Schema.String,
   csrfToken: Schema.optionalKey(Schema.String),
-  /**
-   * What that session may approve in one click: only access whose scopes it
-   * holds. Anything else still needs a pairing code. Absent with `csrfToken`.
-   */
+  /** Only scopes held by this session qualify; others need a pairing code. Absent with `csrfToken`. */
   oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+  /** A managed policy's runtime-mode ceiling; the page loads without the server's config. */
+  runtimeModeCeiling: Schema.optionalKey(
+    Schema.Struct({ organization: Schema.String, maxRuntimeMode: RuntimeMode }),
+  ),
 });
 export type AuthMcpApprovalDetails = typeof AuthMcpApprovalDetails.Type;
 
@@ -629,10 +648,10 @@ export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalErro
 
 export const AuthMcpTokenRequest = Schema.Struct({
   grant_type: Schema.optionalKey(Schema.String),
-  code: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   redirect_uri: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
-  code_verifier: Schema.optionalKey(Schema.String),
+  code_verifier: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;

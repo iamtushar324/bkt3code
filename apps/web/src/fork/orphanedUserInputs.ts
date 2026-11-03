@@ -8,14 +8,14 @@
  * of only a Submit that the dead turn never receives.
  */
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 
 // The server's rule (`runEndedWithoutAnswer`): a completed run's session stays live.
 const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set(["failed", "interrupted", "cancelled"]);
 
 export function releaseEndedRunUserInputs(
   pending: PendingThreadRequests,
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
 ): PendingThreadRequests {
   if (!pending.userInputs.some((input) => input.responseCapability === "live")) return pending;
   const endedRunIds = new Set(

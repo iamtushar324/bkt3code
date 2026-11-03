@@ -16,10 +16,11 @@ const encodeTurnItem = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const launchCodec = Schema.toCodecJson(OrchestrationV2ThreadLaunchInput);
 const encodeLaunch = Schema.encodeSync(launchCodec);
 const decodeLaunch = Schema.decodeSync(launchCodec);
+const decodeLaunchInput = Schema.decodeSync(OrchestrationV2ThreadLaunchInput);
 
 describe("fork metadata in the V2 protocol", () => {
   it("retains credential selection and cross-environment lineage through launch serialization", () => {
-    const launch = Schema.decodeUnknownSync(OrchestrationV2ThreadLaunchInput)({
+    const launch = decodeLaunchInput({
       commandId: "launch-child",
       threadId: "child",
       projectId: "project",

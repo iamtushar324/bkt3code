@@ -26,7 +26,7 @@ import {
   type UserId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -149,10 +149,10 @@ const invalid = (operation: string, detail: string) =>
 
 export const make = Effect.gen(function* () {
   const repository = yield* ThreadCommentsRepository;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   // A failing CSPRNG is a defect, not something a caller can recover from.
-  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const uuid = crypto.uuidV4().pipe(Effect.orDie);
   const shortId = (prefix: string) =>
     Effect.map(uuid, (value) => `${prefix}_${value.replaceAll("-", "").slice(0, 20)}`);
 

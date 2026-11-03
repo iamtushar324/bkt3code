@@ -19,8 +19,6 @@ import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import { EnvironmentAuth } from "../auth/EnvironmentAuth.ts";
 import { ServerConfig } from "../config.ts";
-import { layer as OrchestrationCommandReceiptRepositoryLive } from "../persistence/OrchestrationCommandReceipts.ts";
-import { layer as OrchestrationEventStoreLive } from "../persistence/OrchestrationEventStore.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import {
@@ -29,7 +27,6 @@ import {
   parseEventFeedQuery,
   readEventFeedPage,
 } from "./eventFeedHttp.expbkt3.ts";
-import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
 import { OrchestrationAccessControl } from "./Services/AccessControl.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 

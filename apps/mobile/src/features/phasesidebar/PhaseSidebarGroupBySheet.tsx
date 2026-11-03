@@ -22,7 +22,7 @@ import {
 // T3-CUSTOM(expbkt3): a custom group's colour (XFN-59).
 import { PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Pressable, ScrollView, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -69,6 +69,20 @@ export type PhaseSidebarGroupBySheetIntent =
   | { readonly kind: "create"; readonly seedThreadKey: string | null }
   | { readonly kind: "rename"; readonly groupId: string; readonly label: string };
 
+type GroupEditorState =
+  | { readonly kind: "create"; readonly seedThreadKey: string | null; readonly label: string }
+  | { readonly kind: "rename"; readonly groupId: string; readonly label: string };
+
+function editorForIntent(intent: PhaseSidebarGroupBySheetIntent): GroupEditorState | null {
+  if (intent.kind === "create") {
+    return { kind: "create", seedThreadKey: intent.seedThreadKey, label: "" };
+  }
+  if (intent.kind === "rename") {
+    return { kind: "rename", groupId: intent.groupId, label: intent.label };
+  }
+  return null;
+}
+
 export function PhaseSidebarGroupBySheet(props: {
   /** Every known environment with its resolved identity, for the picker below. */
   readonly environments: ReadonlyMap<string, MobileEnvironmentAppearance>;
@@ -101,20 +115,15 @@ export function PhaseSidebarGroupBySheet(props: {
   // The group whose colour swatches are open inline, if any.
   const [colorEditingId, setColorEditingId] = useState<string | null>(null);
   // The inline editor: null when closed, otherwise what it is naming.
-  const [editor, setEditor] = useState<
-    | { readonly kind: "create"; readonly seedThreadKey: string | null; readonly label: string }
-    | { readonly kind: "rename"; readonly groupId: string; readonly label: string }
-    | null
-  >(null);
-
-  useEffect(() => {
-    if (intent.kind === "create") {
-      setEditor({ kind: "create", seedThreadKey: intent.seedThreadKey, label: "" });
-    } else if (intent.kind === "rename") {
-      setEditor({ kind: "rename", groupId: intent.groupId, label: intent.label });
-    }
-    // Only when the intent changes: editing must not reset on every prefs write.
-  }, [intent]);
+  const [editor, setEditor] = useState<GroupEditorState | null>(() => editorForIntent(intent));
+  // Opened from a new intent only (a render-phase adjustment): editing must not
+  // reset on every prefs write.
+  const [seenIntent, setSeenIntent] = useState(intent);
+  if (seenIntent !== intent) {
+    setSeenIntent(intent);
+    const nextEditor = editorForIntent(intent);
+    if (nextEditor !== null) setEditor(nextEditor);
+  }
 
   const orders: ReadonlyArray<PhaseSidebarGroupOrder> =
     grouping.groupBy === "custom"

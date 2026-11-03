@@ -144,8 +144,9 @@ export function ingestLease(
     recentlyInteracted: lease.recentlyInteracted,
     appState: lease.appState ?? null,
     lowPowerMode: lease.lowPowerMode ?? null,
-    batteryState: lease.batteryState ?? null,
-    networkType: lease.networkType ?? null,
+    // Upstream clients no longer report battery or network state.
+    batteryState: null,
+    networkType: null,
     viewingThreadIds,
     lastReportAtMs: reportAtMs,
     leaseExpiresAtMs: DateTime.toEpochMillis(lease.expiresAt),

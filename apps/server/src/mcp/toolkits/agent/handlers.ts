@@ -1617,9 +1617,11 @@ export const AgentToolkitHandlers = McpToolAccess.toLayer(AgentToolkit, {
   t3_answer: McpToolAccess.writes(answer),
   t3_find_sessions: McpToolAccess.reads(findSessions),
   t3_session_brief: McpToolAccess.reads(brief),
+  // A linked caller is refused: these sessions do not carry its link origin.
   t3_start_session: McpToolAccess.startsThreads(
     (input) => ({ interactionMode: interactionModeFor(input.mode) }),
     startSession,
+    { refused: "start sessions in this environment" },
   ),
   t3_send_message: McpToolAccess.writes(sendMessage),
   t3_session_lifecycle: McpToolAccess.writes(sessionLifecycle),
@@ -1628,6 +1630,7 @@ export const AgentToolkitHandlers = McpToolAccess.toLayer(AgentToolkit, {
   t3_schedule: McpToolAccess.startsThreads(
     (input) => ({ interactionMode: interactionModeFor(input.mode) }),
     schedule,
+    { refused: "schedule tasks in this environment" },
   ),
   t3_schedules: McpToolAccess.reads(listSchedules),
   t3_notify_me: McpToolAccess.writes(notifyMe),

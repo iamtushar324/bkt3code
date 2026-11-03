@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): TEC-1819 — t3_session_lifecycle, the agent toolkit's
 // archive/stop/snooze/delete tool for clients on the OAuth tool list, which
 // does not include the control toolkit's t3_session_action.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -12,6 +13,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { Tool } from "effect/ai";
 
@@ -75,7 +77,7 @@ it("is in the agent tool list and marked destructive", () => {
   expect(Tool.getDescription(SessionLifecycleTool)).toContain("DESTRUCTIVE");
 });
 
-it.layer(NodeServices.layer)("t3_session_lifecycle", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_session_lifecycle", (it) => {
   let archivedAt: string | null = null;
   const dispatched: OrchestrationCommand[] = [];
   const threads = {

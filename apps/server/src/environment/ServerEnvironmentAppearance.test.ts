@@ -1,4 +1,5 @@
 // T3-CUSTOM(expbkt3): the shared host appearance (nickname, icon, colour).
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -12,7 +13,7 @@ import * as ServerConfig from "../config.ts";
 import { redactServerSettingsForClient } from "../serverSettings.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
-it.layer(NodeServices.layer)("shared host appearance", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("shared host appearance", (it) => {
   it.effect("advertises that the server keeps the appearance setting", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

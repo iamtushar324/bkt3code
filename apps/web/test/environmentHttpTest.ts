@@ -140,6 +140,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             // T3-CUSTOM(expbkt3): END
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
+            .handle("webSocketTicketFor", () => unexpectedEndpoint("auth.webSocketTicketFor"))
             .handle(
               "pairingCredential",
               Effect.fn("test.environment.auth.pairingCredential")(function* ({ payload }) {
@@ -150,9 +151,11 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            // T3-CUSTOM(expbkt3): BEGIN — fork-kept pairing link and client listing endpoints.
             .handle("pairingLinks", () => unexpectedEndpoint("auth.pairingLinks"))
-            .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
             .handle("clients", () => unexpectedEndpoint("auth.clients"))
+            // T3-CUSTOM(expbkt3): END
+            .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
             .handle("revokeClient", () => unexpectedEndpoint("auth.revokeClient"))
             .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients")),
         ),

@@ -47,7 +47,7 @@ import {
   clearProjectSettingsOverrides,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -74,7 +74,7 @@ import { redactServerSettingsForClient, ServerSettingsService } from "../../../s
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import { hasUserWideScope, resolveMcpSessionTarget } from "../../mcpSessionTarget.ts";
 import { describeCommandDecodeFailure } from "./dispatchCommandHelp.ts";
 import { boundSessionDetail } from "./sessionDetail.ts";
@@ -469,7 +469,7 @@ const dispatchLinearChange = Effect.fn("T3ControlToolkit.dispatchLinearChange")(
     | { readonly linearLinksRemove: ReadonlyArray<string> },
 ) {
   const dispatcher = yield* TurnStartBootstrap;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const commandId = yield* makeCommandId(crypto, operation);
   // Add and remove are applied against the stored list under the thread's
   // lock, so a concurrent tag from the sidebar or another agent is kept.
@@ -723,7 +723,7 @@ const moveGroupSessions = Effect.fn("T3ControlToolkit.moveGroupSessions")(functi
   customGroup: string | null,
 ) {
   const dispatcher = yield* TurnStartBootstrap;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moved: Array<ThreadId> = [];
   const skipped: Array<{ readonly sessionId: ThreadId; readonly reason: string }> = [];
   for (const sessionId of sessionIds) {
@@ -855,14 +855,14 @@ function redactMcpConfiguration(settings: Parameters<typeof redactServerSettings
   };
 }
 
-const makeCommandId = (crypto: Crypto.Crypto, operation: string) =>
-  crypto.randomUUIDv4().pipe(
+const makeCommandId = (crypto: SecureRandom.SecureRandom["Service"], operation: string) =>
+  crypto.uuidV4().pipe(
     Effect.map((uuid) => CommandId.make(`mcp:${operation}:${uuid}`)),
     mapControlError(operation),
   );
 
-const makeMessageId = (crypto: Crypto.Crypto, operation: string) =>
-  crypto.randomUUIDv4().pipe(
+const makeMessageId = (crypto: SecureRandom.SecureRandom["Service"], operation: string) =>
+  crypto.uuidV4().pipe(
     Effect.map((uuid) => MessageId.make(`mcp:${uuid}`)),
     mapControlError(operation),
   );
@@ -939,7 +939,7 @@ export const runSessionLifecycle = Effect.fn("T3ControlToolkit.runSessionLifecyc
   const { operation, sessionId } = input;
   const query = yield* ProjectionSnapshotQuery;
   const dispatcher = yield* TurnStartBootstrap;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   if (input.action === "archive" || input.action === "unarchive") {
     // A retry of a caller's command id replays its first no-op outcome rather
     // than acting on a state that changed since.
@@ -1075,7 +1075,7 @@ export const createSession = Effect.fn("T3ControlToolkit.createSession")(functio
   const scope = yield* requireSessionCreator(operation);
   const query = yield* ProjectionSnapshotQuery;
   const dispatcher = yield* TurnStartBootstrap;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const shell = yield* query.getShellSnapshot().pipe(mapControlError(operation));
   const projectId = ProjectId.make(input.projectId);
   const project = shell.projects.find((candidate) => candidate.id === projectId);
@@ -1107,7 +1107,7 @@ export const createSession = Effect.fn("T3ControlToolkit.createSession")(functio
   });
   const sessionId =
     options?.sessionId ??
-    ThreadId.make(`mcp:${yield* crypto.randomUUIDv4().pipe(mapControlError(operation))}`);
+    ThreadId.make(`mcp:${yield* crypto.uuidV4().pipe(mapControlError(operation))}`);
   const ownerUserId =
     scope.actorUserId ?? project.ownerUserId ?? (yield* resolveConfiguredOwnerUserId(operation));
   // T3-CUSTOM(expbkt3): the new session inherits the calling session's audience.
@@ -1470,7 +1470,7 @@ const handlers = {
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.control");
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const loaded = yield* query.getThreadDetailById(sessionId).pipe(mapControlError(operation));
     if (Option.isNone(loaded)) {
       return yield* new T3ControlToolError({
@@ -1511,7 +1511,7 @@ const handlers = {
     const operation = "update-session";
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.control");
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const createdAt = yield* nowIso;
     const results: Array<{ readonly type: string; readonly sequence: number }> = [];
 
@@ -1625,7 +1625,7 @@ const handlers = {
     const operation = "respond-approval";
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.control");
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [commandId, createdAt] = yield* Effect.all([makeCommandId(crypto, operation), nowIso]);
     const result = yield* dispatcher
       .dispatch({
@@ -1644,7 +1644,7 @@ const handlers = {
     const operation = "respond-user-input";
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.control");
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [commandId, createdAt] = yield* Effect.all([makeCommandId(crypto, operation), nowIso]);
     const result = yield* dispatcher
       .dispatch({
@@ -1664,7 +1664,7 @@ const handlers = {
     yield* requireExternalOperator(operation);
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const path = yield* Path.Path;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const workspaceRoot = yield* workspacePaths
@@ -1682,7 +1682,7 @@ const handlers = {
       };
     }
 
-    const uuid = yield* crypto.randomUUIDv4().pipe(mapControlError(operation));
+    const uuid = yield* crypto.uuidV4().pipe(mapControlError(operation));
     const projectId = ProjectId.make(`mcp-project:${uuid}`);
     const commandId = yield* makeCommandId(crypto, operation);
     const createdAt = yield* nowIso;
@@ -1733,7 +1733,7 @@ const handlers = {
     yield* requireExternalOperator(operation);
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const projectId = ProjectId.make(input.projectId);
     const shell = yield* query.getShellSnapshot().pipe(mapControlError(operation));
     const project = shell.projects.find((candidate) => candidate.id === projectId);
@@ -1822,7 +1822,7 @@ const handlers = {
         ? yield* resolveSessionId(operation, ThreadId.make(input.parentSessionId), "t3.read")
         : ThreadId.make(input.parentSessionId);
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const commandId = yield* makeCommandId(crypto, operation);
     // The decider owns the tree invariant, so a cycle fails here with its
     // message rather than being re-derived (and drifting) in this handler.
@@ -1853,7 +1853,7 @@ const handlers = {
       "t3.control",
     );
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const commandId = yield* makeCommandId(crypto, operation);
     const result = yield* dispatcher
       .dispatch({
@@ -1941,7 +1941,7 @@ const handlers = {
     const sessionId = yield* resolveSessionId(operation, input.sessionId, "t3.plan");
     const query = yield* ProjectionSnapshotQuery;
     const dispatcher = yield* TurnStartBootstrap;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const thread = yield* query.getThreadDetailById(sessionId).pipe(mapControlError(operation));
     if (Option.isNone(thread)) {
       return yield* new T3ControlToolError({
@@ -1950,7 +1950,7 @@ const handlers = {
       });
     }
     const [uuid, commandId, createdAt] = yield* Effect.all([
-      crypto.randomUUIDv4().pipe(mapControlError(operation)),
+      crypto.uuidV4().pipe(mapControlError(operation)),
       makeCommandId(crypto, operation),
       nowIso,
     ]);
@@ -2300,6 +2300,8 @@ export const T3ControlToolkitHandlers = McpToolAccess.toLayer(T3ControlToolkit, 
   t3_create_session: McpToolAccess.startsThreads(
     (input) => ({ runtimeMode: input.runtimeMode, interactionMode: input.interactionMode }),
     (input, started) => createSession(input, started),
+    // A linked caller is refused: the created session does not carry its link origin.
+    { refused: "create sessions in this environment" },
   ),
   t3_link_session: writesSession(handlers.t3_link_session),
   t3_unlink_session: writesSession(handlers.t3_unlink_session),

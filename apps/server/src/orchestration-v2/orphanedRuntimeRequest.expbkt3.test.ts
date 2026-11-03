@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { isOrphanedRuntimeRequest, messageAnswerText } from "./orphanedRuntimeRequest.expbkt3.ts";
+import { isOrphanedRuntimeRequest } from "./orphanedRuntimeRequest.expbkt3.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -86,14 +86,6 @@ describe("isOrphanedRuntimeRequest", () => {
         runStatus: "failed",
       }),
     );
-  });
-});
-
-describe("messageAnswerText", () => {
-  it("lists a multi-select answer's choices and keeps a text answer", () => {
-    assert.equal(messageAnswerText([" Later ", "", "Now"]), "Later, Now");
-    assert.isUndefined(messageAnswerText([]));
-    assert.equal(messageAnswerText("Later"), "Later");
   });
 });
 

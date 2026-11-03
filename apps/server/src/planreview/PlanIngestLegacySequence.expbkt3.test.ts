@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
@@ -45,7 +46,7 @@ const reviews = PlanReviewService.layer.pipe(
   Layer.provideMerge(PlanReviewDocuments.layer),
   Layer.provideMerge(query),
   Layer.provide(engine),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const TestLayer = PlanIngestListener.layer.pipe(Layer.provideMerge(reviews), Layer.provide(engine));
 

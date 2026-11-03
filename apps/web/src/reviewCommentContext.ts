@@ -13,12 +13,9 @@ const ReviewCommentSelectionSchema = Schema.Struct({
 type ReviewCommentSelection = typeof ReviewCommentSelectionSchema.Type;
 
 // T3-CUSTOM(expbkt3): BEGIN
-// `startIndex`/`endIndex` are nullable, and `author` is new.
-//
-// A plan-review anchor is quoted text, not a line number, and the quote cannot
-// always be located in the source. Requiring the range made the parser reject
-// those blocks, and the transcript then rendered the raw `<review_comment>` XML
-// at the reader. A comment without a range is still a comment worth showing.
+// `startIndex`/`endIndex` are nullable, and `author` is new. A plan-review anchor
+// is quoted text that cannot always be located, and requiring the range made the
+// transcript render raw `<review_comment>` XML.
 export const ReviewCommentContextSchema = Schema.Struct({
   id: Schema.String,
   sectionId: Schema.String,
@@ -389,6 +386,46 @@ export function resolveDiffReviewPosition(
   }
 }
 
+function reviewHunkIndex(fileDiff: FileDiffMetadata, position: PullRequestReviewPosition): number {
+  const [side, line] =
+    position.kind === "deleted"
+      ? (["left", position.oldLine] as const)
+      : (["right", position.newLine] as const);
+  return fileDiff.hunks.findIndex((hunk) =>
+    side === "left"
+      ? line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount
+      : line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
+  );
+}
+
+/**
+ * Where a review comment on `range` is anchored. With `ranged`, a selection inside one hunk
+ * keeps its first line, in diff order, as `startPosition`, because hosts refuse a range that
+ * crosses hunks. Otherwise the comment sits on the line the selection ended on.
+ */
+export function resolveDiffReviewAnchor(
+  fileDiff: FileDiffMetadata,
+  range: SelectedLineRange,
+  ranged: boolean,
+): {
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
+} | null {
+  const endSide = range.endSide ?? range.side;
+  const last = resolveDiffReviewPosition(fileDiff, range.end, endSide);
+  if (last === null) return null;
+  const first = ranged ? resolveDiffReviewPosition(fileDiff, range.start, range.side) : null;
+  if (first === null) return { position: last };
+  const startIndex = findDiffReviewLineIndex(fileDiff, range.start, range.side);
+  const endIndex = findDiffReviewLineIndex(fileDiff, range.end, endSide);
+  if (startIndex === endIndex) return { position: last };
+  const [start, end] = startIndex < endIndex ? [first, last] : [last, first];
+  const hunk = reviewHunkIndex(fileDiff, end);
+  return hunk >= 0 && reviewHunkIndex(fileDiff, start) === hunk
+    ? { position: end, startPosition: start }
+    : { position: last };
+}
+
 function getDiffRange(
   lines: ReadonlyArray<DiffReviewLine>,
   key: "oldLineNumber" | "newLineNumber",
@@ -486,10 +523,10 @@ export function buildReviewCommentRenderablePatch(comment: ReviewCommentContext)
   if ((comment.fenceLanguage ?? "diff") !== "diff") {
     return "";
   }
-  const diff = comment.diff.trim();
-  if (diff.length === 0) {
+  if (comment.diff.trim().length === 0) {
     return "";
   }
+  const diff = comment.diff.trimStart().replace(/\n+$/, "");
   if (diff.startsWith("diff --git ")) {
     return diff;
   }

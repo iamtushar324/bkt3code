@@ -5,6 +5,7 @@ import {
   fileAttachmentTooLargeMessage,
 } from "../state/attachments.ts";
 import type { EnvironmentShellStatus } from "../state/shell.ts";
+import type { ThreadFamilyRead } from "../state/threadFamilies.ts";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -302,15 +303,24 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly threadExists: boolean;
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
-  readonly threadBusy: boolean;
+  /**
+   * Set when the shell can leave idle subagent children out: absence alone is not deletion there,
+   * only a settled family read without the row is.
+   */
+  readonly familyRead?: ThreadFamilyRead;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
     if (input.threadExists) return "remove";
     return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
   }
-  if (!input.threadExists) return input.shellStatus === "live" ? "remove" : "wait";
-  // T3-CUSTOM(expbkt3): relocated from apps/mobile thread-outbox-model.ts; follows
-  // upstream #6543 (steer active turns by default) — `threadBusy` no longer gates sends.
+  if (!input.threadExists) {
+    return input.shellStatus === "live" &&
+      (input.familyRead === undefined || input.familyRead === "settled")
+      ? "remove"
+      : "wait";
+  }
+  // Relocated from apps/mobile thread-outbox-model.ts; follows upstream #6543 (steer
+  // active turns by default), so a busy thread does not gate sends.
   return input.environmentConnected ? "send" : "wait";
 }
 

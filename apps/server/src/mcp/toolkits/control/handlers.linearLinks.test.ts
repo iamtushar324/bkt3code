@@ -4,6 +4,7 @@
 // user-wide credential (the case t3_update_session refuses), each URL is
 // checked before anything is dispatched, and the result reads the stored list
 // back and says which tags were new, already there, left out, or never there.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -15,6 +16,7 @@ import {
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
   applyLinearLinkChanges,
@@ -71,136 +73,139 @@ const query = {
     ),
 } as unknown as ProjectionSnapshotQuery["Service"];
 
-it.layer(NodeServices.layer)("t3_link_linear and t3_unlink_linear", (it) => {
-  const dispatched: OrchestrationCommand[] = [];
-  const dispatcher = TurnStartBootstrap.of({
-    dispatch: (command) =>
-      Effect.sync(() => {
-        dispatched.push(command);
-        if (command.type === "thread.meta.update") {
-          stored = applyLinearLinkChanges(threadLinearLinks(stored), command);
-        }
-        return { sequence: dispatched.length };
-      }),
-    createThread: () => Effect.die("createThread should not be called"),
-  });
-  const provide =
-    (scope: McpInvocationContext.McpInvocationScope = agent) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.provideService(TurnStartBootstrap, dispatcher),
-        Effect.provideService(ProjectionSnapshotQuery, query),
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(OrchestrationAccessControl, accessControl),
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "t3_link_linear and t3_unlink_linear",
+  (it) => {
+    const dispatched: OrchestrationCommand[] = [];
+    const dispatcher = TurnStartBootstrap.of({
+      dispatch: (command) =>
+        Effect.sync(() => {
+          dispatched.push(command);
+          if (command.type === "thread.meta.update") {
+            stored = applyLinearLinkChanges(threadLinearLinks(stored), command);
+          }
+          return { sequence: dispatched.length };
+        }),
+      createThread: () => Effect.die("createThread should not be called"),
+    });
+    const provide =
+      (scope: McpInvocationContext.McpInvocationScope = agent) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(TurnStartBootstrap, dispatcher),
+          Effect.provideService(ProjectionSnapshotQuery, query),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(OrchestrationAccessControl, accessControl),
+        );
+    const reset = () => {
+      dispatched.length = 0;
+      stored = { linearIssueUrl: ISSUE_42 };
+    };
+    const metaUpdates = () =>
+      dispatched.filter(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.meta.update" }> =>
+          command.type === "thread.meta.update",
       );
-  const reset = () => {
-    dispatched.length = 0;
-    stored = { linearIssueUrl: ISSUE_42 };
-  };
-  const metaUpdates = () =>
-    dispatched.filter(
-      (command): command is Extract<OrchestrationCommand, { type: "thread.meta.update" }> =>
-        command.type === "thread.meta.update",
-    );
 
-  it.effect("tags the agent's own session when sessionId is omitted", () =>
-    Effect.gen(function* () {
-      reset();
-      const result = yield* __testing
-        .linkLinear({ urls: [`${ISSUE_42}/slug`, PROJECT, ISSUE_43, ISSUE_43] })
-        .pipe(provide());
-      expect(result).toEqual({
-        sessionId: ownThreadId,
-        linearLinks: [
+    it.effect("tags the agent's own session when sessionId is omitted", () =>
+      Effect.gen(function* () {
+        reset();
+        const result = yield* __testing
+          .linkLinear({ urls: [`${ISSUE_42}/slug`, PROJECT, ISSUE_43, ISSUE_43] })
+          .pipe(provide());
+        expect(result).toEqual({
+          sessionId: ownThreadId,
+          linearLinks: [
+            { url: ISSUE_42, kind: "issue" },
+            { url: PROJECT, kind: "project" },
+            { url: ISSUE_43, kind: "issue" },
+          ],
+          added: [PROJECT, ISSUE_43],
+          alreadyLinked: [ISSUE_42],
+          notAdded: [],
+          sequence: 1,
+        });
+        const [command] = metaUpdates();
+        expect(command?.threadId).toBe(ownThreadId);
+        expect(command?.linearLinksAdd).toEqual([
           { url: ISSUE_42, kind: "issue" },
           { url: PROJECT, kind: "project" },
           { url: ISSUE_43, kind: "issue" },
-        ],
-        added: [PROJECT, ISSUE_43],
-        alreadyLinked: [ISSUE_42],
-        notAdded: [],
-        sequence: 1,
-      });
-      const [command] = metaUpdates();
-      expect(command?.threadId).toBe(ownThreadId);
-      expect(command?.linearLinksAdd).toEqual([
-        { url: ISSUE_42, kind: "issue" },
-        { url: PROJECT, kind: "project" },
-        { url: ISSUE_43, kind: "issue" },
-      ]);
-    }),
-  );
+        ]);
+      }),
+    );
 
-  it.effect("reports an already-linked item and leaves the list as it was", () =>
-    Effect.gen(function* () {
-      reset();
-      const result = yield* __testing.linkLinear({ urls: [ISSUE_42] }).pipe(provide());
-      expect(result.added).toEqual([]);
-      expect(result.alreadyLinked).toEqual([ISSUE_42]);
-      expect(result.linearLinks).toEqual([{ url: ISSUE_42, kind: "issue" }]);
-    }),
-  );
+    it.effect("reports an already-linked item and leaves the list as it was", () =>
+      Effect.gen(function* () {
+        reset();
+        const result = yield* __testing.linkLinear({ urls: [ISSUE_42] }).pipe(provide());
+        expect(result.added).toEqual([]);
+        expect(result.alreadyLinked).toEqual([ISSUE_42]);
+        expect(result.linearLinks).toEqual([{ url: ISSUE_42, kind: "issue" }]);
+      }),
+    );
 
-  it.effect("reports items left out once the session holds the maximum", () =>
-    Effect.gen(function* () {
-      reset();
-      stored = {
-        linearIssueUrl: null,
-        linearLinks: Array.from({ length: THREAD_LINEAR_LINKS_MAX }, (_, index) => ({
-          url: `https://linear.app/acme/issue/ENG-${1000 + index}`,
-          kind: "issue" as const,
-        })),
-      };
-      const result = yield* __testing.linkLinear({ urls: [ISSUE_43] }).pipe(provide());
-      expect(result.added).toEqual([]);
-      expect(result.notAdded).toEqual([ISSUE_43]);
-      expect(result.linearLinks).toHaveLength(THREAD_LINEAR_LINKS_MAX);
-    }),
-  );
+    it.effect("reports items left out once the session holds the maximum", () =>
+      Effect.gen(function* () {
+        reset();
+        stored = {
+          linearIssueUrl: null,
+          linearLinks: Array.from({ length: THREAD_LINEAR_LINKS_MAX }, (_, index) => ({
+            url: `https://linear.app/acme/issue/ENG-${1000 + index}`,
+            kind: "issue" as const,
+          })),
+        };
+        const result = yield* __testing.linkLinear({ urls: [ISSUE_43] }).pipe(provide());
+        expect(result.added).toEqual([]);
+        expect(result.notAdded).toEqual([ISSUE_43]);
+        expect(result.linearLinks).toHaveLength(THREAD_LINEAR_LINKS_MAX);
+      }),
+    );
 
-  it.effect("rejects a URL that is not a Linear issue or project before dispatching", () =>
-    Effect.gen(function* () {
-      reset();
-      const error = yield* __testing
-        .linkLinear({ urls: [ISSUE_43, "https://example.com/ENG-1"] })
-        .pipe(provide(), Effect.flip);
-      expect(error).toBeInstanceOf(T3ControlToolError);
-      expect(error.message).toContain("https://example.com/ENG-1 is not a Linear issue");
-      expect(dispatched).toHaveLength(0);
-    }),
-  );
+    it.effect("rejects a URL that is not a Linear issue or project before dispatching", () =>
+      Effect.gen(function* () {
+        reset();
+        const error = yield* __testing
+          .linkLinear({ urls: [ISSUE_43, "https://example.com/ENG-1"] })
+          .pipe(provide(), Effect.flip);
+        expect(error).toBeInstanceOf(T3ControlToolError);
+        expect(error.message).toContain("https://example.com/ENG-1 is not a Linear issue");
+        expect(dispatched).toHaveLength(0);
+      }),
+    );
 
-  it.effect("removes only the tags the session has and reports the rest", () =>
-    Effect.gen(function* () {
-      reset();
-      const result = yield* __testing
-        .unlinkLinear({ urls: ["https://linear.app/acme/issue/eng-42", PROJECT] })
-        .pipe(provide());
-      expect(result).toEqual({
-        sessionId: ownThreadId,
-        linearLinks: [],
-        removed: [ISSUE_42],
-        notLinked: [PROJECT],
-        sequence: 1,
-      });
-      expect(metaUpdates()[0]?.linearLinksRemove).toEqual([ISSUE_42, PROJECT]);
-    }),
-  );
+    it.effect("removes only the tags the session has and reports the rest", () =>
+      Effect.gen(function* () {
+        reset();
+        const result = yield* __testing
+          .unlinkLinear({ urls: ["https://linear.app/acme/issue/eng-42", PROJECT] })
+          .pipe(provide());
+        expect(result).toEqual({
+          sessionId: ownThreadId,
+          linearLinks: [],
+          removed: [ISSUE_42],
+          notLinked: [PROJECT],
+          sequence: 1,
+        });
+        expect(metaUpdates()[0]?.linearLinksRemove).toEqual([ISSUE_42, PROJECT]);
+      }),
+    );
 
-  it.effect("still needs a sessionId from a caller with no session of its own", () =>
-    Effect.gen(function* () {
-      reset();
-      const external: McpInvocationContext.McpInvocationScope = {
-        ...agent,
-        principal: "external-user",
-        requestNamespace: "external-user:linear",
-        thread: undefined,
-      };
-      const error = yield* __testing
-        .linkLinear({ urls: [ISSUE_43] })
-        .pipe(provide(external), Effect.flip);
-      expect(error.message).toMatch(/^sessionId is required for a user-wide MCP call:/);
-      expect(dispatched).toHaveLength(0);
-    }),
-  );
-});
+    it.effect("still needs a sessionId from a caller with no session of its own", () =>
+      Effect.gen(function* () {
+        reset();
+        const external: McpInvocationContext.McpInvocationScope = {
+          ...agent,
+          principal: "external-user",
+          requestNamespace: "external-user:linear",
+          thread: undefined,
+        };
+        const error = yield* __testing
+          .linkLinear({ urls: [ISSUE_43] })
+          .pipe(provide(external), Effect.flip);
+        expect(error.message).toMatch(/^sessionId is required for a user-wide MCP call:/);
+        expect(dispatched).toHaveLength(0);
+      }),
+    );
+  },
+);

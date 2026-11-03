@@ -6,16 +6,18 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -163,15 +165,18 @@ describe("periodic pull-request sweep rotation", () => {
                   return null;
                 }),
             }),
+            // A client holds an activity lease, so the sweep runs every pass.
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              shouldRunScopeWork: () => Effect.succeed(true),
+              shouldRunOpportunisticWork: Effect.succeed(true),
+            }),
             Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
             Layer.succeed(
-              Crypto.Crypto,
-              Crypto.make({
-                randomBytes: (size) => new Uint8Array(size).fill(1),
-                digest: (_algorithm, data) => Effect.succeed(data),
-              }),
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
             ),
             FileSystem.layerNoop({}),
+            Path.layer,
           );
 
           yield* Effect.gen(function* () {

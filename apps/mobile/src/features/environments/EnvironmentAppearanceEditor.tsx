@@ -11,7 +11,7 @@ import {
   environmentAppearanceSettingValue,
 } from "@t3tools/client-runtime/state/environment-appearance";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -52,12 +52,13 @@ export function EnvironmentAppearanceEditor(props: {
   // undo the first.
   const [pending, setPending] = useState<EnvironmentAppearance | undefined>(undefined);
   const storedKey = JSON.stringify(environmentAppearanceSettingValue(stored ?? {}));
-  useEffect(() => {
-    if (pending === undefined) return;
-    if (JSON.stringify(environmentAppearanceSettingValue(pending)) === storedKey) {
-      setPending(undefined);
-    }
-  }, [pending, storedKey]);
+  // Render-phase adjustment: drop the pending value once the host echoes it.
+  if (
+    pending !== undefined &&
+    JSON.stringify(environmentAppearanceSettingValue(pending)) === storedKey
+  ) {
+    setPending(undefined);
+  }
   const current: EnvironmentAppearance = pending ?? stored ?? {};
 
   const patch = (changes: EnvironmentAppearance) => {

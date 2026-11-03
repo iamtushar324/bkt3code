@@ -7,10 +7,16 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import { PersistenceSqlError, toPersistenceSqlError } from "../persistence/Errors.ts";
-import { LiveStreamBufferError, replayAndBufferLiveEvents } from "./LiveStreamBudget.ts";
+import { LiveStreamBufferError, replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import { forkCompatibilityEvents } from "./forkCompatibilityEvents.expbkt3.ts";
 
 type Event = { readonly sequence: number };
+
+// Upstream removed `replayAndBufferLiveEvents`; it was this identity projection.
+const replayAndBufferLiveEvents = <A extends { readonly sequence: number }, E, R>(
+  input: Omit<Parameters<typeof replayAndBufferProjectedLiveEvents<A, A, E, R>>[0], "project">,
+  limits?: Parameters<typeof replayAndBufferProjectedLiveEvents>[1],
+) => replayAndBufferProjectedLiveEvents({ ...input, project: (event: A) => event }, limits);
 
 describe("fork compatibility event recovery", () => {
   it.effect(

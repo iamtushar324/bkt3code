@@ -29,11 +29,7 @@ import * as DateTime from "effect/DateTime";
 import { RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  SettingsRow,
-  SettingsSection,
-  useRelativeTimeTick,
-} from "../components/settings/settingsLayout";
+import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
 import { searchableSetting } from "../components/settings/settingsSearch";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -42,6 +38,7 @@ import { Switch } from "../components/ui/switch";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { requestConfirmDialog } from "../confirmDialog";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { useNowSecond } from "../hooks/useNowSecond";
 import { cn } from "../lib/utils";
 import {
   desktopNetworkAccessStateAtom,
@@ -510,7 +507,7 @@ function IssuedPairingPanel({
   readonly revoking: boolean;
   readonly onRevoke: () => void;
 }) {
-  const nowMs = useRelativeTimeTick(1_000);
+  const nowMs = useNowSecond();
   const { copyToClipboard } = useCopyToClipboard<CopyTarget>({
     onCopy: (target) => {
       toastManager.add({ type: "success", title: `${target} copied` });

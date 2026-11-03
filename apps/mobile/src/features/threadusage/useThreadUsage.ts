@@ -38,7 +38,7 @@ export function useThreadUsage(environmentId: EnvironmentId | null, threadId: Th
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId ?? NO_ENVIRONMENT));
   const supported = environmentId !== null && config?.environment.capabilities.threadUsage === true;
   const hasSession = shell?.activeProviderThreadId != null;
-  const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
+  const timeZone = useMemo(() => new Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const query = useEnvironmentQuery<ThreadUsage, unknown>(
     supported && hasSession && environmentId !== null && threadId !== null
       ? threadUsageEnvironment.usage({ environmentId, input: { threadId, timeZone } })

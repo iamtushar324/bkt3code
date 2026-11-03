@@ -87,8 +87,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly displayName: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
-    readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
+    readonly desktopLauncherPath: Option.Option<string>;
     readonly appImagePath: Option.Option<string>;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
@@ -218,10 +218,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     t3Home: config.t3Home,
   });
   // T3-CUSTOM(expbkt3): BEGIN - fork builds keep their own user-data directory.
-  // The legacy name must be overridden too: resolveUserDataPath in
-  // DesktopAppIdentity.ts prefers the legacy directory when it exists, so leaving
-  // upstream's "T3 Code (Alpha)" here would make a fork build adopt an installed
-  // upstream app's state instead of starting clean beside it.
+  // Override the legacy name too: resolveUserDataPath prefers an existing legacy
+  // directory, so upstream's "T3 Code (Alpha)" would make a fork build adopt an
+  // installed upstream app's state.
   const userDataDirName = runtimeBrand
     ? runtimeBrand.userDataDirName
     : isDevelopment
@@ -298,9 +297,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     ),
     linuxDesktopEntryName:
       runtimeBrand?.linuxDesktopEntryName ?? resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: runtimeBrand?.linuxWmClass ?? (isDevelopment ? "t3code-dev" : "t3code"),
     // T3-CUSTOM(expbkt3): END
     linuxApplicationsDir,
+    desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({

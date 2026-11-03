@@ -10,19 +10,23 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useOrderWhileOpen } from "~/hooks/useOrderWhileOpen";
+import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
+import { isTriagePrompt } from "~/hooks/useStartTriage";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
   selectProjectGroupingSettings,
-} from "~/logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -30,19 +34,21 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "~/sidebarProjectGrouping";
-import { useProjects, useThreadShells } from "~/state/entities";
+import { useProjects, useVisibleThreadShells } from "~/state/entities";
 // T3-CUSTOM(expbkt3): BEGIN — environment identity in the new-thread picker.
 import {
   // T3-CUSTOM(expbkt3): environment identity in the new-thread picker.
   useEnvironmentAppearances,
   useEnvironments,
   usePrimaryEnvironmentId,
+  useEnvironmentProviders,
 } from "~/state/environments";
 // T3-CUSTOM(expbkt3): environment glyph.
 import { EnvironmentBadgeView } from "../environment/EnvironmentBadge";
 // T3-CUSTOM(expbkt3): END
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Combobox,
@@ -58,8 +64,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
-// T3-CUSTOM(expbkt3): the saved new-thread defaults (project, then host), one resolver.
-import { resolveNewThreadDefaults } from "@t3tools/shared/newThreadDefaults.expbkt3";
+import { TriageDraftHero } from "./TriageDraftHero";
+import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 const ADD_PROJECT_VALUE = "add-project";
 
@@ -93,8 +100,9 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
@@ -102,14 +110,12 @@ export function DraftHeroHeadline({
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  // A boolean, so typing in a draft does not re-render the hero.
+  const isTriageDraftPrompt = useComposerDraftStore((store) =>
+    draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
+  );
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  // T3-CUSTOM(expbkt3): BEGIN — retargeting an empty draft resets its modes to
-  // the new project's saved defaults; Plan only while its toggle exists.
-  const setRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
-  const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
-  const planModeAvailable = useClientSettings((settings) => settings.planModeAvailable);
-  // T3-CUSTOM(expbkt3): END
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
@@ -117,6 +123,8 @@ export function DraftHeroHeadline({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
   const pickerFilter = useComboboxFilter();
+  const highlightedPickerValueRef = useRef<string | null>(null);
+  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -142,7 +150,7 @@ export function DraftHeroHeadline({
     ),
   );
   const projectPickerEntries = buildSidebarProjectPickerEntries({
-    groups: projectGroups,
+    groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
   });
   const projectEntryByKey = new Map(
@@ -156,11 +164,9 @@ export function DraftHeroHeadline({
             (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
           ),
         ) ?? null);
-  // T3-CUSTOM(expbkt3): BEGIN — a logical project can exist on more than one
-  // machine, and the picker previously collapsed those into one row that silently
-  // chose an environment for you. Offer each environment explicitly, so starting a
-  // session says where it will run. Groups that live on a single environment are
-  // untouched, which is every group on a single-environment client.
+  // T3-CUSTOM(expbkt3): BEGIN — a logical project on more than one machine gets one
+  // picker row per environment, so starting a session says where it will run. Groups
+  // on a single environment are untouched.
   const appearances = useEnvironmentAppearances();
   // Named apart from upstream's combobox `pickerItems`, which these rows feed.
   const projectPickerItems: ReadonlyArray<ProjectPickerItem> = projectPickerEntries.flatMap(
@@ -204,7 +210,6 @@ export function DraftHeroHeadline({
         ? `${activeProjectGroup.projectKey}::${activeProjectRef.environmentId}`
         : activeProjectGroup.projectKey;
   // T3-CUSTOM(expbkt3): END
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -222,18 +227,22 @@ export function DraftHeroHeadline({
             project.environmentId === activeProjectRef.environmentId &&
             project.id === activeProjectRef.projectId,
         ) ?? null);
-  const scratchTargetEnvironmentId = scratchEnvironmentId(
-    activeProjectRef?.environmentId ?? primaryEnvironmentId,
-  );
+  const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
-    activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+    activeProject !== null &&
+    isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
 
-  const pickerItems: readonly PickerItem[] = [
-    // T3-CUSTOM(expbkt3): one combobox row per picker row, machine rows included.
-    ...menuEntries.map((item) => ({ value: item.value, label: item.displayName })),
-    { value: ADD_PROJECT_VALUE, label: "Add project" },
-  ];
+  // Pinning from a row keeps rows in place while the picker is open.
+  const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
+    [
+      // T3-CUSTOM(expbkt3): one combobox row per picker row, machine rows included.
+      ...menuEntries.map((item) => ({ value: item.value, label: item.displayName })),
+      { value: ADD_PROJECT_VALUE, label: "Add project" },
+    ],
+    (item) => item.value,
+    pickerOpen,
+  );
   const pickerSearch = pickerQuery.trim();
   const filteredPickerItems =
     pickerSearch.length === 0
@@ -246,23 +255,22 @@ export function DraftHeroHeadline({
   const selectedPickerItem = pickerItems.find((item) => item.value === activeProjectKey) ?? null;
 
   // The picker can change the draft's target while the no-project home is
-  // still being opened; a stale continuation must not retarget it again.
-  const latestTargetRef = useRef({ draftId, activeProjectKey, scratchTargetEnvironmentId });
-  useEffect(() => {
-    latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
-  }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
-  // An empty draft instead opens the chosen project's own draft, like starting a new thread there:
-  // moving it would replace that draft and strand whatever it holds, such as the browser tabs of
-  // the no-project draft.
+  // still being opened; a stale continuation must not retarget it again. Picking
+  // a project clears the pending request, and the draft session is compared
+  // against the store when the scratch project arrives.
+  const pendingScratchRef = useRef<symbol | null>(null);
+  const draftTargetKey = () => {
+    const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
+    return session
+      ? `${session.environmentId}:${session.projectId}:${session.logicalProjectKey}`
+      : null;
+  };
+  // Retargeting an empty draft would overwrite the project's draft and strand browser tabs.
   const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
     if (!draftId) {
       return;
     }
-    latestTargetRef.current = {
-      draftId,
-      activeProjectKey: logicalProjectKey,
-      scratchTargetEnvironmentId: project.environmentId,
-    };
+    pendingScratchRef.current = null;
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
       void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
@@ -275,13 +283,33 @@ export function DraftHeroHeadline({
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
       applyStickyState(draftId);
-      const environmentSettings = environments.find(
+      const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
+      )?.serverConfig;
+      const environmentSettings = environmentConfig?.settings;
+      const defaultSelection = environmentSettings
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
         : project.defaultModelSelection;
+      const fallbackResolution = resolveNewThreadModelSelection({
+        defaultSelection:
+          defaultSelection ??
+          (useComposerDraftStore.getState().stickyActiveProvider !== null || !environmentSettings
+            ? null
+            : resolveProjectDefaultProviderModelSelection(
+                providersByEnvironment.get(project.environmentId) ?? [],
+                environmentSettings,
+                project.id,
+              )),
+        fallbackSelection: environmentSettings?.fallbackModelSelection ?? null,
+        providers: providersByEnvironment.get(project.environmentId) ?? [],
+        ...(environmentSettings ? { settings: environmentSettings } : {}),
+        projectId: project.id,
+        now: Date.now(),
+      });
+      const defaultModelSelection = fallbackResolution.fallback
+        ? fallbackResolution.selection
+        : defaultSelection;
       if (defaultModelSelection) {
         setModelSelection(draftId, defaultModelSelection, {
           replaceOptions: true,
@@ -293,17 +321,14 @@ export function DraftHeroHeadline({
     if (scratchTargetEnvironmentId === null || isScratchDraft) {
       return false;
     }
-    const requested = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+    const request = Symbol("scratch");
+    pendingScratchRef.current = request;
+    const requestedTarget = draftTargetKey();
     const project = await openScratchProject(scratchTargetEnvironmentId);
-    const latest = latestTargetRef.current;
-    if (
-      !project ||
-      latest.draftId !== requested.draftId ||
-      latest.activeProjectKey !== requested.activeProjectKey ||
-      latest.scratchTargetEnvironmentId !== requested.scratchTargetEnvironmentId
-    ) {
+    if (!project || pendingScratchRef.current !== request || draftTargetKey() !== requestedTarget) {
       return false;
     }
+    pendingScratchRef.current = null;
     selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
     return true;
   };
@@ -316,6 +341,9 @@ export function DraftHeroHeadline({
       itemToStringLabel={(item) => item.label}
       isItemEqualToValue={(a, b) => a.value === b.value}
       open={pickerOpen}
+      onItemHighlighted={(item) => {
+        highlightedPickerValueRef.current = item?.value ?? null;
+      }}
       onOpenChange={(open) => {
         setPickerOpen(open);
         setPickerQuery("");
@@ -348,12 +376,12 @@ export function DraftHeroHeadline({
           }
         >
           <DraftProjectName
-            value={isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
+            value={isScratchDraft ? "No project" : (activeProjectTitle ?? "Choose a project")}
             singleLine
           />
         </TooltipTrigger>
-        {activeProjectDisplayName && !isScratchDraft ? (
-          <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
+        {activeProjectTitle && !isScratchDraft ? (
+          <TooltipPopup side="top">{activeProjectTitle}</TooltipPopup>
         ) : null}
       </Tooltip>
       <ComboboxPopup align="center" className="w-72 overflow-hidden">
@@ -362,6 +390,19 @@ export function DraftHeroHeadline({
           placeholder="Search projects..."
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
+          onKeyDown={(event) => {
+            const highlighted = highlightedPickerValueRef.current;
+            // T3-CUSTOM(expbkt3): a machine row's value is not a project key.
+            const group = highlighted
+              ? projectPickerItemByValue.get(highlighted)?.group
+              : undefined;
+            if (!group || !canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            toggleProjectGroupPin(group);
+          }}
         />
         <ComboboxEmpty>No matching projects.</ComboboxEmpty>
         <ComboboxList>
@@ -389,6 +430,14 @@ export function DraftHeroHeadline({
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
+                {entry && canPinProjectGroup(entry.group) ? (
+                  <ProjectPinButton
+                    name={entry.group.displayName}
+                    pinned={entry.group.pinned}
+                    shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
+                    onToggle={() => toggleProjectGroupPin(entry.group)}
+                  />
+                ) : null}
                 {appearance ? (
                   // T3-CUSTOM(expbkt3): this row already names its environment, so
                   // upstream's machine badge would repeat it.
@@ -457,11 +506,23 @@ export function DraftHeroHeadline({
       </Tooltip>
     ) : null;
 
+  if (isScratchDraft && isTriageDraftPrompt) {
+    const environment = environments.find(
+      (entry) => entry.environmentId === activeProject.environmentId,
+    );
+    return (
+      <TriageDraftHero
+        machineLabel={environment?.label ?? null}
+        serverVersion={environment?.serverConfig?.environment.serverVersion ?? null}
+      />
+    );
+  }
+
   // T3-CUSTOM(expbkt3): BEGIN — show the selected machine beneath the draft prompt.
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
       {hasResolvedProject && !isScratchDraft ? (
-        <DraftHeroProjectHeading projectName={activeProjectDisplayName ?? "Choose a project"}>
+        <DraftHeroProjectHeading projectName={activeProjectTitle ?? "Choose a project"}>
           {projectSelector}
         </DraftHeroProjectHeading>
       ) : (
@@ -475,6 +536,13 @@ export function DraftHeroHeadline({
           )}
         </h1>
       )}
+      {/* T3-CUSTOM(expbkt3): which machine this draft will run on. */}
+      {activeEnvironmentAppearance ? (
+        <span className="pointer-events-none mt-2 inline-flex items-center gap-1.5 text-muted-foreground text-xs">
+          <EnvironmentBadgeView appearance={activeEnvironmentAppearance} variant="glyph" />
+          <span>on {activeEnvironmentAppearance.name}</span>
+        </span>
+      ) : null}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

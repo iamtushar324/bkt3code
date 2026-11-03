@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,91 +27,91 @@ const layerEnvironmentAuthPolicy = (overrides?: Partial<ServerConfig.ServerConfi
     ),
   );
 
-it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
-  it.effect("keeps desktop cookies port-scoped on the port a second instance lands on", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "EnvironmentAuthPolicy.layer",
+  (it) => {
+    it.effect("keeps desktop cookies port-scoped on the port a second instance lands on", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.sessionCookieName).toBe("t3_session_3774");
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "desktop",
-          port: 3774,
-        }),
+        expect(descriptor.sessionCookieName).toBe("t3_session_3774");
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "desktop",
+            port: 3774,
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  it.effect("uses remote-reachable policy for desktop mode when bound beyond loopback", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+    it.effect("uses remote-reachable policy for desktop mode when bound beyond loopback", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "desktop",
-          host: "0.0.0.0",
-        }),
+        expect(descriptor.policy).toBe("remote-reachable");
+        expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "desktop",
+            host: "0.0.0.0",
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  it.effect("uses loopback-browser policy for loopback web hosts", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+    it.effect("uses loopback-browser policy for loopback web hosts", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.policy).toBe("loopback-browser");
-      expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
-      expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "web",
-          host: "127.0.0.1",
-          port: 3773,
-        }),
+        expect(descriptor.policy).toBe("loopback-browser");
+        expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+        expect(descriptor.serverUpdateScope).toBe("environment:maintain");
+        expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "web",
+            host: "127.0.0.1",
+            port: 3773,
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  // T3-CUSTOM(expbkt3): BEGIN — team mode must stay invisible to `bootstrapMethods`.
-  //
-  // `bootstrapMethods` is a closed literal union in stock T3 Code. A fork-only
-  // entry there made the whole `server.getConfig` reply undecodable for App Store
-  // clients: they paired, opened the socket, read the config and hung up. The
-  // `clerk` descriptor is an additive optional field, which such clients ignore.
-  it.effect("advertises team mode with the clerk descriptor and no extra bootstrap method", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+    // T3-CUSTOM(expbkt3): BEGIN — team mode must stay invisible to `bootstrapMethods`, a
+    // closed literal union in stock T3 Code: a fork-only entry there made `server.getConfig`
+    // undecodable for App Store clients. The additive `clerk` descriptor is ignored by them.
+    it.effect("advertises team mode with the clerk descriptor and no extra bootstrap method", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.clerk).toEqual({
-        publishableKey: "pk_test_team",
-        organizationId: "org_team",
-      });
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "web",
-          host: "0.0.0.0",
-          clerkAuth: {
-            secretKey: "sk_test_team",
-            publishableKey: "pk_test_team",
-            organizationId: "org_team",
-            defaultOwnerUserId: undefined,
-            defaultOwnerEmail: undefined,
-          },
-        }),
+        expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+        expect(descriptor.clerk).toEqual({
+          publishableKey: "pk_test_team",
+          organizationId: "org_team",
+        });
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "web",
+            host: "0.0.0.0",
+            clerkAuth: {
+              secretKey: "sk_test_team",
+              publishableKey: "pk_test_team",
+              organizationId: "org_team",
+              defaultOwnerUserId: undefined,
+              defaultOwnerEmail: undefined,
+            },
+          }),
+        ),
       ),
-    ),
-  );
-  // T3-CUSTOM(expbkt3): END
-});
+    );
+    // T3-CUSTOM(expbkt3): END
+  },
+);

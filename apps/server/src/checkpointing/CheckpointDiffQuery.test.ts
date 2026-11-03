@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+// T3-CUSTOM(expbkt3): encodes the V1 baseline ref below.
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -16,8 +18,13 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
-import { checkpointRefForThreadTurn } from "./Utils.ts";
 import { CheckpointRefUnavailableError, CheckpointTurnRangeUnavailableError } from "./Errors.ts";
+
+// T3-CUSTOM(expbkt3): BEGIN — the V1 baseline ref; upstream deleted checkpointing/Utils.ts.
+function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
+  return CheckpointRef.make(`refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turnCount}`);
+}
+// T3-CUSTOM(expbkt3): END
 
 const threadId = ThreadId.make("thread:checkpoint-diff-v2");
 const firstRunId = RunId.make("run:checkpoint-diff-v2:1");

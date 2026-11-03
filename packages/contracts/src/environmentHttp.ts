@@ -15,6 +15,7 @@ import {
   AuthBrowserSessionResult,
   // T3-CUSTOM(expbkt3): team mode — Clerk sign-in.
   AuthClerkSessionRequest,
+  // T3-CUSTOM(expbkt3): member-scoped client listing.
   AuthClientSession,
   AuthCreatePairingCredentialInput,
   // T3-CUSTOM(expbkt3): team mode — operator identity binding.
@@ -34,12 +35,14 @@ import {
   AuthMcpTokenRequest,
   AuthMcpTokenResult,
   AuthPairingCredentialResult,
+  // T3-CUSTOM(expbkt3): member-scoped pairing link listing.
   AuthPairingLink,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
+  AuthWebSocketTicketParams,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
@@ -394,6 +397,8 @@ const EnvironmentScopedOperationErrors = [
 ] as const;
 const EnvironmentPairingCredentialErrors = [
   EnvironmentRequestInvalidError,
+  // The managed policy does not allow remote clients.
+  EnvironmentHttpForbiddenError,
   ...EnvironmentScopedOperationErrors,
 ] as const;
 const EnvironmentSessionRevokeErrors = [
@@ -682,6 +687,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("webSocketTicketFor", "/api/auth/websocket-ticket/:use", {
+      headers: OptionalBearerHeaders,
+      params: AuthWebSocketTicketParams,
+      success: AuthWebSocketTicketResult,
+      error: [EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("pairingCredential", "/api/auth/pairing-token", {
       headers: OptionalBearerHeaders,
       payload: AuthCreatePairingCredentialInput,
@@ -689,6 +702,8 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       error: EnvironmentPairingCredentialErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // T3-CUSTOM(expbkt3): BEGIN — member-scoped pairing link and client listing,
+  // which upstream removed as unreached; the fork web calls both.
   .add(
     HttpApiEndpoint.get("pairingLinks", "/api/auth/pairing-links", {
       headers: OptionalBearerHeaders,
@@ -697,17 +712,18 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.get("clients", "/api/auth/clients", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Array(AuthClientSession),
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  // T3-CUSTOM(expbkt3): END
+  .add(
     HttpApiEndpoint.post("revokePairingLink", "/api/auth/pairing-links/revoke", {
       headers: OptionalBearerHeaders,
       payload: AuthRevokePairingLinkInput,
       success: AuthPairingLinkRevokeResult,
-      error: EnvironmentScopedOperationErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.get("clients", "/api/auth/clients", {
-      headers: OptionalBearerHeaders,
-      success: Schema.Array(AuthClientSession),
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -777,14 +793,24 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+  omitIdleSubagents: Schema.optionalKey(Schema.String),
+  omitOlderSettled: Schema.optionalKey(Schema.String),
+});
+
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+  deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
+  dedupeBodies: Schema.optionalKey(Schema.String),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
-  view: Schema.optional(Schema.Literals(["conversation", "activity"])),
+  view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
+  deferWork: Schema.optionalKey(Schema.String),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryErrors = [
@@ -815,6 +841,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
+      query: EnvironmentOrchestrationShellSnapshotQuery,
       success: OrchestrationV2ShellSnapshot,
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -968,13 +995,6 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   )
   .add(
-    HttpApiEndpoint.post("mintCredential", "/api/connect/mint-credential", {
-      payload: RelayCloudMintCredentialRequest,
-      success: RelayEnvironmentMintResponse,
-      error: EnvironmentHttpCloudErrors,
-    }),
-  )
-  .add(
     HttpApiEndpoint.post("t3MintCredential", "/api/t3-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
@@ -982,11 +1002,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
-/**
- * Public entry point for webhook tasks. Unauthenticated by design: the token
- * in the path, and an optional body signature, are the credential. The handler
- * reads the raw body itself so a signature is checked over the exact bytes.
- */
+// Path tokens and optional body signatures authenticate webhooks; read raw bytes to verify signatures.
 const WebhookParams = Schema.Struct({
   hookId: TrimmedNonEmptyString,
   token: TrimmedNonEmptyString,

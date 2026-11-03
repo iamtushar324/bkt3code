@@ -130,7 +130,6 @@ it.effect(
           get: () => Effect.succeed(Option.some(runtime())),
         }),
         Layer.mock(CheckpointService.CheckpointServiceV2)({
-          ensureScope: (scope) => Effect.succeed(scope),
           prepareRootRunScope: (input) =>
             Effect.succeed({
               id: CheckpointScopeId.make(`scope:${input.runId}`),

@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -146,6 +147,7 @@ const makeFixture = Effect.gen(function* () {
     Layer.mock(OrchestrationCommandReceiptRepository)({}),
     Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
     NodeServices.layer,
+    NodeCrypto.layer,
   );
   const setCurrent = (enabled: boolean) =>
     Effect.sync(() => {
@@ -203,19 +205,19 @@ it.effect("changes plan tool visibility for existing HTTP sessions without a res
   Effect.scoped(
     Effect.gen(function* () {
       const fixture = yield* makeFixture;
-      const serverLayer = Layer.mergeAll(
-        McpServer.layerHttp({
-          name: "Plan policy test",
-          version: "1.0.0",
-          path: "/mcp",
-          protocols: [McpProtocol.v2025_06_18],
-        }),
-        T3ControlToolkitRegistrationLive,
-      ).pipe(Layer.provide(fixture.dependencies));
+      // The transport turns the registration's request-level dependencies into
+      // router requirements, which the fixture meets around the served router.
+      const serverLayer = McpServer.layerHttp({
+        name: "Plan policy test",
+        version: "1.0.0",
+        path: "/mcp",
+        protocols: [McpProtocol.v2025_06_18],
+        registrations: T3ControlToolkitRegistrationLive,
+      });
       yield* HttpRouter.serve(serverLayer, {
         disableListenLog: true,
         disableLogger: true,
-      }).pipe(Layer.build);
+      }).pipe(Layer.provide(fixture.dependencies), Layer.build);
       expect(fixture.subscriptions).toBe(1);
       const http = yield* HttpClient.HttpClient;
       let requestId = 0;

@@ -22,7 +22,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -32,6 +31,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 
 export type SourceControlActionKind =
   | "init"
@@ -301,7 +301,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
         ),
       );
     }
-    return publishRepository({
+    const result = await publishRepository({
       environmentId: target.environmentId,
       // T3-CUSTOM(expbkt3): source-control identity — publish with the chosen
       // git identity profile instead of whatever is default in the cwd.
@@ -313,6 +313,10 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
         ...input,
       },
     });
+    if (result._tag === "Success") {
+      void suggestAppAccessForRemote(target.environmentId, result.value.remoteUrl);
+    }
+    return result;
   };
   return useAction({
     kind: "publishRepository",
@@ -390,21 +394,20 @@ export function readCachedPullRequestResolution(
   if (target.environmentId === null || target.cwd === null || target.reference === null) {
     return null;
   }
-  return Option.getOrNull(
-    AsyncResult.value(
-      appAtomRegistry.get(
-        // T3-CUSTOM(expbkt3): BEGIN — thread-scoped git actions in the cached PR-resolution read.
-        gitEnvironment.pullRequestResolution({
-          environmentId: target.environmentId,
-          input: {
-            cwd: target.cwd,
-            reference: target.reference,
-            ...(target.threadId ? { threadId: target.threadId } : {}),
-          },
-        }),
-        // T3-CUSTOM(expbkt3): END
-      ),
+  return AsyncResult.getOrElse(
+    appAtomRegistry.get(
+      // T3-CUSTOM(expbkt3): BEGIN — thread-scoped git actions in the cached PR-resolution read.
+      gitEnvironment.pullRequestResolution({
+        environmentId: target.environmentId,
+        input: {
+          cwd: target.cwd,
+          reference: target.reference,
+          ...(target.threadId ? { threadId: target.threadId } : {}),
+        },
+      }),
+      // T3-CUSTOM(expbkt3): END
     ),
+    () => null,
   );
 }
 

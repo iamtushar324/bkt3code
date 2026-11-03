@@ -16,6 +16,7 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const environmentId = EnvironmentId.make("environment-tool-list");
 const providerToken = "providerTokenWithoutDots";
@@ -82,14 +83,16 @@ const replyOf = (text: string) =>
 it.effect("lists only the agent tools to an OAuth client unless it asks for every tool", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const serverLayer = McpHttpServer.toolkitRegistration(
-        ProbeToolkit,
-        McpToolAccess.toLayer(ProbeToolkit, {
-          t3_wait: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
-          t3_list_sessions: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
-        }),
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          ProbeToolkit,
+          McpToolAccess.toLayer(ProbeToolkit, {
+            t3_wait: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+            t3_list_sessions: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+          }),
+        ),
       ).pipe(
-        Layer.provideMerge(McpHttpServer.layerMcpTransport),
+        Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) =>
