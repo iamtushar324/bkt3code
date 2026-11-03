@@ -149,6 +149,30 @@ describe("ClaudeAutoswitchClient", () => {
     }),
   );
 
+  it.effect("keeps the status when kind, pace or credits have a bad shape", () =>
+    Effect.gen(function* () {
+      const { layer } = harness(() =>
+        output({
+          stdout:
+            '{"schema":"claude-autoswitch.status/1","profiles":[{"name":"agent","kind":5,"pace":"x","credits":[1]},{"name":"api","kind":"api_fallback","credits":{"state":"ok","left_usd":303}}]}',
+        }),
+      );
+      const result = yield* Effect.gen(function* () {
+        const client = yield* ClaudeAutoswitchClient;
+        return yield* client.status();
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(result.kind, "ok");
+      if (result.kind === "ok") {
+        assert.deepEqual(
+          result.value.profiles.map((profile) => profile.name),
+          ["agent", "api"],
+        );
+        assert.equal(result.value.profiles[0]?.kind, 5);
+      }
+    }),
+  );
+
   it.effect("decodes the space-share-v2 fields and keeps older answers without them", () =>
     Effect.gen(function* () {
       const answers = [

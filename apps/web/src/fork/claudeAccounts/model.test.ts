@@ -488,6 +488,9 @@ describe("API credits", () => {
     expect(formatUsd(65.2)).toBe("$65.2");
     expect(formatUsd(99.96)).toBe("$100");
     expect(formatUsd(0)).toBe("$0.0");
+    expect(formatUsd(303.46)).toBe("$303");
+    expect(formatUsd(303.5)).toBe("$304");
+    expect(formatUsd(99.94)).toBe("$99.9");
   });
 
   it("shows what is left, the expiry, and the allowed and actual daily spend", () => {
@@ -549,6 +552,13 @@ describe("API credits", () => {
     expect(
       creditsView(account({ name: "api", credits: { state: "pending" } }), NOW)?.headline,
     ).toBe("Credits: pending");
+  });
+
+  it("shows no credits lines when an ok answer has no balance", () => {
+    expect(
+      creditsView(account({ name: "api", credits: { state: "ok", budgetUsd: 500 } }), NOW),
+    ).toBeNull();
+    expect(creditsView(account({ name: "api", credits: { state: "ok" } }), NOW)).toBeNull();
   });
 
   it("shows no credits lines on an account without credits", () => {

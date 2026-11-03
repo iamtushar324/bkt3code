@@ -131,7 +131,7 @@ export function creditsFrom(raw: unknown): ClaudeAccountCredits | undefined {
  * the API-credit fallback only; a seat never carries them.
  */
 export function paceAndCredits(raw: {
-  readonly kind?: string | null;
+  readonly kind?: unknown;
   readonly pace?: unknown;
   readonly credits?: unknown;
 }): { pace?: ClaudeAccountPace; credits?: ClaudeAccountCredits } {

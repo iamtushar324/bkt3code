@@ -415,8 +415,10 @@ export function paceLine(pace: AccountPaceView): string {
 /** US dollars: one decimal under $100 (`$11.6`), whole dollars from $100 (`$303`). */
 export function formatUsd(value: number): string {
   const sign = value < 0 ? "-" : "";
-  const tenths = Math.round(Math.abs(value) * 10) / 10;
-  return `${sign}$${tenths >= 100 ? Math.round(tenths).toString() : tenths.toFixed(1)}`;
+  const amount = Math.abs(value);
+  // Round once from the raw value; anything that would show as `$100.0` is `$100`.
+  const text = amount >= 99.95 ? Math.round(amount).toString() : amount.toFixed(1);
+  return `${sign}$${text}`;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -446,6 +448,8 @@ function expiresText(credits: NonNullable<ClaudeAccountStatus["credits"]>, now: 
 export function creditsView(status: ClaudeAccountStatus, now: number): AccountCreditsView | null {
   const credits = status.credits;
   if (credits === undefined) return null;
+  // An ok answer without a balance has nothing true to show.
+  if (credits.state === "ok" && credits.leftUsd === undefined) return null;
   if (credits.state !== "ok" || credits.leftUsd === undefined) {
     const detail = credits.detail?.trim() || credits.state.replaceAll("_", " ");
     return { headline: `Credits: ${detail}`, rate: null, tone: "muted" };

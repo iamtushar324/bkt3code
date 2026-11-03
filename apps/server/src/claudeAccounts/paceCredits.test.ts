@@ -106,6 +106,14 @@ describe("paceAndCredits", () => {
     });
   });
 
+  it("treats an unknown or invalid kind as a seat", () => {
+    for (const kind of [5, { api: true }, "team", null]) {
+      expect(paceAndCredits({ kind, pace, credits })).toEqual({
+        pace: { known: true, projectedPercent: 50, status: "underused" },
+      });
+    }
+  });
+
   it("adds nothing for an older switcher", () => {
     expect(paceAndCredits({})).toEqual({});
   });
