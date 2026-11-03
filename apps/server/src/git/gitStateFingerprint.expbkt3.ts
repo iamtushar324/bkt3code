@@ -350,7 +350,9 @@ export const makeGitStateFingerprints = Effect.fn("makeGitStateFingerprints")(fu
           statSignature(inCommonDir("refs", "replace")),
           statSignature(inCommonDir("remotes")),
           statSignature(inCommonDir("branches")),
-          Effect.all(configPaths.map(readConfigSource), { concurrency: "unbounded" }),
+          Effect.forEach(configPaths, (target) => readConfigSource(target), {
+            concurrency: "unbounded",
+          }),
         ],
         { concurrency: "unbounded" },
       );
@@ -416,10 +418,9 @@ export const makeGitStateFingerprints = Effect.fn("makeGitStateFingerprints")(fu
         replaceRefs,
         ...remoteNames.map((remote, index) => `${remote}=${remoteSignatures[index * 2 + 1]}`),
       ].join("\u0000"),
-      unchanged: Effect.all(
-        sources.map((source) => configSignature(source.path)),
-        { concurrency: "unbounded" },
-      ).pipe(
+      unchanged: Effect.forEach(sources, (source) => configSignature(source.path), {
+        concurrency: "unbounded",
+      }).pipe(
         Effect.map((current) =>
           current.every((signature, index) => signature === sources[index]?.signature),
         ),
