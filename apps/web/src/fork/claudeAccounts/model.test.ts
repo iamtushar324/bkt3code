@@ -10,8 +10,12 @@ import {
   accountRows,
   accountWarning,
   autoRowDetail,
+  creditsView,
+  formatUsd,
   nextPick,
   orderAccounts,
+  paceLine,
+  paceView,
   queueLabel,
   recoversIn,
   resetsIn,
@@ -400,5 +404,156 @@ describe("queueLabel", () => {
         }),
       ),
     ).toBe("No account free · number 1 in the queue");
+  });
+});
+
+describe("pace to reset", () => {
+  it("shows the projected percent and the status word", () => {
+    const view = paceView(
+      account({
+        name: "agent",
+        pace: { known: true, projectedPercent: 84.4, usedPercent: 40, status: "on_pace" },
+      }),
+    );
+    expect(view).toEqual({ percent: 84, word: "on pace", tone: "muted" });
+    expect(view && paceLine(view)).toBe("Pace to reset 84% · on pace");
+  });
+
+  it("uses the used percent for a spent cap and colours the words", () => {
+    const spent = paceView(
+      account({
+        name: "agent",
+        pace: { known: true, projectedPercent: 160, usedPercent: 100, status: "spent" },
+      }),
+    );
+    expect(spent && paceLine(spent)).toBe("Pace to reset 100% · spent");
+    expect(spent?.tone).toBe("bad");
+    expect(
+      paceView(
+        account({ name: "a", pace: { known: true, projectedPercent: 130, status: "overused" } }),
+      )?.tone,
+    ).toBe("bad");
+    expect(
+      paceView(
+        account({ name: "a", pace: { known: true, projectedPercent: 20, status: "underused" } }),
+      ),
+    ).toEqual({ percent: 20, word: "underused", tone: "good" });
+    expect(
+      paceView(
+        account({ name: "a", pace: { known: true, projectedPercent: 0, status: "untouched" } }),
+      ),
+    ).toEqual({ percent: 0, word: "untouched", tone: "good" });
+  });
+
+  it("shows no pace line when the pace is unknown or absent", () => {
+    expect(paceView(account({ name: "a" }))).toBeNull();
+    expect(
+      paceView(account({ name: "a", pace: { known: false, why: "no data", status: "unknown" } })),
+    ).toBeNull();
+    expect(
+      paceView(
+        account({ name: "a", pace: { known: true, projectedPercent: 50, status: "unknown" } }),
+      ),
+    ).toBeNull();
+    expect(paceView(account({ name: "a", pace: { known: true, status: "on_pace" } }))).toBeNull();
+  });
+
+  it("puts the pace on the row and keeps the space to reset", () => {
+    const [row] = accountRows(
+      snapshot([
+        account({
+          name: "agent",
+          spaceToReset: 60,
+          spacePerDay: 20,
+          pace: { known: true, projectedPercent: 84, status: "on_pace" },
+        }),
+      ]),
+      null,
+      NOW,
+    );
+    expect(row?.space).toMatchObject({ percent: 60, perDay: 20 });
+    expect(row?.pace).toEqual({ percent: 84, word: "on pace", tone: "muted" });
+    expect(row?.credits).toBeNull();
+  });
+});
+
+describe("API credits", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const HOUR = 60 * 60 * 1000;
+
+  it("formats dollars with one decimal under $100 and none from $100", () => {
+    expect(formatUsd(303.4)).toBe("$303");
+    expect(formatUsd(500)).toBe("$500");
+    expect(formatUsd(11.62)).toBe("$11.6");
+    expect(formatUsd(65.2)).toBe("$65.2");
+    expect(formatUsd(99.96)).toBe("$100");
+    expect(formatUsd(0)).toBe("$0.0");
+  });
+
+  it("shows what is left, the expiry, and the allowed and actual daily spend", () => {
+    const view = creditsView(
+      account({
+        name: "api",
+        credits: {
+          state: "ok",
+          budgetUsd: 500,
+          spentUsd: 197,
+          leftUsd: 303,
+          expiresAt: new Date(NOW + 26 * DAY + 5 * HOUR).toISOString(),
+          daysLeft: 26.2,
+          allowedUsdPerDay: 11.6,
+          drrUsdPerDay: 65.2,
+          runsOutAt: new Date(NOW + 4 * DAY + 16 * HOUR).toISOString(),
+          status: "overused",
+        },
+      }),
+      NOW,
+    );
+    expect(view).toEqual({
+      headline: "Credits $303 left of $500 · expires in 26d",
+      rate: "Allowed $11.6/day · actual $65.2/day · runs out in 4d 16h",
+      tone: "bad",
+    });
+  });
+
+  it("omits the runs-out part when the budget lasts past expiry", () => {
+    const view = creditsView(
+      account({
+        name: "api",
+        credits: {
+          state: "ok",
+          budgetUsd: 500,
+          leftUsd: 450,
+          daysLeft: 20,
+          allowedUsdPerDay: 22.5,
+          drrUsdPerDay: 3,
+          status: "underused",
+        },
+      }),
+      NOW,
+    );
+    expect(view).toEqual({
+      headline: "Credits $450 left of $500 · expires in 20d",
+      rate: "Allowed $22.5/day · actual $3.0/day",
+      tone: "good",
+    });
+  });
+
+  it("shows the detail when the figures cannot be read", () => {
+    expect(
+      creditsView(
+        account({ name: "api", credits: { state: "no_admin_key", detail: "no admin key set" } }),
+        NOW,
+      ),
+    ).toEqual({ headline: "Credits: no admin key set", rate: null, tone: "muted" });
+    expect(
+      creditsView(account({ name: "api", credits: { state: "pending" } }), NOW)?.headline,
+    ).toBe("Credits: pending");
+  });
+
+  it("shows no credits lines on an account without credits", () => {
+    const [row] = accountRows(snapshot([account({ name: "agent" })]), null, NOW);
+    expect(row?.credits).toBeNull();
+    expect(row?.pace).toBeNull();
   });
 });

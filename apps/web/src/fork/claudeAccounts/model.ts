@@ -301,6 +301,29 @@ export interface AccountSpaceView {
   readonly resetsIn: string | null;
 }
 
+/** Colour of a pace or credits status word: good (green), bad (red) or plain. */
+export type PaceTone = "good" | "bad" | "muted";
+
+/** `Pace to reset 84% · on pace`. */
+export interface AccountPaceView {
+  /** Where the binding cap ends at the current run rate (used percent when spent). */
+  readonly percent: number;
+  readonly word: string;
+  readonly tone: PaceTone;
+}
+
+/**
+ * The API-credit fallback's two lines: `Credits $303 left of $500 · expires
+ * in 26d` and `Allowed $11.6/day · actual $65.2/day · runs out in 4d 16h`.
+ * When the figures cannot be read, `headline` is `Credits: <detail>` and
+ * `rate` is null.
+ */
+export interface AccountCreditsView {
+  readonly headline: string;
+  readonly rate: string | null;
+  readonly tone: PaceTone;
+}
+
 export interface AccountRowView {
   readonly name: string;
   /**
@@ -309,6 +332,10 @@ export interface AccountRowView {
    */
   readonly pick: number | null;
   readonly space: AccountSpaceView | null;
+  /** Pace to reset of a subscription seat; null when unknown or not sent. */
+  readonly pace: AccountPaceView | null;
+  /** The API-credit fallback's dollar budget; null on every other account. */
+  readonly credits: AccountCreditsView | null;
   readonly shortLabel: string;
   readonly emailMasked: string | null;
   readonly windows: ReadonlyArray<AccountWindowView>;
@@ -362,6 +389,90 @@ export function spaceLine(space: AccountSpaceView): string {
   return `Space to reset ${space.percent}%${within} · ${space.perDay}%/day`;
 }
 
+const PACE_WORDS: Record<
+  Exclude<NonNullable<ClaudeAccountStatus["pace"]>["status"], "unknown">,
+  { readonly word: string; readonly tone: PaceTone }
+> = {
+  untouched: { word: "untouched", tone: "good" },
+  underused: { word: "underused", tone: "good" },
+  on_pace: { word: "on pace", tone: "muted" },
+  overused: { word: "overused", tone: "bad" },
+  spent: { word: "spent", tone: "bad" },
+};
+
+export function paceView(status: ClaudeAccountStatus): AccountPaceView | null {
+  const pace = status.pace;
+  if (pace === undefined || !pace.known || pace.status === "unknown") return null;
+  const value = pace.status === "spent" ? pace.usedPercent : pace.projectedPercent;
+  if (value === undefined) return null;
+  return { percent: Math.round(value), ...PACE_WORDS[pace.status] };
+}
+
+export function paceLine(pace: AccountPaceView): string {
+  return `Pace to reset ${pace.percent}% · ${pace.word}`;
+}
+
+/** US dollars: one decimal under $100 (`$11.6`), whole dollars from $100 (`$303`). */
+export function formatUsd(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const tenths = Math.round(Math.abs(value) * 10) / 10;
+  return `${sign}$${tenths >= 100 ? Math.round(tenths).toString() : tenths.toFixed(1)}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function untilText(iso: string | undefined, now: number): string | null {
+  if (iso === undefined) return null;
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  return at <= now ? "now" : `in ${formatDuration(at - now)}`;
+}
+
+/** Expiry in whole days (`in 26d`) once a day or more is left, else to the minute. */
+function expiresText(credits: NonNullable<ClaudeAccountStatus["credits"]>, now: number) {
+  const at = credits.expiresAt === undefined ? Number.NaN : Date.parse(credits.expiresAt);
+  const ms = Number.isFinite(at)
+    ? at - now
+    : credits.daysLeft === undefined
+      ? null
+      : credits.daysLeft * DAY_MS;
+  if (ms === null) return null;
+  if (ms <= 0) return "expires now";
+  return ms >= DAY_MS
+    ? `expires in ${Math.floor(ms / DAY_MS)}d`
+    : `expires in ${formatDuration(ms)}`;
+}
+
+export function creditsView(status: ClaudeAccountStatus, now: number): AccountCreditsView | null {
+  const credits = status.credits;
+  if (credits === undefined) return null;
+  if (credits.state !== "ok" || credits.leftUsd === undefined) {
+    const detail = credits.detail?.trim() || credits.state.replaceAll("_", " ");
+    return { headline: `Credits: ${detail}`, rate: null, tone: "muted" };
+  }
+  const left = `Credits ${formatUsd(Math.max(0, credits.leftUsd))} left`;
+  const budget = credits.budgetUsd === undefined ? "" : ` of ${formatUsd(credits.budgetUsd)}`;
+  const expires = expiresText(credits, now);
+  const runsOut = untilText(credits.runsOutAt, now);
+  const rate = [
+    credits.allowedUsdPerDay === undefined
+      ? null
+      : `Allowed ${formatUsd(Math.max(0, credits.allowedUsdPerDay))}/day`,
+    credits.drrUsdPerDay === undefined ? null : `actual ${formatUsd(credits.drrUsdPerDay)}/day`,
+    runsOut === null ? null : `runs out ${runsOut}`,
+  ].filter((part): part is string => part !== null);
+  return {
+    headline: `${left}${budget}${expires === null ? "" : ` · ${expires}`}`,
+    rate: rate.length === 0 ? null : rate.join(" · "),
+    tone:
+      credits.status === "overused" || credits.status === "spent"
+        ? "bad"
+        : credits.status === "underused"
+          ? "good"
+          : "muted",
+  };
+}
+
 export function accountRows(
   snapshot: ClaudeAccountsSnapshot | null,
   thread: ThreadClaudeAccount | null,
@@ -390,6 +501,8 @@ export function accountRows(
     name: status.name,
     pick: picks.get(status.name) ?? null,
     space: spaceView(status, now),
+    pace: paceView(status),
+    credits: creditsView(status, now),
     shortLabel: status.shortLabel || status.name.slice(0, 1),
     emailMasked: status.emailMasked ?? null,
     windows: [

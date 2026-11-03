@@ -95,6 +95,7 @@ import {
 } from "./hardLimitHook.ts";
 import { type FiveHourHistory, fiveHourRates, recordFiveHour } from "./fiveHourRate.ts";
 import { computeShortLabels } from "./shortLabels.ts";
+import { paceAndCredits } from "./paceCredits.ts";
 
 export const STATUS_POLL_INTERVAL_MS = 15_000;
 /** The poll is jittered by up to this much either way so several servers do not align. */
@@ -663,6 +664,7 @@ export const make = Effect.gen(function* () {
       placeRank >= 1
         ? { placeRank }
         : {}),
+      ...paceAndCredits(raw),
     };
   };
 
