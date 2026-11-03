@@ -179,30 +179,33 @@ export const make = Effect.fn("OpenCode2Server.makeIsolated")(function* (
   const isolated = new Map<string, OpenCode2Server["Service"]>();
   const lock = yield* Semaphore.make(1);
   return OpenCode2Server.of({
-    withConnection: (use, executionEnvironment) =>
-      executionEnvironment === undefined || input.serverUrl.trim().length > 0
-        ? shared.withConnection(use)
-        : lock
-            .withPermit(
-              Effect.gen(function* () {
-                const key = Object.entries(executionEnvironment)
-                  .sort(([left], [right]) => left.localeCompare(right))
-                  .map(
-                    ([name, value]) =>
-                      `${name.length}:${name}:${value === undefined ? "undefined" : `${value.length}:${value}`}`,
-                  )
-                  .join("|");
-                let server = isolated.get(key);
-                if (server === undefined) {
-                  server = yield* makeBase({
-                    ...input,
-                    environment: { ...input.environment, ...executionEnvironment },
-                  }).pipe(Effect.provide(context));
-                  isolated.set(key, server);
-                }
-                return server;
-              }),
-            )
-            .pipe(Effect.flatMap((server) => server.withConnection(use))),
+    withConnection: Effect.fn("OpenCode2Server.withConnection")(
+      function (use, executionEnvironment) {
+        return executionEnvironment === undefined || input.serverUrl.trim().length > 0
+          ? shared.withConnection(use)
+          : lock
+              .withPermit(
+                Effect.gen(function* () {
+                  const key = Object.entries(executionEnvironment)
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(
+                      ([name, value]) =>
+                        `${name.length}:${name}:${value === undefined ? "undefined" : `${value.length}:${value}`}`,
+                    )
+                    .join("|");
+                  let server = isolated.get(key);
+                  if (server === undefined) {
+                    server = yield* makeBase({
+                      ...input,
+                      environment: { ...input.environment, ...executionEnvironment },
+                    }).pipe(Effect.provide(context));
+                    isolated.set(key, server);
+                  }
+                  return server;
+                }),
+              )
+              .pipe(Effect.flatMap((server) => server.withConnection(use)));
+      },
+    ),
   });
 });

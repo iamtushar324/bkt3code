@@ -976,7 +976,9 @@ it.effect("admits provider and OAuth client credentials and points only clients 
 it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected credentials", () => {
   const messages: Array<unknown> = [];
   const logger = Logger.make(({ message }) => messages.push(message));
-  const layerAuth = Layer.mergeAll(EnvironmentAuth.layer, McpSessionRegistry.layer).pipe(
+  // T3-CUSTOM(expbkt3): the fork registry ties credentials to logins, so it reads auth's SessionStore.
+  const layerAuth = McpSessionRegistry.layer.pipe(
+    Layer.provideMerge(EnvironmentAuth.layer),
     Layer.provideMerge(
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(environmentId),
@@ -985,6 +987,8 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
     Layer.provideMerge(Sqlite.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ManagedPolicy.layerTest()),
+    // T3-CUSTOM(expbkt3): the fork registry reads the external MCP switch from server settings.
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provideMerge(ServerEnvironment.layerIdentity),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-auth-header-test-" })),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -1078,6 +1082,9 @@ it.effect("hides tools for links and refuses another environment while the beta 
     Effect.gen(function* () {
       const token = "linksToken";
       const scope: McpInvocationContext.McpThreadInvocationScope = {
+        // T3-CUSTOM(expbkt3): fork scope fields.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId,
         requestNamespace: token,
         thread: {
@@ -1202,6 +1209,9 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         token: string,
         subagent: boolean,
       ): McpInvocationContext.McpThreadInvocationScope => ({
+        // T3-CUSTOM(expbkt3): fork scope fields.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId,
         requestNamespace: token,
         thread: {
@@ -1292,6 +1302,8 @@ it.effect(
       Effect.gen(function* () {
         const clientToken = "client-payload.client-signature";
         const clientScope: McpInvocationContext.McpInvocationScope = {
+          principal: "external-operator", // T3-CUSTOM(expbkt3): fork scope fields.
+          actorUserId: null, // T3-CUSTOM(expbkt3)
           environmentId,
           requestNamespace: "client:linked",
           thread: undefined,
@@ -1374,6 +1386,8 @@ it.effect(
           Effect.gen(function* () {
             const headers = {
               accept: "application/json, text/event-stream",
+              // T3-CUSTOM(expbkt3): an OAuth client lists the probe only when it asks for every tool.
+              "x-t3-mcp-tools": "all",
               authorization: `Bearer ${clientToken}`,
               ...(limit === undefined ? {} : { "t3-mode-limit": limit }),
             };

@@ -21,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { oauthClientForkFields } from "../mcp/clientAccess.expbkt3.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
@@ -36,6 +37,8 @@ const layerFor = (identityMode: EnvironmentUserIdentityMode) => {
     prefix: "t3-mcp-approval-policy-test-",
   });
   const layerAuth = EnvironmentAuth.layer.pipe(
+    // Upstream's EnvironmentAuth now reads the managed policy.
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(Sqlite.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerEnvironment.layerIdentity),

@@ -1,4 +1,5 @@
 /** T3-CUSTOM(expbkt3): provider daemons must never share different thread credentials. */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -88,7 +89,11 @@ it.effect("reuses one thread daemon and separates users, threads, and rotated cr
         expect(starts.every((environment) => environment.PATH === "/bin")).toBe(true);
         expect(new Set(starts.map((environment) => environment.OPENCODE_PASSWORD)).size).toBe(4);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(runtimeLayer, clientLayer, NodeServices.layer)));
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(runtimeLayer, clientLayer, NodeServices.layer, NodeCrypto.layer),
+      ),
+    );
     expect(closes).toBe(4);
   }),
 );
@@ -120,6 +125,7 @@ it.effect("uses an external server without forwarding thread credentials", () =>
         }),
         clientLayer,
         NodeServices.layer,
+        NodeCrypto.layer,
       ),
     ),
   ),

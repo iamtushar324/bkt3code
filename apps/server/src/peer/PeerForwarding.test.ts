@@ -326,6 +326,9 @@ const makeLaptop = Effect.gen(function* () {
     caller: string,
     capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["orchestration"]),
   ): McpInvocationContext.McpInvocationScope => ({
+    // T3-CUSTOM(expbkt3): fork scope fields.
+    principal: "provider-session",
+    actorUserId: null,
     environmentId: laptop.environmentId,
     requestNamespace: `provider-session:${caller}`,
     thread: {

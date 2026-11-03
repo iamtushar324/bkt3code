@@ -270,6 +270,9 @@ it.effect.each([
             .providerTurns[0]!;
 
           const scope: McpInvocationScope = {
+            // T3-CUSTOM(expbkt3): fork scope fields.
+            principal: "provider-session",
+            actorUserId: null,
             environmentId: EnvironmentId.make("environment:task-cancel-limit"),
             requestNamespace: "provider-session:task-cancel-limit",
             thread: {

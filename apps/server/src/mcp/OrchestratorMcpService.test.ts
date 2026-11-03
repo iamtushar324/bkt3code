@@ -420,6 +420,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
+        // T3-CUSTOM(expbkt3): fork scope fields.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId: EnvironmentId.make("environment:mcp-next"),
         requestNamespace: "provider-session:mcp-next",
         thread: {
@@ -2759,6 +2762,9 @@ describe("OrchestratorMcpService provider resolution", () => {
       runCount: 0,
     };
     const client: McpInvocationScope = {
+      // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+      principal: "external-operator",
+      actorUserId: null,
       environmentId: EnvironmentId.make("environment:scheduled-base"),
       requestNamespace: "client:scheduled-base",
       thread: undefined,
@@ -3398,6 +3404,9 @@ describe("OrchestratorMcpService thread lookup", () => {
 
 describe("OrchestratorMcpService thread list", () => {
   const client: McpInvocationScope = {
+    // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId: EnvironmentId.make("environment:thread-list"),
     requestNamespace: "client:thread-list",
     thread: undefined,
@@ -3468,6 +3477,9 @@ describe("OrchestratorMcpService thread stop", () => {
   const modelSelection = { instanceId, model: "gpt-5.4" };
   const threadId = ThreadId.make("thread:mcp-stop");
   const client: McpInvocationScope = {
+    // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId: EnvironmentId.make("environment:mcp-stop"),
     requestNamespace: "client:mcp-stop",
     thread: undefined,

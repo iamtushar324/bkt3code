@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -25,6 +26,8 @@ const testConfig = ServerConfig.layerTest(process.cwd(), {
 });
 
 const authLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(testConfig),

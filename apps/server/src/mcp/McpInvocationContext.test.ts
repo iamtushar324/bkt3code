@@ -74,6 +74,9 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
     access: McpInvocationContext.McpClientCaller["access"],
     narrowedTo?: McpInvocationContext.ClientModes,
   ): McpInvocationContext.McpInvocationScope => ({
+    // T3-CUSTOM(expbkt3): an unrestricted operator client, as upstream's fixture means.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId: EnvironmentId.make("environment-1"),
     requestNamespace: "client:session-1",
     thread: undefined,

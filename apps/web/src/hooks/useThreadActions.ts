@@ -379,7 +379,12 @@ export function useThreadActions() {
   };
 
   // T3-CUSTOM(expbkt3): BEGIN — the guarded public action below owns archive progress.
-  const archiveThreadOnce = async (target: ScopedThreadRef) => {
+  // The route is read when the user asks, not after the shared guard's deferral.
+  const archiveThreadOnce = async (
+    target: ScopedThreadRef,
+    requestingRouteHref: string,
+    currentRouteThreadRef: ReturnType<typeof getCurrentRouteThreadRef>,
+  ) => {
     const resolved = resolveThreadTarget(target);
     if (!resolved) return { result: AsyncResult.success(undefined), didArchive: false };
     const { thread, threadRef } = resolved;
@@ -397,8 +402,6 @@ export function useThreadActions() {
       };
     }
 
-    const requestingRouteHref = router.state.location.href;
-    const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
       currentRouteThreadRef.environmentId === threadRef.environmentId;
@@ -447,7 +450,11 @@ export function useThreadActions() {
 
   // T3-CUSTOM(expbkt3): BEGIN — protect all web entry points, including context menus.
   const archiveThread = async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
-    const outcome = await runWithThreadArchivePending(target, () => archiveThreadOnce(target));
+    const requestingRouteHref = router.state.location.href;
+    const currentRouteThreadRef = getCurrentRouteThreadRef();
+    const outcome = await runWithThreadArchivePending(target, () =>
+      archiveThreadOnce(target, requestingRouteHref, currentRouteThreadRef),
+    );
     if (outcome.didArchive) opts.onArchived?.();
     return outcome.result;
   };

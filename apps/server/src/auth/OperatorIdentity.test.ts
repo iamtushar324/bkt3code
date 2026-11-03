@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import {
   ANONYMOUS_PAIRING_SUBJECT,
@@ -28,6 +29,8 @@ import * as SessionStore from "./SessionStore.ts";
 const OPERATOR_USER_ID = UserId.make("user_2abcDEF");
 
 const environmentAuthLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-operator-identity-test-" })),

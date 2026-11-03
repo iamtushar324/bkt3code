@@ -125,6 +125,12 @@ vi.mock("./thread-outbox", async () => {
       state.manager.confirmQueued(message),
     updateThreadOutboxMessage: (message: QueuedThreadMessage, revision?: number) =>
       state.manager.update(message, revision),
+    // T3-CUSTOM(expbkt3): the fork keeps a rejected message visibly failed.
+    markThreadOutboxMessageFailed: (
+      message: QueuedThreadMessage,
+      failureDetail: string,
+      revision?: number,
+    ) => state.manager.update({ ...message, deliveryState: "failed", failureDetail }, revision),
   };
 });
 vi.mock("./thread-outbox-removal", () => ({
@@ -137,6 +143,11 @@ vi.mock("./use-thread-outbox", async () => {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
+    // T3-CUSTOM(expbkt3): the fork delivers only the signed-in identity's queue; every
+    // message here belongs to the one anonymous identity.
+    activeIdentityQueuedMessagesAtom: Atom.make((get) =>
+      get(state.manager.queuedMessagesByThreadKeyAtom),
+    ),
   };
 });
 vi.mock("./use-composer-drafts", async () => {

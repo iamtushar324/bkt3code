@@ -11,7 +11,7 @@ import { useCallback, useMemo } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 import { useClientSettings } from "~/hooks/useSettings";
-import { useSourceControlActionRunning } from "~/lib/sourceControlActions";
+import { useSourceControlActionRunning } from "~/state/sourceControlActions";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";

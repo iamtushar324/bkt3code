@@ -98,7 +98,10 @@ const testServerConfigs = () =>
 
 // The handler reads server configs from the registry at call time, as in upstream's test.
 vi.mock("../rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: () => testServerConfigs() },
+  appAtomRegistry: {
+    get: (atom: unknown) =>
+      atom === "connected-environment-ids" ? ["environment-ssh"] : testServerConfigs(),
+  },
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => testServerConfigs(),
@@ -168,7 +171,7 @@ vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-fresh",
   newThreadId: () => "thread-fresh",
 }));
-vi.mock("../logicalProject", () => ({
+vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: () => "remote-project",
   getProjectOrderKey: () => "remote-project",
   selectProjectGroupingSettings: () => ({}),
@@ -190,6 +193,13 @@ vi.mock("../state/entities", () => {
     useThread: () => null,
   };
 });
+vi.mock("../providerInstances", () => ({
+  resolveProjectDefaultProviderModelSelection: () => null,
+}));
+vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
+vi.mock("../state/presentation", () => ({
+  environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
+}));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
@@ -203,8 +213,7 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({
-  useClientSettings: (selector?: (settings: Record<string, unknown>) => unknown) =>
-    selector ? selector({ planModeAvailable: testState.planModeAvailable }) : {},
+  getClientSettings: () => ({ planModeAvailable: testState.planModeAvailable }),
 }));
 
 import { useNewThreadHandler } from "./useHandleNewThread";

@@ -32,6 +32,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import { issuePairingCredentialForPrincipal } from "./OperatorIdentity.ts";
 import {
@@ -54,6 +55,8 @@ const MEMBER = { subject: clerkSubjectForUser(MEMBER_ID), userId: null } as cons
 const ANONYMOUS = { subject: "one-time-token", userId: null } as const;
 
 const environmentAuthLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-self-pairing-test-" })),

@@ -325,9 +325,13 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     // T3-CUSTOM(expbkt3): tool results link to sessions on the origin the caller used,
-    // and an OAuth client lists the agent tools unless it asks for every tool.
+    // and an OAuth client lists the agent tools unless it asks for every tool. A linked
+    // peer calls any tool by name and never sends the header, so it always gets every tool.
     const requestOrigin = publicRequestOrigin(request);
-    const toolList = registered === undefined && !requestsEveryTool(request) ? "agent" : undefined;
+    const toolList =
+      registered === undefined && limited.client?.linked !== true && !requestsEveryTool(request)
+        ? "agent"
+        : undefined;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,

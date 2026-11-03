@@ -155,6 +155,9 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 vi.mock("@t3tools/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
+  // T3-CUSTOM(expbkt3): the fork seeds the saved Starting mode, falling back to
+  // this default while the plan toggle is hidden.
+  DEFAULT_PROVIDER_INTERACTION_MODE: "default",
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
