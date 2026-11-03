@@ -2,8 +2,8 @@ import { type VcsRef } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): worktree codenames.
 import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
 import { describe, expect, it } from "vite-plus/test";
+import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
-  dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,

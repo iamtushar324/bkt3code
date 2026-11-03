@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+// T3-CUSTOM(expbkt3): cliReleaseChannelOf for the fork version test.
+import {
+  cliArchiveTarCommand,
+  cliReleaseChannelOf,
+  newestCliReleaseVersion,
+  parseChecksums,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
+  // T3-CUSTOM(expbkt3): fork stage/production builds stay on the nightly track.
+  it("reads fork channel-prefixed and upstream-suffixed versions as nightly", () => {
+    expect(cliReleaseChannelOf("0.0.32-stage-nightly.20260810.1")).toBe("nightly");
+    expect(cliReleaseChannelOf("0.0.32-production-nightly.20260810.1")).toBe("nightly");
+    expect(cliReleaseChannelOf("0.1.7-nightly.20261103.4119.upstream.g05b697f6a201")).toBe(
+      "nightly",
+    );
+    expect(cliReleaseChannelOf("0.1.7-nightly.20261103.4119")).toBe("nightly");
+    expect(cliReleaseChannelOf("0.1.7")).toBe("stable");
+  });
+
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [

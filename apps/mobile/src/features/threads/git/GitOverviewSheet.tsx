@@ -10,6 +10,7 @@ import {
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): memorable worktree codenames.
 import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CommonActions,
   StackActions,
@@ -44,7 +45,6 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
-import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
 import {
   LinkedPullRequestRow,
@@ -67,6 +67,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when the route link names a blank environment or thread
   useEffect(() => {
     if (isBlankLink) navigation.goBack();
   }, [isBlankLink, navigation]);
@@ -136,14 +137,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           }),
   }));
 
+  const { shortLabel, singular } = sourceControlClients.get(
+    gitStatus.data?.sourceControlProvider?.kind,
+  ).changeRequest;
+
   const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Dialog.alert("No open PR", "This branch does not have an open pull request.");
+      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Dialog.alert("Unable to open PR", "The pull request could not be opened.");
+      Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
     }
   };
 
@@ -216,15 +221,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
     }
     if (item.kind === "open_pr" && status.pr?.number != null) {
-      return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
+      return `${shortLabel} #${status.pr.number} ${status.pr.state ?? "open"}`;
     }
     return undefined;
   };
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Tying RefreshControl to the query's isPending flag left the spinner stuck
-  // (the status query reports pending during quiet background refreshes too).
+  // Background refreshes also report pending; using that query flag would stick the RefreshControl spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -291,7 +295,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           onPress={() => {
             const params = { environmentId, threadId };
             navigation.dispatch(
-              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
+              presentation === "sheet"
                 ? StackActions.replace("ThreadReview", params)
                 : CommonActions.navigate("ThreadReview", params),
             );
@@ -316,15 +320,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {linkedPrActions.canLink ? (
           <ListRow
             icon="link"
-            label="Link pull request"
-            description="Attach a pull request by URL or number"
+            label={`Link ${linkedPrActions.terminology.singular}`}
+            description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
             onPress={linkedPrActions.promptLink}
           />
         ) : null}
       </ListSection>
 
       {linkedPrLines.length > 0 ? (
-        <ListSection title="Linked pull requests">
+        <ListSection title={`Linked ${linkedPrActions.terminology.plural}`}>
           {linkedPrLines.map((line, index) => (
             <LinkedPullRequestRow
               key={linkedPullRequestKey(line)}

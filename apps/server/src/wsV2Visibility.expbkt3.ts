@@ -4,7 +4,6 @@ import type {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ArchivedShellSnapshot,
   OrchestrationV2ShellStreamItem,
-  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ThreadShell,
   ProjectId,
   ThreadId,
@@ -50,10 +49,6 @@ export function filterNativeShell<
 export type ActiveShellDelta = Extract<
   OrchestrationV2ShellStreamItem,
   { readonly sequence: number }
->;
-export type ArchivedShellDelta = Exclude<
-  OrchestrationV2ArchivedShellStreamItem,
-  { readonly kind: "snapshot" }
 >;
 
 interface ShellViewInput {
@@ -300,39 +295,5 @@ export function makeActiveShellView(
               ),
             },
           },
-  };
-}
-
-/**
- * One archived-shell subscriber's view of the shared feed. Archived streams always start from a
- * full archived snapshot, so the client's rows are known exactly.
- */
-export function makeArchivedShellView(
-  input: Pick<ShellViewInput, "actor" | "afterSequence" | "threads">,
-) {
-  const { actor } = input;
-  const threads = new Set(input.threads.map((thread) => thread.id));
-  const synced = new Set<ThreadId>();
-  return {
-    apply: (batch: ShellFeedBatch): ReadonlyArray<ArchivedShellDelta> => {
-      const out: Array<ArchivedShellDelta> = [];
-      for (const entry of batch.entries) {
-        if (entry.kind !== "thread" || entry.sequence <= input.afterSequence) continue;
-        const shell = entry.shell;
-        if (shell !== null && shell.archivedAt !== null && (actor === null || owns(shell, actor))) {
-          if (entry.changed || !synced.has(shell.id)) {
-            threads.add(shell.id);
-            synced.add(shell.id);
-            out.push({ kind: "thread.updated", sequence: entry.sequence, thread: shell });
-          }
-          continue;
-        }
-        synced.delete(entry.threadId);
-        if (threads.delete(entry.threadId)) {
-          out.push({ kind: "thread.removed", sequence: entry.sequence, threadId: entry.threadId });
-        }
-      }
-      return out;
-    },
   };
 }

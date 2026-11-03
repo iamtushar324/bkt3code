@@ -73,7 +73,7 @@ export class ElectronSafeStorage extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   // T3-CUSTOM(expbkt3): use Electron's asynchronous Keychain decrypt and retain rotation metadata.
@@ -90,14 +90,19 @@ export const make = Effect.gen(function* () {
       try: () => Electron.safeStorage.isAsyncEncryptionAvailable(),
       catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
     }),
-    encryptString: (value) =>
-      Effect.tryPromise({
+    // T3-CUSTOM(expbkt3): async Keychain encrypt/decrypt (upstream's span names kept).
+    encryptString: Effect.fn("ElectronSafeStorage.encryptString")(function (value) {
+      return Effect.tryPromise({
         try: () => Electron.safeStorage.encryptStringAsync(value),
         catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
-      }),
+      });
+    }),
     decryptStringWithMetadata,
-    decryptString: (value) =>
-      decryptStringWithMetadata(value).pipe(Effect.map(({ value: decrypted }) => decrypted)),
+    decryptString: Effect.fn("ElectronSafeStorage.decryptString")(function (value) {
+      return decryptStringWithMetadata(value).pipe(
+        Effect.map(({ value: decrypted }) => decrypted),
+      );
+    }),
     selectedStorageBackend: Effect.sync(() => {
       if (platform !== "linux") {
         return Option.none();

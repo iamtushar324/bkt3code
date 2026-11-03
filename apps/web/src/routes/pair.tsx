@@ -28,7 +28,11 @@ export const Route = createFileRoute("/pair")({
       };
     }
 
-    if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
+    if (
+      authGateState.status === "authenticated" ||
+      authGateState.status === "hosted-static" ||
+      authGateState.status === "guest"
+    ) {
       // T3-CUSTOM(expbkt3): restore an explicit Toolyard draft after browser authentication.
       throw redirect({ to: afterAuthentication(), replace: true });
     }
@@ -80,8 +84,7 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        // Recreate the primary connection so its WebSocket and cached scopes
-        // use the newly issued cookie after re-pairing.
+        // Recreate the connection so WebSocket and cached scopes use the new pairing cookie.
         // T3-CUSTOM(expbkt3): restore an explicit Toolyard draft after pairing authentication.
         router.history.replace(afterAuthentication());
         router.history.flush();

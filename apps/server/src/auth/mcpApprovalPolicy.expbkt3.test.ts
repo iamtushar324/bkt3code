@@ -79,6 +79,7 @@ const clientFromCode = (code: string) =>
     const issued = yield* auth.issueMcpClientSession({
       label: "Test agent",
       access: "auto",
+      peerLink: false,
       client: deriveAuthClientMetadata({ request: request() }),
       userId: approval.userId,
       operator: approval.operator,

@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
+import { usePreparedConnection } from "~/state/session";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 // T3-CUSTOM(expbkt3): the host's shared appearance replaces the glyph once picked.
@@ -51,6 +52,22 @@ export function environmentTransportLabel(
   return environment.displayUrl ?? "Remote link";
 }
 
+export function useEnvironmentTransportLabel(environment: EnvironmentPresentation): string {
+  const prepared = usePreparedConnection(environment.environmentId);
+  return environmentTransportLabel(
+    environment,
+    environment.connection.phase === "connected" && prepared._tag === "Some"
+      ? prepared.value.target
+      : null,
+  );
+}
+
+export function EnvironmentTransportLabel(props: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  return useEnvironmentTransportLabel(props.environment);
+}
+
 export function EnvironmentRow({
   kind,
   label,
@@ -81,8 +98,7 @@ export function EnvironmentRow({
         className,
       )}
     >
-      {/* Dim only the identity so a switched-off row's controls stay readable
-          and distinct from disabled ones. */}
+      {/* Dim only identity so switched-off controls remain readable and distinct from disabled controls. */}
       {/* T3-CUSTOM(expbkt3): BEGIN — host badge instead of the glyph once an icon or colour is picked. */}
       <EnvironmentAppearanceIcon appearance={appearance}>
         <EnvironmentMachineIcon

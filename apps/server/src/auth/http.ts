@@ -1,6 +1,6 @@
 import {
   authScopeRequiredResponse,
-  AuthAccessReadScope,
+  AuthAccessReadScope, // T3-CUSTOM(expbkt3): the pairingLinks and clients routes upstream deleted.
   AuthAccessWriteScope,
   // T3-CUSTOM(expbkt3): administrator-minted pairing links default to member scopes.
   AuthMemberClientScopes,
@@ -8,7 +8,7 @@ import {
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
-  EnvironmentHttpForbiddenError, // T3-CUSTOM(expbkt3): 403 for a verified non-member Clerk token.
+  EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
@@ -31,7 +31,6 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -67,6 +66,7 @@ import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): e
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -103,7 +103,7 @@ export const annotateEnvironmentRequest =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (endpoint: string) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
     const traceId = yield* currentEnvironmentTraceId;
 
     yield* Effect.addFinalizer((exit) =>
@@ -218,7 +218,7 @@ export const authenticateMediaRequest =
   Effect.fnUntraced(function* (requiredScope: AuthEnvironmentScope) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (EnvironmentAuth.isServerAuthCredentialError(error)) {
@@ -781,6 +781,20 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "webSocketTicketFor",
+        Effect.fn("environment.auth.webSocketTicketFor")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            yield* appendCredentialResponseHeaders;
+            return yield* serverAuth.issueWebSocketTicket(session, { use: args.params.use });
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "pairingCredential",
         Effect.fn("environment.auth.pairingCredential")(
           function* (args) {
@@ -849,8 +863,13 @@ export const layer = HttpApiBuilder.group(
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
           ),
+          Effect.catchTags({
+            ManagedPolicyRefusedError: (error) =>
+              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+          }),
         ),
       )
+      // T3-CUSTOM(expbkt3): upstream deleted this route as unreached; fork clients still list through it.
       .handle(
         "pairingLinks",
         Effect.fn("environment.auth.pairingLinks")(
@@ -891,6 +910,7 @@ export const layer = HttpApiBuilder.group(
           ),
         ),
       )
+      // T3-CUSTOM(expbkt3): upstream deleted this route as unreached; fork clients still list through it.
       .handle(
         "clients",
         Effect.fn("environment.auth.clients")(

@@ -1,3 +1,4 @@
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -51,9 +52,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
   // T3-CUSTOM(expbkt3): END
   isCrossRepository: Schema.optional(Schema.Boolean),
-  // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
-  // added later. Both fields stay optional so a version-drifted gh CLI can
-  // never fail the decode and silently drop the PR from the list.
+  // gh < 2.47 omits headRepository.nameWithOwner.
   headRepository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -114,11 +113,6 @@ function normalizeChecksStatus(rollup: ReadonlyArray<unknown> | null | undefined
 }
 // T3-CUSTOM(expbkt3): END
 
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;
   mergedAt?: string | null | undefined;
@@ -136,7 +130,6 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
-/** A pull request row, in `gh --json` or GraphQL node shape, as every read reports it. */
 export function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
@@ -191,10 +184,6 @@ export function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
-/**
- * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
- * skipped, so one malformed pull request cannot hide the rest.
- */
 function decodeGitHubPullRequestEntries(
   entries: ReadonlyArray<unknown>,
 ): ReadonlyArray<NormalizedGitHubPullRequestRecord> {

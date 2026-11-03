@@ -7,14 +7,11 @@
  * its normal home and the plan review panel. Local composer state therefore
  * survives opening and closing a review.
  *
- * While docked, the composer also rests the way it does in chat: upstream's
- * wheel gesture collapses it, and the plan document — not the hidden timeline —
- * is the surface that gesture watches. Nothing here re-implements the gesture;
- * it only answers the three questions `ChatComposer` already asks about its
- * scroll surface with the docked document instead.
+ * While docked, the composer rests at its short height whenever nothing in it
+ * is focused (`usePlanReviewDockedRest`).
  */
 import type { ComponentProps } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 
@@ -228,91 +225,6 @@ export function usePlanReviewDockedRest(input: {
     if (!shouldRest || isComposerScrollCollapsed) return;
     setIsComposerScrollCollapsed(true);
   }, [isComposerScrollCollapsed, setIsComposerScrollCollapsed, shouldRest]);
-}
-
-const SCROLLABLE_RESOLUTION_TTL_MS = 500;
-
-const resolvedScrollables = new WeakMap<HTMLElement, { node: HTMLElement | null; at: number }>();
-
-function isScrollableNode(node: HTMLElement): boolean {
-  const overflowY = window.getComputedStyle(node).overflowY;
-  if (overflowY !== "auto" && overflowY !== "scroll") return false;
-  return node.scrollHeight > node.clientHeight + 1;
-}
-
-/**
- * The element that actually scrolls inside the marked surface.
- *
- * The panel marks its document column, but the scroller is whichever descendant
- * the current view mounts — the editor, the rendered HTML plan, or the version
- * list. Resolution is cached because this runs inside a wheel handler; a miss is
- * cached too, so a plan short enough to have no scroller is not rescanned on
- * every event.
- */
-function resolveScrollableNode(surface: HTMLElement): HTMLElement | null {
-  const now = window.performance.now();
-  const cached = resolvedScrollables.get(surface);
-  if (cached && now - cached.at < SCROLLABLE_RESOLUTION_TTL_MS) {
-    if (cached.node === null) return null;
-    if (surface.contains(cached.node) && isScrollableNode(cached.node)) return cached.node;
-  }
-
-  let found: HTMLElement | null = isScrollableNode(surface) ? surface : null;
-  if (found === null) {
-    for (const node of surface.querySelectorAll<HTMLElement>("*")) {
-      if (isScrollableNode(node)) {
-        found = node;
-        break;
-      }
-    }
-  }
-  resolvedScrollables.set(surface, { node: found, at: now });
-  return found;
-}
-
-/**
- * The three questions `ChatComposer` asks about its scroll surface, named as it
- * names them so the call site stays a single spread.
- */
-export interface ComposerScrollSurface {
-  readonly getTimelineScrollableNode: () => HTMLElement | null;
-  readonly isTimelineAtLogicalEnd: () => boolean;
-  readonly timelineOverflows: boolean;
-}
-
-/**
- * Answer the composer's scroll-surface questions from the plan document while
- * docked, and pass chat's own answers through the rest of the time.
- *
- * `overflows` is true whenever docked: upstream asks it to avoid resting a
- * composer that has no reading space to give back, and in the plan panel the
- * bar always does — every pixel it releases is plan.
- */
-export function usePlanReviewComposerScrollSurface({
-  getTimelineScrollableNode,
-  isTimelineAtLogicalEnd,
-  timelineOverflows,
-}: ComposerScrollSurface) {
-  const scrollSurface = usePlanReviewComposerDockStore((state) => state.scrollSurface);
-  const isDocked = usePlanReviewComposerDockStore((state) => state.target !== null);
-  const docked = isDocked && scrollSurface !== null;
-
-  return useMemo<ComposerScrollSurface>(
-    () => ({
-      getTimelineScrollableNode: () =>
-        docked && scrollSurface !== null
-          ? resolveScrollableNode(scrollSurface)
-          : getTimelineScrollableNode(),
-      isTimelineAtLogicalEnd: () => {
-        if (!docked || scrollSurface === null) return isTimelineAtLogicalEnd();
-        const node = resolveScrollableNode(scrollSurface);
-        if (node === null) return true;
-        return node.scrollTop >= node.scrollHeight - node.clientHeight - 2;
-      },
-      timelineOverflows: docked ? true : timelineOverflows,
-    }),
-    [docked, getTimelineScrollableNode, isTimelineAtLogicalEnd, scrollSurface, timelineOverflows],
-  );
 }
 
 export function resetPlanReviewComposerDockForTests() {

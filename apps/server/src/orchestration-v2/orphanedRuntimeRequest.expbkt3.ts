@@ -81,12 +81,3 @@ export const respondableRuntimeRequest = Effect.fn(
     ? { ...request, responseCapability: { type: "message" as const } }
     : request;
 });
-
-/** One question's answer as message text; a multi-select answer lists its choices. */
-export function messageAnswerText(answer: unknown): unknown {
-  if (!Array.isArray(answer)) return answer;
-  const choices = answer.filter(
-    (choice): choice is string => typeof choice === "string" && choice.trim().length > 0,
-  );
-  return choices.length === 0 ? undefined : choices.map((choice) => choice.trim()).join(", ");
-}

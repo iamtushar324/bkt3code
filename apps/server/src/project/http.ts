@@ -22,8 +22,9 @@ import {
 } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import * as ProjectService from "./ProjectService.ts";
-import { projectMutationOperation } from "./ProjectMutation.ts";
+import { mutateProjectWithClone } from "./ProjectMutation.ts";
 
 const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
@@ -51,6 +52,7 @@ export const layer = HttpApiBuilder.group(
       const principal = yield* EnvironmentAuthenticatedPrincipal;
       return Option.getOrNull(access.actorFor(principal.subject, principal.userId));
     });
+    const projectClones = yield* ProjectCloneTracker.ProjectCloneTracker;
 
     return handlers
       .handle(
@@ -92,7 +94,8 @@ export const layer = HttpApiBuilder.group(
             Effect.catch((cause) => failEnvironmentInternal("project_mutation_failed", cause)),
           );
           if (!allowed) return yield* failEnvironmentInvalidRequest("invalid_command");
-          const operation = projectMutationOperation(projects, args.payload).pipe(
+          const operation = mutateProjectWithClone(projects, projectClones, args.payload).pipe(
+            // T3-CUSTOM(expbkt3): project commands carry the authenticated actor.
             Effect.provideService(CurrentOrchestrationActorUserId, actor),
           );
           return yield* startup
