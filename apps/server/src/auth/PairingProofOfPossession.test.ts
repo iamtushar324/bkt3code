@@ -16,6 +16,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
  */
 import * as NodeCrypto from "node:crypto";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthStandardClientScopes, UserId, clerkSubjectForUser } from "@t3tools/contracts";
 import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@t3tools/shared/dpop";
@@ -86,8 +87,9 @@ const signProof = (input: {
 };
 
 it.layer(
-  Layer.merge(
+  Layer.mergeAll(
     NodeServices.layer,
+    NodePlatformCrypto.layer,
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),
@@ -246,8 +248,9 @@ describe("a token bound to one key rejects proofs from another", () => {
 });
 
 it.layer(
-  Layer.merge(
+  Layer.mergeAll(
     NodeServices.layer,
+    NodePlatformCrypto.layer,
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

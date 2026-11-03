@@ -508,6 +508,27 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
                 ? null
                 : shell(threadId, threadId === "thread:archived" ? now : null);
             }),
+          // T3-CUSTOM(expbkt3): the fork's shared shell feed reads a resume gap through this.
+          getThreadShells: (threadIds: ReadonlyArray<string>) =>
+            Effect.suspend(() => {
+              shellReads.push(threadIds);
+              return batchFails
+                ? Effect.fail("batch failed")
+                : Effect.succeed(
+                    new Map(
+                      threadIds.flatMap((threadId) =>
+                        threadId === "thread:missing"
+                          ? []
+                          : [
+                              [
+                                threadId,
+                                shell(threadId, threadId === "thread:archived" ? now : null),
+                              ] as const,
+                            ],
+                      ),
+                    ),
+                  );
+            }),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
@@ -550,23 +571,21 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
     ];
 
     assert.deepEqual(yield* collectSummary(after), expectedGroup);
-    assert.deepEqual(shellReads, [["thread:archived", "thread:active", "thread:missing"]]);
+    // T3-CUSTOM(expbkt3): BEGIN — the fork's shell feed (TEC-1837) reads every resume gap in one
+    // batch, in first-event order, and has no per-thread fallback: a failed batch fails the resume.
+    assert.deepEqual(shellReads, [["thread:active", "thread:archived", "thread:missing"]]);
 
     shellReads.length = 0;
     assert.deepEqual(yield* collectSummary(active), [
       ["thread.removed", missing, "thread:missing"],
     ]);
-    assert.deepEqual(shellReads, [["scalar:thread:missing"]]);
+    assert.deepEqual(shellReads, [["thread:missing"]]);
 
     shellReads.length = 0;
     batchFails = true;
-    assert.deepEqual(yield* collectSummary(after), expectedGroup);
-    assert.deepEqual(shellReads, [
-      ["thread:archived", "thread:active", "thread:missing"],
-      ["scalar:thread:archived"],
-      ["scalar:thread:active"],
-      ["scalar:thread:missing"],
-    ]);
+    yield* Effect.flip(collectSummary(after));
+    assert.deepEqual(shellReads, [["thread:active", "thread:archived", "thread:missing"]]);
+    // T3-CUSTOM(expbkt3): END
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
@@ -1144,9 +1163,17 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("config-test"),
+            userId: null, // T3-CUSTOM(expbkt3): an unbound session.
             subject: "config-test",
             method: "browser-session-cookie",
-            scopes: [],
+            // T3-CUSTOM(expbkt3): the fork re-checks scopes inside the handler map; without the
+            // config and refresh RPCs' scopes both fail before a response reaches the queue.
+            scopes: [
+              ...new Set([
+                RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.subscribeServerConfig),
+                RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.serverRefreshProviders),
+              ]),
+            ],
           },
           {},
           yield* ServerBrowser.ServerBrowser,

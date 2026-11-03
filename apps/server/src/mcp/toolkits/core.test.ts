@@ -346,9 +346,12 @@ it.effect("records only failed calls of tools that hand off no work", () => {
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
               record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
-                  Effect.asVoid,
-                ),
+                // T3-CUSTOM(expbkt3): the fork also records `mcp.tool.called` for every call.
+                event === "mcp.tool.called"
+                  ? Effect.void
+                  : Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
+                      Effect.asVoid,
+                    ),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),

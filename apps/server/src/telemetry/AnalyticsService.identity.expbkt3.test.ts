@@ -16,6 +16,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -92,6 +93,8 @@ const captureEvents = <A>(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "linux"),
           Layer.succeed(HostProcess.Architecture, "arm64"),
+          // Upstream's AnalyticsService now reads the managed policy.
+          ManagedPolicy.layerTest(),
         ),
       ),
       Layer.provideMerge(NodeHttpServer.layerTest),

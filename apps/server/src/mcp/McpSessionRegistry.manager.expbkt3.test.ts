@@ -1,4 +1,5 @@
 /** T3-CUSTOM(expbkt3): a durable grant is independent from browser login, but never from revocation. */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -9,6 +10,7 @@ import {
   UserId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -43,7 +45,7 @@ it.effect("retains explicit background access without a login and revokes on tok
           getEnvironmentId: Effect.succeed(EnvironmentId.make("test")),
           getDescriptor: Effect.die("unused"),
         }),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
     const issue = (threadId: string, grant?: string) =>
       registry.issue({

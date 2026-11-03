@@ -1486,4 +1486,21 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
+// T3-CUSTOM(expbkt3): BEGIN — upstream's toolkits only, so the agent context budget test
+// keeps measuring upstream text; fork toolkits carry no committed budget.
+export const layerUpstreamTools = Layer.mergeAll(
+  layerPreviewToolkit,
+  layerOrchestratorToolkit,
+  layerThreadToolkit,
+  layerAttachmentToolkit,
+  layerProjectRegistration,
+  layerEnvironmentToolkit,
+  layerPreviewControlsRegistration,
+  layerWorktreeToolkitRegistration,
+  layerPullRequestsToolkit,
+  layerDeviceToolkit,
+  layerHtmlToolkit,
+);
+// T3-CUSTOM(expbkt3): END
+
 export const layer = layerMcpTransport(layerTools);

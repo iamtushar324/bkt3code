@@ -4824,7 +4824,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           );
           const folder = pathService.basename(created.worktree.path);
           assert.isAtMost(folder.length, 40);
-          if (branch.length <= 40) assert.equal(folder, branch);
+          // T3-CUSTOM(expbkt3): the fork names every generated folder with a codename, so a
+          // short branch name is not reused as the folder name.
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
           assert.include(
             yield* git(cwd, ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"]),

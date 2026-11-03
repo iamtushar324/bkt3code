@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -146,6 +147,7 @@ const makeFixture = Effect.gen(function* () {
     Layer.mock(OrchestrationCommandReceiptRepository)({}),
     Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
     NodeServices.layer,
+    NodeCrypto.layer,
   );
   const setCurrent = (enabled: boolean) =>
     Effect.sync(() => {

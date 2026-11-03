@@ -132,7 +132,8 @@ it.effect("agent context matches the committed budget", () =>
     ).toEqual(budget);
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerTools.pipe(
+      // T3-CUSTOM(expbkt3): fork toolkits are outside upstream's committed budget.
+      McpHttpServer.layerUpstreamTools.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(toolHandlerServices),
       ),

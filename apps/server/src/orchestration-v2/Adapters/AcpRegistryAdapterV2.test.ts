@@ -1134,6 +1134,9 @@ describe("AcpRegistryAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("acp-registry-mcp-transport");
         const threadId = ThreadId.make("thread-acp-registry-mcp-transport");
         const mcpSession = {
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          actorUserId: null,
+          upstreamServers: [],
           environmentId: EnvironmentId.make("environment-acp-registry-mcp-transport"),
           threadId,
           providerSessionId: "mcp-session-acp-registry-mcp-transport",

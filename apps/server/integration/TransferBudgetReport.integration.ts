@@ -80,10 +80,14 @@ const LONG_TURN_BUDGET = {
 };
 
 // About 30% above the observed 42 KB. Without the shell opt-ins it carries all 142 rows (217 KB).
+// T3-CUSTOM(expbkt3): BEGIN — the fork's shell keeps every settled thread (ws.ts and http.ts force
+// omitOlderSettled off for per-user views), so only idle subagents drop out: 102 rows, ~188 KB
+// observed. The budget keeps about 30% byte headroom and pins the row count.
 const FLEET_SHELL_BUDGET = {
-  decodedBytes: 55_000,
-  rows: 27,
+  decodedBytes: 245_000,
+  rows: 102,
 };
+// T3-CUSTOM(expbkt3): END
 
 function totalWireBytes(run: TransferBudgetRun): number {
   return run.threadSnapshot.wireBytes + run.measuredTurnWebSocket.wireBytes;

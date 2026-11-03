@@ -39,6 +39,8 @@ it.effect.each([true, false])(
             id: threadId,
             projectId: ProjectId.make("project"),
             providerInstanceId: instanceId,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
             archivedAt: null,
             deletedAt: null,
           },

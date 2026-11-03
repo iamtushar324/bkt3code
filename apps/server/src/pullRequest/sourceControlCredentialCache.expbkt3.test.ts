@@ -27,6 +27,7 @@ import { SourceControlProfileService } from "../sourceControl/SourceControlProfi
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestService from "./PullRequestService.ts";
@@ -183,6 +184,8 @@ it.effect(
             ),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => undefined,
+              // No web-host resolver, so the remote's own host stands, as upstream's tests mock it.
+              get: () => Effect.succeed({} as SourceControlProvider["Service"]),
             }),
             Layer.mock(ProjectService.ProjectService)({
               listShells: () => Effect.succeed([project]),

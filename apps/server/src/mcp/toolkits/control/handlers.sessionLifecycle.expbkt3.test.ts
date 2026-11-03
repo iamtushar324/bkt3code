@@ -1,6 +1,7 @@
 // T3-CUSTOM(expbkt3): TEC-1819 — lifecycle actions are safe to retry, and an
 // orchestrator refusal reaches the agent as its own reason, not the generic
 // "The V2 command could not complete." text.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
@@ -40,7 +42,7 @@ const refusal = (commandType: string, reason: string) =>
 
 type Action = "archive" | "unarchive" | "stop";
 
-it.layer(NodeServices.layer)("runSessionLifecycle", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("runSessionLifecycle", (it) => {
   let archivedAt: string | null = null;
   let shellReads = 0;
   // A read that lags the writes, as when two calls race past the pre-check.

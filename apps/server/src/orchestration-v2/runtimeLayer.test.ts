@@ -3390,6 +3390,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            // T3-CUSTOM(expbkt3): the reactor now needs SecureRandom.
+            NodeCrypto.layer,
             Layer.mock(SourceControlProfileService)({
               resolveThreadExecutionContext: (_threadId, ownerUserId) =>
                 Effect.sync(() => {

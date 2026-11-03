@@ -2402,20 +2402,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     // T3-CUSTOM(expbkt3): createWorktree records the selected starting ref in
-    // gh-merge-base. Surface it so the experimental sidebar can describe a
-    // worktree by its origin rather than repeating its current feature branch.
+    // t3-merge-base (gh-merge-base before upstream gave it its own key). Surface it so the
+    // experimental sidebar can describe a worktree by its origin, not its feature branch.
+    const readWorktreeBaseRef = (key: string) =>
+      runGitStdout(
+        "GitVcsDriver.statusDetails.worktreeBaseRef",
+        cwd,
+        ["config", "--get", key],
+        true,
+      ).pipe(
+        Effect.map((stdout) => stdout.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
     const configuredBaseRef =
       refName === null
         ? null
-        : yield* runGitStdout(
-            "GitVcsDriver.statusDetails.worktreeBaseRef",
-            cwd,
-            ["config", "--get", `branch.${refName}.gh-merge-base`],
-            true,
-          ).pipe(
-            Effect.map((stdout) => stdout.trim() || null),
-            Effect.orElseSucceed(() => null),
-          );
+        : ((yield* readWorktreeBaseRef(branchBaseConfigKey(refName))) ??
+          (yield* readWorktreeBaseRef(legacyBranchBaseConfigKey(refName))));
 
     const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
     for (const entry of numstatEntries) {

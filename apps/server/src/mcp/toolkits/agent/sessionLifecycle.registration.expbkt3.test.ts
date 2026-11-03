@@ -3,6 +3,7 @@
 // receipt store (from the receipt repository the server exposes), so a no-op
 // archive retried with the same clientRequestId replays as a no-op even after
 // the session was unarchived in between.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -132,6 +133,7 @@ const dependencies = Layer.mergeAll(
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(ServerSettingsService)({}),
   NodeServices.layer,
+  NodeCrypto.layer,
 );
 
 const TestLayer = layerAgentToolkitRegistration.pipe(
