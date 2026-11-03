@@ -95,6 +95,13 @@ const UNSUPPORTED_ENVIRONMENT_KEYS = [
 ];
 const GIT_FALSE_VALUES = new Set(["", "0", "false", "no", "off"]);
 
+// Config passed in the environment may include other files, which this module does not follow.
+const environmentConfigIncludes = (environment: NodeJS.ProcessEnv) =>
+  /include/i.test(environment.GIT_CONFIG_PARAMETERS ?? "") ||
+  Object.entries(environment).some(
+    ([key, value]) => /^GIT_CONFIG_KEY_\d+$/i.test(key) && /^include(if)?\./i.test(value ?? ""),
+  );
+
 interface GitEnvironment {
   /** Every variable that selects git's config files or adds config of its own. */
   readonly token: string;
@@ -136,6 +143,7 @@ export const makeGitStateFingerprints = Effect.fn("makeGitStateFingerprints")(fu
 
   const gitEnvironmentOf = (environment: NodeJS.ProcessEnv): GitEnvironment | null => {
     if (UNSUPPORTED_ENVIRONMENT_KEYS.some((key) => (environment[key] ?? "") !== "")) return null;
+    if (environmentConfigIncludes(environment)) return null;
     const token = Object.keys(environment)
       .filter(
         (key) =>

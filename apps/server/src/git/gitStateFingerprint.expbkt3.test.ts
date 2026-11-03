@@ -201,11 +201,24 @@ it.layer(NodeServices.layer)("git state fingerprint", (it) => {
     }),
   );
 
-  it.effect("has no fingerprint when the environment points git at another repository", () =>
-    Effect.gen(function* () {
-      const { commonDir, worktree, fingerprintsFor } = yield* linkedWorktree;
-      const fingerprints = yield* fingerprintsFor({ GIT_DIR: commonDir });
-      expect(yield* fingerprints.read(worktree, "feature/a")).toBeNull();
-    }),
+  it.effect(
+    "has no fingerprint when the environment points git at another repository or file",
+    () =>
+      Effect.gen(function* () {
+        const { commonDir, worktree, fingerprintsFor } = yield* linkedWorktree;
+        const read = (environment: NodeJS.ProcessEnv) =>
+          fingerprintsFor({ GIT_CONFIG_NOSYSTEM: "1", ...environment }).pipe(
+            Effect.flatMap((fingerprints) => fingerprints.read(worktree, "feature/a")),
+          );
+        expect(yield* read({ GIT_DIR: commonDir })).toBeNull();
+        const entry = (key: string) => ({
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: key,
+          GIT_CONFIG_VALUE_0: "/tmp/included",
+        });
+        expect(yield* read(entry("includeIf.gitdir:/src/.path"))).toBeNull();
+        expect(yield* read({ GIT_CONFIG_PARAMETERS: "'include.path'='/tmp/included'" })).toBeNull();
+        expect(yield* read(entry("credential.https://github.com.helper"))).not.toBeNull();
+      }),
   );
 });
