@@ -84,6 +84,9 @@ it.effect("preview_open navigates the opened tab to a dev server in one tool cal
       expect(requests[1]?.tabIdExplicit).toBe(true);
     }).pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId: EnvironmentId.make("environment-1"),
         requestNamespace: "provider-session-1",
         thread: {

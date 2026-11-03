@@ -159,7 +159,6 @@ import { PhaseRowWorkingStatus } from "./sidebar/PhaseRowWorkingStatus";
 import { PhaseSidebarShelfDock } from "./sidebar/PhaseSidebarShelfDock";
 import {
   isTrailingDoubleClick,
-  shouldClearThreadSelectionOnMouseDown,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
 } from "./Sidebar.logic";
@@ -321,6 +320,14 @@ import { MattermostThreadBadge } from "./sidebar/MattermostThreadBadge";
 
 // T3-CUSTOM(expbkt3): Settled-tail paging — recent history is the common
 // lookup; the deep tail stays behind an explicit Show more.
+// Upstream dropped this helper from Sidebar.logic with its legacy sidebar; rows and
+// selection-safe controls keep a multi-selection alive on mousedown.
+const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
+  if (target === null) return true;
+  return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
+}
+
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 

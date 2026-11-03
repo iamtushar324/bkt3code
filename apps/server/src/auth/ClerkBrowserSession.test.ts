@@ -6,6 +6,7 @@ import {
   WS_FORK_METHODS,
 } from "@t3tools/contracts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentUserId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -31,7 +32,7 @@ const authLayer = EnvironmentAuth.layer.pipe(
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

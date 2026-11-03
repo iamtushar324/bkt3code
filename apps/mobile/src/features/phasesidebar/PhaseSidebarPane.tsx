@@ -44,7 +44,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { threadListEnvironmentsAtom } from "../../state/server";
+import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { usePendingNewTasks, type PendingDraftTask } from "../../state/use-pending-new-tasks";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";

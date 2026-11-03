@@ -1,4 +1,5 @@
 // T3-CUSTOM(expbkt3): bkt3 analytics identity, allowlist and key gating (TEC-1631).
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -105,7 +106,9 @@ const captureEvents = <A>(
     return { sent, requests: () => requests, installId: () => installId };
   });
 
-it.layer(NodeServices.layer)("AnalyticsService bkt3 identity", (it) => {
+const layerPlatform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+
+it.layer(layerPlatform)("AnalyticsService bkt3 identity", (it) => {
   it.effect("sends nothing when no PostHog key is set, even with telemetry enabled", () =>
     Effect.gen(function* () {
       const { sent, requests } = yield* captureEvents(

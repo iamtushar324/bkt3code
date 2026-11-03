@@ -7,6 +7,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
  * removing the boundary they were enforcing, so the tests come in pairs: what a
  * member can now do, and what they still cannot.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAccessReadScope,
@@ -230,7 +231,7 @@ describe("who the self-service path admits", () => {
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

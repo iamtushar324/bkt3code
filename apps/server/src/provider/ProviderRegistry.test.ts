@@ -2963,6 +2963,9 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+            if (joined === "auth status")
+              return { stdout: '{"loggedIn":false}\n', stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -3067,6 +3070,10 @@ it.layer(
             layerMockSpawner((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              // T3-CUSTOM(expbkt3): the fork probes `claude auth status` to detect a logged-out CLI.
+              // A logged-in answer leaves the capability-based auth logic under test.
+              if (joined === "auth status")
+                return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),

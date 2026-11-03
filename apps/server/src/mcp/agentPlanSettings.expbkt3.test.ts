@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ServerSettings, ServerSettingsPatch } from "@t3tools/contracts";
@@ -28,7 +29,7 @@ const settingsLayer = () =>
     ),
   );
 
-it.layer(NodeServices.layer)("saved agent plan policy", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("saved agent plan policy", (it) => {
   it.effect("disables the tool for existing settings without the new field", () =>
     Effect.gen(function* () {
       const settings = yield* decodeSettings({ experimental: {} });

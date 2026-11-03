@@ -270,8 +270,8 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   // T3-CUSTOM(expbkt3): BEGIN — with identity required, an approval must name a team
   // user, the same rule `/oauth/token` applies. Unreadable settings count as required.
-  const serverSettings = yield* ServerSettingsService;
-  const identityRequired = serverSettings.getSettings.pipe(
+  const identitySettings = yield* ServerSettingsService;
+  const identityRequired = identitySettings.getSettings.pipe(
     Effect.map((current) => isEnvironmentIdentityRequired(current.environmentUserIdentityMode)),
     Effect.orElseSucceed(() => true),
   );

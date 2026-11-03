@@ -21,6 +21,7 @@ import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestra
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -70,6 +71,7 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
         Layer.mergeAll(
           NodeCrypto.layer,
           Scheduler.layer,
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
@@ -184,6 +186,7 @@ it.effect("a bound run steers by default and queues on request", () =>
         Layer.mergeAll(
           NodeCrypto.layer,
           Scheduler.layer,
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
@@ -232,6 +235,7 @@ it.effect("a task without options runs as nobody, as upstream's do", () =>
         Layer.mergeAll(
           NodeCrypto.layer,
           Scheduler.layer,
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
@@ -298,6 +302,7 @@ it.effect("a watch waits without counting runs, then sends one note and ends", (
         Layer.mergeAll(
           NodeCrypto.layer,
           Scheduler.layer,
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),

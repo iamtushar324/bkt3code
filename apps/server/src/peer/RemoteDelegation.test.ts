@@ -629,6 +629,9 @@ const parentThreadId = ThreadId.make("thread:laptop-parent");
 const parentRunId = RunId.make("run:laptop-parent");
 const parentRootNode = NodeId.make("node:laptop-parent:root");
 const parentScope: McpInvocationContext.McpInvocationScope = {
+  // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+  principal: "provider-session",
+  actorUserId: null,
   environmentId: laptop.environmentId,
   requestNamespace: "provider-session:laptop-parent",
   thread: {

@@ -3,6 +3,7 @@
  * An anonymous pairing code must not approve an agent when identity is required,
  * and only an approval holding `access:write` makes an unbound operator.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
@@ -44,7 +45,7 @@ const layerFor = (identityMode: EnvironmentUserIdentityMode) => {
     Layer.provideMerge(layerAuth),
     Layer.provide(ServerSettings.layerTest({ environmentUserIdentityMode: identityMode })),
     Layer.provide(layerConfig),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 };
 

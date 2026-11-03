@@ -1234,7 +1234,6 @@ const t3ControlToolkitRegistration = Layer.effectDiscard(
   }),
 ).pipe(Layer.provide(McpServer.McpServer.layer));
 // As in `toolkitRegistration`, registration must not capture a caller.
-// @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
 const t3ControlToolkitRegistered = t3ControlToolkitRegistration as Layer.Layer<
   never,
   never,

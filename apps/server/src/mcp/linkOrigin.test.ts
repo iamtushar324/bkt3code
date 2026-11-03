@@ -205,6 +205,9 @@ const clientScope = (
   linked: boolean,
   access: McpInvocationContext.McpClientCaller["access"],
 ): McpInvocationContext.McpInvocationScope => ({
+  // T3-CUSTOM(expbkt3): upstream client callers are unrestricted external users.
+  principal: "external-user",
+  actorUserId: null,
   environmentId: EnvironmentId.make("environment:box"),
   requestNamespace: `client:${sessionId}`,
   thread: undefined,

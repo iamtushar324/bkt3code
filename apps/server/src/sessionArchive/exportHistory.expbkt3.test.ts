@@ -1,5 +1,6 @@
 // T3-CUSTOM(expbkt3): archive-time export resolves the archived session it was handed.
 import { CommandId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SessionArchive from "./SessionArchiveService.ts";
 
 const platform = ServerConfig.layerTest(process.cwd(), { prefix: "t3-archive-export-" }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const engine = makeForkCompatibilityTestLayer("exportHistory.expbkt3.test.ts").pipe(
   Layer.provideMerge(RepositoryIdentityResolver.layer),

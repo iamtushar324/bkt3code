@@ -113,6 +113,9 @@ const mcpClient = McpSchema.McpServerClient.of({
 });
 
 const scope: McpInvocationContext.McpInvocationScope = {
+  // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+  principal: "provider-session",
+  actorUserId: null,
   environmentId: laptop.environmentId,
   requestNamespace: "provider-session:laptop",
   thread: {

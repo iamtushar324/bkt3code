@@ -650,11 +650,9 @@ export default defineConfig({
         rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
       },
       // T3-CUSTOM(expbkt3): END
-      // T3-CUSTOM(expbkt3): BEGIN — fork React Compiler debt. These fork-only surfaces
-      // predate the compiler rules above, and clearing these bailouts needs a rewrite
-      // (ref-backed render state, effects that sync with servers or the URL), not a
-      // lint fix. The lists are a ratchet: drop a file or rule once it is converted,
-      // and never add an upstream-owned file.
+      // T3-CUSTOM(expbkt3): BEGIN — fork React Compiler debt: fork-only surfaces whose
+      // bailouts need a rewrite, not a lint fix. A ratchet: drop a file or rule once it
+      // is converted, and never add an upstream-owned file.
       {
         files: ["apps/web/src/components/PhaseGroupedSidebar.tsx"],
         rules: {

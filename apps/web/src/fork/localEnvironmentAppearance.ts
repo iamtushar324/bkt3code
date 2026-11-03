@@ -14,7 +14,7 @@
  * @module fork/localEnvironmentAppearance
  */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
-import { isDesktopLocalConnectionTarget, isWslConnectionTarget } from "../connection/desktopLocal";
+import { desktopLocalBackendId, isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import {
   LOCAL_ENVIRONMENT_APPEARANCE_DEFAULTS,
   type EnvironmentAppearanceDefaults,
@@ -27,7 +27,11 @@ export function isThisComputerEnvironment(
 ): boolean {
   if (!context.hasDesktopBridge) return false;
   if (target._tag === "PrimaryConnectionTarget") return !context.managedPrimary;
-  return isDesktopLocalConnectionTarget(target) && !isWslConnectionTarget(target);
+  // Upstream dropped `isWslConnectionTarget`; this is the same check it now inlines.
+  return (
+    isDesktopLocalConnectionTarget(target) &&
+    desktopLocalBackendId(target)?.startsWith("wsl:") !== true
+  );
 }
 
 export function localEnvironmentAppearanceDefaults(

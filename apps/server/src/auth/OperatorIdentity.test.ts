@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthCreatePairingCredentialInput,
@@ -111,7 +112,7 @@ describe("pairing credential payload", () => {
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

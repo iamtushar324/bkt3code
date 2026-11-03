@@ -1,4 +1,5 @@
 // T3-CUSTOM(expbkt3): create_threads files new threads under a BK sidebar custom group (XFN-59).
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -127,7 +128,7 @@ describe("OrchestratorMcpService custom groups", () => {
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
