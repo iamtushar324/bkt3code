@@ -449,11 +449,10 @@ function isTransientBootstrapError(error: unknown): boolean {
 }
 
 async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
-  // T3-CUSTOM(expbkt3): BEGIN — a managed build must keep working offline. When
-  // the central primary is unreachable at the transport level and this device
-  // holds a still-valid pairing token, render the app instead of an error
-  // screen; the connection supervisor owns the primary's retry state, and the
-  // bundled local backend stays usable. See fork/managedOfflineGate.
+  // T3-CUSTOM(expbkt3): BEGIN — a managed build must keep working offline. When the
+  // central primary is unreachable and this device holds a valid pairing token,
+  // render the app instead of an error screen; the connection supervisor retries.
+  // See fork/managedOfflineGate.
   let currentSession: AuthSessionState;
   try {
     currentSession = await fetchSessionState();
@@ -555,7 +554,7 @@ export async function createServerPairingCredential(input?: {
   }
 }
 
-// T3-CUSTOM(expbkt3): BEGIN — upstream dropped this as unused (#10225); the fork's
+// T3-CUSTOM(expbkt3): BEGIN — upstream dropped this as unused; the fork's
 // member-devices settings section still lists pairing links.
 export async function listServerPairingLinks(): Promise<ReadonlyArray<ServerPairingLinkRecord>> {
   try {
@@ -612,7 +611,7 @@ export async function revokeServerPairingLink(id: string): Promise<void> {
   }
 }
 
-// T3-CUSTOM(expbkt3): BEGIN — upstream dropped this as unused (#10225); the fork's
+// T3-CUSTOM(expbkt3): BEGIN — upstream dropped this as unused; the fork's
 // member-devices settings section still lists client sessions.
 export async function listServerClientSessions(): Promise<
   ReadonlyArray<ServerClientSessionRecord>

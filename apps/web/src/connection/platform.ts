@@ -276,10 +276,9 @@ export const provisionDesktopSshEnvironment = Effect.fn(
 });
 
 // T3-CUSTOM(expbkt3): BEGIN — present the operator's Clerk identity when pairing a
-// remote fork environment. Never fails: an absent token means "no identity to
-// present", and the environment's own identity mode decides whether that is
-// acceptable. Exported so the wiring from Clerk through to pairing is testable —
-// a silently-null token here is exactly the failure this feature has to avoid.
+// remote fork environment. Never fails: an absent token means "no identity", and
+// the environment's identity mode decides if that is acceptable. Exported so tests
+// catch a silently-null token.
 export const teamEnvironmentIdentity: typeof ClientCapabilities.EnvironmentIdentity.Service =
   ClientCapabilities.EnvironmentIdentity.of({
     identityToken: Effect.promise(readTeamClerkToken).pipe(Effect.map(Option.fromNullishOr)),

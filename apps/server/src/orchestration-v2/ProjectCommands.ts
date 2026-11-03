@@ -158,11 +158,10 @@ export function planProjectCommand(input: {
     causationEventId: null,
     correlationId: command.commandId,
     // T3-CUSTOM(expbkt3): access audit retains the acting user.
-    metadata: {
-      ...("actorUserId" in command && command.actorUserId != null
+    metadata:
+      "actorUserId" in command && command.actorUserId != null
         ? { actorUserId: command.actorUserId }
-        : {}),
-    },
+        : {},
   };
 
   switch (command.type) {

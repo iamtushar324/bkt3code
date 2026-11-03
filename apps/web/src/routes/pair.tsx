@@ -56,12 +56,10 @@ function PairRouteView() {
     return <HostedPairingRouteSurface />;
   }
 
-  // T3-CUSTOM(expbkt3): team mode — when the server advertises a Clerk descriptor
-  // and a publishable key is configured, use the Clerk gate instead of the
-  // pairing-token surface, unless this visit carries a pairing link. Reads the
-  // descriptor rather than a fork-only `bootstrapMethods` entry, which stock
-  // clients cannot decode. After sign-in, reload like the pairing path so the
-  // WebSocket uses the new cookie; the Toolyard draft lives in sessionStorage.
+  // T3-CUSTOM(expbkt3): team mode — with a Clerk descriptor and a publishable key,
+  // use the Clerk gate unless this visit carries a pairing link. Reads the
+  // descriptor, not a `bootstrapMethods` entry stock clients cannot decode. After
+  // sign-in, reload so the WebSocket uses the new cookie.
   if (
     resolvePairRouteSurface({
       teamMode: serverAuthDescriptorSupportsTeam(authGateState.auth) && hasClerkPublicConfig(),

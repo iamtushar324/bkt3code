@@ -61,11 +61,9 @@ let previousShellReadiness: EnvironmentShellReadiness = {
 };
 
 /**
- * Readiness is read off `environmentSnapshotAtom` — the very atom the thread
- * list is derived from — so "this environment is ready" and "these are its
- * threads" can never disagree by a frame. Anything watching for new rows needs
- * that: a ready flag that arrived a tick before its rows would make the whole
- * list look like new arrivals.
+ * Readiness is read off `environmentSnapshotAtom`, the atom the thread list comes
+ * from, so readiness and rows never disagree by a frame. A ready flag a tick
+ * before its rows would make the whole list look like new arrivals.
  */
 export const environmentShellReadinessAtom = Atom.make((get): EnvironmentShellReadiness => {
   const known = new Set<string>();

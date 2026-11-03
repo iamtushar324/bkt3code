@@ -529,14 +529,10 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "nightly";
-    // T3-CUSTOM(expbkt3): BEGIN - the fork ships two apps from one release
-    // repository, so the string handed to electron-updater is the brand's
-    // ("stage-nightly" / "production-nightly"), not the contract-level
-    // channel. It names the manifest the app reads (`<channel>-mac.yml`), and
-    // apps built before the fixed update feed match it against each release
-    // tag's first prerelease identifier. The contract channel is unchanged, so
-    // the settings UI and the persisted setting keep their existing
-    // "latest" | "nightly" values.
+    // T3-CUSTOM(expbkt3): BEGIN - the fork ships two apps from one release repo, so
+    // electron-updater gets the brand's channel ("stage-nightly" /
+    // "production-nightly"), which names the `<channel>-mac.yml` manifest. The
+    // contract channel and the persisted setting keep "latest" | "nightly".
     const brandChannel = resolveRuntimeBrand()?.updateChannel;
     const updaterChannel = allowsPrerelease ? (brandChannel ?? channel) : channel;
     yield* electronUpdater.setChannel(updaterChannel);
@@ -1085,14 +1081,9 @@ export const make = Effect.gen(function* () {
   });
 
   // T3-CUSTOM(expbkt3): BEGIN - tell the user an update is ready.
-  //
-  // Clicking the notification deliberately does NOT install. A notification
-  // click is an easy mis-click, and installing quits the app: it stops every
-  // backend in the pool and calls quitAndInstall. Doing that under someone's
-  // hands would kill an in-flight agent turn, a terminal session and any
-  // unsaved editor state, with no confirmation and no undo. So the click
-  // focuses the window and reveals the update UI, and the labelled in-app
-  // button — one further click — performs the restart.
+  // Clicking the notification deliberately does NOT install: installing quits the
+  // app and kills in-flight turns, terminals and unsaved edits. The click only
+  // focuses the window and reveals the update UI; the in-app button restarts.
   const notifyUpdateReady = Effect.fn("desktop.updates.notifyUpdateReady")(function* (
     version: string,
     runEffect: (effect: Effect.Effect<void>) => void,

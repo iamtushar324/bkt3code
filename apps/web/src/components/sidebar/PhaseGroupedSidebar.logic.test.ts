@@ -1,7 +1,6 @@
 import {
   DEFAULT_RUNTIME_MODE,
   EnvironmentId,
-  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,

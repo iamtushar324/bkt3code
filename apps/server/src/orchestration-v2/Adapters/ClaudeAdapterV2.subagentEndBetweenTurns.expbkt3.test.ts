@@ -19,7 +19,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -250,7 +250,7 @@ const makeHarness = Effect.gen(function* () {
     }),
     fileSystem,
     path: yield* Path.Path,
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     continuationRequests: {
       offer: (request) =>

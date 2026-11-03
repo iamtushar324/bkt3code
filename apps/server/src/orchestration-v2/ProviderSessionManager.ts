@@ -12,7 +12,6 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
-  type UserId, // T3-CUSTOM(expbkt3): runtime credential attribution.
   type ProviderThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -403,11 +402,10 @@ export const layerWithOptions = (
               ? -1
               : messages.findIndex((message) => message.id === messageId);
           const openingMessage = openingIndex === -1 ? undefined : messages[openingIndex];
-          // A server-made turn (wake or restart continuation, task notification,
-          // usage-limit resume) has no sender of its own. It continues the
-          // process the last person started, so it takes that person's identity;
-          // otherwise the identity key changes and the release below kills live
-          // background work. Scheduled, MCP and web messages keep their own rule.
+          // A server-made turn (wake, continuation, task notification, usage-limit resume)
+          // has no sender, so it takes the identity of the person who started the process;
+          // a changed identity key would release the session and kill background work.
+          // Scheduled, MCP and web messages keep their own rule.
           const continuesLatestSender =
             openingMessage !== undefined &&
             openingMessage.sentByUserId == null &&
@@ -2515,7 +2513,6 @@ export const layerWithOptions = (
               >(new Map());
               // T3-CUSTOM(expbkt3): expose the process actor, independent of later messages or owner edits.
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers, executionOptions);
-              const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
                 executionIdentityKey: identityKey, // T3-CUSTOM(expbkt3): credential restart fencing.
                 attachedThreadIds: new Set([input.threadId]),

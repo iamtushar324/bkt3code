@@ -108,8 +108,8 @@ export function isFileBackedComposerAttachment(
   return attachment.fileUri !== undefined;
 }
 
-// T3-CUSTOM(expbkt3): since upstream #8048 a queued attachment may be uploaded
-// already, carrying only its asset id. Only locally-held ones (with a data url)
+// T3-CUSTOM(expbkt3): a queued attachment may be uploaded already, carrying
+// only its asset id. Only locally-held ones (with a data url)
 // can go back into a composer draft.
 export function toDraftComposerImageAttachments(
   attachments: ReadonlyArray<{
@@ -140,7 +140,7 @@ export function toDraftComposerImageAttachments(
 }
 
 // T3-CUSTOM(expbkt3): re-sending a queued message keeps whichever form the queue
-// holds: an uploaded asset id (upstream #8048) or the original inline data url.
+// holds: an uploaded asset id or the original inline data url.
 export function toQueuedResendAttachments(
   attachments: ReadonlyArray<{
     readonly type: "image";

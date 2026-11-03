@@ -196,8 +196,7 @@ export function selectTranscriptMessages(messages: ReadonlyArray<ContextTranscri
 
   const firstPrompt = clamped.find((message) => message.role === "user") ?? null;
   const tailStart = clamped.length - keptFromTail.length;
-  const pinnedFirstPrompt =
-    firstPrompt !== null && clamped.indexOf(firstPrompt) < tailStart ? true : false;
+  const pinnedFirstPrompt = firstPrompt !== null && clamped.indexOf(firstPrompt) < tailStart;
 
   const kept =
     pinnedFirstPrompt && firstPrompt !== null ? [firstPrompt, ...keptFromTail] : keptFromTail;

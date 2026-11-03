@@ -3,6 +3,8 @@ import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
+// T3-CUSTOM(expbkt3): fork lint style-debt ratchet list.
+import { forkLintStyleDebtFiles } from "./scripts/lib/forkLintStyleDebt.expbkt3.ts";
 
 const TEST_EXCLUDE = [
   "**/.repos/**",
@@ -736,6 +738,18 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
+      // T3-CUSTOM(expbkt3): BEGIN — fork style debt under upstream's 2026-11 lint rules.
+      {
+        // Last so it wins over the per-surface blocks above; see the list's own comment.
+        files: [...forkLintStyleDebtFiles],
+        rules: {
+          "t3code/no-low-value-comments": "off",
+          "t3code/no-unreasoned-state-sync": "off",
+          "t3code/no-em-dash-copy": "off",
+          "t3code/no-inline-schema-compile": "off",
+        },
+      },
+      // T3-CUSTOM(expbkt3): END
     ],
     options: {
       reportUnusedDisableDirectives: "error",

@@ -500,12 +500,12 @@ function ThreadRouteContent(
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
   // T3-CUSTOM(expbkt3): BEGIN — opening a thread by any route (list, search,
   // notification, deep link) marks it read for the phase sidebar.
-  const markPhaseSidebarVisited = useMarkPhaseSidebarThreadVisited();
+  // The marker's identity churns on every preference write; as an effect event
+  // it does not re-stamp the visit, which happens once per thread identity.
+  const markPhaseSidebarVisited = useEffectEvent(useMarkPhaseSidebarThreadVisited());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stamps the opened thread in the phase sidebar visit store once per thread identity
   useEffect(() => {
     if (routeThreadIdentity !== null) markPhaseSidebarVisited(routeThreadIdentity);
-    // Once per thread identity; the marker's own identity churns on every
-    // preference write and must not re-stamp the visit.
   }, [routeThreadIdentity]);
   // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): report the open thread so agents can tell who is viewing it.

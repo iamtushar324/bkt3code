@@ -575,7 +575,7 @@ function UserMessagePlanReviewCommentCard({ comment }: { comment: ReviewCommentC
         </div>
       )}
       {comment.author ? (
-        <div className="text-muted-foreground text-xs">— {comment.author}</div>
+        <div className="text-muted-foreground text-xs">by {comment.author}</div>
       ) : null}
     </div>
   );

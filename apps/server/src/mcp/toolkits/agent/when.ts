@@ -355,6 +355,7 @@ export const describeSchedule = (
   },
 ): string => {
   if (schedule.type === "webhook") return "on each request to its webhook URL";
+  if (schedule.type === "once") return `once at ${schedule.runAt}`;
   if (schedule.type === "interval") {
     return options.runOnce === true ? "once" : `every ${formatDuration(schedule.everyMs)}`;
   }

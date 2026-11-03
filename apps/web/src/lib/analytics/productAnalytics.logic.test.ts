@@ -166,7 +166,7 @@ describe("createVisibilityReporter", () => {
       clearTimer: (handle) => timers.delete(handle as number),
     });
     const flush = () => {
-      for (const [id, callback] of [...timers]) {
+      for (const [id, callback] of Array.from(timers)) {
         timers.delete(id);
         callback();
       }

@@ -399,6 +399,9 @@ const make = Effect.gen(function* () {
     parent: { readonly threadId: ThreadId; readonly providerInstanceId: ProviderInstanceId },
     remote: OrchestrationV2RemoteTaskChild,
   ): ThreadScope => ({
+    // T3-CUSTOM(expbkt3): fork scope fields; the follower acts as the parent thread, for no user.
+    principal: "provider-session",
+    actorUserId: null,
     environmentId: hereId,
     requestNamespace: `remote-task:${parent.threadId}`,
     thread: {

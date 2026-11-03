@@ -79,17 +79,9 @@ function resolveDesktopBrandOverride(
 }
 
 /**
- * Name written into the staged package.json, and therefore the app's global
- * updater cache directory.
- *
- * electron-builder derives `updaterCacheDirName` in `app-update.yml` from this
- * name, and electron-updater then keeps downloads in
- * `~/Library/Caches/<name>-updater`. That path is *outside* `userData`, so
- * isolating bundle id and user-data directory is not enough: with the upstream
- * literal every fork app and upstream itself would share
- * `~/Library/Caches/t3code-updater` and could overwrite each other's
- * part-downloaded update.
- *
+ * Name written into the staged package.json, which also names the updater cache
+ * (`~/Library/Caches/<name>-updater`, outside `userData`). Without it every fork
+ * app and upstream would share one cache and overwrite each other's downloads.
  * Reuses `userDataDirName` so the two isolation axes cannot drift apart.
  */
 export function resolveDesktopStagePackageName(): string {
@@ -2716,14 +2708,10 @@ export function resolveDesktopRuntimeDependencies(
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
   updateChannel: "latest" | "nightly",
 ) {
-  // T3-CUSTOM(expbkt3): BEGIN - a fork app reads its manifest from one fixed
-  // release, not from the releases feed. The feed lists only the ten newest
-  // releases, and staging and mobile builds in the same repository push
-  // production builds out of it. The generic provider reads
-  // `<channel>-mac.yml` under `url`. See scripts/lib/bk-desktop-brand.ts.
-  // GitHub answers a multi-range request with 501, which GitHubProvider knows
-  // and the generic provider does not, so without the flag every differential
-  // download falls back to the full ZIP.
+  // T3-CUSTOM(expbkt3): BEGIN - a fork app reads `<channel>-mac.yml` from one fixed
+  // release, because the releases feed lists only the ten newest. GitHub answers a
+  // multi-range request with 501, which the generic provider needs a flag for, or
+  // every differential download falls back to the full ZIP.
   const brand = resolveDesktopBrandOverride();
   if (brand && updateChannel === "nightly") {
     return {
@@ -2951,19 +2939,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),
-      // T3-CUSTOM(expbkt3): BEGIN - fork self-signed identity. Squirrel.Mac
-      // validates an update bundle against the installed app's designated
-      // requirement, so an unsigned build can never auto-update. Apple's
-      // certificates are bound to upstream's App ID, so the fork signs with a
-      // self-signed cert from the build machine's keychain instead: the
-      // requirement is then identifier + leaf hash, which is stable across
-      // builds as long as the same certificate signs every one of them.
-      // Deliberately not notarised — Gatekeeper still quarantines the download,
-      // which the documented `xattr -dr` step already clears.
-      // The hardened runtime is switched off with it: it exists to satisfy
-      // notarisation, which a self-signed build cannot do anyway, and leaving it
-      // on only adds entitlement-shaped launch failures (JIT, library
-      // validation for the unsigned .node addons) to debug on teammates' Macs.
+      // T3-CUSTOM(expbkt3): BEGIN - fork self-signed identity, so Squirrel.Mac can
+      // validate updates (unsigned builds never auto-update). Keep the same cert for
+      // every build. Not notarised, so the hardened runtime is off too: it only adds
+      // launch failures for the unsigned .node addons.
       ...(resolveBkSigningIdentity()
         ? { identity: resolveBkSigningIdentity(), hardenedRuntime: false }
         : {}),

@@ -1039,7 +1039,7 @@ const make = Effect.gen(function* () {
   const forkSql = yield* Effect.serviceOption(SqlClient.SqlClient);
   // T3-CUSTOM(expbkt3): preserve fork identity, access and integration behavior.
   const forkAccess = yield* Effect.serviceOption(OrchestrationAccessControl);
-  // T3-CUSTOM(expbkt3): explicit project targets (#15219) stay inside the actor's team
+  // T3-CUSTOM(expbkt3): explicit project targets stay inside the actor's team
   // access; the caller's own project is already authorized through its thread.
   // T3-CUSTOM(expbkt3): BEGIN — scheduled tasks the caller may manage.
   const mayManage = (scope: McpInvocationScope, task: ScheduledTask) =>

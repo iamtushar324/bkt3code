@@ -166,9 +166,8 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
 const bootstrap = Effect.gen(function* () {
   // T3-CUSTOM(expbkt3): a managed BK build serves its packaged renderer, keeps
   // the central environment primary, and starts the bundled backend as a
-  // secondary local environment.
-  // T3-CUSTOM(expbkt3): managed BK builds own their channel-specific bundled
-  // backend port and state defaults in branding/BkBundledBackendRuntime.ts.
+  // secondary local environment (port and state defaults per channel live in
+  // branding/BkBundledBackendRuntime.ts).
   if (yield* bootstrapBkManagedDesktop()) return;
 
   const state = yield* DesktopState.DesktopState;

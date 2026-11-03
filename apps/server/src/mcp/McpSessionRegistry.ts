@@ -154,18 +154,10 @@ export interface McpSessionRegistryOptions {
   // T3-CUSTOM(expbkt3): END
 }
 
-// T3-CUSTOM(expbkt3): BEGIN — idle timeout for external-user credentials and the absolute
-// backstop lifetime for credentials no login governs (single-user/unrestricted local mode).
-
-// External-user credentials are resolved from persistent settings on every
-// request, so their invocation scope can remain short-lived.
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
-// Provider MCP credentials are static headers injected when the provider
-// process starts. They cannot be rotated underneath a running process, so an
-// inactivity timeout would permanently disconnect otherwise-healthy sessions.
-// A user-bound credential instead lives exactly as long as the authenticated
-// login that produced it; this backstop only bounds credentials that no login
-// governs (single-user/unrestricted local mode).
+// T3-CUSTOM(expbkt3): BEGIN — the absolute backstop lifetime for credentials no login
+// governs (single-user/unrestricted local mode). Provider credentials are static headers a
+// running process cannot rotate, so no idle timeout; a user-bound credential lives as long
+// as the login that produced it.
 const DEFAULT_MAXIMUM_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 // T3-CUSTOM(expbkt3): END
 
@@ -219,8 +211,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
   // T3-CUSTOM(expbkt3): BEGIN — drop credentials whose backing login has ended.
-  // Idle records stay (upstream #19491): resolve() refuses them and touch() can
-  // restore them until revocation. A passed login expiry never comes back.
+  // Idle records stay: resolve() refuses them and touch() can restore them until
+  // revocation. A passed login expiry never comes back.
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
     const next = new Map(Array.from(records).filter(([, record]) => timestamp <= record.expiresAt));
     return next.size === records.size ? records : next;
@@ -637,7 +629,7 @@ export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
 export const resolveActiveMcpCredential = (
   rawToken: string,
 ): Effect.Effect<McpInvocationContext.McpInvocationScope | undefined> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.resolve(rawToken) : Effect.succeed(undefined);
+  activeMcpSessionRegistry ? activeMcpSessionRegistry.resolve(rawToken) : Effect.undefined;
 export const __testing = {
   make: makeWithOptions,
 };

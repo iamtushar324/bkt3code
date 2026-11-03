@@ -503,13 +503,9 @@ export class EnvironmentAuth extends Context.Service<
     // T3-CUSTOM(expbkt3): BEGIN — team mode: mint a cookie session for an already-verified
     // Clerk operator without going through bootstrap-credential consumption.
     /**
-     * Issue a browser-session cookie for an already-verified Clerk operator.
-     *
-     * Unlike `createBrowserSession` this bypasses one-time bootstrap credential
-     * consumption: the caller (the `/api/auth/clerk-session` handler) has already
-     * verified the Clerk token and org membership, so we mint a standard-scoped
-     * cookie session with `subject: "clerk:<userId>"`. Everything downstream (WS
-     * ticket, principal, visibility) reads that subject unchanged.
+     * A browser-session cookie for a Clerk operator `/api/auth/clerk-session` already verified,
+     * so no bootstrap credential is consumed. The session's `subject` is `clerk:<userId>`,
+     * which the WS ticket, principal and visibility read unchanged.
      */
     readonly createClerkBrowserSession: (
       input: {

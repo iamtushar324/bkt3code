@@ -904,7 +904,7 @@ it("does not send the primary Clerk token to a server with a different authentic
 it("does not inspect Toolyard credentials before the selected server authenticates the client", async () => {
   using _setup = setup();
   mocks.sessionAuthenticated.set("env_stage", false);
-  await using view = await mount();
+  await using _view = await mount();
   expect(mocks.statusQueries).not.toHaveBeenCalled();
   expect(mocks.configure).not.toHaveBeenCalled();
 });

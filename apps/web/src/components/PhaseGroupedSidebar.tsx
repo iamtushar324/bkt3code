@@ -85,6 +85,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { useComposerDraftStore, useThreadHasUnsentDraft } from "../composerDraftStore";
 import { useClientSettings } from "../hooks/useSettings";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useNowAfter } from "../hooks/useDeadline";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { ThreadArchiveStatus } from "../fork/ThreadArchiveStatus";
@@ -157,7 +158,6 @@ import { PhaseRowWorkingStatus } from "./sidebar/PhaseRowWorkingStatus";
 // T3-CUSTOM(expbkt3): the parked shelves, docked above the footer.
 import { PhaseSidebarShelfDock } from "./sidebar/PhaseSidebarShelfDock";
 import {
-  hasUnseenCompletion,
   isTrailingDoubleClick,
   shouldClearThreadSelectionOnMouseDown,
   useRetainedValue,
@@ -170,9 +170,7 @@ import {
   buildPhaseSidebarFilterChips,
   buildPhaseSidebarRepositoryOptions,
   comparePhaseSidebarRows,
-  derivePhaseSidebarRepositoryKey,
   filterVisiblePhaseSidebarRows,
-  isThreadAssignedToUser,
   phaseSidebarRowOwnerAvatarUserId,
   partitionPhaseSidebarRows,
   // T3-CUSTOM(expbkt3): Session priority badge tone.
@@ -185,12 +183,9 @@ import {
   phaseSidebarIsExecutionActive,
   phaseSidebarIsAgentLive,
   resolvePhaseSidebarAttentionKind,
-  resolvePhaseSidebarAttentionPriority,
   resolvePhaseSidebarCheckoutMetadata,
   // T3-CUSTOM(expbkt3): PR number + colour-only state in the row.
   resolvePhaseSidebarChangeRequestBadge,
-  resolvePhaseSidebarDisplayPhase,
-  resolvePhaseSidebarPhase,
   buildPhaseSidebarRows,
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   phaseSidebarLinearIssueIdentifiers,
@@ -208,8 +203,6 @@ import {
   PHASE_SIDEBAR_PRIORITY_CHOICES,
   // T3-CUSTOM(expbkt3): strict in-group ordering.
   PHASE_SIDEBAR_SORT_DIRECTION_LABELS,
-  // T3-CUSTOM(expbkt3): ownership and co-participant facets.
-  phaseSidebarThreadParticipantIds,
   compactPhaseSidebarTimeLabel,
   // T3-CUSTOM(expbkt3): row status — working time, subagents, parked shelves.
   phaseSidebarActiveSubagentCount,
@@ -941,6 +934,7 @@ function PhaseSnoozePopoverButton({
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
+    // oxlint-disable-next-line react/purity -- presets sample the clock when the popover opens; the memo recomputes only then.
     () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
     [open, timestampFormat],
   );
@@ -1373,13 +1367,17 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // Snooze is offered only where it can succeed: capability-gated, and never
   // on a thread that is blocked on the user (hiding a pending request would
   // defeat it).
-  const canSnoozeRow =
-    row.snoozeSupported && canSnooze(row.thread, { now: new Date().toISOString() });
+  // A clock read in render would stay frozen in the compiler's cache, so the
+  // snooze checks read a snapshot that moves when the wake time changes or passes.
+  const snoozeClock = new Date(
+    useNowAfter(Date.parse(row.thread.snoozedUntil ?? "") || null),
+  ).toISOString();
+  const canSnoozeRow = row.snoozeSupported && canSnooze(row.thread, { now: snoozeClock });
   const snoozeMenuOpen = snoozeMenuOpenRaw && canSnoozeRow;
   useEffect(() => {
     if (!canSnoozeRow) setSnoozeMenuOpen(false);
   }, [canSnoozeRow]);
-  const wokeAt = threadWokeAt(row.thread, { now: new Date().toISOString() });
+  const wokeAt = threadWokeAt(row.thread, { now: snoozeClock });
   // A wake the user has not looked at yet: same "visiting clears it" rule
   // the unread indicator uses.
   const showWokePill =
@@ -1397,7 +1395,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
   // did this wrap up" — the same timestamp they sort by.
   const timeLabel =
     section === "snoozed" && row.thread.snoozedUntil != null
-      ? snoozeWakeLabel(row.thread.snoozedUntil, { now: new Date().toISOString() })
+      ? snoozeWakeLabel(row.thread.snoozedUntil, { now: snoozeClock })
       : compactPhaseSidebarTimeLabel(
           formatRelativeTimeLabel(
             (section === "settled" ? resolveSettledTimestamp(row.thread) : null) ??
@@ -2878,6 +2876,7 @@ export function PhaseGroupedSidebar() {
       allRows.filter((row) => row.thread.archivedAt === null),
       // TEC-1306: settled comes from the server, which applies each project's
       // auto-settle override; the primary server's global window does not.
+      // oxlint-disable-next-line react/purity -- snooze classification samples the real clock when the rows, the minute or the wake tick change; the memo recomputes only then.
       { now: nowMinute, preciseNow: new Date().toISOString() },
     );
   }, [allRows, nowMinute, snoozeWakeTick]);

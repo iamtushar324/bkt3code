@@ -179,15 +179,13 @@ export const AuthStandardClientScopes = [
   AuthRelayWriteScope,
 ] as const;
 // T3-CUSTOM(expbkt3): BEGIN — upstream folded the administrative scopes into
-// AuthStandardClientScopes (#20432); fork-owned callers keep the old name.
+// AuthStandardClientScopes; fork-owned callers keep the old name.
 export const AuthAdministrativeScopes = AuthStandardClientScopes;
 /**
  * What a team member's own sessions carry: the standard set without access and
- * relay management. Upstream's argument for granting those by default (a shell
- * or full-access agent reaches them anyway) holds for the machine's owner, but in
- * team mode `access:write` is what separates an environment administrator from a
- * member, so Clerk sign-ins, self-issued pairings and member MCP clients stay on
- * this narrower set.
+ * relay management. In team mode `access:write` separates an administrator from
+ * a member, so Clerk sign-ins, self-issued pairings and member MCP clients stay
+ * on this narrower set.
  */
 export const AuthMemberClientScopes = AuthStandardClientScopes.filter(
   (scope) =>
@@ -219,12 +217,10 @@ export type ServerAuthClerkDescriptor = typeof ServerAuthClerkDescriptor.Type;
 
 export const ServerAuthDescriptor = Schema.Struct({
   policy: ServerAuthPolicy,
-  // T3-CUSTOM(expbkt3): bootstrap methods grow over time, so drop ones this
-  // build does not know rather than failing the whole descriptor decode — the
-  // same treatment `ServerConfig` already gives `issues` and `availableEditors`.
-  // Without it, a server advertising a method the client has never heard of
-  // makes `server.getConfig` undecodable and the client closes the socket, which
-  // is what a fork-only `clerk-session` value did to stock T3 Code clients.
+  // T3-CUSTOM(expbkt3): drop bootstrap methods this build does not know rather
+  // than failing the whole decode (as `ServerConfig` does for `issues`). An
+  // unknown method otherwise makes `server.getConfig` undecodable and the client
+  // closes the socket, as a fork-only `clerk-session` did to stock clients.
   bootstrapMethods: ForwardCompatibleArray(ServerAuthBootstrapMethod),
   sessionMethods: Schema.Array(ServerAuthSessionMethod),
   sessionCookieName: TrimmedNonEmptyString,
@@ -485,13 +481,10 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
-  // T3-CUSTOM(expbkt3): BEGIN - mint a credential that can only be redeemed with a
-  // DPoP proof, and that lives for 2 hours instead of 5 minutes. Off by default, so
-  // every existing caller keeps producing exactly the credential it produces today.
-  //
-  // Safe to accept from a client, unlike a subject: it only *restricts* who can
-  // redeem the credential and binds the issued token to the redeemer's key. There is
-  // still deliberately no `subject` field — see apps/server/src/auth/OperatorIdentity.ts.
+  // T3-CUSTOM(expbkt3): BEGIN - mint a credential redeemable only with a DPoP proof,
+  // living 2 hours instead of 5 minutes. Off by default. Safe from a client because
+  // it only restricts who can redeem; there is still deliberately no `subject` field
+  // (see apps/server/src/auth/OperatorIdentity.ts).
   requireProofOfPossession: Schema.optionalKey(Schema.Boolean),
   // T3-CUSTOM(expbkt3): END
 });

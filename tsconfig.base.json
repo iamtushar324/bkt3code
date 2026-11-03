@@ -101,6 +101,56 @@
               "packages/provider-testing/**"
             ],
             "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
+          },
+          // T3-CUSTOM(expbkt3): fork-owned files that predate upstream's 2026-11 Effect style
+          // rules. A ratchet: drop a file once it passes; never add an upstream-owned file.
+          {
+            "include": [
+              "**/apps/server/src/auth/ClerkDirectory.ts",
+              "**/apps/server/src/auth/EnvironmentUserService.ts",
+              "**/apps/server/src/claudeAccounts/ClaudeAutoswitchClient.ts",
+              "**/apps/server/src/linear/LinearIssueResolver.ts",
+              "**/apps/server/src/mcp/ToolyardConnect.ts",
+              "**/apps/server/src/mcp/UserMcpProfileStore.ts",
+              "**/apps/server/src/mcp/toolkits/agent/handlers.ts",
+              "**/apps/server/src/mcp/toolkits/agent/schedules.ts",
+              "**/apps/server/src/mcp/toolkits/agent/support.ts",
+              "**/apps/server/src/mcp/toolkits/control/handlers.ts",
+              "**/apps/server/src/mcp/toolkits/control/registration.expbkt3.ts",
+              "**/apps/server/src/mcp/toolkits/webUi/bridge.ts",
+              "**/apps/server/src/orchestration-v2/ForkLegacyHistory.expbkt3.ts",
+              "**/apps/server/src/orchestration-v2/managerGuard.expbkt3.ts",
+              "**/apps/server/src/orchestration-v2/turnStartBootstrap.expbkt3.ts",
+              "**/apps/server/src/persistence/AgentUiRenders.ts",
+              "**/apps/server/src/persistence/EnvironmentUsers.ts",
+              "**/apps/server/src/persistence/PlanReviewDocuments.ts",
+              "**/apps/server/src/persistence/ThreadClaudeAccount.ts",
+              "**/apps/server/src/persistence/ThreadComments.ts",
+              "**/apps/server/src/persistence/ThreadWorkspaceGroups.ts",
+              "**/apps/server/src/presence/presenceMessages.ts",
+              "**/apps/server/src/session-webhooks/SessionWebhookService.ts",
+              "**/apps/server/src/session-webhooks/mcp.ts",
+              "**/apps/server/src/sessionArchive/gitFacts.ts",
+              "**/apps/server/src/sourceControl/SourceControlProfileService.ts",
+              "**/apps/server/src/toolyard/ToolyardIntegration.ts"
+            ],
+            "options": {
+              "diagnosticSeverity": {
+                "catchConditionalRefailToCatchIf": "off",
+                "catchToIgnore": "off",
+                "catchToOrElseSucceed": "off",
+                "catchUnfailableEffect": "off",
+                "effectFnOpportunity": "off",
+                "effectSucceedWithVoid": "off",
+                "mapSomeToAsSome": "off",
+                "optionMatchToFromOption": "off",
+                "preferSucceedSomeOrNone": "off",
+                "preferTypedSchemaDecoder": "off",
+                "runEffectInsideEffect": "off",
+                "tryCatchInEffectGen": "off",
+                "unnecessaryFailYieldableError": "off"
+              }
+            }
           }
         ]
       }

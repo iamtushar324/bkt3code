@@ -173,36 +173,11 @@ import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration1049 from "./Migrations/059_McpAppModelContext.ts";
 import Migration1050 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 
-/**
- * Migration loader with all migrations defined inline.
- *
- * Key format: "{id}_{name}" where:
- * - id: numeric migration ID (determines execution order)
- * - name: descriptive name for the migration
- *
- * Uses Migrator.fromRecord which parses the key format and
- * returns migrations sorted by ID.
- */
-// T3-CUSTOM(expbkt3): migration index allocation rule. Do not re-decide this
-// on every upstream merge — apply it mechanically.
-//
-//   * 1-32      shared history, identical to upstream.
-//   * 33-42     LEGACY fork block. Frozen. These indices are already applied in
-//               production databases (effect_sql_migrations keys on
-//               `${id}_${name}`), so renumbering one makes it run a second time
-//               on live data. Never touch them.
-//   * 43-45     LEGACY upstream remaps applied before the first 1000+ migration.
-//               Frozen for the same durable-identity reason as 33-42.
-//   * 46-999    reserved. Do not append migrations here: Effect only executes
-//               IDs greater than the highest applied ID, and live databases
-//               have already applied 1000+ migrations.
-//   * 1000+     monotonic shared allocation lane for every new migration. Fork
-//               files use the allocated ID; upstream files keep their upstream
-//               filename but register at the next free ID in this lane.
-//
-// Always allocate an ID greater than the current maximum registry ID. This is
-// required by Migrator.make, which only runs migrations newer than the highest
-// row already present in effect_sql_migrations.
+// T3-CUSTOM(expbkt3): migration ids. 1-32 match upstream; 33-45 are frozen (applied in prod and
+// keyed on `${id}_${name}`, so renumbering reruns them); 46-999 are reserved. Every new migration,
+// fork or upstream, takes the next id above the current maximum (1000+): Migrator.make runs only
+// ids above the highest applied one. Upstream files keep their filename.
+
 // T3-CUSTOM(expbkt3): owner-bound session callback storage.
 import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
 // T3-CUSTOM(expbkt3): review comments are sent once; this records when.
@@ -225,13 +200,10 @@ import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 // T3-CUSTOM(expbkt3): upstream ships this as migration 67; it registers at the next free 1000+ id.
 import Migration1059 from "./Migrations/067_WebhookDedupe.ts";
-// T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
-// deliberately NOT registered. It drops the V1 activity, turn, proposed-plan,
-// pending-approval and state projections and checkpoint diff blobs, but the fork still reads the V1
-// projections for old-thread history (ForkLegacyHistory.expbkt3.ts,
-// legacyProjection.expbkt3.ts). Running it on bkt3 would lose that history
-// irreversibly. Leave the file in the tree; register it only once no fork code
-// reads those tables, at the next free 1000+ id.
+// T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is NOT registered:
+// it irreversibly drops V1 projections and checkpoint diff blobs that fork history still reads
+// (ForkLegacyHistory.expbkt3.ts, legacyProjection.expbkt3.ts). Register it at the next free
+// 1000+ id only once no fork code reads those tables.
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],

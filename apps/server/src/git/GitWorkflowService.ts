@@ -472,10 +472,13 @@ export const make = Effect.gen(function* () {
     }),
     // T3-CUSTOM(expbkt3): BEGIN worktree codename allocation reads live branch names.
     // T3-CUSTOM(expbkt3): generated worktree names must be free locally and remotely.
-    listWorktreeBranchNames: (cwd) =>
-      ensureGitCommand("GitWorkflowService.listWorktreeBranchNames", cwd).pipe(
-        Effect.andThen(git.listWorktreeBranchNames(cwd)),
-      ),
+    listWorktreeBranchNames: Effect.fn("GitWorkflowService.listWorktreeBranchNames")(
+      function (cwd) {
+        return ensureGitCommand("GitWorkflowService.listWorktreeBranchNames", cwd).pipe(
+          Effect.andThen(git.listWorktreeBranchNames(cwd)),
+        );
+      },
+    ),
     // T3-CUSTOM(expbkt3): END
     deleteLocalBranch: Effect.fn("GitWorkflowService.deleteLocalBranch")(function (input) {
       return ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(

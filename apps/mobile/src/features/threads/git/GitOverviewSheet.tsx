@@ -347,7 +347,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <ListSection title="Worktree">
           <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
             {/* T3-CUSTOM(expbkt3): codename first, path as detail. */}
-            {`${resolveWorktreeCodename(currentWorktreePath)} — ${currentWorktreePath}`}
+            {`${resolveWorktreeCodename(currentWorktreePath)} (${currentWorktreePath})`}
           </Text>
         </ListSection>
       ) : null}

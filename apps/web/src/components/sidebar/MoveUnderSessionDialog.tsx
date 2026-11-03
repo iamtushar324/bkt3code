@@ -1,5 +1,4 @@
 /** T3-CUSTOM(expbkt3): pick the session a thread should be filed under. */
-import type { ThreadId } from "@t3tools/contracts";
 import { CornerDownRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 

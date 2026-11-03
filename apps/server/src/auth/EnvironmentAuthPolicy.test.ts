@@ -83,12 +83,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       ),
     );
 
-    // T3-CUSTOM(expbkt3): BEGIN — team mode must stay invisible to `bootstrapMethods`.
-    //
-    // `bootstrapMethods` is a closed literal union in stock T3 Code. A fork-only
-    // entry there made the whole `server.getConfig` reply undecodable for App Store
-    // clients: they paired, opened the socket, read the config and hung up. The
-    // `clerk` descriptor is an additive optional field, which such clients ignore.
+    // T3-CUSTOM(expbkt3): BEGIN — team mode must stay invisible to `bootstrapMethods`, a
+    // closed literal union in stock T3 Code: a fork-only entry there made `server.getConfig`
+    // undecodable for App Store clients. The additive `clerk` descriptor is ignored by them.
     it.effect("advertises team mode with the clerk descriptor and no extra bootstrap method", () =>
       Effect.gen(function* () {
         const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;

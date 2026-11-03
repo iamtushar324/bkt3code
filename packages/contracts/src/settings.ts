@@ -479,14 +479,10 @@ export const ClientSettingsSchema = Schema.Struct({
   phaseGroupedSidebarEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
-  // T3-CUSTOM(expbkt3): plan mode stays a first-class feature in the fork.
-  // Upstream retired the composer's Build/Plan toggle behind an off-by-default
-  // flag; we keep it on, because our workflow requires plan mode and the fork's
-  // own "default interaction mode" settings (global and per-project) are dead
-  // while it is off — the server resolves "plan", then the composer forces
-  // "default" back. Deliberately a fresh key (was `planModeEnabled`): decoding
-  // drops the old key, so browsers that already persisted upstream's `false`
-  // reset to the fork default instead of silently staying in build mode.
+  // T3-CUSTOM(expbkt3): plan mode stays on in the fork; upstream hides the toggle
+  // behind an off-by-default flag, which kills the fork's default interaction mode
+  // settings. A fresh key (was `planModeEnabled`) so browsers that persisted
+  // upstream's `false` reset to the fork default.
   planModeAvailable: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
@@ -961,11 +957,8 @@ export type ExternalMcpSettings = typeof ExternalMcpSettings.Type;
 
 /**
  * T3-CUSTOM(expbkt3): How much of an archived session's worktree to give back.
- *
- * `slim` deletes only regenerable directories (`node_modules`, build output,
- * caches) and leaves a usable checkout behind. `remove` runs
- * `git worktree remove`, which reclaims everything but means reopening the
- * session has to re-create the worktree first.
+ * `slim` deletes only regenerable directories and leaves a usable checkout.
+ * `remove` runs `git worktree remove`, so reopening must re-create the worktree.
  */
 export const SessionArchiveReclaimMode = Schema.Literals(["slim", "remove"]);
 export type SessionArchiveReclaimMode = typeof SessionArchiveReclaimMode.Type;
@@ -978,18 +971,10 @@ export const SessionArchiveMinArchivedDays = Schema.Int.check(
 export const DEFAULT_SESSION_ARCHIVE_MIN_ARCHIVED_DAYS = 14;
 
 /**
- * T3-CUSTOM(expbkt3): Reclaim archived sessions' worktrees without losing what
- * the session did.
- *
- * Upstream only removes a worktree when a thread is *deleted*, so the sole way
- * to get the disk back is to destroy the history. Archived worktrees therefore
- * accumulate indefinitely. This exports a durable history file pair (digest
- * Markdown plus a full transcript sidecar) outside the worktree first, then
- * reclaims the worktree per `SessionArchiveReclaimMode`.
- *
- * `historyDir` is blank by default, meaning `<baseDir>/session-history`.
- * `autoSweep` is off by default: the panel drives this by hand until an
- * operator opts into the timer.
+ * T3-CUSTOM(expbkt3): Reclaim archived sessions' worktrees without losing what the
+ * session did: export a digest and transcript outside the worktree first, then
+ * reclaim per `SessionArchiveReclaimMode`. A blank `historyDir` means
+ * `<baseDir>/session-history`; `autoSweep` is off until an operator opts in.
  */
 export const SessionArchiveAutoSweepSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1328,15 +1313,9 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 // T3-CUSTOM(expbkt3): BEGIN — preview browser host for this environment.
 /**
- * Which browser hosts a preview tab opened against this environment.
- *
- * - `client`: a desktop app draws the tab in its own Electron browser, on the
- *   user's machine, with that machine's network and logins. Clients with no
- *   browser of their own (web, phone) still use the server browser.
- * - `server`: the environment's headless browser hosts every tab and streams it.
- *
- * Agents' `preview_*` tools always use the server browser, in both modes.
- *
+ * Which browser hosts a preview tab: `client` (a desktop app's own Electron
+ * browser; web and phone fall back to the server) or `server` (the environment's
+ * headless browser). Agents' `preview_*` tools always use the server browser.
  * Server-owned, so every user of the host sees the same choice.
  */
 export const PreviewBrowserHostSetting = Schema.Literals(["client", "server"]);
@@ -1485,12 +1464,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   // T3-CUSTOM(expbkt3): BEGIN — `defaultThreadModelSelection` and
-  // `defaultThreadRuntimeMode` are deprecated: the server folds them into
-  // upstream's `defaultModelSelection` / `defaultRuntimeMode` on load (which
-  // projects can override through `projectSettingsOverrides`), and nothing
-  // writes them any more. They stay decodable so an un-folded file still
-  // loads. `defaultThreadInteractionMode` (Plan or Build for new threads) is
-  // live and project-scoped.
+  // `defaultThreadRuntimeMode` are deprecated (the server folds them into
+  // upstream's defaults on load) but stay decodable. `defaultThreadInteractionMode`
+  // (Plan or Build for new threads) is live and project-scoped.
   defaultThreadModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({

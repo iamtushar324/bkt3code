@@ -797,6 +797,8 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
   const tools = Context.get(context, McpServer.McpServer).tools as ReadonlyArray<Entry>;
   // The testkit's live thread runs on the `codex` instance; the caller must match it.
   const scope: McpInvocationContext.McpThreadInvocationScope = {
+    principal: "provider-session", // T3-CUSTOM(expbkt3): fork scope fields.
+    actorUserId: null,
     environmentId: EnvironmentId.make("00000000-0000-4000-8000-0000000000e0"),
     requestNamespace: "mcp-tool-use-eval",
     thread: {

@@ -33,7 +33,7 @@ import {
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -210,7 +210,7 @@ export class TurnStartBootstrap extends Context.Service<
 >()("t3/orchestration-v2/turnStartBootstrap.expbkt3/TurnStartBootstrap") {}
 
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
   }>();
 
   const randomUUID = crypto
-    .randomUUIDv4()
+    .uuidV4()
     .pipe(
       Effect.mapError((cause) =>
         toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
@@ -669,7 +669,7 @@ export const make = Effect.gen(function* () {
         }
 
         if (bootstrap?.createThread && resumable === null) {
-          const created = yield* dispatchWithOptions(
+          yield* dispatchWithOptions(
             {
               type: "thread.create",
               commandId: yield* serverCommandId("bootstrap-thread-create"),
@@ -715,7 +715,7 @@ export const make = Effect.gen(function* () {
       command.type === "thread.turn.start" && command.bootstrap
         ? dispatchBootstrapTurnStart(command, options)
         : dispatchWithOptions(command, options).pipe(
-            Effect.tap(({ sequence }) =>
+            Effect.tap(() =>
               command.type === "thread.create" ? effectWorker.drain() : Effect.void,
             ),
             Effect.mapError((cause) =>

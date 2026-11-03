@@ -103,7 +103,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
-      // T3-CUSTOM(expbkt3): #15219 dropped the calling-project bound; team access replaces it.
+      // T3-CUSTOM(expbkt3): upstream dropped the calling-project bound; team access replaces it.
       const forkTask = tasks.find((task) => task.id === input.taskId);
       if (forkTask !== undefined)
         yield* requireForkProjectAccess(

@@ -1157,6 +1157,10 @@ const decodeMessagePayload = Schema.decodeUnknownEffect(
 const decodePlanJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
 );
+// T3-CUSTOM(expbkt3): the pending async question ids kept in a thread's payload_json.
+const PendingAsyncUserInputIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodePendingAsyncUserInputIds = Schema.decodeEffect(PendingAsyncUserInputIdsJson);
+const encodePendingAsyncUserInputIds = Schema.encodeEffect(PendingAsyncUserInputIdsJson);
 // T3-CUSTOM(expbkt3): narrows a plan artifact to a proposed plan.
 const isProposedPlanArtifact = (
   plan: OrchestrationV2PlanArtifact,
@@ -2636,13 +2640,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 const rows = yield* sql<{
                   ids: string;
                 }>`SELECT COALESCE(json_extract(payload_json,'$.pendingAsyncUserInputIds'),'[]') AS ids FROM orchestration_v2_projection_threads WHERE thread_id=${event.threadId}`;
-                const ids = yield* Schema.decodeUnknownEffect(
-                  Schema.fromJsonString(Schema.Array(Schema.String)),
-                )(rows[0]?.ids ?? "[]");
+                const ids = yield* decodePendingAsyncUserInputIds(rows[0]?.ids ?? "[]");
                 const next = updatePendingAsyncUserInputIds(ids, asyncChange);
-                const encoded = yield* Schema.encodeEffect(
-                  Schema.fromJsonString(Schema.Array(Schema.String)),
-                )(next);
+                const encoded = yield* encodePendingAsyncUserInputIds(next);
                 yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json=json_set(payload_json,'$.pendingAsyncUserInputIds',json(${encoded})) WHERE thread_id=${event.threadId}`;
               }
               break;
@@ -5001,7 +5001,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json FROM orchestration_v2_projection_plans
           WHERE thread_id = ${threadId} AND kind = 'proposed_plan' AND status = 'active'
         `;
-        const plans = yield* decodeRows(decodePlanPayload, threadId)(rows);
+        const plans = yield* decodeRows(decodePlanJson, threadId)(rows);
         return plans.filter(isProposedPlanArtifact);
       },
       (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
@@ -7285,28 +7285,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 const rows = [...rowsByThreadId.values()];
                 const ids = [...rowsByThreadId.keys()];
                 const forkSourceIds = shellForkSourceIds(rows);
-                const [runRows, itemCountRows, providerThreadRows, pendingTurnItemRows] =
-                  yield* Effect.all([
-                    forkSourceIds.length === 0
-                      ? Effect.succeed([] as ReadonlyArray<ShellRunRow>)
-                      : selectShellRunRows(forkSourceIds),
-                    forkSourceIds.length === 0
-                      ? Effect.succeed([] as ReadonlyArray<ShellRunItemCountRow>)
-                      : selectShellRunItemCounts(forkSourceIds),
-                    selectShellProviderThreadRows(ids),
-                    selectShellPendingTurnItemRows(
-                      ids,
-                      rows.flatMap((row) =>
-                        row.active_run_id !== null && row.active_run_status === "running"
-                          ? [row.active_run_id]
-                          : [],
-                      ),
+                const [
+                  runRows,
+                  itemCountRows,
+                  shellItemCountRows,
+                  providerThreadRows,
+                  pendingTurnItemRows,
+                ] = yield* Effect.all([
+                  forkSourceIds.length === 0
+                    ? Effect.succeed([] as ReadonlyArray<ShellRunRow>)
+                    : selectShellRunRows(forkSourceIds),
+                  forkSourceIds.length === 0
+                    ? Effect.succeed([] as ReadonlyArray<ShellRunItemCountRow>)
+                    : selectShellRunItemCounts(forkSourceIds),
+                  selectShellItemCounts(ids),
+                  selectShellProviderThreadRows(ids),
+                  selectShellPendingTurnItemRows(
+                    ids,
+                    rows.flatMap((row) =>
+                      row.active_run_id !== null && row.active_run_status === "running"
+                        ? [row.active_run_id]
+                        : [],
                     ),
-                  ]);
+                  ),
+                ]);
                 const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
                   runRows,
                   itemCountRows,
                 });
+                const shellItemCountsByThreadId = shellItemCountMap(shellItemCountRows);
                 const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
                   yield* pendingBackgroundDataByThreadId({
                     providerThreadRows,
@@ -7317,6 +7324,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row,
                     runOrdinalsByThreadId,
                     itemCountsByThreadId,
+                    shellItemCountsByThreadId,
                     providerThreadsByThreadId,
                     pendingTurnItemsByThreadId,
                   }),

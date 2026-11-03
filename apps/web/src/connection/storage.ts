@@ -52,7 +52,6 @@ import * as Clock from "effect/Clock";
 // T3-CUSTOM(expbkt3): BEGIN — size budget for the cached thread history.
 import {
   recordThreadOpened,
-  sweepThreadCache,
   pinThreadForHandoff as pinThreadForHandoffInStore,
 } from "./threadCacheEviction";
 // T3-CUSTOM(expbkt3): END
@@ -576,8 +575,6 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   return { read, update } satisfies CatalogStore;
 });
 
-// T3-CUSTOM(expbkt3): BEGIN — pin a thread whose history seeded a handoff, so the
-// sweep keeps it while the work it started continues somewhere else.
 // T3-CUSTOM(expbkt3): BEGIN — read every cached thread for one environment, so a
 // search can still answer while its host is unreachable. Bounded by what this
 // device has actually opened, which is what the eviction budget also bounds.
@@ -619,6 +616,8 @@ export function readCachedThreadsForEnvironment(
 }
 // T3-CUSTOM(expbkt3): END
 
+// T3-CUSTOM(expbkt3): BEGIN — pin a thread whose history seeded a handoff, so the
+// sweep keeps it while the work it started continues somewhere else.
 const pinThreadCacheEffect = Effect.fn("web.connectionStorage.pinThreadForHandoff")(function* (
   environmentId: EnvironmentId,
   threadId: ThreadId,

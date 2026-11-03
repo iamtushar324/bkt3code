@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): retained fork commands dispatch through the one V2 event sink. */
-import { OrchestrationCommand, OrchestrationEvent } from "@t3tools/contracts/orchestration";
+import { OrchestrationEvent } from "@t3tools/contracts/orchestration";
 import {
   OrchestrationV2Command,
   CommandId,
@@ -8,7 +8,6 @@ import {
   type ThreadId,
   type ApplicationStoredEvent,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2StoredEvent,
   type UserId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";

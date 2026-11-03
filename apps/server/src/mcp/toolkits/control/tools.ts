@@ -21,7 +21,7 @@ import {
   // T3-CUSTOM(expbkt3): review comments on assistant messages in chat.
   THREAD_COMMENT_MAX_BODY_LENGTH,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -66,7 +66,7 @@ const dependencies = [
   ProjectionSnapshotQuery,
   TurnStartBootstrap,
   OrchestrationAccessControl,
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
 ];
 const agentUiDependencies = [...dependencies, AgentUiService];
 const threadCommentsDependencies = [...dependencies, ThreadCommentsService];

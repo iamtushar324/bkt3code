@@ -97,11 +97,9 @@ export interface ThreadActivitySource extends QueuedThreadShell {
 }
 
 /**
- * Latest USER-initiated activity: messages and the turn requests they start,
- * deliberately not the agent-side started/completed stamps. The settle-on-
- * merge anchor uses this so a merge landing mid-turn still settles the
- * thread when that turn finishes, while a user re-engaging after the merge
- * blocks it for good. Falls back to creation time for untouched threads.
+ * Latest USER-initiated activity (messages and the turns they request), not agent
+ * stamps, so a merge landing mid-turn still settles the thread while a user
+ * re-engaging after it blocks it for good. Falls back to creation time.
  */
 function threadUserActivityAnchorAt(thread: ThreadActivitySource): string {
   const messageAt = thread.latestUserMessageAt;
@@ -116,14 +114,9 @@ function threadUserActivityAnchorAt(thread: ThreadActivitySource): string {
 }
 
 /**
- * Returns whether the change request settles the thread immediately. A
- * terminal request settles the thread only while it postdates every user-
- * initiated event in it: settling on a merge happens ONCE. A request last
- * touched before the thread was created is inherited branch history (a new
- * thread started at a worktree root whose PR already merged), and one older
- * than the user's latest engagement was already adjudicated — re-engaging a
- * thread whose PR merged is the user saying the conversation outlived the
- * PR. Unknown timestamps keep the old always-settle behavior.
+ * A terminal change request settles the thread only while it postdates every
+ * user-initiated event, so settling on a merge happens once and inherited branch
+ * history never settles. Unknown timestamps keep the old always-settle behavior.
  */
 export function changeRequestAutoSettles(
   changeRequest: ChangeRequestSettleSource | null | undefined,
@@ -298,18 +291,10 @@ export function threadWokeAt(
 // upstream's `autoSettleOnMerge` option; the fork keeps that behaviour by defaulting
 // `sidebarAutoSettleOnMerge` to false in contracts/settings.ts.
 /**
- * Settled resolution over the server-backed settled lifecycle. Activity
- * blockers (pending approval/user-input, a live session, an unadjudicated
- * queued turn) are checked first and hold a thread active regardless of any
- * override. Past the blockers, the explicit user override (thread.settle /
- * thread.unsettle commands, projected into settledOverride + settledAt)
- * wins in both directions; without one, a thread can auto-settle on a
- * merged PR or always on a closed PR (both only while the terminal state is
- * the thread's latest event, see changeRequestAutoSettles), or settles on
- * inactivity past the window.
- * An open PR blocks the inactivity path entirely. The server
- * un-settles on real activity (user message, session start, approval/
- * user-input request), so an override never goes stale silently.
+ * Activity blockers (pending requests, a live session, a queued turn) hold a
+ * thread active first. Then the user's settle/unsettle override wins; without
+ * one, a merged or closed PR (see changeRequestAutoSettles) or inactivity past
+ * the window settles it, and an open PR blocks the inactivity path.
  */
 export function effectiveSettled(
   shell: ThreadActivitySource & {
@@ -335,14 +320,10 @@ export function effectiveSettled(
   )
     return false;
   if (hasQueuedTurnStart(shell, { now: options.now })) {
-    // The queued-turn blocker alone is forgivable: it is clock-derived, and
-    // list callers pass a coarser `now` than the settle action used. When
-    // the server already adjudicated the queued message by accepting a
-    // settle after it (settledAt stamps server accept time), trust that
-    // ruling — otherwise a settle near the grace boundary leaves the row
-    // pinned active until the caller's clock ticks over. A message NEWER
-    // than settledAt is genuinely new work and keeps the block until the
-    // server's auto-unsettle lands.
+    // The queued-turn blocker is clock-derived, so trust a server settle that
+    // was accepted after the queued message (settledAt is the server accept
+    // time). A message newer than settledAt is new work and keeps the block
+    // until the server's auto-unsettle lands.
     const serverAdjudicated =
       shell.settledOverride === "settled" &&
       shell.settledAt !== null &&

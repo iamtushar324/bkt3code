@@ -7,11 +7,12 @@ import {
   summarizeSidebarSessions,
   type PhaseSidebarRow,
 } from "@t3tools/client-runtime/state/phase-sidebar";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { useThreadListNow } from "../threads/use-thread-list-now";
 import { countPhaseSidebarUnreadRows } from "./phaseSidebarCounterLogic";
 
 function Counter(props: {
@@ -38,32 +39,22 @@ function Counter(props: {
 }
 
 export function PhaseSidebarCounters(props: { readonly rows: ReadonlyArray<PhaseSidebarRow> }) {
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  const threads = useMemo(() => props.rows.map((row) => row.thread), [props.rows]);
+  // Advances each minute and when a snooze wakes, so a woken thread is counted.
+  const now = useThreadListNow(threads);
   const counts = useMemo(() => {
-    void snoozeWakeTick;
-    const shared = summarizeSidebarSessions(
-      props.rows.map((row) => row.thread),
-      {
-        now: new Date().toISOString(),
-        snoozeSupported: (thread) =>
-          props.rows.find(
-            (row) =>
-              row.thread.environmentId === thread.environmentId && row.thread.id === thread.id,
-          )?.snoozeSupported === true,
-      },
-    );
+    const shared = summarizeSidebarSessions(threads, {
+      now,
+      snoozeSupported: (thread) =>
+        props.rows.find(
+          (row) => row.thread.environmentId === thread.environmentId && row.thread.id === thread.id,
+        )?.snoozeSupported === true,
+    });
     return {
       ...shared,
       unread: countPhaseSidebarUnreadRows(props.rows),
     };
-  }, [props.rows, snoozeWakeTick]);
-  useEffect(() => {
-    const nextWakeAtMs = Date.parse(counts.nextSnoozeWakeAt ?? "");
-    if (!Number.isFinite(nextWakeAtMs)) return;
-    const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
-    const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
-    return () => clearTimeout(id);
-  }, [counts.nextSnoozeWakeAt]);
+  }, [now, props.rows, threads]);
 
   return (
     <View accessibilityLabel="Session status summary" className="flex-row items-center gap-1">

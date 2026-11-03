@@ -799,12 +799,9 @@ export const make = Effect.gen(function* () {
             );
           }
           // T3-CUSTOM(expbkt3): BEGIN - a platform environment is torn down whenever
-          // the host stops reporting it, which includes the host simply being
-          // unreachable. Clearing its caches here is what turned a temporary outage
-          // into permanent data loss: the shell and thread snapshots that let the
-          // environment render offline were destroyed, so a restart came back empty.
-          // Cached data is only discarded when the user removes the connection by
-          // hand (`remove`), which is the one removal that is meant to be final.
+          // its host is unreachable, so clearing caches here turned an outage into
+          // data loss. Cached data is only discarded when the user removes the
+          // connection by hand (`remove`).
           yield* ownedDataCleanup.clear(environmentId);
           // T3-CUSTOM(expbkt3): END
           return true;

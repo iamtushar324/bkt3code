@@ -1303,11 +1303,9 @@ const agentToolFailure =
   };
 
 /**
- * The agent toolkit answers in Markdown: an agent acts on a short numbered
- * list with the next call in it more reliably than on JSON, and Claude Code
- * shows `structuredContent` in place of the text when a result carries both.
- * So a result is the Markdown alone, unless the call passed `format: "json"`;
- * then the text and `structuredContent` carry the same facts as data.
+ * The agent toolkit answers in Markdown alone: agents act on a short list with the next call
+ * more reliably than on JSON, and Claude Code shows `structuredContent` instead of the text
+ * when both are set. With `format: "json"` the text and `structuredContent` carry the data.
  */
 const registerAgentToolkit = Effect.fn("McpHttpServer.registerAgentToolkit")(function* () {
   const server = yield* McpServer.McpServer;

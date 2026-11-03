@@ -17,10 +17,9 @@ export interface ReviewCommentTarget {
 }
 
 // T3-CUSTOM(expbkt3): BEGIN
-// `startIndex`/`endIndex` are nullable and `author` is new, matching
-// `apps/web/src/reviewCommentContext.ts`. A plan-review anchor is quoted text
-// that cannot always be located in the source, and rejecting those blocks made
-// the transcript render raw `<review_comment>` XML at the reader.
+// Nullable `startIndex`/`endIndex` and `author`, matching the web parser: a
+// plan-review anchor may not resolve to lines, and rejecting the block would
+// render raw `<review_comment>` XML.
 export interface ReviewInlineComment {
   readonly id: string;
   readonly sectionId: string;

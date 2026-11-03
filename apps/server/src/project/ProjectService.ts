@@ -601,7 +601,10 @@ export const make = Effect.gen(function* () {
   );
 
   return ProjectService.of({
-    dispatch: (command) => commit(command).pipe(Effect.asVoid), // T3-CUSTOM(expbkt3): native commit path.
+    // T3-CUSTOM(expbkt3): native commit path.
+    dispatch: Effect.fn("ProjectService.dispatch")(function (command) {
+      return commit(command).pipe(Effect.asVoid);
+    }),
     create,
     bootstrap,
     update,

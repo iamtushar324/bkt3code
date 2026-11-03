@@ -2618,7 +2618,7 @@ const PlanReviewCommentCard = memo(function PlanReviewCommentCard(props: {
           </Text>
           {props.comment.author ? (
             <Text className="mt-1 text-[11px]" style={{ color: props.colors.mutedText }}>
-              — {props.comment.author}
+              by {props.comment.author}
             </Text>
           ) : null}
         </View>

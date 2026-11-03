@@ -13,12 +13,9 @@ const ReviewCommentSelectionSchema = Schema.Struct({
 type ReviewCommentSelection = typeof ReviewCommentSelectionSchema.Type;
 
 // T3-CUSTOM(expbkt3): BEGIN
-// `startIndex`/`endIndex` are nullable, and `author` is new.
-//
-// A plan-review anchor is quoted text, not a line number, and the quote cannot
-// always be located in the source. Requiring the range made the parser reject
-// those blocks, and the transcript then rendered the raw `<review_comment>` XML
-// at the reader. A comment without a range is still a comment worth showing.
+// `startIndex`/`endIndex` are nullable, and `author` is new. A plan-review anchor
+// is quoted text that cannot always be located, and requiring the range made the
+// transcript render raw `<review_comment>` XML.
 export const ReviewCommentContextSchema = Schema.Struct({
   id: Schema.String,
   sectionId: Schema.String,

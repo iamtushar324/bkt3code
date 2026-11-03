@@ -157,6 +157,11 @@ const decodeStoredThread = Schema.decodeUnknownOption(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
 );
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
+// T3-CUSTOM(expbkt3): fork thread metadata and imported V2 thread payloads.
+const decodeMemberUserIds = Schema.decodeUnknownSync(Schema.Array(UserId));
+const decodeAppThreadJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2AppThreadJson),
+);
 
 function parseJson(json: string): unknown {
   try {
@@ -242,9 +247,7 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     // T3-CUSTOM(expbkt3): never discard ownership or retained fork metadata on V2 import.
     titleManuallySet: row.title_manually_set === 1,
     ownerUserId: row.owner_user_id === null ? null : UserId.make(row.owner_user_id),
-    memberUserIds: Schema.decodeUnknownSync(Schema.Array(UserId))(
-      parseJson(row.member_user_ids_json),
-    ),
+    memberUserIds: decodeMemberUserIds(parseJson(row.member_user_ids_json)),
     sourceControlProfileId:
       row.source_control_profile_id === null
         ? null
@@ -865,9 +868,7 @@ const make = Effect.gen(function* () {
         const threadRows = yield* sql<{
           payload_json: string;
         }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id=${threadId}`;
-        const thread = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(OrchestrationV2AppThreadJson),
-        )(threadRows[0]?.payload_json);
+        const thread = yield* decodeAppThreadJson(threadRows[0]?.payload_json);
         const history = yield* forkLegacyHistoryEvents(thread).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
         );

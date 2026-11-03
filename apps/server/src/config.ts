@@ -36,12 +36,9 @@ export type StartupPresentation = typeof StartupPresentation.Type;
 
 // T3-CUSTOM(expbkt3): BEGIN — team mode: optional Clerk-backed multi-user config.
 /**
- * Optional Clerk team-mode configuration.
- *
- * Present only when the deployment is configured with a Clerk secret. When
- * `undefined` the server runs in single-user mode with zero behavior change:
- * no Clerk verification, no per-user visibility filtering, everyone who pairs
- * is an unrestricted operator (byte-for-byte the historical behavior).
+ * Clerk team-mode configuration, present only when the deployment has a Clerk secret.
+ * When `undefined` the server runs single-user, unchanged: no Clerk verification, no
+ * per-user visibility, and everyone who pairs is an unrestricted operator.
  */
 export interface ServerClerkAuthConfig {
   /** Clerk backend secret key (`sk_...`). Enables token verification. */

@@ -902,11 +902,10 @@ export const make = Effect.gen(function* () {
     } satisfies UsageSummary;
   });
 
-  // T3-CUSTOM(expbkt3): BEGIN one thread's cost. Same scan, same cache, same
-  // rates as the summary; only the fold differs (see threadUsage.ts).
-  // A thread read only opens that thread's own transcripts, and rewrites the
-  // (23 MB in prod) scan cache at most every THREAD_USAGE_PERSIST_INTERVAL_MS;
-  // the rest lands with the next summary scan or on shutdown.
+  // T3-CUSTOM(expbkt3): BEGIN one thread's cost: the summary's scan, cache and rates with
+  // another fold (threadUsage.ts). It opens only the thread's transcripts and rewrites the
+  // large scan cache at most every THREAD_USAGE_PERSIST_INTERVAL_MS; the rest lands with the
+  // next summary scan or on shutdown.
   let lastThreadUsagePersistMs: number | null = null;
   const persistScanCacheAfterThreadRead = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
@@ -926,7 +925,7 @@ export const make = Effect.gen(function* () {
     yield* ensureRates(false);
     yield* ensureScanCacheLoaded;
     const settings = yield* readSettings;
-    // Upstream's resolver now needs the scan-cache retention cutoff (#12304).
+    // Upstream's resolver needs the scan-cache retention cutoff.
     const retentionCutoffMs =
       (yield* Clock.currentTimeMillis) - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
@@ -950,7 +949,7 @@ export const make = Effect.gen(function* () {
         );
         for (const file of files) {
           // Upstream's reader returns a fresh parse as `update` for the caller to
-          // cache (#15149); store it under the same later-read guard scans use.
+          // cache; store it under the same later-read guard scans use.
           const { records: parsed, update } = yield* readFileRecords(
             file.path,
             file.size,

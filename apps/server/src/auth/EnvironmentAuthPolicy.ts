@@ -39,16 +39,10 @@ export const make = Effect.gen(function* () {
         ? ["desktop-bootstrap", "one-time-token"]
         : ["one-time-token"];
 
-  // T3-CUSTOM(expbkt3): BEGIN — team mode advertises itself with the `clerk`
-  // descriptor alone, so the SPA can detect it and render Clerk sign-in without
-  // build-time coupling.
-  //
-  // Deliberately NOT a new `bootstrapMethods` entry. That field is a closed
-  // literal union in stock T3 Code, and a fork-only `clerk-session` value made
-  // the whole `server.getConfig` reply undecodable for App Store clients: they
-  // paired, opened the socket, read the config, and hung up. Keeping the fork's
-  // signal in an additive optional field means unknown-key-tolerant clients
-  // ignore it instead of disconnecting.
+  // T3-CUSTOM(expbkt3): BEGIN — team mode advertises itself with the `clerk` descriptor alone,
+  // so the SPA can render Clerk sign-in. Never a `bootstrapMethods` entry: that closed union
+  // made `server.getConfig` undecodable for App Store clients, which then disconnected; an
+  // additive optional field is ignored instead.
   const clerkConfig = config.clerkAuth;
   const clerk: ServerAuthDescriptor["clerk"] =
     clerkConfig?.publishableKey !== undefined

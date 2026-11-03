@@ -1528,12 +1528,10 @@ function createDraftThreadState(
     options?.startFromOrigin === undefined
       ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
-  // T3-CUSTOM(expbkt3): a parent in another project — including one on another
-  // machine — can be linked now, so a project change no longer drops it. Moving
-  // a seeded draft somewhere the work can actually run, while its parent's host
-  // is unreachable, is the case this exists for. The parent's environment is
-  // materialised at the moment the draft leaves it, because "the draft's own
-  // environment" stops being the right answer from then on.
+  // T3-CUSTOM(expbkt3): a parent in another project or machine can be linked, so a
+  // project change keeps it (a seeded draft can move off an unreachable host). The
+  // parent's environment is pinned when the draft leaves it, because the draft's
+  // own environment stops being the right answer from then on.
   const nextParentThreadId =
     options?.parentThreadId === undefined
       ? (existingThread?.parentThreadId ?? null)

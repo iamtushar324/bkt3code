@@ -82,13 +82,10 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
   // GLTFLoader fetches embedded textures through blob URLs.
   const connectSources = ["'self'", "blob:", "http:", "https:", "ws:", "wss:"];
 
-  // T3-CUSTOM(expbkt3): a Plannotator review is served by the environment that
-  // owns the thread, not by this renderer's origin, so the review iframe is
-  // cross-origin. Those environment origins are unknown here for the same
-  // reason as connect-src, so allow the network schemes rather than hosts. The
-  // frame itself stays sandboxed without `allow-same-origin`, so it runs in an
-  // opaque origin and cannot reach renderer state.
-  // `blob:` is upstream's: document viewers render from local Blob URLs.
+  // T3-CUSTOM(expbkt3): Plannotator reviews are served by the thread's environment,
+  // whose origin is unknown here, so allow the network schemes rather than hosts.
+  // The frame stays sandboxed without `allow-same-origin`, so it cannot reach
+  // renderer state. `blob:` is upstream's, for document viewers.
   const frameSources = ["'self'", "blob:", "http:", "https:", "https://challenges.cloudflare.com"];
 
   return [

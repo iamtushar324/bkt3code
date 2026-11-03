@@ -1,9 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files and the fake Claude CLI uses Node streams
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
-// T3-CUSTOM(expbkt3): fork credential fingerprints still hash synchronously with node:crypto.
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- fork fingerprints run in plain synchronous helpers; Effect Crypto is effectful.
-import * as NodeCryptoHash from "node:crypto"; // T3-CUSTOM(expbkt3): credential fingerprints must participate in query identity.
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
@@ -504,11 +501,11 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
   });
 });
 
+// T3-CUSTOM(expbkt3): actual credentials live only in the spawned environment. The
+// fingerprint is sha256("Bearer secret-claude-token") in hex.
+const credentialFingerprint = "d7453d535081696903909cc1e5e70f08f1dd329daf74bd4367b4ba07fbb53daf";
+
 describe("ClaudeAdapterV2 MCP query overrides", () => {
-  // T3-CUSTOM(expbkt3): actual credentials live only in the spawned environment.
-  const credentialFingerprint = NodeCryptoHash.createHash("sha256")
-    .update("Bearer secret-claude-token")
-    .digest("hex");
   const T3_MCP_SERVERS = {
     "t3-code": {
       type: "http",
@@ -628,9 +625,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     });
     assert.deepEqual(overrides, {
       allowedTools: ["Read", "mcp__t3-code__*"],
-      mcpCredentialFingerprint: NodeCryptoHash.createHash("sha256")
-        .update("Bearer secret-claude-token")
-        .digest("hex"), // T3-CUSTOM(expbkt3): query cache uses a fingerprint.
+      mcpCredentialFingerprint: credentialFingerprint, // T3-CUSTOM(expbkt3): query cache uses a fingerprint.
       mcpServers: {
         "t3-code": {
           type: "http",
@@ -3073,7 +3068,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
           fileSystem,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           queryRunner: {
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),

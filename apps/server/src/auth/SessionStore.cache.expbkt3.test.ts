@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -36,10 +36,7 @@ const withSessionStore = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(Layer.merge(layerSessionStore, TestClock.layer())));
 
 /** Same random bytes every call, so the next issued session id is known up front. */
-const fixedCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size).fill(7),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const fixedCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 it.layer(NodeServices.layer)("SessionStore session cache", (it) => {
   it.effect("answers verify from the cache until the cache TTL passes", () =>
@@ -121,9 +118,9 @@ it.layer(NodeServices.layer)("SessionStore session cache", (it) => {
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const secrets = yield* ServerSecretStore.ServerSecretStore;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       // The id the next `issue` will draw from the fixed random source.
-      const sessionId = AuthSessionId.make(yield* crypto.randomUUIDv4());
+      const sessionId = AuthSessionId.make(yield* crypto.uuidV4());
       const issuedAtMs = yield* Clock.currentTimeMillis;
       const payload = base64UrlEncode(
         JSON.stringify({
@@ -148,7 +145,9 @@ it.layer(NodeServices.layer)("SessionStore session cache", (it) => {
     }).pipe(
       Effect.provide(
         Layer.merge(
-          layerSessionStore.pipe(Layer.provideMerge(Layer.succeed(Crypto.Crypto, fixedCrypto))),
+          layerSessionStore.pipe(
+            Layer.provideMerge(Layer.succeed(SecureRandom.SecureRandom, fixedCrypto)),
+          ),
           TestClock.layer(),
         ),
       ),

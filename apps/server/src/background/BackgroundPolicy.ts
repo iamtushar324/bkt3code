@@ -17,6 +17,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+// T3-CUSTOM(expbkt3): the lease change feed user presence reads.
+import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
@@ -36,6 +40,8 @@ export class BackgroundPolicy extends Context.Service<
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
+    /** T3-CUSTOM(expbkt3): a snapshot after each lease change, for user presence. */
+    readonly streamChanges: Stream.Stream<BackgroundPolicySnapshot>;
   }
 >()("t3/background/BackgroundPolicy") {}
 
@@ -212,6 +218,18 @@ export const make = Effect.fn("background.policy.make")(function* () {
     return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN — lease changes publish one snapshot each, in order.
+  const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
+  const publishMutex = yield* Semaphore.make(1);
+  const publishAfter = <A>(update: Effect.Effect<A>) =>
+    publishMutex.withPermits(1)(
+      update.pipe(
+        Effect.andThen(snapshot),
+        Effect.flatMap((next) => PubSub.publish(changes, next)),
+      ),
+    );
+  // T3-CUSTOM(expbkt3): END
+
   const reportClientActivity: BackgroundPolicy["Service"]["reportClientActivity"] = Effect.fn(
     "BackgroundPolicy.reportClientActivity",
   )(function* (sessionId, rpcClientId, input) {
@@ -232,22 +250,28 @@ export const make = Effect.fn("background.policy.make")(function* () {
       updatedAt: now,
       expiresAt,
     };
-    yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
+    // T3-CUSTOM(expbkt3): publish the change for user presence.
+    yield* publishAfter(
+      Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now)),
+    );
   });
 
   const removeRpcClient: BackgroundPolicy["Service"]["removeRpcClient"] = (
     sessionId,
     rpcClientId,
   ) =>
-    Ref.update(leasesRef, (leases) => {
-      const next = new Map(leases);
-      for (const [key, lease] of next) {
-        if (lease.sessionId === sessionId && lease.rpcClientId === rpcClientId) {
-          next.delete(key);
+    // T3-CUSTOM(expbkt3): publish the change for user presence.
+    publishAfter(
+      Ref.update(leasesRef, (leases) => {
+        const next = new Map(leases);
+        for (const [key, lease] of next) {
+          if (lease.sessionId === sessionId && lease.rpcClientId === rpcClientId) {
+            next.delete(key);
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      }),
+    );
 
   const shouldRunScopeWork: BackgroundPolicy["Service"]["shouldRunScopeWork"] = Effect.fn(
     "BackgroundPolicy.shouldRunScopeWork",
@@ -271,15 +295,18 @@ export const make = Effect.fn("background.policy.make")(function* () {
       Effect.andThen(
         Effect.gen(function* () {
           const now = yield* DateTime.now;
-          yield* Ref.update(leasesRef, (leases) => {
-            const next = new Map(leases);
-            for (const [key, lease] of next) {
-              if (!isLeaseActive(lease, now)) {
-                next.delete(key);
+          // T3-CUSTOM(expbkt3): publish expiries for user presence.
+          yield* publishAfter(
+            Ref.update(leasesRef, (leases) => {
+              const next = new Map(leases);
+              for (const [key, lease] of next) {
+                if (!isLeaseActive(lease, now)) {
+                  next.delete(key);
+                }
               }
-            }
-            return next;
-          });
+              return next;
+            }),
+          );
         }),
       ),
     ),
@@ -291,6 +318,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     snapshot,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
+    streamChanges: Stream.fromPubSub(changes), // T3-CUSTOM(expbkt3): user presence feed.
   });
 });
 

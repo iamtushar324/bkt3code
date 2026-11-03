@@ -651,17 +651,10 @@ function foldLegacyProjectSettings(
   };
 }
 
-// T3-CUSTOM(expbkt3): BEGIN — fold the fork's deprecated host-wide thread
-// defaults into upstream's keys, which the web, the sidebar, the MCP tools and
-// the per-project overrides all resolve through (`newThreadDefaults.expbkt3`).
-// Only a key present in the file counts as set, because the decoder fills the
-// defaults in. The upstream key wins when both exist, except that a fork model
-// naming the same instance and model lends its options (effort, context size)
-// to an upstream entry that has none: the settings UI used to save the model
-// without options, so those options only ever lived on the fork key. The fork
-// key is reset to its default afterwards so the write strips it from the file,
-// which is what makes the fold idempotent: a later reset of
-// `defaultModelSelection` in the UI is not undone by the next load.
+// T3-CUSTOM(expbkt3): BEGIN — fold the fork's deprecated thread defaults into upstream's keys
+// (`newThreadDefaults.expbkt3`); only keys present in the file count. Upstream's key wins, but a
+// fork model on the same instance and model lends it options it lacks. The fork key is then
+// reset so the write strips it, which keeps the fold idempotent.
 const decodeSettingsJsonKeys = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -703,11 +696,9 @@ function foldLegacyThreadDefaults(settings: ServerSettings, rawJson: string): Se
   };
 }
 
-// The deprecated patch keys still arrive from older clients and from
-// `t3_update_server_settings`. They land on upstream's keys (a partial model
-// patch completes from the current default, like `textGenerationModelSelection`
-// does through deepMerge) and never re-enter the file; an upstream key in the
-// same patch wins.
+// Deprecated patch keys from older clients and `t3_update_server_settings` land on upstream's
+// keys (a partial model patch completes from the current default) and never re-enter the
+// file; an upstream key in the same patch wins.
 function translateDeprecatedThreadDefaultsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,

@@ -409,14 +409,10 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // T3-CUSTOM(expbkt3): BEGIN - the OS keyring can still be locked when the app
-  // launches (typically Linux), and safe storage reports unavailable until it
-  // opens. Answering "no catalog" then hides every saved connection — and the
-  // cached threads that render while a host is down — for the whole run, because
-  // the renderer reads this catalog once at startup. Wait a bounded moment for
-  // the keyring rather than reporting an empty catalog we know is wrong. Nothing
-  // waits when there is no catalog on disk: the check runs only once a document
-  // exists to decrypt.
+  // T3-CUSTOM(expbkt3): BEGIN - the OS keyring can still be locked at launch, and
+  // the renderer reads this catalog once, so "no catalog" would hide every saved
+  // connection for the whole run. Wait a bounded moment for the keyring; this
+  // only runs once a catalog document exists on disk.
   const CATALOG_ENCRYPTION_WAIT_ATTEMPTS = 12;
   const CATALOG_ENCRYPTION_WAIT_INTERVAL = "500 millis";
 

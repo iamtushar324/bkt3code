@@ -280,7 +280,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unread — finished since you last opened them</TooltipPopup>
+            <TooltipPopup side="bottom">Unread: finished since you last opened them</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -300,7 +300,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Running — an agent is working</TooltipPopup>
+            <TooltipPopup side="bottom">Running: an agent is working</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -325,7 +325,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unsettled — idle and waiting on you</TooltipPopup>
+            <TooltipPopup side="bottom">Unsettled: idle and waiting on you</TooltipPopup>
           </Tooltip>
         </div>
       ) : null}

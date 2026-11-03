@@ -81,12 +81,8 @@ export const fetchEnvironmentSessionState = Effect.fn(
 // T3-CUSTOM(expbkt3): BEGIN
 /**
  * The org user directory for one environment, via `/api/orchestration/users`.
- *
- * These are `UserId`s — org-level people who can own or be tagged on a thread —
- * and deliberately not the `EnvironmentUserId`s that `users.list` returns; those
- * are per-environment accounts and a different id space entirely. Lives here
- * because this module already carries the prepared-connection and auth-header
- * plumbing an environment HTTP call needs.
+ * These are org-level `UserId`s (thread owners and members), not the
+ * per-environment `EnvironmentUserId`s that `users.list` returns.
  */
 export const fetchOrchestrationUsers = Effect.fn("clientRuntime.state.fetchOrchestrationUsers")(
   function* (input: {
@@ -114,12 +110,9 @@ export const fetchOrchestrationUsers = Effect.fn("clientRuntime.state.fetchOrche
 
 // T3-CUSTOM(expbkt3): BEGIN
 /**
- * The operator id an environment session reports, or null.
- *
- * Null for an unauthenticated gate state, and for a single-user or local
- * environment whose subject is not an operator. Lives here rather than in a
- * client so web and mobile answer "who am I" identically; web's
- * fork/environmentOperatorIdentity re-exports it.
+ * The operator id an environment session reports, or null when unauthenticated
+ * or when the subject is not an operator. Shared so web and mobile answer
+ * "who am I" identically.
  */
 export function operatorUserIdFromSessionState(
   sessionState: AuthSessionState | null,

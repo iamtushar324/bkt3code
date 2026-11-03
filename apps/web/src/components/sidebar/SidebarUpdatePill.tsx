@@ -229,6 +229,7 @@ function SidebarUpdateControl() {
   // surfaces the update here rather than installing. Installing quits the app,
   // which would discard an in-flight agent turn or terminal session, so the
   // restart stays behind the labelled button below (which confirms first).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the desktop bridge's update-reveal event while mounted.
   useEffect(() => {
     const bridge = window.desktopBridge;
     if (!bridge?.onUpdateReveal) return;

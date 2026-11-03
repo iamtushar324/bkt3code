@@ -76,20 +76,22 @@ function PulsingGlyph(props: { readonly glyph: Glyph }) {
   useEffect(() => {
     if (!props.glyph.pulse) {
       cancelAnimation(progress);
-      progress.value = 1;
+      progress.set(1);
       return;
     }
-    progress.value = withRepeat(
-      withSequence(
-        withTiming(0.35, { duration: 650, easing: Easing.inOut(Easing.quad) }),
-        withTiming(1, { duration: 650, easing: Easing.inOut(Easing.quad) }),
+    progress.set(
+      withRepeat(
+        withSequence(
+          withTiming(0.35, { duration: 650, easing: Easing.inOut(Easing.quad) }),
+          withTiming(1, { duration: 650, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        false,
       ),
-      -1,
-      false,
     );
     return () => cancelAnimation(progress);
   }, [progress, props.glyph.pulse]);
-  const style = useAnimatedStyle(() => ({ opacity: progress.value }));
+  const style = useAnimatedStyle(() => ({ opacity: progress.get() }));
   return (
     <Animated.View style={style}>
       <SymbolView

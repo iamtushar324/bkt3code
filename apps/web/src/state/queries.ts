@@ -103,11 +103,8 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
 // T3-CUSTOM(expbkt3): BEGIN — offline search over this device's thread cache.
 /**
  * Matches from this device's cache, for environments whose host cannot answer a
- * search right now.
- *
- * Read from IndexedDB rather than from the atoms, because the point is to find
- * work after a restart — when nothing has been opened yet this session. Bounded
- * by what the cache holds, and stated as such at the call site.
+ * search right now. Reads IndexedDB rather than the atoms so it finds work after
+ * a restart, and is bounded by what the cache holds.
  */
 function useCachedThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,

@@ -458,12 +458,9 @@ describe("primary topology cache", () => {
 });
 
 // T3-CUSTOM(expbkt3): BEGIN — identity-bearing pairing.
-//
-// `TeamIdentityBridge` registers Clerk's `getToken`; this capability is what
-// carries the result into `preparePairingRegistration`. The failure mode being
-// guarded is silent: a capability that always reports "no identity" still pairs
-// fine against a single-user environment and only fails against a team-mode one,
-// where it reads like a bad pairing code.
+// This capability carries Clerk's `getToken` into `preparePairingRegistration`.
+// A capability that always reports "no identity" still pairs with a single-user
+// environment and only fails in team mode, where it looks like a bad code.
 describe("team environment identity capability", () => {
   it.effect("presents the operator's Clerk token while signed in", () =>
     Effect.gen(function* () {

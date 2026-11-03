@@ -343,22 +343,24 @@ export const layer = HttpApiBuilder.group(
       }
       const identity = yield* clerkIdentity.verify(token).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-not-configured"
                 ? yield* failEnvironmentInternal("identity_management_failed", error)
                 : yield* failEnvironmentAuthInvalid("invalid_identity");
-            }),
+            },
+          ),
         }),
       );
       yield* users.assertAllowed(identity.userId).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-blocked"
                 ? yield* failEnvironmentAuthInvalid("blocked_identity")
                 : yield* failEnvironmentInternal("identity_management_failed", error);
-            }),
+            },
+          ),
         }),
       );
       return identity;
@@ -389,12 +391,13 @@ export const layer = HttpApiBuilder.group(
         Effect.tap(({ identity }) =>
           users.assertAllowed(identity.userId).pipe(
             Effect.catchTags({
-              EnvironmentUserManagementError: (error) =>
-                Effect.gen(function* () {
+              EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+                function* (error) {
                   return error.reason === "identity-blocked"
                     ? yield* failEnvironmentAuthInvalid("blocked_identity")
                     : yield* failEnvironmentInternal("identity_management_failed", error);
-                }),
+                },
+              ),
             }),
           ),
         ),
@@ -422,12 +425,13 @@ export const layer = HttpApiBuilder.group(
       // credential minted while they were allowed.
       yield* users.assertAllowed(EnvironmentUserId.make(userId)).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-blocked"
                 ? yield* failEnvironmentAuthInvalid("blocked_identity")
                 : yield* failEnvironmentInternal("identity_management_failed", error);
-            }),
+            },
+          ),
         }),
       );
       return {

@@ -2590,24 +2590,27 @@ export const layerWsRpc = (
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
             // T3-CUSTOM(expbkt3): BEGIN — search must not reveal hidden conversations.
-            Effect.flatMap((result) =>
+            (search) =>
               actorUserId === null
-                ? Effect.succeed(result)
-                : Effect.forEach(result.matches, (match) =>
-                    accessControl.canAccessThread(actorUserId, match.threadId).pipe(
-                      Effect.orElseSucceed(() => false),
-                      Effect.map((allowed) => (allowed ? match : null)),
+                ? search
+                : search.pipe(
+                    Effect.flatMap((result) =>
+                      Effect.forEach(result.matches, (match) =>
+                        accessControl.canAccessThread(actorUserId, match.threadId).pipe(
+                          Effect.orElseSucceed(() => false),
+                          Effect.map((allowed) => (allowed ? match : null)),
+                        ),
+                      ).pipe(
+                        Effect.map((matches) => ({
+                          ...result,
+                          matches: matches.filter((match) => match !== null),
+                          ...(result.threads === undefined
+                            ? {}
+                            : { threads: visibleShellThreads(result.threads) }),
+                        })),
+                      ),
                     ),
-                  ).pipe(
-                    Effect.map((matches) => ({
-                      ...result,
-                      matches: matches.filter((match) => match !== null),
-                      ...(result.threads === undefined
-                        ? {}
-                        : { threads: visibleShellThreads(result.threads) }),
-                    })),
                   ),
-            ),
             // T3-CUSTOM(expbkt3): END
             Effect.mapError(
               (cause) =>

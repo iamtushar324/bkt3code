@@ -352,7 +352,7 @@ function ExperimentsSettingsSection() {
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        The BK sidebar groups threads by lifecycle and shows the full row lane — worktree codename,
+        The BK sidebar groups threads by lifecycle and shows the full row lane: worktree codename,
         Linear tags, priority and owner. Experimental; turn it off to return to the stock list.
       </Text>
     </View>

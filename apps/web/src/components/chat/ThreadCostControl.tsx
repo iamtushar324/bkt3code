@@ -68,7 +68,7 @@ export function ThreadCostControl({
   const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const supported = config?.environment.capabilities.threadUsage === true;
-  const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
+  const timeZone = useMemo(() => new Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const hasSession = shell?.activeProviderThreadId != null;
   const { data, isPending, refresh } = useEnvironmentQuery<ThreadUsage, unknown>(
     supported && hasSession
