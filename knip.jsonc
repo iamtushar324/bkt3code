@@ -58,6 +58,8 @@
       "entry": [
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
+        // T3-CUSTOM(expbkt3): the git process host entry.
+        "src/process-host.expbkt3.ts!",
         // T3-CUSTOM(expbkt3): TEC-1631 product analytics
         "scripts/analytics-backfill.ts",
         "scripts/cli.ts",
