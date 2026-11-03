@@ -8,6 +8,9 @@
  * dropped, and an object without its required enum is dropped whole, so the
  * picker never shows a line built from bad data.
  */
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
 import type {
   ClaudeAccountCredits,
   ClaudeAccountCreditsState,
@@ -67,8 +70,8 @@ function text(value: unknown): string | undefined {
 
 function iso(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
-  const at = Date.parse(value);
-  return Number.isFinite(at) ? new Date(at).toISOString() : undefined;
+  const parsed = DateTime.make(value);
+  return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : undefined;
 }
 
 /** Adds `key: value` only when the value is defined (exactOptionalPropertyTypes). */
