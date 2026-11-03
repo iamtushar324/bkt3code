@@ -35,6 +35,8 @@ import {
 } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
+// T3-CUSTOM(expbkt3): a fake spawner needs the git process host turned off.
+import * as ProcessHostSpawner from "../processHost/processHostSpawner.expbkt3.ts";
 import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
@@ -1647,9 +1649,11 @@ describe("rejected git refs", () => {
     const layer = GitVcsDriver.layer.pipe(
       Layer.provide(layerServerConfig),
       Layer.provideMerge(
-        Layer.merge(
+        Layer.mergeAll(
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          // T3-CUSTOM(expbkt3): otherwise the process host runs a real git instead of this fake.
+          Layer.succeed(ProcessHostSpawner.ProcessHostEnabled, false),
         ),
       ),
     );

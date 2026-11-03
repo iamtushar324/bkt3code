@@ -61,6 +61,8 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+// T3-CUSTOM(expbkt3): spawn watchers turn off the git process host.
+import * as ProcessHostSpawner from "../processHost/processHostSpawner.expbkt3.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -653,7 +655,11 @@ function makeManager(input?: {
               );
           });
         }),
-      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
+      ).pipe(
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        // T3-CUSTOM(expbkt3): the process host would start git without this watching spawner.
+        Layer.merge(Layer.succeed(ProcessHostSpawner.ProcessHostEnabled, false)),
+      )
     : Layer.empty;
   const gitVcsDriver = input?.gitConfigReads
     ? Layer.effect(
