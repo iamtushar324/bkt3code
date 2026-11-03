@@ -4,6 +4,8 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+// T3-CUSTOM(expbkt3): access-control mock returns no actor.
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
@@ -58,7 +60,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
   // T3-CUSTOM(expbkt3): fork thread-access gate on upstream toolkits.
-  Layer.mock(OrchestrationAccessControl)({}),
+  Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
   Layer.mock(PeerForwarding)({}),
   Layer.mock(PeerLinkRequests)({}),
   Layer.mock(PeerLinks)({}),
