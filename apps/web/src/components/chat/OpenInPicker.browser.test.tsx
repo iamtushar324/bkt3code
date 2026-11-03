@@ -57,6 +57,15 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
     },
   };
 });
+// T3-CUSTOM(expbkt3): BEGIN — the shortcut dispatcher reads the server keybindings
+// through the registry, which boots the connection runtime. The fork keeps that
+// runtime alive, so its discovery poll never stops and vi.runAllTimers never drains.
+vi.mock(import("../../state/server"), async (importOriginal) => {
+  const { Atom } = await import("effect/reactivity");
+  const { DEFAULT_RESOLVED_KEYBINDINGS: keybindings } = await import("@t3tools/shared/keybindings");
+  return { ...(await importOriginal()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
+});
+// T3-CUSTOM(expbkt3): END
 vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,

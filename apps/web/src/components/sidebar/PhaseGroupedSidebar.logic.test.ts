@@ -627,6 +627,8 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     providerInstanceId: ProviderInstanceId.make("codex"),
     lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
+    linkOrigin: null,
+    delegatedFrom: null,
     pendingBackgroundTasks: [],
     providerInstanceHistory: [],
     itemCount: 0,

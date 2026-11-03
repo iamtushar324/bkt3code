@@ -108,6 +108,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
           Layer.mock(GitVcsDriver.GitVcsDriver)({
             resolvePrimaryRemoteName: () => Effect.succeed("origin"),
             resolveDefaultBranchName: () => Effect.succeed("main"),
+            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
           }),
           ServerSettings.layerTest(),
         ),

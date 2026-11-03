@@ -21,6 +21,8 @@ vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
 
 import { render } from "../../../test/render";
 import type { EnvironmentPresentation } from "~/state/environments";
+// T3-CUSTOM(expbkt3): the fork's presentation carries a resolved appearance.
+import { resolveEnvironmentAppearance } from "~/state/environmentAppearance";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -59,6 +61,9 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
   const environment: EnvironmentPresentation = {
     environmentId: ENVIRONMENT_ID,
     label: "Desk",
+    // T3-CUSTOM(expbkt3): fork presentation fields.
+    connectionLabel: "Desk",
+    appearance: resolveEnvironmentAppearance({ environmentId: ENVIRONMENT_ID, label: "Desk" }),
     displayUrl: null,
     relayManaged: false,
     entry,

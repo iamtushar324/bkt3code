@@ -1123,38 +1123,43 @@ export const layer = Layer.effectContext(
         },
       ),
       // T3-CUSTOM(expbkt3): BEGIN durable client outbox persistence.
-      loadOutbox: (environmentId, identityKey) =>
-        readDatabaseValuesInRange(
-          database,
-          OUTBOX_STORE_NAME,
-          IDBKeyRange.bound(
-            outboxPrefix(environmentId, identityKey),
-            `${outboxPrefix(environmentId, identityKey)}\uffff`,
-          ),
-        ).pipe(
-          Effect.flatMap((values) =>
-            Effect.try({
-              try: () => values.map(decodeQueuedThreadMessage),
-              catch: (cause) => persistenceError("load-outbox", cause),
-            }),
-          ),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-outbox", cause),
-          ),
-        ),
-      saveOutbox: (message) =>
-        writeDatabaseValue(
+      loadOutbox: Effect.fn("Persistence.EnvironmentCacheStore.loadOutbox")(
+        function (environmentId, identityKey) {
+          return readDatabaseValuesInRange(
+            database,
+            OUTBOX_STORE_NAME,
+            IDBKeyRange.bound(
+              outboxPrefix(environmentId, identityKey),
+              `${outboxPrefix(environmentId, identityKey)}\uffff`,
+            ),
+          ).pipe(
+            Effect.flatMap((values) =>
+              Effect.try({
+                try: () => values.map(decodeQueuedThreadMessage),
+                catch: (cause) => persistenceError("load-outbox", cause),
+              }),
+            ),
+            Effect.mapError((cause) =>
+              cause._tag === "ConnectionPersistenceError"
+                ? cause
+                : persistenceError("load-outbox", cause),
+            ),
+          );
+        },
+      ),
+      saveOutbox: Effect.fn("Persistence.EnvironmentCacheStore.saveOutbox")(function (message) {
+        return writeDatabaseValue(
           database,
           OUTBOX_STORE_NAME,
           outboxKey(message),
           encodeQueuedThreadMessage(message),
-        ).pipe(Effect.mapError((cause) => persistenceError("save-outbox", cause))),
-      removeOutbox: (message) =>
-        removeDatabaseValue(database, OUTBOX_STORE_NAME, outboxKey(message)).pipe(
+        ).pipe(Effect.mapError((cause) => persistenceError("save-outbox", cause)));
+      }),
+      removeOutbox: Effect.fn("Persistence.EnvironmentCacheStore.removeOutbox")(function (message) {
+        return removeDatabaseValue(database, OUTBOX_STORE_NAME, outboxKey(message)).pipe(
           Effect.mapError((cause) => persistenceError("remove-outbox", cause)),
-        ),
+        );
+      }),
       // T3-CUSTOM(expbkt3): END
       removeThread: Effect.fn("Persistence.EnvironmentCacheStore.removeThread")(
         function (environmentId, threadId) {

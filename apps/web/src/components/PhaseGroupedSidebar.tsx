@@ -930,6 +930,7 @@ function PhaseSnoozePopoverButton({
   onOpenChange,
   onSnooze,
   timestampFormat,
+  environmentId,
 }: {
   readonly open: boolean;
   readonly label: string;
@@ -937,13 +938,14 @@ function PhaseSnoozePopoverButton({
   readonly onOpenChange: (open: boolean) => void;
   readonly onSnooze: (preset: SnoozePreset) => void;
   readonly timestampFormat: TimestampFormat;
+  readonly environmentId: EnvironmentId;
 }) {
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
     // oxlint-disable-next-line react/purity -- presets sample the clock when the popover opens; the memo recomputes only then.
-    () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
-    [open, timestampFormat],
+    () => (open ? resolveSnoozePresets(new Date(), timestampFormat, environmentId) : []),
+    [open, timestampFormat, environmentId],
   );
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -1485,7 +1487,11 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     if (!api) return;
     // T3-CUSTOM(expbkt3): BEGIN — lifecycle parking items, capability-gated
     // so an old server shows none of them rather than failing on click.
-    const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+    const snoozePresets = resolveSnoozePresets(
+      new Date(),
+      timestampFormat,
+      threadRef.environmentId,
+    );
     const settlementItems = row.settlementSupported
       ? [
           section === "settled"
@@ -2550,6 +2556,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                   onOpenChange={setSnoozeMenuOpen}
                   onSnooze={(preset) => onSnooze(row, preset)}
                   timestampFormat={timestampFormat}
+                  environmentId={row.thread.environmentId}
                 />
               ) : null}
               {row.settlementSupported ? (
