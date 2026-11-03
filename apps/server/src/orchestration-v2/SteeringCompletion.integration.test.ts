@@ -488,6 +488,40 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  // T3-CUSTOM(expbkt3): BEGIN the fork opens one provider session per thread, so a side chat
+  // has its own session. Two sessions reading one queue would steal each other's events, so
+  // route each event to the session that started its provider thread.
+  const firstSessionEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  const sessionEventsByThread = new Map<
+    string,
+    Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>
+  >();
+  const sessionEventsByProviderThread = new Map<
+    string,
+    Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>
+  >();
+  const providerThreadIdOf = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+    event.type === "provider_turn.updated"
+      ? event.providerTurn.providerThreadId
+      : event.type === "turn.terminal"
+        ? event.providerThreadId
+        : event.type === "provider_thread.updated"
+          ? event.providerThread.id
+          : undefined;
+  yield* Queue.take(events).pipe(
+    Effect.flatMap((event) => {
+      const providerThreadId = providerThreadIdOf(event);
+      return Queue.offer(
+        (providerThreadId === undefined
+          ? undefined
+          : sessionEventsByProviderThread.get(providerThreadId)) ?? firstSessionEvents,
+        event,
+      );
+    }),
+    Effect.forever,
+    Effect.forkScoped,
+  );
+  // T3-CUSTOM(expbkt3): END
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
   const interrupted: ProviderTurnId[] = [];
@@ -508,6 +542,19 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     openSession: (input) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
+        // T3-CUSTOM(expbkt3): BEGIN each session reads its own routed queue.
+        // A reopened session for the same thread keeps its queue, as with one shared queue.
+        const sessionEvents =
+          sessionEventsByThread.get(input.threadId) ??
+          (sessionEventsByThread.size === 0
+            ? firstSessionEvents
+            : yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>());
+        sessionEventsByThread.set(input.threadId, sessionEvents);
+        const ownProviderThread = (providerThreadId: string) =>
+          Effect.sync(() => {
+            sessionEventsByProviderThread.set(providerThreadId, sessionEvents);
+          });
+        // T3-CUSTOM(expbkt3): END
         const turnUpdated = (
           turn: ProviderAdapter.ProviderAdapterV2TurnInput,
           status: "running" | "interrupted",
@@ -534,6 +581,8 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
         const startTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             started.push(turn);
+            // T3-CUSTOM(expbkt3): later events for this provider thread reach this session.
+            yield* ownProviderThread(turn.providerThread.id);
             yield* turnUpdated(turn, "running");
           });
         return {
@@ -552,7 +601,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
             updatedAt: now,
             lastError: null,
           },
-          events: Stream.fromQueue(events),
+          events: Stream.fromQueue(sessionEvents), // T3-CUSTOM(expbkt3): routed per session.
           ensureThread: ({ threadId }) =>
             Effect.succeed({
               id: ProviderThreadId.make(`provider-thread:${threadId}`),

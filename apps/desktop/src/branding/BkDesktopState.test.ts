@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -67,6 +68,8 @@ const makeBackendLayer = (
     Layer.provide(
       Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
         installIntoProcess: Effect.succeed(true),
+        awaitDiscovery: Effect.succeed(true),
+        updates: Stream.empty,
       }),
     ),
     Layer.provideMerge(serverExposureLayer),

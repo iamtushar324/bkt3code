@@ -105,7 +105,9 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
           Layer.mock(SecretRequests.SecretRequests)({}),
           // Upstream's MCP service now also reads these; the schedule tools use neither.
           threadLaunch,
-          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+          }),
           ServerSettings.layerTest(),
         ),
       ),
