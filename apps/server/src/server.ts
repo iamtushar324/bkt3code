@@ -138,6 +138,8 @@ import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
+// T3-CUSTOM(expbkt3): git starts from the process host.
+import * as ProcessHostSpawner from "./processHost/processHostSpawner.expbkt3.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -457,7 +459,13 @@ const layerRepositoryIdentityResolver = Layer.effect(
       }),
     });
   }),
-).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
+  // T3-CUSTOM(expbkt3) BEGIN: the identity resolver runs git about once a minute per uncached
+  // project, so its runner starts git from the process host.
+).pipe(
+  Layer.provide(layerSourceControlProviderRegistry),
+  Layer.provide(ProcessHostSpawner.layerProcessRunner()),
+);
+// T3-CUSTOM(expbkt3) END
 
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),

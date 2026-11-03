@@ -44,6 +44,8 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+// T3-CUSTOM(expbkt3): git starts from the process host.
+import * as ProcessHostSpawner from "../processHost/processHostSpawner.expbkt3.ts";
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -1557,4 +1559,9 @@ export const make = Effect.gen(function* () {
 });
 
 export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
-export const layer = Layer.effect(GitVcsDriver, make);
+// T3-CUSTOM(expbkt3) BEGIN: runGitCommand spawns git itself, outside VcsProcess, and is the
+// busiest git path, so it also starts git from the process host.
+export const layer = Layer.effect(GitVcsDriver, make).pipe(
+  Layer.provide(ProcessHostSpawner.layerSpawner()),
+);
+// T3-CUSTOM(expbkt3) END

@@ -24,6 +24,8 @@ import type { SourceControlProcessInput } from "@t3tools/source-control-core/ser
 
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
+// T3-CUSTOM(expbkt3): git and gh start from the process host.
+import * as ProcessHostSpawner from "../processHost/processHostSpawner.expbkt3.ts";
 // T3-CUSTOM(expbkt3): source-control identity — merge per-call execution environment.
 import {
   CurrentSourceControlExecutionEnvironment,
@@ -396,4 +398,9 @@ export const make = Effect.gen(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+// T3-CUSTOM(expbkt3) BEGIN: a fork() of the multi-GB server blocks its event loop, so git and gh
+// start from a small process host. The runner is private because ProcessRunner.layer is shared.
+export const layer = Layer.effect(VcsProcess, make).pipe(
+  Layer.provide(ProcessHostSpawner.layerProcessRunner()),
+);
+// T3-CUSTOM(expbkt3) END
