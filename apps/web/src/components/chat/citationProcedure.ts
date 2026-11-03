@@ -131,6 +131,7 @@ export function citedThreadSnapshot(input: {
   // Older pages merge into the visible turn items, not the message list.
   const item = input.thread.projection.visibleTurnItems.find(
     (row) =>
+      // T3-CUSTOM(expbkt3): plan turn items are citable.
       ((row.item.type === "assistant_message" || row.item.type === "user_message") &&
         row.item.messageId === input.messageId) ||
       // T3-CUSTOM(expbkt3): a citation names a plan by its id.

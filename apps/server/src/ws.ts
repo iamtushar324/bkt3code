@@ -1272,6 +1272,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
         }),
       );
+    // T3-CUSTOM(expbkt3): shared per-user shell feed replaces the upstream concat.
     // Initial unmarked (+ optional same-load marked) always drains first.
     // Enrichment merges only with the post-prefix tail so a ready marked
     // refresh cannot interleave before the authoritative initial frame.

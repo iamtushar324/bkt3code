@@ -18,6 +18,7 @@ export interface VcsStatusRevalidationTarget {
  */
 export function createVcsStatusRevalidationAtomFamily<R>(input: {
   readonly refreshStatus: AtomCommand<
+    // T3-CUSTOM(expbkt3): refresh input takes an optional thread id.
     {
       readonly environmentId: EnvironmentId;
       // T3-CUSTOM(expbkt3): optional thread id so the refresh honors its source-control profile.
@@ -76,6 +77,7 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
   });
   const idle = Atom.make<void>(undefined).pipe(Atom.withLabel("vcs-status-revalidation:idle"));
   return (target: VcsStatusRevalidationTarget | null): Atom.Atom<void> =>
+    // T3-CUSTOM(expbkt3): family key includes the thread id.
     target === null
       ? idle
       : family({

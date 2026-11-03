@@ -1183,6 +1183,7 @@ export default function GitActionsControl({
   useAtomMount(
     vcsStatusRevalidation(
       activeEnvironmentId !== null && gitCwd !== null
+        // T3-CUSTOM(expbkt3): revalidation target carries the thread.
         ? {
             environmentId: activeEnvironmentId,
             cwd: gitCwd,
@@ -1641,6 +1642,7 @@ export default function GitActionsControl({
               <Menu
                 onOpenChange={(open) => {
                   if (open) {
+                    // T3-CUSTOM(expbkt3): status refresh carries the thread for its source-control profile.
                     requestVcsStatusRefresh(
                       refreshVcsStatus,
                       activeEnvironmentId,

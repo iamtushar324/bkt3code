@@ -6323,6 +6323,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
+      // T3-CUSTOM(expbkt3): a restart continuation keeps open plans.
       yield* completeSourcePlan(now, { supersedeOpenPlans: false });
       yield* emitEvent({
         type: "run-attempt.created",
@@ -9388,6 +9389,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const replies: string[] = [];
       if (
         runtimeRequest.responseCapability.type === "message" &&
+        // T3-CUSTOM(expbkt3): approval requests skip the message-answer reply.
         resolvedNodeStatus !== "cancelled" &&
         // T3-CUSTOM(expbkt3): an approval its provider outlived closes without a reply.
         runtimeRequest.kind === "user_input"

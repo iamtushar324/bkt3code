@@ -64,6 +64,7 @@ import {
 } from "../../state/use-model-option-memory";
 import { useBranches, usePaginatedBranches } from "../../state/queries";
 import { vcsEnvironment } from "../../state/vcs";
+// T3-CUSTOM(expbkt3): fork import of pending source-control profile helpers.
 import {
   // T3-CUSTOM(expbkt3): pending tasks retain source-control profile choices.
   type QueuedThreadCreation,

@@ -1509,6 +1509,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     </>
   );
 
+  // T3-CUSTOM(expbkt3): access view adds member devices and the appearance dialog.
   if (showsAccess)
     return (
       <SettingsPageContainer>

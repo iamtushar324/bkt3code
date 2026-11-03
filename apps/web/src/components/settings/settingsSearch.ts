@@ -168,6 +168,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: null,
+    // T3-CUSTOM(expbkt3): nav group includes the BK Add-ons section.
     paths: [
       "/settings/maintenance",
       "/settings/experiments", // T3-CUSTOM(expbkt3): fork-only BK Add-ons section.
@@ -1183,6 +1184,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "linked-environments",
     searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
   },
+  // T3-CUSTOM(expbkt3): fork-only Users search entry.
   {
     // T3-CUSTOM(expbkt3): fork-only Users section.
     id: "users",

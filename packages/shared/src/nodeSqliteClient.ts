@@ -1291,6 +1291,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
+      // T3-CUSTOM(expbkt3): reader count is configurable.
       ? yield* Effect.forEach(
           // T3-CUSTOM(expbkt3): the pool size is configurable (`readerWorkers`).
           Array.from({

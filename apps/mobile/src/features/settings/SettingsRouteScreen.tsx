@@ -154,6 +154,7 @@ function ConfiguredSettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
+  // T3-CUSTOM(expbkt3): the local list also carries the Users row.
   return (
     <SettingsList
       connections={[

@@ -115,6 +115,7 @@ const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
       reportAtomCommandResult(result, { label: "cloud account cleanup" });
     }
   },
+  // T3-CUSTOM(expbkt3): activation also reveals children gated on relay auth.
   activate: ({ source, accountId }) => {
     activateManagedRelayAuthentication(accountId, clerkTokenReader(source));
     notifyManagedRelayReadiness(); // T3-CUSTOM(expbkt3): reveal children once managed relay auth is active.
