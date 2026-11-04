@@ -78,7 +78,7 @@ export const ForkThreadUpdateFields = {
  * `ThreadCustomGroup` schema (trimmed, non-blank, at most
  * THREAD_CUSTOM_GROUP_MAX_LENGTH characters).
  */
-const forkCustomGroupDescription = `BK sidebar custom group label for the new session; 1–${THREAD_CUSTOM_GROUP_MAX_LENGTH} chars. Files the session under that group in the sidebar's Custom view. Labels match case-insensitively, so reuse an existing label (t3_list_sessions shows them) to join its group. Omit to leave the session ungrouped.`;
+const forkCustomGroupDescription = `BK sidebar custom group label for the new session; 1–${THREAD_CUSTOM_GROUP_MAX_LENGTH} chars. Files the session under that group in the sidebar's Custom view. Labels match case-insensitively, so reuse an existing label (t3_list_sessions shows them) to join its group. Omit to file it under its parent session's group, or, for a top-level session, under the host's default group for new sessions (ungrouped when none is set).`;
 
 /** `customGroup` for a tool that creates sessions now (t3_thread_launch, create_threads). */
 export const ForkCustomGroupCreateField = {

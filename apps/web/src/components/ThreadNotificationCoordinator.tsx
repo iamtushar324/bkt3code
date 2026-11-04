@@ -4,6 +4,11 @@ import {
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+// T3-CUSTOM(expbkt3): per-group notification mode.
+import {
+  buildPhaseSidebarCustomGroupRegistry,
+  phaseSidebarCustomGroupAllowsNotification,
+} from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -20,6 +25,9 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
+// T3-CUSTOM(expbkt3): per-group notification mode.
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { environmentServerConfigsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
@@ -79,11 +87,56 @@ export function startThreadNotifications(
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
   const openToasts = new Map<string, Array<ToastId>>();
+  // T3-CUSTOM(expbkt3): the thread behind each open toast, for the group mute below.
+  const toastThreads = new Map<string, { environmentId: EnvironmentId; threadId: ThreadId }>();
   const forgetToast = (key: string, toastId: ToastId) => {
     const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
-    if (remaining.length === 0) openToasts.delete(key);
-    else openToasts.set(key, remaining);
+    if (remaining.length === 0) {
+      openToasts.delete(key);
+      toastThreads.delete(key);
+    } else openToasts.set(key, remaining);
   };
+  // T3-CUSTOM(expbkt3): BEGIN — a custom group's notification mode (all, parents, off).
+  // The mode lives in the shared group registry, merged across hosts the way the
+  // sidebar shows it, so the bell a user sees is the rule that applies.
+  const currentGroupRegistry = () =>
+    buildPhaseSidebarCustomGroupRegistry(
+      registry.get(environmentServerConfigsAtom),
+      registry.get(primaryEnvironmentIdAtom),
+    );
+  // A task delegated from another host is a child even where its parent is not listed.
+  const groupAllows = (
+    groups: ReturnType<typeof currentGroupRegistry>,
+    thread: Pick<EnvironmentThreadShell, "customGroup" | "parentThreadId" | "delegatedFrom">,
+  ) =>
+    phaseSidebarCustomGroupAllowsNotification(
+      groups,
+      thread.customGroup,
+      thread.parentThreadId !== null || thread.delegatedFrom !== null,
+    );
+  // Muting a group also closes what its sessions already have on screen.
+  const closeMutedPending = () => {
+    if (openToasts.size === 0 && pending.size === 0) return;
+    const groups = currentGroupRegistry();
+    const muted = (ref: { environmentId: EnvironmentId; threadId: ThreadId }) => {
+      const state = watched.get(ref.environmentId)?.previous.get(ref.threadId);
+      return state !== undefined && !groupAllows(groups, state.thread);
+    };
+    for (const [key, ref] of toastThreads) {
+      if (!muted(ref)) continue;
+      for (const toastId of openToasts.get(key) ?? []) toastManager.close(toastId);
+      openToasts.delete(key);
+      toastThreads.delete(key);
+    }
+    const count = pending.size;
+    for (const [tag, entry] of pending) {
+      if (!muted(entry)) continue;
+      entry.notification.close();
+      pending.delete(tag);
+    }
+    if (count !== pending.size) setNotificationBadge(pending.size);
+  };
+  // T3-CUSTOM(expbkt3): END
   // A notification shown before the tag filter turned on must not stay on screen. While hiding,
   // one whose thread left the live list (archived) cannot be judged, so it closes too.
   const closeHiddenPending = () => {
@@ -96,6 +149,7 @@ export function startThreadNotifications(
       if (!shouldClose(key)) continue;
       for (const toastId of toastIds) toastManager.close(toastId);
       openToasts.delete(key);
+      toastThreads.delete(key); // T3-CUSTOM(expbkt3)
     }
     const count = pending.size;
     for (const [tag, entry] of pending) {
@@ -123,6 +177,8 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
+    // T3-CUSTOM(expbkt3): a group set to "off", or to "parents" for a child session, stays quiet.
+    if (!groupAllows(currentGroupRegistry(), thread)) return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
@@ -184,6 +240,7 @@ export function startThreadNotifications(
         },
       });
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
+      toastThreads.set(toastKey, { environmentId, threadId: thread.id }); // T3-CUSTOM(expbkt3)
       return;
     }
     if (
@@ -276,6 +333,17 @@ export function startThreadNotifications(
     }
     entry.reconnecting = false;
     entry.previous = next;
+    // T3-CUSTOM(expbkt3): a session moved into a quieted group drops what it already shows.
+    if (
+      changed.some(
+        ([prior, state]) =>
+          prior !== undefined &&
+          (prior.thread.customGroup !== state.thread.customGroup ||
+            prior.thread.parentThreadId !== state.thread.parentThreadId),
+      )
+    ) {
+      closeMutedPending();
+    }
     entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
@@ -405,6 +473,8 @@ export function startThreadNotifications(
     registry.subscribe(environmentThreadShells.hiddenThreadKeysAtom, closeHiddenPending),
     registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, closeHiddenPending),
     registry.subscribe(environmentThreadShells.threadRefsAtom, closeHiddenPending),
+    // T3-CUSTOM(expbkt3): a group's mode changes through its host's server settings.
+    registry.subscribe(environmentServerConfigsAtom, closeMutedPending),
   ];
   onSettings();
 

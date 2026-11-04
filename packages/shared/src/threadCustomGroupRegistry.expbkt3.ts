@@ -42,3 +42,32 @@ export function mergeThreadCustomGroupRegistry(
   }
   return Object.fromEntries(next);
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — the default group follows its registry entry.
+/**
+ * Where `defaultThreadCustomGroup` must point after a registry patch, or
+ * `undefined` to leave it as it is. A patch that removes the default group
+ * and adds exactly one other group is a rename (the sidebar and the MCP
+ * rename both send that shape), so the default follows the new label. Any
+ * other removal clears the default, so new sessions never land in a group
+ * that no longer exists.
+ */
+export function followDefaultThreadCustomGroup(
+  defaultLabel: string | null,
+  patch: ThreadCustomGroupRegistryPatch,
+): string | null | undefined {
+  if (defaultLabel === null) return undefined;
+  const key = normalizeThreadCustomGroup(defaultLabel);
+  const removed = Object.entries(patch).some(
+    ([patchKey, definition]) => definition === null && normalizeThreadCustomGroup(patchKey) === key,
+  );
+  if (!removed) return undefined;
+  const added = Object.values(patch).filter(
+    (definition) =>
+      definition !== null &&
+      normalizeThreadCustomGroup(definition.label) !== key &&
+      !isReservedThreadCustomGroup(definition.label),
+  );
+  return added.length === 1 ? (added[0]?.label ?? null) : null;
+}
+// T3-CUSTOM(expbkt3): END

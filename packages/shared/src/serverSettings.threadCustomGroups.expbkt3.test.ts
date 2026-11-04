@@ -123,3 +123,46 @@ describe("threadCustomGroups server setting", () => {
     });
   });
 });
+
+// T3-CUSTOM(expbkt3): the default group for new sessions.
+describe("defaultThreadCustomGroup server setting", () => {
+  const withGroups = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    threadCustomGroups: {
+      backlog: { label: "Backlog" },
+      ops: { label: "Ops", notifications: "parents" },
+    },
+    defaultThreadCustomGroup: "Backlog",
+  });
+
+  it("starts unset and keeps a notification mode in the registry", () => {
+    expect(DEFAULT_SERVER_SETTINGS.defaultThreadCustomGroup).toBeNull();
+    expect(withGroups.defaultThreadCustomGroup).toBe("Backlog");
+    expect(withGroups.threadCustomGroups.ops).toEqual({ label: "Ops", notifications: "parents" });
+  });
+
+  it("follows a rename of the default group", () => {
+    const renamed = applyServerSettingsPatch(withGroups, {
+      threadCustomGroups: { backlog: null, "later work": { label: "Later Work" } },
+    });
+    expect(renamed.defaultThreadCustomGroup).toBe("Later Work");
+  });
+
+  it("clears when the default group is deleted, and ignores other groups' changes", () => {
+    const otherDeleted = applyServerSettingsPatch(withGroups, {
+      threadCustomGroups: { ops: null },
+    });
+    expect(otherDeleted.defaultThreadCustomGroup).toBe("Backlog");
+    const deleted = applyServerSettingsPatch(withGroups, {
+      threadCustomGroups: { BACKLOG: null },
+    });
+    expect(deleted.defaultThreadCustomGroup).toBeNull();
+  });
+
+  it("lets an explicit value in the same patch win", () => {
+    const patched = applyServerSettingsPatch(withGroups, {
+      threadCustomGroups: { backlog: null },
+      defaultThreadCustomGroup: "Ops",
+    });
+    expect(patched.defaultThreadCustomGroup).toBe("Ops");
+  });
+});

@@ -51,6 +51,8 @@ import {
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   type LinearIssueStatusSummary,
   type SidebarThreadSortOrder,
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  type ThreadCustomGroupNotificationMode,
   type UserId,
 } from "@t3tools/contracts";
 import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
@@ -130,7 +132,9 @@ export type PhaseSidebarSectionActionId =
   | "move-up"
   | "move-down"
   | "color:default"
-  | `color:${string}`;
+  | `color:${string}`
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  | `notifications:${ThreadCustomGroupNotificationMode}`;
 
 export interface PhaseSidebarListProps {
   readonly rows: ReadonlyArray<PhaseSidebarRow>;
@@ -542,6 +546,24 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
                     state: section.colorId === option.id ? ("on" as const) : ("off" as const),
                   })),
                 ],
+              },
+              // T3-CUSTOM(expbkt3): which of the group's sessions alert on web and desktop.
+              {
+                id: "notifications",
+                title: "Notifications",
+                image: section.notifications === "off" ? "bell.slash" : "bell",
+                subactions: (
+                  [
+                    ["all", "All sessions"],
+                    ["parents", "Parent sessions only"],
+                    ["off", "Off"],
+                  ] as const
+                ).map(([mode, title]) => ({
+                  id: `notifications:${mode}`,
+                  title,
+                  state:
+                    (section.notifications ?? "all") === mode ? ("on" as const) : ("off" as const),
+                })),
               },
             ]
           : []),

@@ -31,7 +31,12 @@ import {
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
 import { phaseSidebarFiltersActive } from "@t3tools/client-runtime/state/phase-sidebar-tree";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
-import { isReservedThreadCustomGroup, type EnvironmentId } from "@t3tools/contracts";
+import {
+  isReservedThreadCustomGroup,
+  resolveThreadCustomGroupNotificationMode,
+  type EnvironmentId,
+  type ThreadCustomGroupNotificationMode,
+} from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -262,6 +267,7 @@ export function PhaseSidebarPane(props: {
     renameGroup: renameSharedCustomGroup,
     deleteGroup: deleteSharedCustomGroup,
     recolorGroup: recolorSharedCustomGroup,
+    setGroupNotifications: setSharedCustomGroupNotifications,
   } = customGroupRegistry;
   const renameCustomGroup = useCallback(
     (groupId: string, label: string) => {
@@ -296,6 +302,16 @@ export function PhaseSidebarPane(props: {
         colorId,
       ),
     [customGroups, recolorSharedCustomGroup],
+  );
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  const setCustomGroupNotifications = useCallback(
+    (groupId: string, mode: ThreadCustomGroupNotificationMode) =>
+      setSharedCustomGroupNotifications(
+        groupId,
+        customGroups.find((group) => group.id === groupId)?.label ?? groupId,
+        mode,
+      ),
+    [customGroups, setSharedCustomGroupNotifications],
   );
 
   const projectLabelFor = useCallback(
@@ -481,10 +497,17 @@ export function PhaseSidebarPane(props: {
           if (actionId.startsWith("color:")) {
             recolorCustomGroup(section.id, actionId.slice("color:".length));
           }
+          // T3-CUSTOM(expbkt3)
+          if (actionId.startsWith("notifications:")) {
+            setCustomGroupNotifications(
+              section.id,
+              resolveThreadCustomGroupNotificationMode(actionId.slice("notifications:".length)),
+            );
+          }
           return;
       }
     },
-    [deleteCustomGroup, recolorCustomGroup],
+    [deleteCustomGroup, recolorCustomGroup, setCustomGroupNotifications],
   );
   // "New group…" from a row files that row; from the sheet it is an empty
   // group until a session is moved in. Either way it is registered on a host
