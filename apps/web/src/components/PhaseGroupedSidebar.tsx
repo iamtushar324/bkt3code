@@ -4625,7 +4625,7 @@ function PhaseSidebarSectionBlock({
                 aria-label={`Notifications for group ${section.label}: ${GROUP_NOTIFICATION_LABELS[notificationMode]}. Change to ${GROUP_NOTIFICATION_LABELS[nextThreadCustomGroupNotificationMode(notificationMode)]}.`}
                 data-testid="phase-sidebar-section-notifications"
                 className={cn(
-                  "shrink-0 items-center rounded p-0.5 text-current/60 outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
+                  "shrink-0 items-center rounded p-0.5 text-current/60 outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
                   notificationMode === "all"
                     ? "hidden group-hover/section:inline-flex group-has-[:focus-visible]/section:inline-flex"
                     : "inline-flex",
