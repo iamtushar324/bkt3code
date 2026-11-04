@@ -16,6 +16,7 @@ import {
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
+  resolvePhaseSidebarUngroupedNotifications,
   type PhaseSidebarCustomGroupRegistry,
   type PhaseSidebarCustomGroupWritePlan,
 } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
@@ -49,6 +50,9 @@ export interface PhaseSidebarCustomGroupRegistryControls {
     label: string,
     notifications: ThreadCustomGroupNotificationMode,
   ) => void;
+  /** T3-CUSTOM(expbkt3): the "Ungrouped" section's mode, and its setter (every writable host). */
+  readonly ungroupedNotifications: ThreadCustomGroupNotificationMode;
+  readonly setUngroupedNotifications: (notifications: ThreadCustomGroupNotificationMode) => void;
 }
 
 const EMPTY_SERVER_CONFIGS: ReadonlyMap<EnvironmentId, ServerConfig> = new Map();
@@ -169,6 +173,24 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
     [homeEnvironmentId, registry, send, writableEnvironmentIds],
   );
 
+  // T3-CUSTOM(expbkt3): "Ungrouped" has no registry entry, so its mode is a
+  // plain host setting, written to every host this session may write.
+  const ungroupedNotifications = useMemo(
+    () => resolvePhaseSidebarUngroupedNotifications(serverConfigs, preferredEnvironmentId),
+    [preferredEnvironmentId, serverConfigs],
+  );
+  const setUngroupedNotifications = useCallback(
+    (notifications: ThreadCustomGroupNotificationMode) => {
+      for (const environmentId of writableEnvironmentIds) {
+        void updateSettings({
+          environmentId: environmentId as EnvironmentId,
+          input: { patch: { ungroupedThreadNotifications: notifications } },
+        });
+      }
+    },
+    [updateSettings, writableEnvironmentIds],
+  );
+
   return useMemo(
     () => ({
       registry,
@@ -178,6 +200,8 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
       deleteGroup,
       recolorGroup,
       setGroupNotifications,
+      ungroupedNotifications,
+      setUngroupedNotifications,
     }),
     [
       createGroup,
@@ -187,6 +211,8 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
       registry,
       renameGroup,
       setGroupNotifications,
+      setUngroupedNotifications,
+      ungroupedNotifications,
     ],
   );
 }

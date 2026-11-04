@@ -166,3 +166,14 @@ describe("defaultThreadCustomGroup server setting", () => {
     expect(patched.defaultThreadCustomGroup).toBe("Ops");
   });
 });
+
+// T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode.
+describe("ungroupedThreadNotifications server setting", () => {
+  it("starts at all and takes a patch", () => {
+    expect(DEFAULT_SERVER_SETTINGS.ungroupedThreadNotifications).toBe("all");
+    const patched = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      ungroupedThreadNotifications: "off",
+    });
+    expect(patched.ungroupedThreadNotifications).toBe("off");
+  });
+});

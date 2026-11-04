@@ -2113,6 +2113,9 @@ const handlers = {
           : groups.filter((group) => normalizeThreadCustomGroup(group.label) === filter),
       // T3-CUSTOM(expbkt3): the group new top-level sessions join.
       defaultGroup: resolveDefaultThreadCustomGroup(settings),
+      ungroupedNotifications: resolveThreadCustomGroupNotificationMode(
+        settings.ungroupedThreadNotifications,
+      ),
       colors: [...THREAD_CUSTOM_GROUP_COLOR_IDS],
     };
   }),

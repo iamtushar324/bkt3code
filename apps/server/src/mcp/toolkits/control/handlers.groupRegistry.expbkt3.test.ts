@@ -292,6 +292,7 @@ it.effect("lists saved groups and label-only groups the caller can see", () =>
       },
     ]);
     expect(listed.defaultGroup).toBeNull();
+    expect(listed.ungroupedNotifications).toBe("all");
 
     const one = yield* __testing.groupList({ label: "SPRINT 42" }).pipe(provide(settings.service));
     expect(one.groups.map((group) => group.label)).toEqual(["Sprint 42"]);

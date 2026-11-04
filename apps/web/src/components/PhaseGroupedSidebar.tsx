@@ -3002,9 +3002,11 @@ export function PhaseGroupedSidebar() {
         projectLabelFor,
         environmentLabelFor,
         customGroupRegistry: sharedCustomGroups,
+        ungroupedNotifications: customGroupRegistry.ungroupedNotifications, // T3-CUSTOM(expbkt3)
       }),
     [
       activeRows,
+      customGroupRegistry.ungroupedNotifications,
       environmentLabelFor,
       filters,
       grouping,
@@ -4362,6 +4364,10 @@ export function PhaseGroupedSidebar() {
                       : {}),
                   }
                 : {})}
+              {...(section.kind === "custom" && section.isUngrouped && canRecolorCustomGroups
+                ? // T3-CUSTOM(expbkt3): "Ungrouped" has a bell too, kept as a host setting.
+                  { onSetGroupNotifications: customGroupRegistry.setUngroupedNotifications }
+                : {})}
             />
           ))}
           {/* T3-CUSTOM(expbkt3): the snoozed and settled shelves moved out of this
@@ -4684,59 +4690,62 @@ function PhaseSidebarSectionBlock({
             )}
           >
             {toggle}
-            <span
-              className={phaseSidebarSectionActionsClassName(colorPickerOpen)}
-              data-testid="phase-sidebar-section-actions"
-            >
-              {onRecolorGroup ? (
-                <Popover open={colorPickerOpen} onOpenChange={setColorPickerOpen}>
-                  <PopoverTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label={`Change colour of group ${section.label}`}
-                        className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
+            {/* T3-CUSTOM(expbkt3): a bell-only header ("Ungrouped") has no hover overlay. */}
+            {onRecolorGroup || onRenameGroup || onDeleteGroup ? (
+              <span
+                className={phaseSidebarSectionActionsClassName(colorPickerOpen)}
+                data-testid="phase-sidebar-section-actions"
+              >
+                {onRecolorGroup ? (
+                  <Popover open={colorPickerOpen} onOpenChange={setColorPickerOpen}>
+                    <PopoverTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={`Change colour of group ${section.label}`}
+                          className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
+                        />
+                      }
+                    >
+                      <PaletteIcon aria-hidden className="size-3" />
+                    </PopoverTrigger>
+                    <PopoverPopup align="end" padding="compact">
+                      <PhaseSidebarGroupColorSwatches
+                        groupLabel={section.label}
+                        value={section.colorId ?? null}
+                        onSelect={(colorId) => {
+                          onRecolorGroup(colorId);
+                          setColorPickerOpen(false);
+                        }}
                       />
-                    }
+                    </PopoverPopup>
+                  </Popover>
+                ) : null}
+                {onRenameGroup ? (
+                  <button
+                    type="button"
+                    aria-label={`Rename group ${section.label}`}
+                    onClick={onRenameGroup}
+                    className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
                   >
-                    <PaletteIcon aria-hidden className="size-3" />
-                  </PopoverTrigger>
-                  <PopoverPopup align="end" padding="compact">
-                    <PhaseSidebarGroupColorSwatches
-                      groupLabel={section.label}
-                      value={section.colorId ?? null}
-                      onSelect={(colorId) => {
-                        onRecolorGroup(colorId);
-                        setColorPickerOpen(false);
-                      }}
-                    />
-                  </PopoverPopup>
-                </Popover>
-              ) : null}
-              {onRenameGroup ? (
-                <button
-                  type="button"
-                  aria-label={`Rename group ${section.label}`}
-                  onClick={onRenameGroup}
-                  className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
-                >
-                  <PencilIcon aria-hidden className="size-3" />
-                </button>
-              ) : null}
-              {onDeleteGroup ? (
-                <button
-                  type="button"
-                  aria-label={`Delete group ${section.label}`}
-                  onClick={onDeleteGroup}
-                  className={cn(
-                    PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
-                    "hover:text-destructive",
-                  )}
-                >
-                  <Trash2Icon aria-hidden className="size-3" />
-                </button>
-              ) : null}
-            </span>
+                    <PencilIcon aria-hidden className="size-3" />
+                  </button>
+                ) : null}
+                {onDeleteGroup ? (
+                  <button
+                    type="button"
+                    aria-label={`Delete group ${section.label}`}
+                    onClick={onDeleteGroup}
+                    className={cn(
+                      PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
+                      "hover:text-destructive",
+                    )}
+                  >
+                    <Trash2Icon aria-hidden className="size-3" />
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
           </div>
           {onSetGroupNotifications ? (
             <Tooltip>

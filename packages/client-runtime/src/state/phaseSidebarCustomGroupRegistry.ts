@@ -88,7 +88,11 @@ export interface PhaseSidebarCustomGroupRegistryConfig {
     readonly capabilities: { readonly threadCustomGroupRegistry?: boolean | undefined };
   };
   readonly settings?:
-    | { readonly threadCustomGroups?: ThreadCustomGroupRegistry | undefined }
+    | {
+        readonly threadCustomGroups?: ThreadCustomGroupRegistry | undefined;
+        /** T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode. */
+        readonly ungroupedThreadNotifications?: string | undefined;
+      }
     | undefined;
 }
 
@@ -385,17 +389,43 @@ export function planPhaseSidebarCustomGroupNotifications(input: {
 }
 
 /**
+ * The "Ungrouped" section's mode across hosts, read like the registry: the
+ * preferred host wins, else the first host that keeps the registry.
+ */
+export function resolvePhaseSidebarUngroupedNotifications(
+  serverConfigs: ReadonlyMap<string, PhaseSidebarCustomGroupRegistryConfig | null | undefined>,
+  preferredEnvironmentId: string | null,
+): ThreadCustomGroupNotificationMode {
+  const preferred =
+    preferredEnvironmentId === null ? undefined : serverConfigs.get(preferredEnvironmentId);
+  if (phaseSidebarCustomGroupRegistrySupported(preferred)) {
+    return resolveThreadCustomGroupNotificationMode(
+      preferred?.settings?.ungroupedThreadNotifications,
+    );
+  }
+  for (const config of serverConfigs.values()) {
+    if (!phaseSidebarCustomGroupRegistrySupported(config)) continue;
+    return resolveThreadCustomGroupNotificationMode(config?.settings?.ungroupedThreadNotifications);
+  }
+  return "all";
+}
+
+/**
  * Whether a session may alert under its group's mode. `customGroup` is the
  * session's label; `isChild` is true when it has a parent session. A session
- * with no group, or whose group has no registry entry, always may.
+ * with no group follows `ungrouped`; one whose group has no registry entry
+ * always may.
  */
 export function phaseSidebarCustomGroupAllowsNotification(
   registry: PhaseSidebarCustomGroupRegistry,
   customGroup: string | null | undefined,
   isChild: boolean,
+  ungrouped: ThreadCustomGroupNotificationMode = "all",
 ): boolean {
-  if (customGroup === null || customGroup === undefined) return true;
-  const mode = registry.get(normalizeThreadCustomGroup(customGroup))?.notifications ?? "all";
+  const mode =
+    customGroup === null || customGroup === undefined
+      ? ungrouped
+      : (registry.get(normalizeThreadCustomGroup(customGroup))?.notifications ?? "all");
   return mode === "all" || (mode === "parents" && !isChild);
 }
 // T3-CUSTOM(expbkt3): END
