@@ -1,9 +1,8 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ByteSize from "effect/ByteSize";
 import * as Data from "effect/Data"; // T3-CUSTOM(expbkt3): profile-scoped remote-status cache key.
 import * as DateTime from "effect/DateTime";
@@ -50,29 +49,21 @@ import {
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 import {
-  detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
-  normalizeGitRemoteUrl,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
-  canonicalRepositoryKey,
-  getChangeRequestTerminologyForKind,
-  isSshRemoteUrl,
   type ChangeRequestTerminology,
-} from "@t3tools/shared/sourceControl";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  parseGitHubRepositorySelector,
-  resolveGitHubRepository,
-} from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
+} from "@t3tools/source-control-core/shared/definition";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import {
@@ -94,10 +85,18 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { CurrentSourceControlExecutionEnvironment } from "../sourceControl/SourceControlExecutionEnvironment.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
+// T3-CUSTOM(expbkt3): sweep lookups reuse git state while the files it was read from are unchanged.
+import {
+  GIT_STATE_FINGERPRINT_MAX_AGE,
+  gitStateFingerprintToken,
+  makeGitStateFingerprints,
+  type GitStateFingerprint,
+} from "./gitStateFingerprint.expbkt3.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -144,10 +143,7 @@ export class GitManager extends Context.Service<
       input: VcsStatusInput,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
-    /**
-     * `refresh` asks the host again. `freshGitState` rereads the branch's git
-     * state without forcing a host refresh; use it before persisting a result.
-     */
+    /** refresh queries the host; freshGitState rereads only git state and is required before persisting. */
     readonly branchPullRequest: (
       input: { readonly cwd: string; readonly branch: string },
       options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
@@ -190,11 +186,8 @@ const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
- * A hosting provider rejects a throttled request immediately, so caching every
- * failure for a flat 20s made a rate-limited poller re-ask *faster* than a
- * healthy one does (which waits PR_LOOKUP_CACHE_TTL), turning a transient 429
- * into sustained pressure. Backing off per branch keeps the retry rate below
- * the healthy rate once a branch has failed more than a couple of times.
+ * Throttled lookups fail fast, so a flat failure TTL would retry faster than a healthy
+ * lookup refreshes. Backing off per branch keeps a 429 from becoming sustained pressure.
  */
 function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
   const exponent = Math.max(0, consecutiveFailures - 1);
@@ -269,48 +262,15 @@ interface BranchHeadContext {
 }
 
 export function pullRequestRepositoryKey(value: string): string | null {
-  try {
-    const url = new URL(value);
-    const match =
-      /^(.*)(?:\/pulls?\/|\/-\/merge_requests\/|\/pull-requests\/|\/pullrequest\/)\d+(?:\/.*)?$/iu.exec(
-        url.pathname,
-      );
-    if (match?.[1] === undefined) return null;
-    url.pathname = match[1];
-    url.search = "";
-    url.hash = "";
-    return normalizeGitRemoteUrl(url.toString());
-  } catch {
-    return null;
-  }
+  const repositoryUrl = sourceControlDefinitions.parseChangeRequestUrl(value)?.link.repositoryUrl;
+  return repositoryUrl === undefined
+    ? null
+    : sourceControlDefinitions.repositoryKeyFromRemote(repositoryUrl);
 }
 
-function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
-  const trimmed = url.trim();
-  const match = /^https?:\/\/[^/]+\/[^/]+\/([^/]+)\/pull\/\d+(?:\/.*)?$/i.exec(trimmed);
-  const repositoryName = match?.[1]?.trim() ?? "";
-  return repositoryName.length > 0 ? repositoryName : null;
-}
-
-function resolveHeadRepositoryNameWithOwner(
-  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-): string | null {
-  const explicitRepository = pullRequest.headRepositoryNameWithOwner?.trim() ?? "";
-  if (explicitRepository.length > 0) {
-    return explicitRepository;
-  }
-
-  if (!pullRequest.isCrossRepository) {
-    return null;
-  }
-
-  const ownerLogin = pullRequest.headRepositoryOwnerLogin?.trim() ?? "";
-  const repositoryName = parseRepositoryNameFromPullRequestUrl(pullRequest.url);
-  if (ownerLogin.length === 0 || !repositoryName) {
-    return null;
-  }
-
-  return `${ownerLogin}/${repositoryName}`;
+/** Null when the host did not name the repository the head lives in. */
+function resolveHeadRepositoryNameWithOwner(pullRequest: PullRequestHeadRemoteInfo): string | null {
+  return normalizeOptionalString(pullRequest.headRepositoryNameWithOwner);
 }
 
 function resolvePullRequestWorktreeLocalBranchName(
@@ -345,7 +305,8 @@ function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null 
   if (trimmed.length === 0) {
     return null;
   }
-  // GitLab reports the top-level group as owner. The full path distinguishes subgroups.
+  // The first segment only: a nested path's owner is its top-level group. The full path
+  // distinguishes subgroups.
   const [ownerLogin] = trimmed.split("/");
   const normalizedOwnerLogin = ownerLogin?.trim() ?? "";
   return normalizedOwnerLogin.length > 0 ? normalizedOwnerLogin : null;
@@ -364,27 +325,6 @@ function normalizeOptionalRepositoryNameWithOwner(value: string | null | undefin
 function normalizeOptionalOwnerLogin(value: string | null | undefined): string | null {
   const normalized = normalizeOptionalString(value);
   return normalized ? normalized.toLowerCase() : null;
-}
-
-function resolvePullRequestHeadRepositoryNameWithOwner(
-  pr: PullRequestHeadRemoteInfo & { url: string },
-) {
-  const explicitRepository = normalizeOptionalString(pr.headRepositoryNameWithOwner);
-  if (explicitRepository) {
-    return explicitRepository;
-  }
-
-  if (!pr.isCrossRepository) {
-    return null;
-  }
-
-  const ownerLogin = normalizeOptionalString(pr.headRepositoryOwnerLogin);
-  const repositoryName = parseRepositoryNameFromPullRequestUrl(pr.url);
-  if (!ownerLogin || !repositoryName) {
-    return null;
-  }
-
-  return `${ownerLogin}/${repositoryName}`;
 }
 
 interface PullRequestHeadIdentity {
@@ -408,7 +348,7 @@ function resolveExpectedHeadIdentity(
 
 function resolvePullRequestHeadIdentity(pr: PullRequestInfo): PullRequestHeadIdentity {
   const repositoryNameWithOwner = normalizeOptionalRepositoryNameWithOwner(
-    resolvePullRequestHeadRepositoryNameWithOwner(pr),
+    resolveHeadRepositoryNameWithOwner(pr),
   );
   return {
     repositoryNameWithOwner,
@@ -660,11 +600,6 @@ function headBranchProbe(
   );
 }
 
-/** A URL's host as `new URL` reads it: lowercased, any non-default port kept, `:443` dropped. */
-function urlHost(url: string): string | null {
-  return URL.canParse(url) ? new URL(url).host : null;
-}
-
 function appendUnique(values: string[], next: string | null | undefined): void {
   const trimmed = next?.trim() ?? "";
   if (trimmed.length === 0 || values.includes(trimmed)) {
@@ -772,31 +707,50 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcess.Environment;
+  // T3-CUSTOM(expbkt3): stats instead of git processes for unchanged worktrees.
+  const gitStateFingerprints = yield* makeGitStateFingerprints({
+    fileSystem,
+    path,
+    environment: process.env,
+  });
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
+    cwd: string,
+  ) {
+    return yield* sourceControlProvider(cwd).pipe(
+      Effect.map((provider) => sourceControlDefinitions.get(provider.kind).changeRequest),
+      Effect.orElseSucceed(() => UNKNOWN_SOURCE_CONTROL_CLIENT.changeRequest),
+    );
+  });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
   }) {
     const settings = yield* serverSettingsService.getSettings;
     if (!hasProjectSettingsOverrides(settings))
       return { settings, projectId: null as ProjectId | null };
-    const projectId: ProjectId | null = yield* input.threadId !== undefined
-      ? threads.getThreadShell(input.threadId).pipe(
-          Effect.map((thread) => thread?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        )
-      : projects.findActiveByWorkspaceRoot(input.cwd).pipe(
-          Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        );
+    const threadProjectId =
+      input.threadId === undefined
+        ? null
+        : yield* threads.getThreadShell(input.threadId).pipe(
+            Effect.map((thread) => thread?.projectId ?? null),
+            Effect.orElseSucceed(() => null),
+          );
+    const projectId =
+      threadProjectId ??
+      input.projectId ??
+      (yield* projects.findActiveByWorkspaceRoot(input.cwd).pipe(
+        Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
+        Effect.orElseSucceed(() => null),
+      ));
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
   const readThreadContext = Effect.fnUntraced(
@@ -824,6 +778,31 @@ export const make = Effect.gen(function* () {
         ),
       ),
   );
+  // Hands the base T3 recorded for a branch to the host, whose own tools may keep it elsewhere.
+  // Best-effort: nothing T3 does reads it back from there.
+  const shareBranchBase = Effect.fn("GitManager.shareBranchBase")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const baseBranch = yield* gitCore
+      .readBranchBase(cwd, branch)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (baseBranch === null) return;
+    const provider = yield* sourceControlProvider(cwd).pipe(Effect.orElseSucceed(() => null));
+    yield* provider?.recordBranchBase?.({ cwd, branch, baseBranch }) ?? Effect.void;
+  });
+  // Publishing a branch that tracks its base records that base first, even when the push then
+  // fails, so the host hears of it after every successful push rather than the first attempt.
+  const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
+    cwd: string,
+    branch: string | null,
+  ) {
+    const result = yield* gitCore.pushCurrentBranch(cwd, branch);
+    if (result.status === "pushed" && result.branch) {
+      yield* shareBranchBase(cwd, result.branch);
+    }
+    return result;
+  });
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
     Effect.orElseSucceed(() => ""),
@@ -839,7 +818,15 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
           );
     const worktreesDirectory = yield* readWorktreesDirectory;
-    return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
+    const result = yield* gitCore.createWorktree(input, {
+      worktreesDirectory,
+      ...options,
+      submodules,
+    });
+    if (input.newRefName && input.baseRefName) {
+      yield* shareBranchBase(input.cwd, input.newRefName);
+    }
+    return result;
   });
 
   const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(
@@ -927,7 +914,7 @@ export const make = Effect.gen(function* () {
     }
   });
   const randomUUIDv4 = (cwd: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({
@@ -966,6 +953,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestHostOptions = (url: string) => {
+    const host = URL.parse(url)?.host;
+    return host ? { host } : {};
+  };
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
@@ -996,6 +988,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1039,6 +1032,31 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // The kind comes from the provider, not the remote alone: an unrecognised remote can resolve
+  // to a known host.
+  const changeRequestHeadRef = Effect.fn("GitManager.changeRequestHeadRef")(function* (
+    cwd: string,
+    number: number,
+  ) {
+    const provider = yield* sourceControlProvider(cwd);
+    const ref = sourceControlDefinitions.get(provider.kind).changeRequestHeadRef?.(number);
+    if (ref === undefined) {
+      return yield* new GitManagerError({
+        operation: "changeRequestHeadRef",
+        cwd,
+        detail: "This host publishes no ref for a change request's head.",
+      });
+    }
+    return ref;
+  });
+
+  const fetchChangeRequestHeadIntoBranch = Effect.fn("GitManager.fetchChangeRequestHeadIntoBranch")(
+    function* (cwd: string, number: number, branch: string) {
+      const ref = yield* changeRequestHeadRef(cwd, number);
+      yield* gitCore.fetchRefIntoBranch({ cwd, ref, branch });
+    },
+  );
+
   const materializePullRequestHeadBranchBase = Effect.fn("materializePullRequestHeadBranch")(
     function* (
       cwd: string,
@@ -1048,51 +1066,43 @@ export const make = Effect.gen(function* () {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
-        yield* gitCore
-          .fetchPullRequestBranch({
-            cwd,
-            prNumber: pullRequest.number,
-            branch: localBranch,
-          })
-          .pipe(
-            // Azure DevOps, GitLab and Bitbucket publish no `refs/pull/<n>/head`. A head in the
-            // same repository is a branch on the primary remote, so it is fetched by name instead,
-            // but only when that remote is the pull request's own repository: Azure finds a pull
-            // request by number anywhere in the organization. Only while it is open, too: the
-            // branch of a closed one may have moved on past the head it was closed with.
-            Effect.catch((cause) =>
-              pullRequest.isCrossRepository === true || pullRequest.state !== "open"
-                ? Effect.fail(cause)
-                : Effect.gen(function* () {
-                    const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
-                    const remoteUrl = yield* gitCore.readConfigValue(
-                      cwd,
-                      `remote.${remoteName}.url`,
-                    );
-                    const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
-                    if (
-                      remoteUrl === null ||
-                      pullRequestKey === null ||
-                      canonicalRepositoryKey(pullRequestKey) !==
-                        canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl))
-                    ) {
-                      return yield* cause;
-                    }
-                    yield* gitCore.fetchRemoteBranch({
-                      cwd,
-                      remoteName,
-                      remoteBranch: pullRequest.headBranch,
-                      localBranch,
-                    });
-                  }),
-            ),
-          );
+        yield* fetchChangeRequestHeadIntoBranch(cwd, pullRequest.number, localBranch).pipe(
+          // Fall back to a branch fetch only for an open PR in the primary remote's repository.
+          // A host can resolve a PR number from another repository, so verify the repository first.
+          // Closed PR branches may have moved past the head recorded at closure.
+          Effect.catch((cause) =>
+            pullRequest.isCrossRepository === true || pullRequest.state !== "open"
+              ? Effect.fail(cause)
+              : Effect.gen(function* () {
+                  const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+                  const remoteUrl = yield* gitCore.readConfigValue(cwd, `remote.${remoteName}.url`);
+                  const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
+                  if (
+                    remoteUrl === null ||
+                    pullRequestKey === null ||
+                    sourceControlDefinitions.canonicalRepositoryKey(pullRequestKey) !==
+                      sourceControlDefinitions.canonicalRepositoryKey(
+                        sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+                      )
+                  ) {
+                    return yield* cause;
+                  }
+                  yield* gitCore.fetchRemoteBranch({
+                    cwd,
+                    remoteName,
+                    remoteBranch: pullRequest.headBranch,
+                    localBranch,
+                  });
+                }),
+          ),
+        );
         return;
       }
 
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1128,29 +1138,23 @@ export const make = Effect.gen(function* () {
   ) =>
     materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
       Effect.catch((primaryCause) =>
-        gitCore
-          .fetchPullRequestBranch({
-            cwd,
-            prNumber: pullRequest.number,
-            branch: localBranch,
-          })
-          .pipe(
-            Effect.mapError(
-              (fallbackCause) =>
-                new GitPullRequestMaterializationError({
-                  cwd,
-                  pullRequestNumber: pullRequest.number,
-                  headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
-                  headBranch: pullRequest.headBranch,
-                  localBranch,
-                  cause: new AggregateError(
-                    [primaryCause, fallbackCause],
-                    `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
-                    { cause: primaryCause },
-                  ),
-                }),
-            ),
+        fetchChangeRequestHeadIntoBranch(cwd, pullRequest.number, localBranch).pipe(
+          Effect.mapError(
+            (fallbackCause) =>
+              new GitPullRequestMaterializationError({
+                cwd,
+                pullRequestNumber: pullRequest.number,
+                headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
+                headBranch: pullRequest.headBranch,
+                localBranch,
+                cause: new AggregateError(
+                  [primaryCause, fallbackCause],
+                  `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
+                  { cause: primaryCause },
+                ),
+              }),
           ),
+        ),
       ),
     );
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
@@ -1274,8 +1278,8 @@ export const make = Effect.gen(function* () {
   >();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
-      const parsed = parseChangeRequestUrl(pr.url);
-      if (parsed === null || parsed.number !== pr.number) return Effect.void;
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(pr.url)?.link;
+      if (parsed === undefined || parsed.number !== pr.number) return Effect.void;
       const key = normalizeThreadPullRequestKey(parsed);
       const id = threadPullRequestKeyOf(key);
       const previous = lookupStates.get(id);
@@ -1308,18 +1312,15 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        // T3-CUSTOM(expbkt3): preserve the no-remote lookup decision in the PR cache.
-        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
-        if (!lookup) {
-          return { latest: null, headContext, skipReason: null };
-        }
-        // T3-CUSTOM(expbkt3): BEGIN — keep why the lookup was skipped ("no-remote"
-        // vs "unpublished") for the PR-badge fallback in lookupStatusPr.
-        const skipReason =
-          details.localBranchExists && details.upstreamRef === null
-            ? yield* isUnpublishedBranch(cwd, headContext)
-            : null;
-        if (skipReason !== null) {
+        // T3-CUSTOM(expbkt3): BEGIN the git-derived decision is reused while its files are
+        // unchanged. skipReason keeps why the lookup was skipped ("no-remote" vs
+        // "unpublished") for the PR-badge fallback in lookupStatusPr.
+        const { headContext, lookup, skipReason } = yield* resolvePrLookupDecision(
+          key,
+          cwd,
+          details,
+        );
+        if (!lookup || skipReason !== null) {
           return { latest: null, headContext, skipReason };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
@@ -1372,11 +1373,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    // Both sides must be resolved before treating a mismatch as real:
-    // `readConfigValueNullable` swallows any git-config read failure into
-    // `null`, so a transient failure to resolve the *current* remote URL must
-    // read as "unknown", not as "no remote" — the latter would otherwise drop
-    // an already-known PR badge on every hiccup.
+    // Config read failures become null; require both remote URLs before treating a mismatch as real.
     if (lastKnown.headRemoteUrlKey !== null && current.headRemoteUrlKey !== null) {
       return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
     }
@@ -1401,8 +1398,7 @@ export const make = Effect.gen(function* () {
     },
     refreshMissingPullRequest = false,
   ) {
-    // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
-    // `push -u`) must not orphan the fallback value for the same branch.
+    // Upstream changes must not orphan the same branch's fallback value.
     // T3-CUSTOM(expbkt3): BEGIN — source-control identity: PR lookups are cached per
     // (cwd, profile) so two identities working the same repo don't share stale PR state.
     const executionEnvironment = yield* CurrentSourceControlExecutionEnvironment;
@@ -1538,39 +1534,27 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
-  // Whether the GitHub provider creates PRs in the only remote. It picks GH_REPO when that
-  // parses, else what resolveGitHubRepository makes of the remote and its gh-resolved mark from
-  // `gh repo set-default`, given the host the provider's context gets from the remote URL. An
-  // HTTPS remote keeps a non-default port there, and the provider then ignores the mark. With no
-  // answer at all, the provider falls back to the remote itself.
+  // Whether the remote's host creates change requests in the only remote. A host's tools can let
+  // configuration outside the remotes name another repository; the remote itself otherwise.
   const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
     cwd: string,
     remoteName: string,
     remote: { readonly remoteUrl: string | null; readonly repositoryNameWithOwner: string | null },
   ) {
-    const baseUrl =
-      remote.remoteUrl === null
-        ? undefined
-        : detectSourceControlProviderFromGitRemoteUrl(remote.remoteUrl)?.baseUrl;
-    const host = baseUrl === undefined ? null : urlHost(baseUrl);
-    const repository = remote.repositoryNameWithOwner?.toLowerCase();
-    const fromEnvironment = parseGitHubRepositorySelector(environment.GH_REPO ?? "", host ?? "");
-    if (fromEnvironment !== null) {
-      const { host: targetHost, owner, name } = fromEnvironment;
-      return (
-        host !== null &&
-        urlHost(`https://${targetHost}`) === host &&
-        `${owner}/${name}`.toLowerCase() === repository
-      );
-    }
-    const mark = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
-    const { locator } = resolveGitHubRepository({
-      remotes: remote.remoteUrl === null ? "" : `${remoteName}\t${remote.remoteUrl} (fetch)`,
-      resolved: mark === null ? "" : `remote.${remoteName}.gh-resolved ${mark}`,
-      hostHint: host ?? undefined,
-      defaultHost: host ?? "github.com",
+    const provider =
+      remote.remoteUrl === null ? null : sourceControlDefinitions.recognizeRemote(remote.remoteUrl);
+    if (remote.remoteUrl === null || provider === null) return true;
+    const context = { provider, remoteName, remoteUrl: remote.remoteUrl };
+    const handle = yield* sourceControlProviders
+      .resolveHandle({ cwd, context })
+      .pipe(Effect.orElseSucceed(() => null));
+    const createsChangeRequestsIn = handle?.provider.createsChangeRequestsIn;
+    if (createsChangeRequestsIn === undefined) return true;
+    return yield* createsChangeRequestsIn({
+      cwd,
+      context: handle?.context ?? context,
+      repository: remote.repositoryNameWithOwner,
     });
-    return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === repository;
   });
 
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
@@ -1585,7 +1569,7 @@ export const make = Effect.gen(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const provider = remoteUrl ? sourceControlDefinitions.recognizeRemote(remoteUrl) : null;
     if (!remoteUrl || provider?.kind !== "unknown") return provider;
     const handle = yield* sourceControlProviders
       .resolveHandle({
@@ -1616,7 +1600,7 @@ export const make = Effect.gen(function* () {
       /^https?:\/\//iu.test(remoteUrl) &&
       (repositoryNameWithOwner?.split("/").length ?? 0) > 2
     ) {
-      const kind = detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind;
+      const kind = sourceControlDefinitions.recognizeRemote(remoteUrl)?.kind;
       const provider =
         kind === undefined
           ? undefined
@@ -1627,7 +1611,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       remoteUrl,
-      remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
+      remoteUrlKey: remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
       repositoryNameWithOwner,
       ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
     };
@@ -1665,9 +1649,9 @@ export const make = Effect.gen(function* () {
       remoteName,
     );
 
-    // With no origin to compare against, the only remote is the repository gh targets
-    // unless GH_REPO or `gh repo set-default` (gh-resolved) names another, so a branch on it
-    // is not a fork. With several remotes, or with that other target, it may still be a fork.
+    // With no origin to compare against, the only remote is the repository change requests
+    // are created in unless the host's own configuration names another, so a branch on it is
+    // not a fork. With several remotes, or with that other target, it may still be a fork.
     const isOnlyRemote =
       remoteName !== null &&
       remoteName !== "origin" &&
@@ -1740,8 +1724,7 @@ export const make = Effect.gen(function* () {
     } satisfies BranchHeadContext;
   });
 
-  // Remote names may contain slashes, so refs are matched literally per remote
-  // instead of with a glob.
+  // Remote names can contain slashes; match refs literally.
   const findRemoteTrackingRemote = Effect.fn("findRemoteTrackingRemote")(function* (
     cwd: string,
     branch: string,
@@ -1840,11 +1823,7 @@ export const make = Effect.gen(function* () {
             })
             .pipe(
               Effect.flatMap((result) => {
-                // `merge-base --is-ancestor` reports 0 for ancestor and 1
-                // for not-ancestor; any other non-zero exit is a failed
-                // probe, not a negative result. A failed probe rejects the
-                // whole inference instead of letting a surviving probe win
-                // by default and attach the wrong fork's PR.
+                // Exit 1 means non-ancestor; other failures must reject inference rather than pick another fork.
                 if (result.exitCode === 0) return Effect.succeed(remote.name);
                 if (result.exitCode === 1) return Effect.succeed(null);
                 return new GitCommandError({
@@ -1867,10 +1846,7 @@ export const make = Effect.gen(function* () {
     return remoteUrl === null ? null : remoteName;
   });
 
-  // `git worktree add -b feature origin/main` makes the new local branch track
-  // origin/main. That upstream is the branch's base, not its published PR head.
-  // Looking up PRs for it can attach an old reverse merge from main and
-  // auto-settle an unrelated feature thread.
+  // worktree add can set origin/main as upstream; this base is not the branch's published PR head.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1981,6 +1957,59 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => null));
   });
 
+  // T3-CUSTOM(expbkt3): BEGIN a PR cache miss reuses the git-derived head context while the
+  // files it was read from are unchanged, so an expired PR state queries only the host. The
+  // unpublished check reads every remote-tracking ref, which no fingerprint covers, so it reruns.
+  interface PrLookupDecision {
+    readonly headContext: BranchHeadContext;
+    readonly lookup: boolean;
+  }
+  const prLookupDecisionByKey = new Map<
+    string,
+    { readonly token: string; readonly readAtMs: number; readonly decision: PrLookupDecision }
+  >();
+  const resolvePrLookupDecision = Effect.fn("resolvePrLookupDecision")(function* (
+    key: string,
+    cwd: string,
+    details: {
+      readonly branch: string;
+      readonly upstreamRef: string | null;
+      readonly defaultBranch: string | null;
+      readonly localBranchExists: boolean;
+      readonly remoteName?: string;
+    },
+  ) {
+    const fingerprint = yield* gitStateFingerprints.read(cwd, details.branch);
+    const readAtMs = yield* Clock.currentTimeMillis;
+    const remembered = prLookupDecisionByKey.get(key);
+    const reusable =
+      fingerprint !== null &&
+      remembered !== undefined &&
+      remembered.token === fingerprint.branch &&
+      readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE);
+    const decision: PrLookupDecision =
+      reusable && remembered !== undefined
+        ? remembered.decision
+        : yield* resolveLookupHeadContext(cwd, details);
+    if (!reusable) {
+      prLookupDecisionByKey.delete(key);
+      if (fingerprint !== null && (yield* fingerprint.unchanged)) {
+        if (prLookupDecisionByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+          const oldestKey = prLookupDecisionByKey.keys().next().value;
+          if (oldestKey !== undefined) prLookupDecisionByKey.delete(oldestKey);
+        }
+        prLookupDecisionByKey.set(key, { token: fingerprint.branch, readAtMs, decision });
+      }
+    }
+    const { headContext, lookup } = decision;
+    const skipReason =
+      lookup && details.localBranchExists && details.upstreamRef === null
+        ? yield* isUnpublishedBranch(cwd, headContext)
+        : null;
+    return { headContext, lookup, skipReason };
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const findOpenPr = Effect.fn("findOpenPr")(function* (
     cwd: string,
     headContext: Pick<
@@ -2054,12 +2083,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
   ) {
-    const terms = yield* sourceControlProvider(cwd).pipe(
-      Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-      Effect.orElseSucceed(() =>
-        getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
-      ),
-    );
+    const terms = yield* changeRequestTermsFor(cwd);
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
     let currentBranchIsDefault = false;
@@ -2158,7 +2182,7 @@ export const make = Effect.gen(function* () {
       if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredRef };
     }
 
-    const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
+    const configured = yield* gitCore.readBranchBase(cwd, branch);
     if (configured) {
       const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
       const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
@@ -2404,7 +2428,7 @@ export const make = Effect.gen(function* () {
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const terms = getChangeRequestTerminologyForKind(provider.kind);
+    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -2504,7 +2528,15 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
-    const created = yield* findOpenPr(cwd, headContext);
+    // The PR already exists at this point, so a failed lookup only loses its metadata.
+    const created = yield* findOpenPr(cwd, headContext).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitManager.runPrStep lookup after create failed", {
+          provider: provider.kind,
+          errorTag: error._tag,
+        }).pipe(Effect.as(null)),
+      ),
+    );
     if (!created) {
       return {
         status: "created" as const,
@@ -2545,33 +2577,43 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
-  // A merged or closed answer can settle a thread or remove its worktree, so
-  // branchPullRequest confirms one against fresh reads, and discovery asks for
-  // fresh reads (`freshGitState`) before it persists an answer.
+  // Closed PR results can settle threads or remove worktrees; confirm fresh git state before persisting.
   const prLookupGitStateByKey = new Map<
     string,
-    { readonly readAtMs: number; readonly value: string | null }
+    // T3-CUSTOM(expbkt3): token is the fingerprint the value was read under, if any.
+    { readonly readAtMs: number; readonly value: string | null; readonly token: string | null }
   >();
   const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(
     cwd: string,
     key: string,
     fresh: boolean,
     read: Effect.Effect<string | null, E>,
+    // T3-CUSTOM(expbkt3): validates remembered state by its files; null keeps the TTL.
+    fingerprint: GitStateFingerprint | null = null,
   ) {
     const entryKey = `${cwd}\u0000${key}`;
     const readAtMs = yield* Clock.currentTimeMillis;
     const remembered = prLookupGitStateByKey.get(entryKey);
+    // T3-CUSTOM(expbkt3): BEGIN an unchanged fingerprint keeps state past the TTL.
+    const token = fingerprint === null ? null : gitStateFingerprintToken(fingerprint, key);
     if (
       !fresh &&
       remembered !== undefined &&
-      readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+      (token === null
+        ? remembered.token === null &&
+          readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+        : remembered.token === token &&
+          readAtMs - remembered.readAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE))
     ) {
       return remembered.value;
     }
+    // T3-CUSTOM(expbkt3): END
     // invalidateStatus bumps the epoch. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
     const epoch = prLookupEpoch(cwd);
     const value = yield* read;
+    // T3-CUSTOM(expbkt3): config rewritten during the read must not be stored under the old token.
+    const storedToken = fingerprint !== null && (yield* fingerprint.unchanged) ? token : null;
     const latest = prLookupGitStateByKey.get(entryKey);
     if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
       return value;
@@ -2581,7 +2623,8 @@ export const make = Effect.gen(function* () {
       const oldestKey = prLookupGitStateByKey.keys().next().value;
       if (oldestKey !== undefined) prLookupGitStateByKey.delete(oldestKey);
     }
-    prLookupGitStateByKey.set(entryKey, { readAtMs, value });
+    // T3-CUSTOM(expbkt3): see storedToken above.
+    prLookupGitStateByKey.set(entryKey, { readAtMs, value, token: storedToken });
     return value;
   });
   const forgetPrLookupGitState = (cwd: string) =>
@@ -2591,6 +2634,14 @@ export const make = Effect.gen(function* () {
         for (const key of prLookupGitStateByKey.keys()) {
           if (key.startsWith(prefix)) prLookupGitStateByKey.delete(key);
         }
+        // T3-CUSTOM(expbkt3): BEGIN fingerprint-validated decisions and confirmations go too.
+        for (const key of prLookupDecisionByKey.keys()) {
+          if (key.startsWith(prefix)) prLookupDecisionByKey.delete(key);
+        }
+        for (const key of confirmedClosedPrByBranchKey.keys()) {
+          if (key.startsWith(prefix)) confirmedClosedPrByBranchKey.delete(key);
+        }
+        // T3-CUSTOM(expbkt3): END
       }),
     );
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
@@ -2599,6 +2650,8 @@ export const make = Effect.gen(function* () {
       branch: string,
       remoteNameOverride: string | undefined,
       fresh: boolean,
+      // T3-CUSTOM(expbkt3): validates the remembered config reads.
+      fingerprint: GitStateFingerprint | null = null,
     ) {
       const readConfig = (key: string) =>
         rememberPrLookupGitState(
@@ -2606,12 +2659,16 @@ export const make = Effect.gen(function* () {
           `config\u0000${key}`,
           fresh,
           gitCore.readConfigValue(cwd, key),
+          // T3-CUSTOM(expbkt3): see the fingerprint parameter.
+          fingerprint,
         ).pipe(Effect.orElseSucceed(() => null));
       const readRemoteUrlKey = (remoteName: string | null) =>
         remoteName === null
           ? Effect.succeed(null)
           : readConfig(`remote.${remoteName}.url`).pipe(
-              Effect.map((remoteUrl) => (remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null)),
+              Effect.map((remoteUrl) =>
+                remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
+              ),
             );
       const remoteName = remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`));
       const [headRemoteUrlKey, targetRemoteUrlKey] =
@@ -2630,10 +2687,16 @@ export const make = Effect.gen(function* () {
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
-    options: { readonly refresh: boolean; readonly freshGitState: boolean },
+    // T3-CUSTOM(expbkt3): fingerprint is taken before any git read; null keeps the state TTL.
+    options: {
+      readonly refresh: boolean;
+      readonly freshGitState: boolean;
+      readonly fingerprint: GitStateFingerprint | null;
+    },
   ) {
     const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
-      rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read);
+      // T3-CUSTOM(expbkt3): validated by the lookup's fingerprint.
+      rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read, options.fingerprint);
     const remotes = yield* remember(
       "remotes",
       gitCore
@@ -2742,10 +2805,10 @@ export const make = Effect.gen(function* () {
       );
       if (Option.isSome(cached)) yield* Cache.invalidate(prLookupCache, cacheKey);
     }
+    // T3-CUSTOM(expbkt3): a refresh or fresh lookup decides from git, not a remembered decision.
+    if (options.freshGitState) prLookupDecisionByKey.delete(cacheKey);
     let cached = yield* getPrLookup(cacheKey);
-    // The cached head context may have resolved on a different remote than
-    // the saved upstream: a branch tracking origin/main but pushed to a fork
-    // is looked up on the fork. Verify against the remote the lookup used.
+    // Lookup may use a fork instead of the saved upstream; verify the remote actually queried.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
     const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
@@ -2753,6 +2816,8 @@ export const make = Effect.gen(function* () {
       branch,
       identityRemoteName(cached.headContext),
       options.freshGitState,
+      // T3-CUSTOM(expbkt3): validated by the lookup's fingerprint.
+      options.fingerprint,
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
@@ -2771,12 +2836,16 @@ export const make = Effect.gen(function* () {
     }
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
       yield* Cache.invalidate(prLookupCache, cacheKey);
+      // T3-CUSTOM(expbkt3): the mismatch proves the remembered decision stale; read git again.
+      prLookupDecisionByKey.delete(cacheKey);
       cached = yield* getPrLookup(cacheKey);
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
         identityRemoteName(cached.headContext),
         true,
+        // T3-CUSTOM(expbkt3): store the fresh reads under the lookup's fingerprint.
+        options.fingerprint,
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
@@ -2803,26 +2872,105 @@ export const make = Effect.gen(function* () {
       closedAt: latest.closedAt ?? null,
       mergedAt: latest.mergedAt ?? null,
       headSha: latest.headSha ?? null,
-      // Hosting CLIs can select an upstream repository instead of origin.
-      // The returned PR URL names the repository that actually owns it.
+      // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+  // T3-CUSTOM(expbkt3): BEGIN a closed or merged result that fresh git state confirmed under the
+  // same fingerprint is not confirmed again, so a settled PR's idle worktree starts no git.
+  const confirmedClosedPrByBranchKey = new Map<
+    string,
+    {
+      readonly token: string;
+      readonly epoch: number;
+      readonly confirmedAtMs: number;
+      readonly pullRequest: string;
+    }
+  >();
+  const closedPrIdentity = (pullRequest: GitBranchPullRequest) =>
+    [pullRequest.number, pullRequest.url, pullRequest.state, pullRequest.repositoryKey ?? ""].join(
+      "\u0000",
+    );
+  const confirmedClosedPrKey = (cacheCwd: string, branch: string, profileId: string | null) =>
+    `${cacheCwd}\u0000${branch}\u0000${profileId ?? "machine"}`;
+  const isConfirmedClosedPr = Effect.fn("isConfirmedClosedPr")(function* (
+    cacheCwd: string,
+    branch: string,
+    fingerprint: GitStateFingerprint | null,
+    pullRequest: GitBranchPullRequest,
+  ) {
+    if (fingerprint === null) return false;
+    const environment = yield* CurrentSourceControlExecutionEnvironment;
+    const confirmed = confirmedClosedPrByBranchKey.get(
+      confirmedClosedPrKey(cacheCwd, branch, environment?.profileId ?? null),
+    );
+    const nowMs = yield* Clock.currentTimeMillis;
+    return (
+      confirmed !== undefined &&
+      confirmed.token === fingerprint.branch &&
+      confirmed.epoch === prLookupEpoch(cacheCwd) &&
+      nowMs - confirmed.confirmedAtMs < Duration.toMillis(GIT_STATE_FINGERPRINT_MAX_AGE) &&
+      confirmed.pullRequest === closedPrIdentity(pullRequest)
+    );
+  });
+  const rememberConfirmedClosedPr = Effect.fn("rememberConfirmedClosedPr")(function* (
+    cacheCwd: string,
+    branch: string,
+    started: { readonly fingerprint: GitStateFingerprint | null; readonly epoch: number },
+    confirmedAtMs: number,
+    pullRequest: GitBranchPullRequest | null,
+  ) {
+    const environment = yield* CurrentSourceControlExecutionEnvironment;
+    const key = confirmedClosedPrKey(cacheCwd, branch, environment?.profileId ?? null);
+    confirmedClosedPrByBranchKey.delete(key);
+    const { fingerprint, epoch } = started;
+    if (fingerprint === null || pullRequest === null || pullRequest.state === "open") return;
+    if (prLookupEpoch(cacheCwd) !== epoch || !(yield* fingerprint.unchanged)) return;
+    if (confirmedClosedPrByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+      const oldestKey = confirmedClosedPrByBranchKey.keys().next().value;
+      if (oldestKey !== undefined) confirmedClosedPrByBranchKey.delete(oldestKey);
+    }
+    confirmedClosedPrByBranchKey.set(key, {
+      token: fingerprint.branch,
+      epoch,
+      confirmedAtMs,
+      pullRequest: closedPrIdentity(pullRequest),
+    });
+  });
+  // T3-CUSTOM(expbkt3): END
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const refresh = options?.refresh === true;
     const freshGitState = refresh || options?.freshGitState === true;
+    // T3-CUSTOM(expbkt3): BEGIN taken before any git read, so a change during the lookup shows next time.
+    const started = {
+      fingerprint: yield* gitStateFingerprints.read(cacheCwd, branch),
+      epoch: prLookupEpoch(cacheCwd),
+    };
+    const startedAtMs = yield* Clock.currentTimeMillis;
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
+      fingerprint: started.fingerprint,
     });
-    if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
-    return yield* lookupBranchPullRequest(cacheCwd, branch, {
+    if (freshGitState) {
+      yield* rememberConfirmedClosedPr(cacheCwd, branch, started, startedAtMs, pullRequest);
+      return pullRequest;
+    }
+    if (pullRequest === null || pullRequest.state === "open") return pullRequest;
+    if (yield* isConfirmedClosedPr(cacheCwd, branch, started.fingerprint, pullRequest)) {
+      return pullRequest;
+    }
+    const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
+      fingerprint: started.fingerprint,
     });
+    yield* rememberConfirmedClosedPr(cacheCwd, branch, started, startedAtMs, confirmed);
+    return confirmed;
+    // T3-CUSTOM(expbkt3): END
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
@@ -2843,6 +2991,9 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A user is waiting on these, so a host's background rate-limit pause must not refuse them.
+  const asUserAction = Effect.provideService(SourceControlRateLimit.Interactive, true);
+
   const resolvePullRequest: GitManager["Service"]["resolvePullRequest"] = Effect.fn(
     "resolvePullRequest",
   )(function* (input) {
@@ -2854,7 +3005,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
 
     return { pullRequest };
-  });
+  }, asUserAction);
 
   const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
     cwd: string,
@@ -2971,17 +3122,13 @@ export const make = Effect.gen(function* () {
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
-      // Git refuses to move a branch that is checked out in a worktree, so the
-      // reuse paths cannot go through materializePullRequestHeadBranch and instead
-      // advance the checkout from inside the worktree.
+      // Git refuses to move checked-out branches; advance reused checkouts from inside their worktree.
       const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
         worktreePath: string,
         checkedOutBranch: string,
       ) {
         if (checkedOutBranch !== localPullRequestBranch) {
-          // findLocalHeadBranch also accepts a branch that merely shares the head's bare name —
-          // a fork PR opened from "main" matches the user's own local main. That checkout is
-          // somebody else's work, so it keeps its tracking config and nothing else.
+          // Bare-name matches may be unrelated local branches; preserve their work and tracking config.
           return {
             pullRequest,
             branch: localPullRequestBranch,
@@ -2990,9 +3137,7 @@ export const make = Effect.gen(function* () {
           };
         }
 
-        // Read before ensureExistingWorktreeUpstream: it force-updates the remote-tracking ref,
-        // and once that has jumped to a rewritten head there is no way left to tell a checkout
-        // that holds nothing of its own from one carrying local commits.
+        // Capture upstream before its forced fetch so rewritten heads remain distinguishable from local commits.
         const upstreamCommitBeforeFetch = yield* gitCore
           .resolveCommit({ cwd: worktreePath, revision: "@{upstream}" })
           .pipe(
@@ -3002,56 +3147,54 @@ export const make = Effect.gen(function* () {
 
         yield* ensureExistingWorktreeUpstream(worktreePath);
 
-        const refreshed = yield* gitCore
-          // The pull request's own ref, because it is the only thing that certainly names its
-          // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
-          // from `origin/main` whose head branch has since been deleted still resolves — and
-          // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
-          .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
-            // taken only where it is the head branch's own rather than whatever the checkout
-            // happened to be cut from.
-            Effect.catch(() =>
-              Effect.gen(function* () {
-                const details = yield* gitCore.statusDetails(worktreePath);
-                if (
-                  details.upstreamRef === null ||
-                  !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
-                ) {
-                  return yield* new GitManagerError({
-                    operation: "preparePullRequestThread",
-                    cwd: worktreePath,
-                    detail: "The pull request head could not be resolved for this checkout.",
-                  });
-                }
-                return yield* gitCore.resolveCommit({
+        // The pull request's own ref, because it is the only thing that certainly names its
+        // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
+        // from `origin/main` whose head branch has since been deleted still resolves — and
+        // following it would move the checkout onto main and call that the pull request.
+        const refreshed = yield* changeRequestHeadRef(worktreePath, pullRequest.number).pipe(
+          Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd: worktreePath, ref })),
+          // A host that publishes no head ref leaves the remote-tracking branch,
+          // taken only where it is the head branch's own rather than whatever the checkout
+          // happened to be cut from.
+          Effect.catch(() =>
+            Effect.gen(function* () {
+              const details = yield* gitCore.statusDetails(worktreePath);
+              if (
+                details.upstreamRef === null ||
+                !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
+              ) {
+                return yield* new GitManagerError({
+                  operation: "preparePullRequestThread",
                   cwd: worktreePath,
-                  revision: details.upstreamRef,
+                  detail: "The pull request head could not be resolved for this checkout.",
                 });
-              }),
-            ),
-            Effect.flatMap((target) =>
-              gitCore.refreshCheckedOutBranch({
+              }
+              return yield* gitCore.resolveCommit({
                 cwd: worktreePath,
-                targetCommit: target.commitSha,
-                resetWhenHeadCommit: upstreamCommitBeforeFetch,
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "GitManager.preparePullRequestThread reused worktree refresh failed",
-                {
-                  worktreePath,
-                  localBranch: localPullRequestBranch,
-                  cause: error,
-                },
-              ).pipe(Effect.as({ moved: false, onTarget: false })),
-            ),
-          );
+                revision: details.upstreamRef,
+              });
+            }),
+          ),
+          Effect.flatMap((target) =>
+            gitCore.refreshCheckedOutBranch({
+              cwd: worktreePath,
+              targetCommit: target.commitSha,
+              resetWhenHeadCommit: upstreamCommitBeforeFetch,
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "GitManager.preparePullRequestThread reused worktree refresh failed",
+              {
+                worktreePath,
+                localBranch: localPullRequestBranch,
+                cause: error,
+              },
+            ).pipe(Effect.as({ moved: false, onTarget: false })),
+          ),
+        );
 
-        // Only when the checkout actually moved: another thread may be running in this worktree,
-        // and re-running the setup script under it buys nothing when the code did not change.
+        // Setup can disrupt other threads using this worktree; rerun only when the checkout moved.
         if (refreshed.moved) {
           yield* maybeRunSetupScript(worktreePath);
         }
@@ -3172,7 +3315,7 @@ export const make = Effect.gen(function* () {
         isOnPullRequestHead: true,
       };
     }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
-  });
+  }, asUserAction);
 
   const runFeatureBranchStep = Effect.fn("runFeatureBranchStep")(function* (
     settings: SourceControlTextGenerationSettings,
@@ -3320,14 +3463,7 @@ export const make = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
-        const changeRequestTerms = wantsPr
-          ? yield* sourceControlProvider(input.cwd).pipe(
-              Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-              Effect.orElseSucceed(() =>
-                getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
-              ),
-            )
-          : null;
+        const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
 
         const commit = commitAction
           ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(
@@ -3356,7 +3492,7 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => gitCore.pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
               )
           : { status: "skipped_not_requested" as const };
 
@@ -3417,6 +3553,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+    asUserAction,
   );
 
   return GitManager.of({

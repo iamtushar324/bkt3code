@@ -33,17 +33,21 @@ export class ElectronNotification extends Context.Service<
 >()("@t3tools/desktop/electron/ElectronNotification") {}
 
 export const make = ElectronNotification.of({
-  show: (request) =>
-    Effect.sync(() => {
-      if (!Electron.Notification.isSupported()) return false;
-      const notification = new Electron.Notification({
-        title: request.title,
-        body: request.body,
+  show: Effect.fn("ElectronNotification.show")(
+    function* (request: ElectronNotificationRequest) {
+      return yield* Effect.sync(() => {
+        if (!Electron.Notification.isSupported()) return false;
+        const notification = new Electron.Notification({
+          title: request.title,
+          body: request.body,
+        });
+        notification.on("click", request.onClick);
+        notification.show();
+        return true;
       });
-      notification.on("click", request.onClick);
-      notification.show();
-      return true;
-    }).pipe(Effect.catchCause(() => Effect.succeed(false))),
+    },
+    Effect.catchCause(() => Effect.succeed(false)),
+  ),
 });
 
 export const layer = Layer.succeed(ElectronNotification, make);

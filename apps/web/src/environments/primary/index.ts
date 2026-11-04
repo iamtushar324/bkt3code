@@ -1,9 +1,4 @@
 export {
-  resetPrimaryEnvironmentDescriptorForTests,
-  resolveInitialPrimaryEnvironmentDescriptor,
-} from "./context";
-
-export {
   // T3-CUSTOM(expbkt3): BEGIN — Clerk-backed managed auth surface.
   bindPrimaryEnvironmentClerkIdentity,
   // T3-CUSTOM(expbkt3): END

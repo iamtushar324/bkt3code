@@ -59,6 +59,7 @@ import {
   QUEUE_PICK_HINT,
   queueLabel,
   spaceLine,
+  type PaceTone,
   SWITCH_RESTARTS_SESSION_HINT,
   switchRestartsSession,
   triggerTooltip,
@@ -96,6 +97,12 @@ const BAND_TEXT_CLASS: Record<UsageBand, string | null> = {
   ok: null,
   warn: "text-warning-foreground",
   bad: "text-destructive-foreground",
+};
+
+const PACE_TEXT_CLASS: Record<PaceTone, string | null> = {
+  good: "text-success-foreground",
+  bad: "text-destructive-foreground",
+  muted: null,
 };
 
 const TAG_VARIANT: Record<AccountTagTone, "error" | "warning" | "outline"> = {
@@ -241,6 +248,30 @@ function AccountRow(props: {
         <span className={cn("truncate text-2xs text-muted-foreground tabular-nums", indent)}>
           {spaceLine(row.space)}
         </span>
+      ) : null}
+      {row.pace && !row.disabled ? (
+        <span className={cn("truncate text-2xs text-muted-foreground tabular-nums", indent)}>
+          {`Pace to reset ${row.pace.percent}% · `}
+          <span className={cn(PACE_TEXT_CLASS[row.pace.tone] ?? undefined)}>{row.pace.word}</span>
+        </span>
+      ) : null}
+      {row.credits ? (
+        <>
+          <span className={cn("truncate text-2xs text-muted-foreground tabular-nums", indent)}>
+            {row.credits.headline}
+          </span>
+          {row.credits.rate ? (
+            <span
+              className={cn(
+                "truncate text-2xs text-muted-foreground tabular-nums",
+                PACE_TEXT_CLASS[row.credits.tone] ?? undefined,
+                indent,
+              )}
+            >
+              {row.credits.rate}
+            </span>
+          ) : null}
+        </>
       ) : null}
       {row.windows.length > 0 ? (
         <span className={cn("grid grid-cols-3 gap-3", indent)}>

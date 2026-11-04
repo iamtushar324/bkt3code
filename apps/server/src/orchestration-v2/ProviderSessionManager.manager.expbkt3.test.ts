@@ -83,6 +83,8 @@ function fixture(provider = "codex") {
     id: threadId,
     ownerUserId: owner,
     memberUserIds: [actor],
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
     archivedAt: null,
     deletedAt: null,
   };

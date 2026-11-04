@@ -21,9 +21,11 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -71,6 +73,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
         Layer.mergeAll(
           NodeCrypto.layer,
           Scheduler.layer,
+          ManagedPolicy.layerTest(),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
@@ -89,6 +92,8 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
       Layer.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
@@ -100,7 +105,11 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
           Layer.mock(SecretRequests.SecretRequests)({}),
           // Upstream's MCP service now also reads these; the schedule tools use neither.
           threadLaunch,
-          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            resolveDefaultBranchName: () => Effect.succeed("main"),
+            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+          }),
           ServerSettings.layerTest(),
         ),
       ),

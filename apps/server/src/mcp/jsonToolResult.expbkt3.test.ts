@@ -25,14 +25,9 @@ describe("JsonToolResult", () => {
     expect(toJsonValue(10n)).toBe("10");
   });
 
+  // effect 4.1 no longer rejects the raw value in the CallToolResult constructor,
+  // so the check is that the encoded value is the plain JSON MCP sends.
   it("encodes a handler value that MCP accepts as structuredContent", () => {
-    expect(
-      () =>
-        new McpSchema.CallToolResult({
-          content: [],
-          structuredContent: handlerValue() as never,
-        }),
-    ).toThrow();
     const encoded = Schema.encodeUnknownSync(JsonToolResult)(handlerValue());
     const result = new McpSchema.CallToolResult({
       content: [],

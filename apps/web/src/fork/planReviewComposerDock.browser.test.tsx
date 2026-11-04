@@ -1,17 +1,14 @@
 import type { ReactNode } from "react";
-import { useEffect } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
 import { render } from "../../test/render";
 
 import {
-  type ComposerScrollSurface,
   PlanReviewComposerDock,
   PlanReviewConversationComposerTarget,
   resetPlanReviewComposerDockForTests,
   shouldRestDockedComposer,
   shouldShowPlanFollowUpDrawer,
-  usePlanReviewComposerScrollSurface,
 } from "./planReviewComposerDock";
 
 function setup() {
@@ -87,31 +84,6 @@ describe("resting a docked composer", () => {
 
   it("does not collapse behind open composer chrome", () => {
     expect(shouldRestDockedComposer({ ...docked, hasExpandedChrome: true })).toBe(false);
-  });
-});
-
-describe("the docked scroll surface", () => {
-  it("passes chat's own timeline through while the composer is home", async () => {
-    setup();
-    const timeline = document.createElement("div");
-    const captured: { surface: ComposerScrollSurface | null } = { surface: null };
-
-    function Probe() {
-      const surface = usePlanReviewComposerScrollSurface({
-        getTimelineScrollableNode: () => timeline,
-        isTimelineAtLogicalEnd: () => false,
-        timelineOverflows: false,
-      });
-      useEffect(() => {
-        captured.surface = surface;
-      }, [surface]);
-      return null;
-    }
-
-    await using _screen = await mount(<Probe />);
-    expect(captured.surface?.getTimelineScrollableNode()).toBe(timeline);
-    expect(captured.surface?.isTimelineAtLogicalEnd()).toBe(false);
-    expect(captured.surface?.timelineOverflows).toBe(false);
   });
 });
 

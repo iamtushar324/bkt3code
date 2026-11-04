@@ -1,23 +1,27 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 import {
   EventId,
   IsoDateTime,
-  NonNegativeInt,
   ProviderItemId,
-  PositiveInt,
-  RuntimeItemId,
   RuntimeRequestId,
-  RuntimeTaskId,
   ThreadId,
-  TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ProviderUsageLimitsUpdate } from "./providerUsageLimits.ts";
 import { ProviderApprovalOption } from "./providerPolicy.ts";
+// T3-CUSTOM(expbkt3): END
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
+// Upstream removed these ids from baseSchemas with the V1 runtime events.
+const RuntimeItemId = TrimmedNonEmptyString.pipe(Schema.brand("RuntimeItemId"));
+export type RuntimeItemId = typeof RuntimeItemId.Type;
+const RuntimeTaskId = TrimmedNonEmptyString.pipe(Schema.brand("RuntimeTaskId"));
+export type RuntimeTaskId = typeof RuntimeTaskId.Type;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 
 const RuntimeEventRawSource = Schema.Union([
@@ -70,16 +74,20 @@ const RuntimeThreadState = Schema.Literals([
   "error",
 ]);
 export type RuntimeThreadState = typeof RuntimeThreadState.Type;
+// T3-CUSTOM(expbkt3): END
 
 const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
 export type RuntimeTurnState = typeof RuntimeTurnState.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
+// T3-CUSTOM(expbkt3): END
 
 const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
 export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 const RuntimeContentStreamKind = Schema.Literals([
   "assistant_text",
   "reasoning_text",
@@ -102,6 +110,7 @@ const RuntimeErrorClass = Schema.Literals([
   "unknown",
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
+// T3-CUSTOM(expbkt3): END
 
 const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
@@ -120,6 +129,7 @@ export function isToolLifecycleItemType(value: string): value is ToolLifecycleIt
   return TOOL_LIFECYCLE_ITEM_TYPES.includes(value as ToolLifecycleItemType);
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 export const CanonicalItemType = Schema.Literals([
   "user_message",
   "assistant_message",
@@ -259,6 +269,7 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
   metadata: Schema.optional(UnknownRecordSchema),
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
+// T3-CUSTOM(expbkt3): END
 
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
@@ -286,6 +297,7 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 const ThreadTokenUsageUpdatedPayload = Schema.Struct({
   usage: ThreadTokenUsageSnapshot,
 });
@@ -321,17 +333,23 @@ const TurnStartedPayload = Schema.Struct({
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
+// T3-CUSTOM(expbkt3): END
 
-/**
- * Input includes cache reads and writes. Output includes reasoning, and
- * reasoningTokens is an optional subset.
- */
+// Input includes cache reads/writes; output includes the optional reasoningTokens subset.
 const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
+  // Native model ids the provider reported for the main agent's work. Absent means unknown.
+  models: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
+  // The provider ran a local command; its counters describe that result, not model work.
+  localCommand: Schema.optional(Schema.Boolean),
+  // Provider-ledger counts beyond the main agent, such as native subagents and compaction.
+  otherUsage: Schema.optional(
+    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+  ),
 };
 export const TurnTokenUsage = Schema.Union([
   Schema.Struct({
@@ -349,6 +367,7 @@ export const TurnTokenUsage = Schema.Union([
 ]);
 export type TurnTokenUsage = typeof TurnTokenUsage.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
@@ -392,6 +411,7 @@ const TurnDiffUpdatedPayload = Schema.Struct({
   unifiedDiff: Schema.String,
 });
 export type TurnDiffUpdatedPayload = typeof TurnDiffUpdatedPayload.Type;
+// T3-CUSTOM(expbkt3): END
 
 export const ToolActivitySurface = Schema.Literals(["browser", "computer"]);
 export type ToolActivitySurface = typeof ToolActivitySurface.Type;
@@ -433,6 +453,7 @@ export const ToolActivitySource = Schema.Struct({
 });
 export type ToolActivitySource = typeof ToolActivitySource.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
@@ -470,13 +491,13 @@ const RequestResolvedPayload = Schema.Struct({
   resolution: Schema.optional(Schema.Unknown),
 });
 export type RequestResolvedPayload = typeof RequestResolvedPayload.Type;
+// T3-CUSTOM(expbkt3): END
 
 const UserInputQuestionOption = Schema.Struct({
   label: TrimmedNonEmptyStringSchema,
   description: Schema.String,
   value: Schema.optional(Schema.String),
 });
-export type UserInputQuestionOption = typeof UserInputQuestionOption.Type;
 
 export const UserInputQuestion = Schema.Struct({
   id: TrimmedNonEmptyStringSchema,
@@ -491,6 +512,7 @@ export const UserInputQuestion = Schema.Struct({
 });
 export type UserInputQuestion = typeof UserInputQuestion.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — retained V1 provider runtime event schemas for fork consumers.
 export const UserInputRequestedPayload = Schema.Struct({
   questions: Schema.Array(UserInputQuestion),
   responseMode: Schema.optional(Schema.Literal("message")),
@@ -1167,3 +1189,4 @@ export type ProviderRuntimeEvent = ProviderRuntimeEventV2;
 
 export const ProviderRuntimeTurnStatus = RuntimeTurnState;
 export type ProviderRuntimeTurnStatus = RuntimeTurnState;
+// T3-CUSTOM(expbkt3): END

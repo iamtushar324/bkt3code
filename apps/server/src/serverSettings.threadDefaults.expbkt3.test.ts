@@ -1,5 +1,6 @@
 // T3-CUSTOM(expbkt3): the deprecated host-wide thread defaults fold into
 // upstream's keys once, on load.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -21,6 +23,7 @@ const decodeJsonRecord = Schema.decodeSync(
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -29,7 +32,7 @@ const makeServerSettingsLayer = () =>
         }),
       ),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const forkModel = {

@@ -55,7 +55,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -95,6 +95,7 @@ import {
 } from "./hardLimitHook.ts";
 import { type FiveHourHistory, fiveHourRates, recordFiveHour } from "./fiveHourRate.ts";
 import { computeShortLabels } from "./shortLabels.ts";
+import { paceAndCredits } from "./paceCredits.ts";
 
 export const STATUS_POLL_INTERVAL_MS = 15_000;
 /** The poll is jittered by up to this much either way so several servers do not align. */
@@ -326,10 +327,10 @@ export const make = Effect.gen(function* () {
   const providers = yield* ProviderService;
   const dispatcher = yield* OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const uuid = crypto.uuidV4().pipe(Effect.orDie);
 
   /** The account `~/.claude-active` points at today — the degraded answer when the switcher cannot place. */
   const currentProfileFromActiveLink: Effect.Effect<ClaudeAccountResolution | undefined> =
@@ -663,6 +664,7 @@ export const make = Effect.gen(function* () {
       placeRank >= 1
         ? { placeRank }
         : {}),
+      ...paceAndCredits(raw),
     };
   };
 

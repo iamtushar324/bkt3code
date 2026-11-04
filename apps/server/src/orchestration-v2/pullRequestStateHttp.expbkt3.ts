@@ -34,20 +34,17 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import {
-  canonicalRepositoryKey,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
-import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { authenticateForkRoute, catchForkRouteAuthErrors } from "./forkRouteAuth.expbkt3.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -146,7 +143,9 @@ export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.a
     number: write.number,
     url: write.url,
   });
-  const repositoryKey = canonicalRepositoryKey(`${key.host}/${key.repository}`);
+  const repositoryKey = sourceControlDefinitions.canonicalRepositoryKey(
+    `${key.host}/${key.repository}`,
+  );
   const commandId = (threadId: string, kind: string) =>
     CommandId.make(`bridge:pr-state:${write.deliveryId}:${threadId}:${kind}`);
 
@@ -200,13 +199,14 @@ export const applyPullRequestState = Effect.fn("orchestration.pullRequestState.a
     // (b) Threads on the PR's head branch in the same repository: branch PR.
     if (thread.branch === write.snapshot.headBranch) {
       const project = Option.getOrUndefined(yield* snapshots.getProjectShellById(thread.projectId));
-      const repository = sourceControlRepositorySelector(project?.repositoryIdentity);
+      const repository = sourceControlDefinitions.repositorySelector(project?.repositoryIdentity);
       if (
         project !== undefined &&
         repository !== null &&
         project.repositoryIdentity != null &&
-        canonicalRepositoryKey(project.repositoryIdentity.canonicalKey.toLowerCase()) ===
-          repositoryKey
+        sourceControlDefinitions.canonicalRepositoryKey(
+          project.repositoryIdentity.canonicalKey.toLowerCase(),
+        ) === repositoryKey
       ) {
         const branchPullRequest = {
           projectId: project.id,

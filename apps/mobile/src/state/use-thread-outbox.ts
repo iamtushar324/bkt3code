@@ -13,7 +13,8 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
 
-const activeIdentityQueuedMessagesAtom = Atom.make((get) => {
+// T3-CUSTOM(expbkt3): exported so the delivery service drains only this identity's queue.
+export const activeIdentityQueuedMessagesAtom = Atom.make((get) => {
   const identityKey = get(managedRelaySessionAtom)?.accountId ?? ANONYMOUS_OUTBOX_IDENTITY;
   const messages = Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))
     .flat()
@@ -21,7 +22,7 @@ const activeIdentityQueuedMessagesAtom = Atom.make((get) => {
   return groupQueuedThreadMessages(messages);
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:active-identity"));
 
-const threadOutboxShellStatusesAtom = Atom.make(
+export const threadOutboxShellStatusesAtom = Atom.make(
   (get): ReadonlyMap<EnvironmentId, EnvironmentShellStatus> => {
     const statuses = new Map<EnvironmentId, EnvironmentShellStatus>();
     for (const queue of Object.values(get(activeIdentityQueuedMessagesAtom))) {
@@ -35,11 +36,7 @@ const threadOutboxShellStatusesAtom = Atom.make(
 ).pipe(Atom.withLabel("mobile:thread-outbox:shell-statuses"));
 // T3-CUSTOM(expbkt3): END
 
-/**
- * Queued pending tasks the outbox drain must not deliver right now: the one
- * open in the new-task editor, plus any whose latest edits could not be saved
- * back yet (delivering those would send stale content).
- */
+/** Do not deliver tasks still open in an editor or whose latest edits failed to save; their queued payloads are stale. */
 export const editingQueuedMessageIdsAtom = Atom.make<Readonly<Record<MessageId, true>>>({}).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:thread-outbox:editing-message-ids"),
@@ -84,12 +81,8 @@ export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
     }
   }
   return keys;
-}).pipe(Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
 
 export function useQueuedThreadKeys(): ReadonlySet<string> {
   return useAtomValue(queuedThreadKeysAtom);
-}
-
-export function useThreadOutboxShellStatuses() {
-  return useAtomValue(threadOutboxShellStatusesAtom);
 }

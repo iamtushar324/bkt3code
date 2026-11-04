@@ -84,6 +84,20 @@ import Migration1007 from "./Migrations/1007_OwnershipBackfillFastPath.ts";
 import Migration1008 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
 // T3-CUSTOM(expbkt3): native plan review documents, versions and discussions.
 import Migration1009 from "./Migrations/1009_PlanReviewDocuments.ts";
+// T3-CUSTOM(expbkt3): upstream ships these as migrations 68-78. The legacy fork
+// block (33-42) and the shipped 1000+ lane already occupy those slots, so they
+// register at the next free IDs in the 1000+ lane; the files keep upstream names.
+import Migration1060 from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration1061 from "./Migrations/069_ThreadMessageSearch.ts";
+import Migration1062 from "./Migrations/070_PeerLinks.ts";
+import Migration1063 from "./Migrations/071_PeerLinkFence.ts";
+import Migration1064 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration1065 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import Migration1066 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration1067 from "./Migrations/075_SubagentDeliveryState.ts";
+import Migration1068 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
+import Migration1069 from "./Migrations/077_RepairBooleanSettledOverride.ts";
+import Migration1070 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
 
 // T3-CUSTOM(expbkt3): session lineage column for the experimental sidebar tree.
 import Migration1010 from "./Migrations/1010_ProjectionThreadsParentThread.ts";
@@ -159,36 +173,11 @@ import Migration1047 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration1049 from "./Migrations/059_McpAppModelContext.ts";
 import Migration1050 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 
-/**
- * Migration loader with all migrations defined inline.
- *
- * Key format: "{id}_{name}" where:
- * - id: numeric migration ID (determines execution order)
- * - name: descriptive name for the migration
- *
- * Uses Migrator.fromRecord which parses the key format and
- * returns migrations sorted by ID.
- */
-// T3-CUSTOM(expbkt3): migration index allocation rule. Do not re-decide this
-// on every upstream merge — apply it mechanically.
-//
-//   * 1-32      shared history, identical to upstream.
-//   * 33-42     LEGACY fork block. Frozen. These indices are already applied in
-//               production databases (effect_sql_migrations keys on
-//               `${id}_${name}`), so renumbering one makes it run a second time
-//               on live data. Never touch them.
-//   * 43-45     LEGACY upstream remaps applied before the first 1000+ migration.
-//               Frozen for the same durable-identity reason as 33-42.
-//   * 46-999    reserved. Do not append migrations here: Effect only executes
-//               IDs greater than the highest applied ID, and live databases
-//               have already applied 1000+ migrations.
-//   * 1000+     monotonic shared allocation lane for every new migration. Fork
-//               files use the allocated ID; upstream files keep their upstream
-//               filename but register at the next free ID in this lane.
-//
-// Always allocate an ID greater than the current maximum registry ID. This is
-// required by Migrator.make, which only runs migrations newer than the highest
-// row already present in effect_sql_migrations.
+// T3-CUSTOM(expbkt3): migration ids. 1-32 match upstream; 33-45 are frozen (applied in prod and
+// keyed on `${id}_${name}`, so renumbering reruns them); 46-999 are reserved. Every new migration,
+// fork or upstream, takes the next id above the current maximum (1000+): Migrator.make runs only
+// ids above the highest applied one. Upstream files keep their filename.
+
 // T3-CUSTOM(expbkt3): owner-bound session callback storage.
 import Migration1045 from "./Migrations/1045_SessionWebhooks.ts";
 // T3-CUSTOM(expbkt3): review comments are sent once; this records when.
@@ -211,13 +200,10 @@ import Migration1057 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration1058 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
 // T3-CUSTOM(expbkt3): upstream ships this as migration 67; it registers at the next free 1000+ id.
 import Migration1059 from "./Migrations/067_WebhookDedupe.ts";
-// T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is
-// deliberately NOT registered. It drops the V1 activity, turn, proposed-plan,
-// pending-approval and state projections and checkpoint diff blobs, but the fork still reads the V1
-// projections for old-thread history (ForkLegacyHistory.expbkt3.ts,
-// legacyProjection.expbkt3.ts). Running it on bkt3 would lose that history
-// irreversibly. Leave the file in the tree; register it only once no fork code
-// reads those tables, at the next free 1000+ id.
+// T3-CUSTOM(expbkt3): upstream migration 63 (`063_DropUnusedV1Projections.ts`) is NOT registered:
+// it irreversibly drops V1 projections and checkpoint diff blobs that fork history still reads
+// (ForkLegacyHistory.expbkt3.ts, legacyProjection.expbkt3.ts). Register it at the next free
+// 1000+ id only once no fork code reads those tables.
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -360,6 +346,18 @@ export const migrationEntries = [
   [1058, "RepairClientSettlementTimestamps", Migration1058],
   // T3-CUSTOM(expbkt3): upstream 67 remapped above the shipped 1058 migration.
   [1059, "WebhookDedupe", Migration1059],
+  // T3-CUSTOM(expbkt3): upstream 68-78 remapped above the shipped 1059 migration.
+  [1060, "ShellStopRequestIndex", Migration1060],
+  [1061, "ThreadMessageSearch", Migration1061],
+  [1062, "PeerLinks", Migration1062],
+  [1063, "PeerLinkFence", Migration1063],
+  [1064, "WaitingLinkRequestIndex", Migration1064],
+  [1065, "ActiveTurnItemIndexes", Migration1065],
+  [1066, "ExcludeAttachmentPlaceholdersFromSearch", Migration1066],
+  [1067, "SubagentDeliveryState", Migration1067],
+  [1068, "ProjectionProjectsPinArchive", Migration1068],
+  [1069, "RepairBooleanSettledOverride", Migration1069],
+  [1070, "DropOrchestrationEventCorrelationIndex", Migration1070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -377,12 +375,7 @@ const makeMigrationLoader = (throughId?: number) =>
 // and stay unguarded, like upstream's ids below 55.
 const FIRST_V2_MIGRATION_ID = 1043;
 
-/**
- * Fail before migrating when the migrator would skip one of V2's own
- * migrations. It skips every id up to the highest recorded one, whatever name
- * was recorded, so a database that took a V2 id for another migration would
- * start without V2's schema and fail on first use.
- */
+// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
 const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
   throughId?: number,
 ) {

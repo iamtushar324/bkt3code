@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -11,7 +12,7 @@ import {
   AuthEnvironmentScopes,
   AuthSessionId,
   EnvironmentUserId, // T3-CUSTOM(expbkt3): managed auth — needed for the owning user id on sessions.
-  ClientSurface,
+  ClientSurface, // T3-CUSTOM(expbkt3): client connection metadata the fork still records.
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -112,7 +113,7 @@ export const SetAuthSessionUserInput = Schema.Struct({
   userId: EnvironmentUserId,
 });
 export type SetAuthSessionUserInput = typeof SetAuthSessionUserInput.Type;
-// T3-CUSTOM(expbkt3): END
+// T3-CUSTOM(expbkt3): upstream deleted this as unreached; the fork records the client app version Settings shows.
 export const SetAuthSessionClientConnectionInput = Schema.Struct({
   sessionId: AuthSessionId,
   surface: Schema.NullOr(ClientSurface),
@@ -151,6 +152,7 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    // T3-CUSTOM(expbkt3): managed auth setUser, and client connection metadata upstream deleted.
     readonly setUser: (
       input: SetAuthSessionUserInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
@@ -241,7 +243,7 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -397,6 +399,7 @@ export const make = Effect.gen(function* () {
   });
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): upstream deleted this as unreached; the fork records the client app version Settings shows.
   const setClientConnectionRow = SqlSchema.void({
     Request: SetAuthSessionClientConnectionInput,
     execute: ({ sessionId, surface, appVersion }) =>
@@ -497,6 +500,7 @@ export const make = Effect.gen(function* () {
 
   const getById: AuthSessionRepository["Service"]["getById"] = (input) =>
     getSessionRowById(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.getById:query",
@@ -524,6 +528,7 @@ export const make = Effect.gen(function* () {
 
   const listActive: AuthSessionRepository["Service"]["listActive"] = (input) =>
     listActiveSessionRows(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.listActive:query",
@@ -609,6 +614,7 @@ export const make = Effect.gen(function* () {
     );
   // T3-CUSTOM(expbkt3): END
 
+  // T3-CUSTOM(expbkt3): upstream deleted this as unreached; the fork records the client app version Settings shows.
   const setClientConnection: AuthSessionRepository["Service"]["setClientConnection"] = (input) =>
     setClientConnectionRow(input).pipe(
       Effect.mapError(
@@ -631,6 +637,7 @@ export const make = Effect.gen(function* () {
     // T3-CUSTOM(expbkt3): managed auth — expose revokeByUserId/setUser on the repository service.
     revokeByUserId,
     setLastConnectedAt,
+    // T3-CUSTOM(expbkt3): managed auth setUser and the client connection metadata write.
     setUser,
     setClientConnection,
   } satisfies AuthSessionRepository["Service"];

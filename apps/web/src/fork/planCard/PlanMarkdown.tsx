@@ -25,9 +25,11 @@ export default function PlanMarkdown(props: ComponentProps<typeof ChatMarkdown>)
   const timeline = card?.timeline;
   const body = segments.map((segment, index) =>
     segment.kind === "html" ? (
+      // oxlint-disable-next-line react/no-array-index-key -- segments are positional slices of one plan text
       <PlanHtmlFrame key={`html-${index}`} html={segment.html} title={segment.title} />
     ) : (
       <ChatMarkdown
+        // oxlint-disable-next-line react/no-array-index-key -- segments are positional slices of one plan text
         key={`markdown-${index}`}
         {...(timeline
           ? {

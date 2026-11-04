@@ -57,7 +57,7 @@ const handlers = makeWebUiRpcHandlers((_scope, requests) => {
 });
 const TestLayer = McpHttpServer.toolkitRegistration(WebUiRpcToolkit, handlers).pipe(
   Layer.provide(liveThreadsLayer),
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
 );
 
 const withInvocation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -81,9 +81,9 @@ it.effect("registers four compact tools while listing the complete virtual surfa
       expect(listed.structuredContent).toMatchObject({
         ok: true,
         // T3-CUSTOM(expbkt3): registration exposes native V2 methods and all retained fork RPCs.
-        rpcCount: 253,
-        streamCount: 35,
-        matchedCount: 253,
+        rpcCount: 265,
+        streamCount: 31,
+        matchedCount: 265,
       });
 
       const schema = yield* withInvocation(

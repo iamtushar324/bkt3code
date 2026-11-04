@@ -1,4 +1,6 @@
 import {
+  // T3-CUSTOM(expbkt3): the legacy V1 baseline ref helper (upstream deleted checkpointing/Utils.ts).
+  CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
@@ -7,7 +9,9 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+// T3-CUSTOM(expbkt3): the legacy V1 baseline ref helper (upstream deleted checkpointing/Utils.ts).
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -24,9 +28,13 @@ import {
   type CheckpointServiceError,
 } from "./Errors.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
-// T3-CUSTOM(expbkt3): imported checkpoint scopes keep the existing V1 baseline ref.
-import { checkpointRefForThreadTurn } from "./Utils.ts";
 import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } from "./Diffs.ts";
+
+// T3-CUSTOM(expbkt3): imported checkpoint scopes keep the existing V1 baseline ref.
+// Upstream deleted checkpointing/Utils.ts, which held this helper.
+function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
+  return CheckpointRef.make(`refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turnCount}`);
+}
 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
@@ -82,11 +90,11 @@ function buildTurnDiffResult(
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -191,7 +199,7 @@ export const make = Effect.gen(function* () {
               : yield* checkpointRefForScopeOrdinal({
                   scopeId: firstScope.id,
                   ordinalWithinScope: 0,
-                }).pipe(Effect.provideService(Crypto.Crypto, crypto))
+                }).pipe(Effect.provideService(Digest.Digest, digest))
           : (
               parentCheckpoint ??
               readyCheckpoints.find(

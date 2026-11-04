@@ -1,6 +1,6 @@
 import {
   authScopeRequiredResponse,
-  AuthAccessReadScope,
+  AuthAccessReadScope, // T3-CUSTOM(expbkt3): the pairingLinks and clients routes upstream deleted.
   AuthAccessWriteScope,
   // T3-CUSTOM(expbkt3): administrator-minted pairing links default to member scopes.
   AuthMemberClientScopes,
@@ -8,7 +8,7 @@ import {
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
-  EnvironmentHttpForbiddenError, // T3-CUSTOM(expbkt3): 403 for a verified non-member Clerk token.
+  EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
@@ -31,7 +31,6 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -67,6 +66,7 @@ import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): e
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -103,7 +103,7 @@ export const annotateEnvironmentRequest =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (endpoint: string) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
     const traceId = yield* currentEnvironmentTraceId;
 
     yield* Effect.addFinalizer((exit) =>
@@ -218,7 +218,7 @@ export const authenticateMediaRequest =
   Effect.fnUntraced(function* (requiredScope: AuthEnvironmentScope) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "media").pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (EnvironmentAuth.isServerAuthCredentialError(error)) {
@@ -343,22 +343,24 @@ export const layer = HttpApiBuilder.group(
       }
       const identity = yield* clerkIdentity.verify(token).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-not-configured"
                 ? yield* failEnvironmentInternal("identity_management_failed", error)
                 : yield* failEnvironmentAuthInvalid("invalid_identity");
-            }),
+            },
+          ),
         }),
       );
       yield* users.assertAllowed(identity.userId).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-blocked"
                 ? yield* failEnvironmentAuthInvalid("blocked_identity")
                 : yield* failEnvironmentInternal("identity_management_failed", error);
-            }),
+            },
+          ),
         }),
       );
       return identity;
@@ -389,31 +391,22 @@ export const layer = HttpApiBuilder.group(
         Effect.tap(({ identity }) =>
           users.assertAllowed(identity.userId).pipe(
             Effect.catchTags({
-              EnvironmentUserManagementError: (error) =>
-                Effect.gen(function* () {
+              EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+                function* (error) {
                   return error.reason === "identity-blocked"
                     ? yield* failEnvironmentAuthInvalid("blocked_identity")
                     : yield* failEnvironmentInternal("identity_management_failed", error);
-                }),
+                },
+              ),
             }),
           ),
         ),
       );
 
-    // T3-CUSTOM(expbkt3): BEGIN — identity for the `/oauth/token` exchange. Policy
-    // and its rationale live in `ExchangeIdentity.ts`; this binds it to the two
-    // verifiers already built above.
-    //
-    // A verified non-member fails as `invalid_identity` rather than the 403 that
-    // `clerkSession` returns: this endpoint's declared error union has no forbidden
-    // member, and widening it would ripple through every remote client's error type.
-    //
-    // A client that presents no `identity_token` — the Clerk-free BK desktop — can
-    // still be identified by the credential it is redeeming, because a member-minted
-    // credential carries `clerk:<userId>` as a subject the *server* derived. Reading
-    // it here, without consuming the grant, is what lets such a client satisfy
-    // `environmentUserIdentityMode: "required"`. An anonymous grant still resolves to
-    // nothing and is refused exactly as before.
+    // T3-CUSTOM(expbkt3): BEGIN — identity for the `/oauth/token` exchange (policy in
+    // `ExchangeIdentity.ts`). A non-member fails as `invalid_identity`: the error union has
+    // no forbidden member. With no `identity_token`, the grant's server-derived
+    // `clerk:<userId>` subject identifies the client; an anonymous grant is still refused.
     const resolveGrantIdentity = Effect.fn("environment.auth.resolveGrantIdentity")(function* (
       credential: string,
     ) {
@@ -432,12 +425,13 @@ export const layer = HttpApiBuilder.group(
       // credential minted while they were allowed.
       yield* users.assertAllowed(EnvironmentUserId.make(userId)).pipe(
         Effect.catchTags({
-          EnvironmentUserManagementError: (error) =>
-            Effect.gen(function* () {
+          EnvironmentUserManagementError: Effect.fn("EnvironmentUserManagementError")(
+            function* (error) {
               return error.reason === "identity-blocked"
                 ? yield* failEnvironmentAuthInvalid("blocked_identity")
                 : yield* failEnvironmentInternal("identity_management_failed", error);
-            }),
+            },
+          ),
         }),
       );
       return {
@@ -486,474 +480,506 @@ export const layer = HttpApiBuilder.group(
     );
     // T3-CUSTOM(expbkt3): END
 
-    return handlers
-      .handle(
-        "session",
-        Effect.fn("environment.auth.session")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            const result = yield* serverAuth.getSessionState(request);
-            const credential = EnvironmentAuth.selectRequestCredential(
-              request,
-              sessions.cookieName,
-              sessions.legacyCookieName,
-            );
-            if (
-              credential?.source === "legacy-cookie" &&
-              result.authenticated &&
-              result.sessionMethod === "browser-session-cookie" &&
-              result.expiresAt
-            ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
-              yield* appendCredentialResponseHeaders;
-            }
-            return result;
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("internal_error", error),
-          ),
-        ),
-      )
-      .handle("logout", logoutHandler) // T3-CUSTOM(expbkt3): Server-backed web logout.
-      .handle(
-        "browserSession",
-        Effect.fn("environment.auth.browserSession")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            const identity = yield* resolveIdentity(args.payload.identityToken); // T3-CUSTOM(expbkt3): team mode identity resolution.
-            const previousCredential = EnvironmentAuth.selectRequestCredential(
-              request,
-              sessions.cookieName,
-              sessions.legacyCookieName,
-            );
-            const result = yield* serverAuth.createBrowserSession(
-              args.payload.credential,
-              // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
-              deriveAuthClientMetadata({
+    return (
+      handlers
+        .handle(
+          "session",
+          Effect.fn("environment.auth.session")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              const result = yield* serverAuth.getSessionState(request);
+              const credential = EnvironmentAuth.selectRequestCredential(
                 request,
-                ...(args.payload.client_version
-                  ? { presented: { appVersion: args.payload.client_version } }
-                  : {}),
-              }),
-              previousCredential &&
-                EnvironmentAuth.isBrowserCookieCredential(previousCredential.source)
-                ? previousCredential.token
-                : undefined,
-              identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
-            );
-            yield* persistIdentity(
-              identity,
-              result.response.scopes.includes(AuthAccessWriteScope),
-            ).pipe(
-              Effect.tapError(() =>
-                sessions.verify(result.sessionToken).pipe(
-                  Effect.flatMap((session) => sessions.revoke(session.sessionId)),
-                  Effect.ignore,
-                ),
-              ),
-            );
-            const cookieName = result.cookieName ?? sessions.cookieName;
-            const selectedCookie = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
-                expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
-              }),
-            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
-            const sessionCookies = result.expireNormalCookie
-              ? yield* Effect.fromResult(
-                  Cookies.expireCookie(selectedCookie, sessions.cookieName, {
-                    httpOnly: true,
-                    path: "/",
-                    sameSite: "lax",
-                  }),
-                ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
-              : selectedCookie;
-
-            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
-            );
-            yield* appendCredentialResponseHeaders;
-            return result.response;
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+                sessions.cookieName,
+                sessions.legacyCookieName,
+              );
+              if (
+                credential?.source === "legacy-cookie" &&
+                result.authenticated &&
+                result.sessionMethod === "browser-session-cookie" &&
+                result.expiresAt
+              ) {
+                yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+                yield* appendCredentialResponseHeaders;
+              }
+              return result;
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("internal_error", error),
             ),
           ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("browser_session_issuance_failed", error),
-          ),
-        ),
-      ) // T3-CUSTOM(expbkt3): BEGIN — team mode: direct Clerk sign-in mints a browser cookie for an already-verified operator.
-      .handle(
-        "clerkSession",
-        Effect.fn("environment.auth.clerkSession")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            // Verify the Clerk token and hard-gate on org membership before
-            // minting a browser-session cookie bound to "clerk:<userId>".
-            const verified = yield* resolveDirectClerkIdentity(args.payload.token);
-            yield* persistIdentity(verified.identity, verified.administrativeGrant);
-            const result = yield* serverAuth.createClerkBrowserSession(
-              { subject: verified.subject, userId: verified.identity.userId },
-              deriveAuthClientMetadata({
+          // T3-CUSTOM(expbkt3): upstream handlers re-indented inside the fork's deeper handler chain.
+        )
+        .handle("logout", logoutHandler) // T3-CUSTOM(expbkt3): Server-backed web logout.
+        .handle(
+          "browserSession",
+          Effect.fn("environment.auth.browserSession")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              const identity = yield* resolveIdentity(args.payload.identityToken); // T3-CUSTOM(expbkt3): team mode identity resolution.
+              const previousCredential = EnvironmentAuth.selectRequestCredential(
                 request,
-                ...(args.payload.client_version
-                  ? { presented: { appVersion: args.payload.client_version } }
-                  : {}),
-              }),
-            );
-            const sessionCookies = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, sessions.cookieName, result.sessionToken, {
-                expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
-              }),
-            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
-
-            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
-            );
-            yield* appendCredentialResponseHeaders;
-            return result.response;
-          },
-          // A valid token for a non-member (or Clerk disabled) is forbidden;
-          // a bad/expired token is auth_invalid.
-          Effect.catchTags({
-            ClerkAuthError: (
-              error,
-            ): Effect.Effect<never, EnvironmentAuthInvalidError | EnvironmentHttpForbiddenError> =>
-              error.reason === "invalid_token"
-                ? failEnvironmentAuthInvalid("invalid_credential")
-                : Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
-          }),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("browser_session_issuance_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "bindIdentity",
-        Effect.fn("environment.auth.bindIdentity")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* EnvironmentAuthenticatedPrincipal;
-            // T3-CUSTOM(expbkt3): END
-            // T3-CUSTOM(expbkt3): This endpoint receives the direct browser session token.
-            const verified = yield* resolveDirectClerkIdentity(args.payload.identityToken);
-            const identity = verified.identity;
-            yield* persistIdentity(
-              identity,
-              verified.administrativeGrant || session.scopes.has(AuthAccessWriteScope),
-            );
-            yield* sessions
-              .bindUserId(session.sessionId, identity.userId)
-              .pipe(
-                Effect.catchIf(SessionStore.isSessionCredentialInternalError, (error) =>
-                  failEnvironmentInternal("identity_management_failed", error),
+                sessions.cookieName,
+                sessions.legacyCookieName,
+              );
+              const result = yield* serverAuth.createBrowserSession(
+                args.payload.credential,
+                // T3-CUSTOM(expbkt3): direct hosted clients also report their build.
+                deriveAuthClientMetadata({
+                  request,
+                  ...(args.payload.client_version
+                    ? { presented: { appVersion: args.payload.client_version } }
+                    : {}),
+                }),
+                previousCredential &&
+                  EnvironmentAuth.isBrowserCookieCredential(previousCredential.source)
+                  ? previousCredential.token
+                  : undefined,
+                identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
+              );
+              yield* persistIdentity(
+                identity,
+                result.response.scopes.includes(AuthAccessWriteScope),
+              ).pipe(
+                Effect.tapError(() =>
+                  sessions.verify(result.sessionToken).pipe(
+                    Effect.flatMap((session) => sessions.revoke(session.sessionId)),
+                    Effect.ignore,
+                  ),
                 ),
               );
-            yield* appendCredentialResponseHeaders;
-            return { userId: identity.userId };
-          },
-          Effect.catchTags({
-            ClerkAuthError: () => failEnvironmentAuthInvalid("invalid_identity"),
-          }),
-          Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }),
-        ),
-      )
-      .handle(
-        "token",
-        Effect.fn("environment.auth.token")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            const requestedScopes =
-              args.payload.scope === undefined
-                ? undefined
-                : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ?? null);
-            if (requestedScopes === null || requestedScopes?.length === 0) {
-              return yield* failEnvironmentInvalidRequest("invalid_scope");
-            }
-            const proofKeyThumbprint = args.headers.dpop
-              ? yield* verifyRequestDpopProof({ request }).pipe(
-                  Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-                    appendDpopChallengeHeader.pipe(
-                      Effect.andThen(
-                        failEnvironmentAuthInvalid(
-                          "invalid_credential",
-                          EnvironmentAuth.serverAuthDpopFailureReason(error),
+              const cookieName = result.cookieName ?? sessions.cookieName;
+              const selectedCookie = yield* Effect.fromResult(
+                Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+                  expires: DateTime.toDate(result.response.expiresAt),
+                  httpOnly: true,
+                  path: "/",
+                  sameSite: "lax",
+                }),
+              ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+              const sessionCookies = result.expireNormalCookie
+                ? yield* Effect.fromResult(
+                    Cookies.expireCookie(selectedCookie, sessions.cookieName, {
+                      httpOnly: true,
+                      path: "/",
+                      sameSite: "lax",
+                    }),
+                  ).pipe(
+                    Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
+                  )
+                : selectedCookie;
+
+              yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+                Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+              );
+              yield* appendCredentialResponseHeaders;
+              return result.response;
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+              failEnvironmentAuthInvalid(
+                EnvironmentAuth.serverAuthCredentialReason(error),
+                EnvironmentAuth.serverAuthDpopFailureReason(error),
+              ),
+            ),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("browser_session_issuance_failed", error),
+            ),
+          ),
+        ) // T3-CUSTOM(expbkt3): BEGIN — team mode: direct Clerk sign-in mints a browser cookie for an already-verified operator.
+        .handle(
+          "clerkSession",
+          Effect.fn("environment.auth.clerkSession")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              // Verify the Clerk token and hard-gate on org membership before
+              // minting a browser-session cookie bound to "clerk:<userId>".
+              const verified = yield* resolveDirectClerkIdentity(args.payload.token);
+              yield* persistIdentity(verified.identity, verified.administrativeGrant);
+              const result = yield* serverAuth.createClerkBrowserSession(
+                { subject: verified.subject, userId: verified.identity.userId },
+                deriveAuthClientMetadata({
+                  request,
+                  ...(args.payload.client_version
+                    ? { presented: { appVersion: args.payload.client_version } }
+                    : {}),
+                }),
+              );
+              const sessionCookies = yield* Effect.fromResult(
+                Cookies.set(Cookies.empty, sessions.cookieName, result.sessionToken, {
+                  expires: DateTime.toDate(result.response.expiresAt),
+                  httpOnly: true,
+                  path: "/",
+                  sameSite: "lax",
+                }),
+              ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+
+              yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+                Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+              );
+              yield* appendCredentialResponseHeaders;
+              return result.response;
+            },
+            // A valid token for a non-member (or Clerk disabled) is forbidden;
+            // a bad/expired token is auth_invalid.
+            Effect.catchTags({
+              ClerkAuthError: (
+                error,
+              ): Effect.Effect<
+                never,
+                EnvironmentAuthInvalidError | EnvironmentHttpForbiddenError
+              > =>
+                error.reason === "invalid_token"
+                  ? failEnvironmentAuthInvalid("invalid_credential")
+                  : Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+            }),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("browser_session_issuance_failed", error),
+            ),
+          ),
+        )
+        .handle(
+          "bindIdentity",
+          Effect.fn("environment.auth.bindIdentity")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const session = yield* EnvironmentAuthenticatedPrincipal;
+              // T3-CUSTOM(expbkt3): END
+              // T3-CUSTOM(expbkt3): This endpoint receives the direct browser session token.
+              const verified = yield* resolveDirectClerkIdentity(args.payload.identityToken);
+              const identity = verified.identity;
+              yield* persistIdentity(
+                identity,
+                verified.administrativeGrant || session.scopes.has(AuthAccessWriteScope),
+              );
+              yield* sessions
+                .bindUserId(session.sessionId, identity.userId)
+                .pipe(
+                  Effect.catchIf(SessionStore.isSessionCredentialInternalError, (error) =>
+                    failEnvironmentInternal("identity_management_failed", error),
+                  ),
+                );
+              yield* appendCredentialResponseHeaders;
+              return { userId: identity.userId };
+            },
+            Effect.catchTags({
+              ClerkAuthError: () => failEnvironmentAuthInvalid("invalid_identity"),
+            }),
+            Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }),
+          ),
+        )
+        .handle(
+          "token",
+          Effect.fn("environment.auth.token")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              const requestedScopes =
+                args.payload.scope === undefined
+                  ? undefined
+                  : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ??
+                    null);
+              if (requestedScopes === null || requestedScopes?.length === 0) {
+                return yield* failEnvironmentInvalidRequest("invalid_scope");
+              }
+              const proofKeyThumbprint = args.headers.dpop
+                ? yield* verifyRequestDpopProof({ request }).pipe(
+                    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+                      appendDpopChallengeHeader.pipe(
+                        Effect.andThen(
+                          failEnvironmentAuthInvalid(
+                            "invalid_credential",
+                            EnvironmentAuth.serverAuthDpopFailureReason(error),
+                          ),
                         ),
                       ),
                     ),
+                    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+                      failEnvironmentInternal("access_token_issuance_failed", error),
+                    ),
+                  )
+                : undefined;
+              // T3-CUSTOM(expbkt3): accept a direct Clerk browser token here too, so a
+              // remote client can pair against `environmentUserIdentityMode: "required"`.
+              const { identity, administrativeGrant, identitySource } =
+                yield* resolveTokenExchangeIdentity({
+                  token: args.payload.identity_token,
+                  // T3-CUSTOM(expbkt3): the grant is the fallback source of identity.
+                  credential: args.payload.subject_token,
+                });
+              yield* appendCredentialResponseHeaders;
+              const result = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+                args.payload.subject_token,
+                requestedScopes,
+                deriveAuthClientMetadata({
+                  request,
+                  presented: {
+                    ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
+                    ...(args.payload.client_device_type
+                      ? { deviceType: args.payload.client_device_type }
+                      : {}),
+                    ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+                    // T3-CUSTOM(expbkt3): persist client build identity for diagnostics.
+                    ...(args.payload.client_version
+                      ? { appVersion: args.payload.client_version }
+                      : {}),
+                  },
+                }),
+                proofKeyThumbprint || identity
+                  ? {
+                      ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                      ...(identity ? { userId: identity.userId } : {}),
+                    }
+                  : undefined,
+              );
+              yield* persistIdentity(
+                // T3-CUSTOM(expbkt3): a grant-derived identity carries no Clerk profile,
+                // so it is bound to the session but never fed to directory admission —
+                // admitting it would overwrite a real record with blanks. The operator was
+                // already admitted when they signed in to mint the credential.
+                identitySource === "pairing-grant" ? null : identity,
+                // T3-CUSTOM(expbkt3): a Clerk org admin is admitted as an environment
+                // admin, matching `bindIdentity`.
+                administrativeGrant || result.scope.split(" ").includes(AuthAccessWriteScope),
+              ).pipe(
+                Effect.tapError(() =>
+                  sessions.verify(result.access_token).pipe(
+                    Effect.flatMap((session) => sessions.revoke(session.sessionId)),
+                    Effect.ignore,
                   ),
-                  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-                    failEnvironmentInternal("access_token_issuance_failed", error),
-                  ),
-                )
-              : undefined;
-            // T3-CUSTOM(expbkt3): accept a direct Clerk browser token here too, so a
-            // remote client can pair against `environmentUserIdentityMode: "required"`.
-            const { identity, administrativeGrant, identitySource } =
-              yield* resolveTokenExchangeIdentity({
-                token: args.payload.identity_token,
-                // T3-CUSTOM(expbkt3): the grant is the fallback source of identity.
-                credential: args.payload.subject_token,
-              });
-            yield* appendCredentialResponseHeaders;
-            const result = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              args.payload.subject_token,
-              requestedScopes,
-              deriveAuthClientMetadata({
-                request,
-                presented: {
-                  ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
-                  ...(args.payload.client_device_type
-                    ? { deviceType: args.payload.client_device_type }
-                    : {}),
-                  ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
-                  // T3-CUSTOM(expbkt3): persist client build identity for diagnostics.
-                  ...(args.payload.client_version
-                    ? { appVersion: args.payload.client_version }
-                    : {}),
-                },
-              }),
-              proofKeyThumbprint || identity
-                ? {
-                    ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
-                    ...(identity ? { userId: identity.userId } : {}),
-                  }
-                : undefined,
-            );
-            yield* persistIdentity(
-              // T3-CUSTOM(expbkt3): a grant-derived identity carries no Clerk profile,
-              // so it is bound to the session but never fed to directory admission —
-              // admitting it would overwrite a real record with blanks. The operator was
-              // already admitted when they signed in to mint the credential.
-              identitySource === "pairing-grant" ? null : identity,
-              // T3-CUSTOM(expbkt3): a Clerk org admin is admitted as an environment
-              // admin, matching `bindIdentity`.
-              administrativeGrant || result.scope.split(" ").includes(AuthAccessWriteScope),
-            ).pipe(
-              Effect.tapError(() =>
-                sessions.verify(result.access_token).pipe(
-                  Effect.flatMap((session) => sessions.revoke(session.sessionId)),
-                  Effect.ignore,
                 ),
+              );
+              return result;
+            },
+            traceRelayRequest,
+            Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+              failEnvironmentAuthInvalid(
+                EnvironmentAuth.serverAuthCredentialReason(error),
+                EnvironmentAuth.serverAuthDpopFailureReason(error),
               ),
-            );
-            return result;
-          },
-          traceRelayRequest,
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+            ),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
+              failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
+            ),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("access_token_issuance_failed", error),
             ),
           ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
-            failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
+        )
+        .handle(
+          "webSocketTicket",
+          Effect.fn("environment.auth.webSocketTicket")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const session = yield* EnvironmentAuthenticatedPrincipal;
+              yield* appendCredentialResponseHeaders;
+              return yield* serverAuth.issueWebSocketTicket(session);
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+            ),
           ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("access_token_issuance_failed", error),
+        )
+        .handle(
+          "webSocketTicketFor",
+          Effect.fn("environment.auth.webSocketTicketFor")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const session = yield* EnvironmentAuthenticatedPrincipal;
+              yield* appendCredentialResponseHeaders;
+              return yield* serverAuth.issueWebSocketTicket(session, { use: args.params.use });
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+            ),
           ),
-        ),
-      )
-      .handle(
-        "webSocketTicket",
-        Effect.fn("environment.auth.webSocketTicket")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* EnvironmentAuthenticatedPrincipal;
-            yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.issueWebSocketTicket(session);
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("websocket_ticket_issuance_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "pairingCredential",
-        Effect.fn("environment.auth.pairingCredential")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            // T3-CUSTOM(expbkt3): a member with a Clerk identity may mint for themselves;
-            // `access:write` still gates every environment-wide credential.
-            const { session, administrative } =
-              yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
-            const delegatedScopes =
-              args.payload.scopes ??
-              // T3-CUSTOM(expbkt3): a member's default is their own standard scopes; an
-              // administrator's default stays the member set, since upstream's standard
-              // set now carries access and relay management (#20432).
-              (administrative ? AuthMemberClientScopes : selfServicePairingScopes(session.scopes));
-            if (
-              delegatedScopes.length === 0 ||
-              new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
-            ) {
-              return yield* failEnvironmentInvalidRequest("invalid_scope");
-            }
-            for (const delegatedScope of delegatedScopes) {
-              if (!session.scopes.has(delegatedScope)) {
-                return yield* failEnvironmentScopeRequired(delegatedScope);
-              }
-            }
-            // T3-CUSTOM(expbkt3): BEGIN - self-service guards. Scopes are narrowed to the
-            // standard client set so a self-issued credential can never carry `access:*`
-            // or `relay:write`, and the member's concurrent pairings are capped.
-            if (!administrative) {
-              if (!isSelfServiceScopeAllowed(delegatedScopes, session.scopes)) {
-                return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
-              }
-              const selfUserId = operatorUserIdForPrincipal(session);
-              if (selfUserId === null) {
-                return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
-              }
-              const [pairingLinks, clientSessions] = yield* Effect.all([
-                serverAuth.listPairingLinks(),
-                serverAuth.listClientSessions(session.sessionId),
-              ]);
+        )
+        .handle(
+          "pairingCredential",
+          Effect.fn("environment.auth.pairingCredential")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              // T3-CUSTOM(expbkt3): a member with a Clerk identity may mint for themselves;
+              // `access:write` still gates every environment-wide credential.
+              const { session, administrative } =
+                yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
+              const delegatedScopes =
+                args.payload.scopes ??
+                // T3-CUSTOM(expbkt3): a member's default is their own standard scopes; an
+                // administrator's default stays the member set, since upstream's standard
+                // set now carries access and relay management.
+                (administrative
+                  ? AuthMemberClientScopes
+                  : selfServicePairingScopes(session.scopes));
               if (
-                !canIssueSelfServicePairing({ userId: selfUserId, pairingLinks, clientSessions })
+                delegatedScopes.length === 0 ||
+                new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
               ) {
-                return yield* failEnvironmentOperationForbidden("self_pairing_limit_reached");
+                return yield* failEnvironmentInvalidRequest("invalid_scope");
               }
-            }
-            // T3-CUSTOM(expbkt3): END
-            // T3-CUSTOM(expbkt3): stamp the authenticated operator on the credential
-            // so a client paired with it acts as them. The subject comes from the
-            // session, never from the payload — `AuthCreatePairingCredentialInput`
-            // has no `subject` field, so no client can mint one for a teammate.
-            return yield* issuePairingCredentialForPrincipal({
-              serverAuth,
-              principal: session,
-              scopes: delegatedScopes,
-              ...(args.payload.label ? { label: args.payload.label } : {}),
-              // T3-CUSTOM(expbkt3): opt-in, default off — a device-bound credential for
-              // a managed BK desktop. Only ever restricts redemption, so unlike a
-              // subject it is safe to take from the payload.
-              ...(args.payload.requireProofOfPossession ? { requireProofOfPossession: true } : {}),
-              // T3-CUSTOM(expbkt3): marks the link as a member's own, which caps it and
-              // shortens the session it produces. Administrative links are unaffected.
-              ...(administrative ? {} : { selfIssued: true }),
-            });
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_credential_issuance_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "pairingLinks",
-        Effect.fn("environment.auth.pairingLinks")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            // T3-CUSTOM(expbkt3): a member sees only their own links; `access:read`
-            // still sees every link in the environment.
-            const { session, administrative } =
-              yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessReadScope);
-            const pairingLinks = yield* serverAuth.listPairingLinks();
-            return administrative ? pairingLinks : ownPairingLinks(pairingLinks, session);
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_links_load_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "revokePairingLink",
-        Effect.fn("environment.auth.revokePairingLink")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            // T3-CUSTOM(expbkt3): a member may revoke their own link; anything else
-            // still needs `access:write`.
-            const { session, administrative } =
-              yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
-            if (!administrative) {
-              const own = ownPairingLinks(yield* serverAuth.listPairingLinks(), session);
-              if (!own.some((pairingLink) => pairingLink.id === args.payload.id)) {
-                return yield* failEnvironmentOperationForbidden("self_pairing_not_own_resource");
+              for (const delegatedScope of delegatedScopes) {
+                if (!session.scopes.has(delegatedScope)) {
+                  return yield* failEnvironmentScopeRequired(delegatedScope);
+                }
               }
-            }
-            const revoked = yield* serverAuth.revokePairingLink(args.payload.id);
-            return { revoked };
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_link_revoke_failed", error),
+              // T3-CUSTOM(expbkt3): BEGIN - self-service guards. Scopes are narrowed to the
+              // standard client set so a self-issued credential can never carry `access:*`
+              // or `relay:write`, and the member's concurrent pairings are capped.
+              if (!administrative) {
+                if (!isSelfServiceScopeAllowed(delegatedScopes, session.scopes)) {
+                  return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
+                }
+                const selfUserId = operatorUserIdForPrincipal(session);
+                if (selfUserId === null) {
+                  return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
+                }
+                const [pairingLinks, clientSessions] = yield* Effect.all([
+                  serverAuth.listPairingLinks(),
+                  serverAuth.listClientSessions(session.sessionId),
+                ]);
+                if (
+                  !canIssueSelfServicePairing({ userId: selfUserId, pairingLinks, clientSessions })
+                ) {
+                  return yield* failEnvironmentOperationForbidden("self_pairing_limit_reached");
+                }
+              }
+              // T3-CUSTOM(expbkt3): END
+              // T3-CUSTOM(expbkt3): stamp the authenticated operator on the credential so
+              // a client paired with it acts as them. The subject comes from the session,
+              // never the payload, so no client can mint one for a teammate.
+              return yield* issuePairingCredentialForPrincipal({
+                serverAuth,
+                principal: session,
+                scopes: delegatedScopes,
+                ...(args.payload.label ? { label: args.payload.label } : {}),
+                // T3-CUSTOM(expbkt3): opt-in, default off — a device-bound credential for
+                // a managed BK desktop. Only ever restricts redemption, so unlike a
+                // subject it is safe to take from the payload.
+                ...(args.payload.requireProofOfPossession
+                  ? { requireProofOfPossession: true }
+                  : {}),
+                // T3-CUSTOM(expbkt3): marks the link as a member's own, which caps it and
+                // shortens the session it produces. Administrative links are unaffected.
+                ...(administrative ? {} : { selfIssued: true }),
+              });
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("pairing_credential_issuance_failed", error),
+            ),
+            Effect.catchTags({
+              ManagedPolicyRefusedError: (error) =>
+                Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+            }),
           ),
-        ),
-      )
-      .handle(
-        "clients",
-        Effect.fn("environment.auth.clients")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            // T3-CUSTOM(expbkt3): a member sees only their own sessions.
-            const { session, administrative } =
-              yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessReadScope);
-            const clientSessions = yield* serverAuth.listClientSessions(session.sessionId);
-            return administrative ? clientSessions : ownClientSessions(clientSessions, session);
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_sessions_load_failed", error),
+        )
+        // T3-CUSTOM(expbkt3): upstream deleted this route as unreached; fork clients still list through it.
+        .handle(
+          "pairingLinks",
+          Effect.fn("environment.auth.pairingLinks")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              // T3-CUSTOM(expbkt3): a member sees only their own links; `access:read`
+              // still sees every link in the environment.
+              const { session, administrative } =
+                yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessReadScope);
+              const pairingLinks = yield* serverAuth.listPairingLinks();
+              return administrative ? pairingLinks : ownPairingLinks(pairingLinks, session);
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("pairing_links_load_failed", error),
+            ),
           ),
-        ),
-      )
-      .handle(
-        "revokeClient",
-        Effect.fn("environment.auth.revokeClient")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            // T3-CUSTOM(expbkt3): a member may revoke their own device sessions.
-            const { session, administrative } =
-              yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
-            if (!administrative) {
-              const own = ownClientSessions(
-                yield* serverAuth.listClientSessions(session.sessionId),
-                session,
+        )
+        .handle(
+          "revokePairingLink",
+          Effect.fn("environment.auth.revokePairingLink")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              // T3-CUSTOM(expbkt3): a member may revoke their own link; anything else
+              // still needs `access:write`.
+              const { session, administrative } =
+                yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
+              if (!administrative) {
+                const own = ownPairingLinks(yield* serverAuth.listPairingLinks(), session);
+                if (!own.some((pairingLink) => pairingLink.id === args.payload.id)) {
+                  return yield* failEnvironmentOperationForbidden("self_pairing_not_own_resource");
+                }
+              }
+              const revoked = yield* serverAuth.revokePairingLink(args.payload.id);
+              return { revoked };
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("pairing_link_revoke_failed", error),
+            ),
+          ),
+        )
+        // T3-CUSTOM(expbkt3): upstream deleted this route as unreached; fork clients still list through it.
+        .handle(
+          "clients",
+          Effect.fn("environment.auth.clients")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              // T3-CUSTOM(expbkt3): a member sees only their own sessions.
+              const { session, administrative } =
+                yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessReadScope);
+              const clientSessions = yield* serverAuth.listClientSessions(session.sessionId);
+              return administrative ? clientSessions : ownClientSessions(clientSessions, session);
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("client_sessions_load_failed", error),
+            ),
+          ),
+        )
+        .handle(
+          "revokeClient",
+          Effect.fn("environment.auth.revokeClient")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              // T3-CUSTOM(expbkt3): a member may revoke their own device sessions.
+              const { session, administrative } =
+                yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
+              if (!administrative) {
+                const own = ownClientSessions(
+                  yield* serverAuth.listClientSessions(session.sessionId),
+                  session,
+                );
+                if (
+                  !own.some((clientSession) => clientSession.sessionId === args.payload.sessionId)
+                ) {
+                  return yield* failEnvironmentOperationForbidden("self_pairing_not_own_resource");
+                }
+              }
+              const revoked = yield* serverAuth.revokeClientSession(
+                session.sessionId,
+                args.payload.sessionId,
               );
-              if (
-                !own.some((clientSession) => clientSession.sessionId === args.payload.sessionId)
-              ) {
-                return yield* failEnvironmentOperationForbidden("self_pairing_not_own_resource");
-              }
-            }
-            const revoked = yield* serverAuth.revokeClientSession(
-              session.sessionId,
-              args.payload.sessionId,
-            );
-            return { revoked };
-          },
-          Effect.catchTags({
-            ServerAuthForbiddenOperationError: () =>
-              failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
-          }),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_session_revoke_failed", error),
+              return { revoked };
+            },
+            Effect.catchTags({
+              ServerAuthForbiddenOperationError: () =>
+                failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
+            }),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("client_session_revoke_failed", error),
+            ),
           ),
-        ),
-      )
-      .handle(
-        "revokeOtherClients",
-        Effect.fn("environment.auth.revokeOtherClients")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
-            return { revokedCount };
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_session_revoke_failed", error),
+        )
+        .handle(
+          "revokeOtherClients",
+          Effect.fn("environment.auth.revokeOtherClients")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+              const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
+              return { revokedCount };
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("client_session_revoke_failed", error),
+            ),
           ),
-        ),
-      );
+        )
+    );
   }),
 );

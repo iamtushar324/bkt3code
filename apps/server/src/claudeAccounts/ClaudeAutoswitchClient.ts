@@ -73,6 +73,12 @@ export const SwitcherProfile = Schema.Struct({
   // (null when it is not placeable now) and its live plus pending sessions.
   fair_share: Schema.optionalKey(NullableNumber),
   load: Schema.optionalKey(NullableNumber),
+  // `api_fallback` marks the API-credit account. `kind`, `pace` and `credits`
+  // are validated in `paceCredits.ts`, so a bad value drops only those fields
+  // and never rejects the status.
+  kind: Schema.optionalKey(Schema.Unknown),
+  pace: Schema.optionalKey(Schema.Unknown),
+  credits: Schema.optionalKey(Schema.Unknown),
 });
 export type SwitcherProfile = typeof SwitcherProfile.Type;
 

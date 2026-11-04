@@ -22,7 +22,7 @@
  *
  * @module fork/environmentOperatorIdentity
  */
-import type { AuthSessionState, UserId } from "@t3tools/contracts";
+import type { UserId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

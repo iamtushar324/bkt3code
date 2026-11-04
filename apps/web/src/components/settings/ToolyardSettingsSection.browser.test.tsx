@@ -154,9 +154,8 @@ vi.mock(import("@t3tools/client-runtime/toolyard-trust-setup"), async (original)
 // The UI stand-ins render every fold and dialog inline, so the tests query one tree.
 // Button and Badge stay real: their modules import lib/utils, whose graph imports them again
 // (through TraitsPicker), so a stand-in factory that awaits the original waits on itself and
-// the file never loads.
-vi.mock(import("../ui/input"), async (original) => ({
-  ...(await original()),
+// the file never loads. Input is in that cycle too (ui/menu imports it), and it exports only Input.
+vi.mock(import("../ui/input"), () => ({
   Input: ((props: object) => <input {...props} />) as never,
 }));
 // A click asks for the opposite state, as the real switch does.
@@ -904,7 +903,7 @@ it("does not send the primary Clerk token to a server with a different authentic
 it("does not inspect Toolyard credentials before the selected server authenticates the client", async () => {
   using _setup = setup();
   mocks.sessionAuthenticated.set("env_stage", false);
-  await using view = await mount();
+  await using _view = await mount();
   expect(mocks.statusQueries).not.toHaveBeenCalled();
   expect(mocks.configure).not.toHaveBeenCalled();
 });

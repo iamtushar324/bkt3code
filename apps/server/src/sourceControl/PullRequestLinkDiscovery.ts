@@ -3,7 +3,6 @@ import type {
   OrchestrationPullRequestLinkFailure,
   OrchestrationPullRequestLinksResult,
   OrchestrationShellSnapshot,
-  ThreadId,
   VcsStatusInput,
   VcsStatusResult,
 } from "@t3tools/contracts";

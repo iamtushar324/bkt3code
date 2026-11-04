@@ -6,6 +6,7 @@
 // `t3_group_list` reports saved groups next to label-only ones, and
 // `t3_group_rename` / `t3_group_remove` change the registry and re-file every
 // session the caller can see.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -23,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
@@ -180,7 +182,7 @@ it.effect("validates a colour id and lists the allowed ones when it is unknown",
   }),
 );
 
-it.layer(NodeServices.layer)("t3_group_save", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_save", (it) => {
   it.effect("saves an empty group, then recolours it without losing the label", () =>
     Effect.gen(function* () {
       const settings = makeSettings();
@@ -258,7 +260,7 @@ it.effect("lists saved groups and label-only groups the caller can see", () =>
   }),
 );
 
-it.layer(NodeServices.layer)("t3_group_rename", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_rename", (it) => {
   it.effect("renames the saved group, keeps its colour and re-files visible sessions", () =>
     Effect.gen(function* () {
       const settings = makeSettings({ "sprint 42": { label: "Sprint 42", colorId: "blue" } });
@@ -328,7 +330,7 @@ it.layer(NodeServices.layer)("t3_group_rename", (it) => {
   );
 });
 
-it.layer(NodeServices.layer)("t3_group_remove", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_remove", (it) => {
   it.effect("deletes the saved group and ungroups the visible sessions", () =>
     Effect.gen(function* () {
       const settings = makeSettings({

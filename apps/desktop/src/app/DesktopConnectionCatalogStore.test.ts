@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
@@ -101,6 +102,7 @@ function layerFor(
     layerEnvironment,
     layerSafeStorage,
     NodeServices.layer,
+    NodeCrypto.layer,
     fileSystemLayer,
   );
   const layerSavedEnvironments = DesktopSavedEnvironments.layer.pipe(
@@ -126,7 +128,7 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
-  it.effect("persists, reads, and clears an encrypted connection catalog", () =>
+  it.effect("persists and reads an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -134,9 +136,6 @@ describe("DesktopConnectionCatalogStore", () => {
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
-
-        yield* store.clear;
-        assert.deepStrictEqual(yield* store.get, Option.none());
       }),
     ),
   );
@@ -206,63 +205,6 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.isTrue(yield* Fiber.join(save));
       assert.isTrue(yield* Deferred.isDone(replacementEncryptionStarted));
       assert.deepStrictEqual(yield* store.get, Option.some(replacement));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("does not recreate a catalog cleared while a key rotation is pending", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
-      });
-      const decryptStarted = yield* Deferred.make<void>();
-      const releaseDecrypt = yield* Deferred.make<void>();
-      const delayNextDecrypt = yield* Ref.make(true);
-      const observeClear = yield* Ref.make(false);
-      const clearStarted = yield* Deferred.make<void>();
-      const fileSystemLayer = Layer.effect(
-        FileSystem.FileSystem,
-        Effect.gen(function* () {
-          const baseFileSystem = yield* FileSystem.FileSystem;
-          return {
-            ...baseFileSystem,
-            remove: (target, options) =>
-              Ref.getAndSet(observeClear, false).pipe(
-                Effect.flatMap((observing) =>
-                  observing ? Deferred.succeed(clearStarted, undefined) : Effect.void,
-                ),
-                Effect.andThen(baseFileSystem.remove(target, options)),
-              ),
-          };
-        }),
-      ).pipe(Layer.provide(NodeServices.layer));
-      const decryptStringWithMetadata: DecryptStringWithMetadata = (value) =>
-        Effect.gen(function* () {
-          const decrypted = textDecoder.decode(value).slice("encrypted:".length);
-          if (yield* Ref.getAndSet(delayNextDecrypt, false)) {
-            yield* Deferred.succeed(decryptStarted, undefined);
-            yield* Deferred.await(releaseDecrypt);
-          }
-          return { value: decrypted, shouldReEncrypt: true };
-        });
-      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(layerFor(baseDir, true, null, fileSystemLayer, decryptStringWithMetadata)),
-      );
-      const catalog = '{"schemaVersion":1,"targets":["original"]}';
-
-      assert.isTrue(yield* store.set(catalog));
-      yield* Ref.set(observeClear, true);
-      const read = yield* store.get.pipe(Effect.forkChild);
-      yield* Deferred.await(decryptStarted);
-      const clear = yield* store.clear.pipe(Effect.forkChild({ startImmediately: true }));
-      assert.isFalse(yield* Deferred.isDone(clearStarted));
-      yield* Deferred.succeed(releaseDecrypt, undefined);
-
-      assert.deepStrictEqual(yield* Fiber.join(read), Option.some(catalog));
-      yield* Fiber.join(clear);
-      assert.isTrue(yield* Deferred.isDone(clearStarted));
-      assert.isFalse(yield* fileSystem.exists(`${baseDir}/userdata/connection-catalog.json`));
-      assert.deepStrictEqual(yield* store.get, Option.none());
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

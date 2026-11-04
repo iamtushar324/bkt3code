@@ -43,3 +43,9 @@ export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
     }),
   };
 }
+
+// T3-CUSTOM(expbkt3): upstream's delivery receipt type, over the shared outbox message.
+export type AcknowledgedThreadMessage = QueuedThreadMessage & {
+  /** The server sequence that committed the message; older servers do not report it. */
+  readonly sequence?: number;
+};

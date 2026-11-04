@@ -3,6 +3,7 @@
  * An anonymous pairing code must not approve an agent when identity is required,
  * and only an approval holding `access:write` makes an unbound operator.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
@@ -20,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { oauthClientForkFields } from "../mcp/clientAccess.expbkt3.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
@@ -35,6 +37,8 @@ const layerFor = (identityMode: EnvironmentUserIdentityMode) => {
     prefix: "t3-mcp-approval-policy-test-",
   });
   const layerAuth = EnvironmentAuth.layer.pipe(
+    // Upstream's EnvironmentAuth now reads the managed policy.
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(Sqlite.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerEnvironment.layerIdentity),
@@ -44,7 +48,7 @@ const layerFor = (identityMode: EnvironmentUserIdentityMode) => {
     Layer.provideMerge(layerAuth),
     Layer.provide(ServerSettings.layerTest({ environmentUserIdentityMode: identityMode })),
     Layer.provide(layerConfig),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 };
 
@@ -52,7 +56,12 @@ const request = (headers: Record<string, string> = {}) =>
   HttpServerRequest.fromWeb(new Request(`${ORIGIN}/oauth/mcp/decision`, { headers }));
 
 const authorization: McpOAuth.AuthorizationRequest = {
-  client: { clientId: "client-approval-policy", name: "Test agent", redirectUris: [REDIRECT] },
+  client: {
+    clientId: "client-approval-policy",
+    name: "Test agent",
+    redirectUris: [REDIRECT],
+    peerLink: false,
+  },
   redirectUri: REDIRECT,
   codeChallenge: "c".repeat(43),
   state: undefined,
@@ -79,6 +88,7 @@ const clientFromCode = (code: string) =>
     const issued = yield* auth.issueMcpClientSession({
       label: "Test agent",
       access: "auto",
+      peerLink: false,
       client: deriveAuthClientMetadata({ request: request() }),
       userId: approval.userId,
       operator: approval.operator,

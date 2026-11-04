@@ -1,4 +1,8 @@
-import { AuthEnvironmentMaintainScope, type ServerAuthDescriptor } from "@t3tools/contracts";
+import {
+  AuthEnvironmentMaintainScope,
+  type ServerAuthDescriptor,
+  type ServerAuthPolicy,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,20 +18,19 @@ export class EnvironmentAuthPolicy extends Context.Service<
   }
 >()("t3/auth/EnvironmentAuthPolicy") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** The auth policy a server started with `config` runs under. */
+export function resolveServerAuthPolicy(
+  config: Pick<ServerConfig.ServerConfig["Service"], "mode" | "host">,
+): ServerAuthPolicy {
+  if (isRemoteReachableHost(config.host)) return "remote-reachable";
+  return config.mode === "desktop" ? "desktop-managed-local" : "loopback-browser";
+}
+
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const isRemoteReachable = isRemoteReachableHost(config.host);
-
-  const policy =
-    config.mode === "desktop"
-      ? isRemoteReachable
-        ? "remote-reachable"
-        : "desktop-managed-local"
-      : isRemoteReachable
-        ? "remote-reachable"
-        : "loopback-browser";
+  const policy = resolveServerAuthPolicy(config);
 
   const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
     policy === "desktop-managed-local"
@@ -36,16 +39,10 @@ export const make = Effect.gen(function* () {
         ? ["desktop-bootstrap", "one-time-token"]
         : ["one-time-token"];
 
-  // T3-CUSTOM(expbkt3): BEGIN — team mode advertises itself with the `clerk`
-  // descriptor alone, so the SPA can detect it and render Clerk sign-in without
-  // build-time coupling.
-  //
-  // Deliberately NOT a new `bootstrapMethods` entry. That field is a closed
-  // literal union in stock T3 Code, and a fork-only `clerk-session` value made
-  // the whole `server.getConfig` reply undecodable for App Store clients: they
-  // paired, opened the socket, read the config, and hung up. Keeping the fork's
-  // signal in an additive optional field means unknown-key-tolerant clients
-  // ignore it instead of disconnecting.
+  // T3-CUSTOM(expbkt3): BEGIN — team mode advertises itself with the `clerk` descriptor alone,
+  // so the SPA can render Clerk sign-in. Never a `bootstrapMethods` entry: that closed union
+  // made `server.getConfig` undecodable for App Store clients, which then disconnected; an
+  // additive optional field is ignored instead.
   const clerkConfig = config.clerkAuth;
   const clerk: ServerAuthDescriptor["clerk"] =
     clerkConfig?.publishableKey !== undefined
@@ -73,8 +70,9 @@ export const make = Effect.gen(function* () {
   };
 
   return EnvironmentAuthPolicy.of({
-    getDescriptor: () =>
-      Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuthPolicy.getDescriptor")),
+    getDescriptor: Effect.fn("EnvironmentAuthPolicy.getDescriptor")(function () {
+      return Effect.succeed(descriptor);
+    }),
   });
 });
 

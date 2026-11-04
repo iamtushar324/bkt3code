@@ -90,6 +90,8 @@ function fixture(
       worktreePath: null,
       ownerUserId: UserId.make("different-owner"),
       memberUserIds: options.deny === "member" ? [] : [actor],
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
       archivedAt: null,
       deletedAt: null,
     },

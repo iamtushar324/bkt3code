@@ -41,7 +41,13 @@ const providerThreadId = ProviderThreadId.make("provider-thread:wake");
 const sessionId = ProviderSessionId.make("session:wake");
 const attemptId = RunAttemptId.make("attempt:wake");
 const projectId = ProjectId.make("project:wake");
-const monitorTask = { taskId: "monitor:ci", kind: "monitor", description: "Watch CI for PR 281" };
+// Upstream #24610: a monitor is awaited work only when the agent said it waits on it.
+const monitorTask = {
+  taskId: "monitor:ci",
+  kind: "monitor",
+  description: "Watch CI for PR 281",
+  awaited: true,
+};
 const shellTask = { taskId: "shell:ci", kind: "command", description: "gh pr checks 281 --watch" };
 const shellWork = {
   kind: "shell" as const,

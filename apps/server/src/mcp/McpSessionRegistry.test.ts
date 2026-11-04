@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import {
   AuthSessionId,
@@ -13,7 +15,6 @@ import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpServer } from "effect/http";
@@ -45,7 +46,7 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
@@ -208,7 +209,7 @@ const makeLoginBoundRegistry = (
     .pipe(
       Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
 const loginUserId = UserId.make("user-login");
@@ -402,7 +403,7 @@ it.effect("resolves the enabled external operator key without storing it in the 
       .pipe(
         Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
         Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
     const resolved = yield* registry.resolve("t3exp_12345678901234567890123456789012");
@@ -448,7 +449,7 @@ it.effect("binds credentials and upstream MCP servers to the actor user", () =>
       .pipe(
         Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
         Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
     const issued = yield* registry.issue({
@@ -484,7 +485,7 @@ it.effect("grants user-wide session authority to every user-bound ACP", () =>
       .pipe(
         Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
         Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
     const issued = yield* registry.issue({
@@ -533,7 +534,7 @@ it.effect("pre-registers the shared Bifrost proxy for user sessions before setup
       .pipe(
         Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
         Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
     const issued = yield* registry.issue({
@@ -568,7 +569,7 @@ it.effect("resolves a personal external token only while the external endpoint i
       .pipe(
         Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
         Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
     const resolved = yield* registry.resolve("t3usr_personal-token");
@@ -602,7 +603,7 @@ const makeStubSessionStore = (input: {
     verify: () => Effect.die("unused"),
     issueWebSocketToken: () => Effect.die("unused"),
     verifyWebSocketToken: () => Effect.die("unused"),
-    // Upstream #8169 records the connecting client's surface; unused by this test.
+    // Upstream records the connecting client's surface; unused by this test.
     recordClientConnection: () => Effect.void,
     listActive: () =>
       Effect.succeed(
@@ -675,7 +676,7 @@ it.effect("cuts off provider MCP access when the auth session store revokes the 
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
           Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment)),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     );
@@ -798,7 +799,7 @@ const makeRegistryWithProfile = (
     .pipe(
       Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
 it.effect("proxies the built-in toolyard integration once the user is connected", () =>

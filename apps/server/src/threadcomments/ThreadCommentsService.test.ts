@@ -5,6 +5,7 @@
  * injection all rely on, so they are pinned here: who reopens, what a reply
  * does, and what "deliverable" means once delivery is paused.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MessageId,
@@ -47,7 +48,7 @@ const layer = ThreadCommentsServiceModule.layer.pipe(
   Layer.provide(ThreadComments.layer),
   Layer.provide(MigrationsLive),
   Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const withService = <A, E>(
@@ -602,7 +603,7 @@ describe("ThreadCommentsService", () => {
         Layer.provide(gatedRepository),
         Layer.provide(MigrationsLive),
         Layer.provide(SqlitePersistenceMemory),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
       yield* Effect.gen(function* () {

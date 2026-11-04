@@ -13,11 +13,7 @@ import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import type { ShellFeedBatch, ShellFeedEntry } from "./orchestration-v2/ShellFeed.expbkt3.ts";
 import * as ProviderReplayHarness from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
-import {
-  type ActiveShellDelta,
-  makeActiveShellView,
-  makeArchivedShellView,
-} from "./wsV2Visibility.expbkt3.ts";
+import { type ActiveShellDelta, makeActiveShellView } from "./wsV2Visibility.expbkt3.ts";
 
 const owner = UserId.make("user:owner");
 const member = UserId.make("user:member");
@@ -441,30 +437,6 @@ describe("makeActiveShellView", () => {
       ]);
     }),
   );
-});
-
-describe("makeArchivedShellView", () => {
-  it("sends visible archived rows and removes only rows the client holds", () => {
-    const archived = shell("a", { archivedAt: DateTime.makeUnsafe(1) });
-    const view = makeArchivedShellView({ actor: member, afterSequence: 0, threads: [archived] });
-    const items = [
-      ...view.apply(batch(threadEntry(1, { ...archived, title: "Renamed" }))),
-      ...view.apply(
-        batch(
-          threadEntry(
-            2,
-            shell("hidden", { archivedAt: DateTime.makeUnsafe(1), memberUserIds: [] }),
-          ),
-        ),
-      ),
-      ...view.apply(batch(threadEntry(3, shell("a")))),
-      ...view.apply(batch(threadEntry(4, null, { threadId: "hidden" }))),
-    ];
-    assert.deepEqual(
-      items.map((item) => `${item.sequence}:${item.kind}`),
-      ["1:thread.updated", "3:thread.removed"],
-    );
-  });
 });
 
 const providerInstanceId = ProviderInstanceId.make("codex");

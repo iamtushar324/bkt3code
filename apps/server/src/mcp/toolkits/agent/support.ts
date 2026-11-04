@@ -7,7 +7,7 @@ import {
   type OrchestrationUser,
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -97,10 +97,8 @@ export const commandIdFor = Effect.fn("agentToolkit.commandIdFor")(function* (
       `mcp:agent:${operation}:${stableUuid(`${scope.requestNamespace}\u0000${target}\u0000${clientRequestId.trim()}`)}`,
     );
   }
-  const crypto = yield* Crypto.Crypto;
-  return CommandId.make(
-    `mcp:agent:${operation}:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-  );
+  const crypto = yield* SecureRandom.SecureRandom;
+  return CommandId.make(`mcp:agent:${operation}:${yield* crypto.uuidV4().pipe(Effect.orDie)}`);
 });
 
 /** The interaction mode a `mode: "build" | "plan"` parameter asks for. */

@@ -6,6 +6,7 @@ import {
   WS_FORK_METHODS,
 } from "@t3tools/contracts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentUserId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -24,6 +26,8 @@ const testConfig = ServerConfig.layerTest(process.cwd(), {
 });
 
 const authLayer = EnvironmentAuth.layer.pipe(
+  // Upstream's EnvironmentAuth now reads the managed policy.
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(testConfig),
@@ -31,7 +35,7 @@ const authLayer = EnvironmentAuth.layer.pipe(
 
 it.layer(
   Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("fork-auth-test")),
     }),

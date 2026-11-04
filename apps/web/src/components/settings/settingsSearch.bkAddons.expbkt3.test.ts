@@ -45,7 +45,7 @@ it.each(["Preview browser", "headless", "webview"])(
   "finds the preview browser host for %s",
   (query) => {
     expect(searchSettings(query)).toContainEqual(
-      expect.objectContaining({ id: "preview-browser-host", to: "/settings/integrations" }),
+      expect.objectContaining({ id: "preview-browser-host", to: "/settings/browser" }),
     );
   },
 );

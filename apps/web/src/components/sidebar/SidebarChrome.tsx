@@ -5,6 +5,7 @@ import { Alert, AlertTitle, AlertDescription } from "../ui/alert";
 // T3-CUSTOM(expbkt3): import reformatted to multi-line to fit the fork's added icons below.
 import {
   ArrowLeftIcon,
+  ArrowRightIcon,
   ChartNoAxesColumnIcon,
   // T3-CUSTOM(expbkt3): sync and environment-notice icons.
   LoaderIcon,
@@ -21,7 +22,15 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../../connection/useDesktopLocalBootstraps";
 import { EXPERIMENTAL_CONTROL_CENTER_ENABLED } from "../../experimentalFeatures";
+import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { shortcutLabelForCommand } from "../../keybindings";
+import {
+  navigateHistory,
+  useCanNavigateHistory,
+  type HistoryDirection,
+} from "../../navigationHistory";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -32,6 +41,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import {
   SidebarFooter,
   // T3-CUSTOM(expbkt3): environment notices group.
@@ -63,7 +73,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
-    environmentIdentificationMode === "artwork",
+    environmentIdentificationMode,
   );
   const pillLabel =
     environmentIdentificationMode === "pill"
@@ -88,8 +98,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       </div>
       {/* T3-CUSTOM(expbkt3): min-h, not h, so the row can grow to wrap the lifecycle counters. */}
       <div className="relative z-10 flex min-h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
-        {/* T3-CUSTOM(expbkt3): on mobile the brand shows only the lifecycle counters. */}
-        <SidebarBrand onBackdrop={backdropVariant !== null} />
+        <div className="flex shrink-0 items-center gap-1">
+          {/* T3-CUSTOM(expbkt3): on mobile the brand shows only the lifecycle counters. */}
+          <SidebarBrand onBackdrop={backdropVariant !== null} />
+          {isElectron ? (
+            <div className="hidden items-center md:flex">
+              <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
+              <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
+            </div>
+          ) : null}
+        </div>
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
             <Badge data-environment-identification="pill" size="sm" variant="secondary">
@@ -103,8 +121,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 });
 
 export function SidebarBrandWidthProbe({
+  isElectron,
   onWidthChange,
 }: {
+  isElectron: boolean;
   onWidthChange: (width: number) => void;
 }) {
   const observeWidth = (probe: HTMLDivElement) => {
@@ -119,10 +139,53 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex">
+      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
         <SidebarBrandMark onBackdrop={false} />
+        {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
     </div>
+  );
+}
+
+function HistoryNavigationButton({
+  direction,
+  onBackdrop,
+}: {
+  direction: HistoryDirection;
+  onBackdrop: boolean;
+}) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const enabled = useCanNavigateHistory(direction);
+  const label = direction === "back" ? "Go back" : "Go forward";
+  const shortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    direction === "back" ? "navigation.back" : "navigation.forward",
+  );
+  const Icon = direction === "back" ? ArrowLeftIcon : ArrowRightIcon;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            className={cn(
+              "[-webkit-app-region:no-drag]",
+              onBackdrop && "relative top-auto translate-y-0",
+            )}
+            disabled={!enabled}
+            onClick={() => navigateHistory(direction)}
+            size="icon-sm"
+            variant={onBackdrop ? "media-navigation" : "ghost"}
+          />
+        }
+      >
+        <Icon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {label}
+        {shortcutLabel ? ` (${shortcutLabel})` : ""}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -142,6 +205,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true,
     lastVisitedAtByThreadKey,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-reads the clock when the next snooze wakes
   useEffect(() => {
     const nextWakeAtMs = Date.parse(counts.nextSnoozeWakeAt ?? "");
     if (!Number.isFinite(nextWakeAtMs)) return;
@@ -172,7 +236,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       data-testid="sidebar-brand-layout"
     >
       <Link
-        aria-label="Go to threads"
+        aria-label="T3 Code home"
         className={cn(
           // T3-CUSTOM(expbkt3): upstream's mobile collapse (`hidden md:flex`), moved here from the outer element.
           "hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
@@ -216,7 +280,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unread — finished since you last opened them</TooltipPopup>
+            <TooltipPopup side="bottom">Unread: finished since you last opened them</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -236,7 +300,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Running — an agent is working</TooltipPopup>
+            <TooltipPopup side="bottom">Running: an agent is working</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -261,7 +325,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unsettled — idle and waiting on you</TooltipPopup>
+            <TooltipPopup side="bottom">Unsettled: idle and waiting on you</TooltipPopup>
           </Tooltip>
         </div>
       ) : null}
@@ -355,7 +419,7 @@ function SidebarUtilityItem({
   );
 }
 
-export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -411,7 +475,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
-              label="Pull Requests"
+              label="Pull requests"
               onClick={handlePullRequestsClick}
             />
           ) : null}
@@ -422,6 +486,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
+      <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
     </SidebarMenu>
   );
@@ -430,7 +495,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
-      <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />

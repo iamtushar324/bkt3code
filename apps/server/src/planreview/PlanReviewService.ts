@@ -24,7 +24,7 @@ import {
   type PlanReviewAnchoredComment,
 } from "@t3tools/shared/planReview";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -195,10 +195,10 @@ export const make = Effect.gen(function* () {
   const repository = yield* PlanReviewRepository;
   const dispatcher = yield* OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
 
   // A failing CSPRNG is a defect, not something a caller can recover from.
-  const uuid = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const uuid = crypto.uuidV4().pipe(Effect.orDie);
 
   // Mutations announce the document they touched; `watch` re-reads from there.
   const changes = yield* PubSub.unbounded<string>();

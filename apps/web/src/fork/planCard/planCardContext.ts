@@ -18,7 +18,7 @@ export interface PlanCardTimeline {
   readonly threadRef: ScopedThreadRef | null;
   readonly citationRequest: AssistantCitationTarget | null;
   readonly listRef: RefObject<LegendListRef | null>;
-  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly onRunShellCommand: ((command: string) => void) | undefined;
   readonly onImageExpand: (preview: ExpandedImagePreview) => void;
   readonly onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;

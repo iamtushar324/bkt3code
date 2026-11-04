@@ -6,6 +6,7 @@
  * choose the framed URL scheme, or push an unbounded document into the database,
  * is a different feature from the one we shipped.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AGENT_UI_MAX_HTML_CHARS, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -25,7 +26,7 @@ const layer = AgentUiServiceModule.layer.pipe(
   Layer.provide(AgentUiRenders.layer),
   Layer.provide(MigrationsLive),
   Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const withService = <A, E>(

@@ -287,21 +287,21 @@ function EnvironmentToolyardContent({
   const [manageOpen, setManageOpen] = useState<boolean | null>(null);
   const [adminOpen, setAdminOpen] = useState<boolean | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  useEffect(() => {
-    if (browserDraft && status && toolyardCommittedDraftMatches(browserDraft, status)) {
-      setDraft((value) =>
-        value &&
-        value.baseUrl === browserDraft.baseUrl &&
-        value.enabled === browserDraft.enabled &&
-        value.revision === browserDraft.revision &&
-        value.mode === browserDraft.mode
-          ? null
-          : value,
-      );
-      setBrowserDraft(null);
-      setError(null);
-    }
-  }, [browserDraft, status]);
+  // Render-phase adjustment: once the host commits the browser draft, drop it
+  // and the matching local draft.
+  if (browserDraft && status && toolyardCommittedDraftMatches(browserDraft, status)) {
+    setDraft((value) =>
+      value &&
+      value.baseUrl === browserDraft.baseUrl &&
+      value.enabled === browserDraft.enabled &&
+      value.revision === browserDraft.revision &&
+      value.mode === browserDraft.mode
+        ? null
+        : value,
+    );
+    setBrowserDraft(null);
+    setError(null);
+  }
   const current = draft ?? {
     baseUrl: status?.baseUrl ?? "",
     enabled: status?.enabled ?? false,
@@ -385,6 +385,7 @@ function EnvironmentToolyardContent({
           target.environmentId,
           userScope,
           current,
+          // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
           Date.now(),
         );
         await Linking.openURL(url);

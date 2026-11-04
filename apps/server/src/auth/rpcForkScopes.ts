@@ -9,7 +9,6 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  ORCHESTRATION_WS_METHODS,
   WS_FORK_METHODS,
 } from "@t3tools/contracts";
 

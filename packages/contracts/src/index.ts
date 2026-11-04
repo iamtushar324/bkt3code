@@ -49,6 +49,7 @@ export * from "./agentUi.ts";
 export * from "./threadComments.ts";
 // T3-CUSTOM(expbkt3): Claude account profiles per thread.
 export * from "./claudeAccounts.ts";
+export * from "./managedPolicy.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
@@ -64,11 +65,15 @@ export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
+export * from "./guestShare.ts";
+export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
+export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./threadSearch.ts";
+export * from "./threadTags.ts";
 export * from "./threadTitle.ts";
 // T3-CUSTOM(expbkt3): native V2 team metadata.
 export * from "./orchestrationFork.ts";
@@ -86,7 +91,6 @@ export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
-export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
@@ -199,4 +203,6 @@ export * from "./sessionWebhooks.ts";
 
 // T3-CUSTOM(expbkt3): server-owned Toolyard federation.
 export * from "./toolyardIntegration.ts";
+export * from "./secretReference.ts";
+export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";

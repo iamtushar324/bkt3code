@@ -87,29 +87,15 @@ describe("shared durable thread outbox", () => {
     );
   });
 
-  it("allows a busy thread to send because the durable server queues or steers it", () => {
+  // Upstream #6543 steers active turns by default, so a thread's activity never holds a
+  // queued send back. Only a disconnected environment waits.
+  it("sends to an existing thread and waits only when disconnected", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
         isCreation: false,
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
-      }),
-    ).toBe("send");
-  });
-
-  // T3-CUSTOM(expbkt3): upstream #6543 steers active turns by default, so a busy
-  // thread no longer holds a queued send back even without durable recovery. Only
-  // a disconnected environment waits.
-  it("sends to a busy thread even without durable recovery, and waits only when disconnected", () => {
-    expect(
-      resolveThreadOutboxDeliveryAction({
-        isCreation: false,
-        threadExists: true,
-        shellStatus: "live",
-        environmentConnected: true,
-        threadBusy: true,
       }),
     ).toBe("send");
     expect(
@@ -118,9 +104,21 @@ describe("shared durable thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: false,
-        threadBusy: true,
       }),
     ).toBe("wait");
+  });
+
+  it("removes a message for a missing thread only once its family read settles", () => {
+    const missing = {
+      isCreation: false,
+      threadExists: false,
+      shellStatus: "live",
+      environmentConnected: true,
+    } as const;
+    expect(resolveThreadOutboxDeliveryAction(missing)).toBe("remove");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "pending" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "failed" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "settled" })).toBe("remove");
   });
   it("round-trips upstream file-backed uploads alongside fork identity and failure state", () => {
     const message: QueuedThreadMessage = {
