@@ -7,6 +7,7 @@ import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 import { SettingsSearchTarget } from "../components/settings/settingsLayout";
 import { EnvironmentToolyardSettings } from "../components/settings/ToolyardSettingsSection";
 import { EnvironmentSessionWebhookSettings } from "./SessionWebhookSettingsSection";
+import { EnvironmentDefaultCustomGroupSetting } from "./DefaultCustomGroupSetting";
 
 type SelectedEnvironment = ReturnType<typeof useSettingsScope>["environments"][number];
 
@@ -51,6 +52,13 @@ function ServerAddons({
       </div>
       {connected && environment.serverConfig ? (
         <>
+          <SettingsSearchTarget id={first ? "default-custom-group" : undefined}>
+            <EnvironmentDefaultCustomGroupSetting
+              environmentId={environment.environmentId}
+              label={environment.label}
+              serverConfig={environment.serverConfig}
+            />
+          </SettingsSearchTarget>
           <EnvironmentToolyardSettings
             environment={{ ...environment, serverConfig: environment.serverConfig }}
             compact

@@ -192,7 +192,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_save", 
       expect(created).toEqual({
         saved: true,
         created: true,
-        group: { label: "Release train", colorId: "violet" },
+        group: { label: "Release train", colorId: "violet", notifications: "all" },
       });
       expect(settings.read()).toEqual({
         "release train": { label: "Release train", colorId: "violet" },
@@ -216,6 +216,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_save", 
         .groupSave({ label: "Release train", color: null })
         .pipe(provide(settings.service));
       expect(settings.read()).toEqual({ "release train": { label: "Release train" } });
+    }),
+  );
+
+  // T3-CUSTOM(expbkt3): per-group notification mode.
+  it.effect("sets the notification mode and keeps it across a recolour and a rename", () =>
+    Effect.gen(function* () {
+      const settings = makeSettings({ ops: { label: "Ops", colorId: "teal" } });
+      const quiet = yield* __testing
+        .groupSave({ label: "Ops", notifications: "parents" })
+        .pipe(provide(settings.service));
+      expect(quiet.group).toEqual({ label: "Ops", colorId: "teal", notifications: "parents" });
+      yield* __testing.groupSave({ label: "Ops", color: "red" }).pipe(provide(settings.service));
+      expect(settings.read()).toEqual({
+        ops: { label: "Ops", colorId: "red", notifications: "parents" },
+      });
+      yield* __testing
+        .groupRename({ label: "ops", newLabel: "Platform" })
+        .pipe(provide(settings.service, makeDispatcher().service));
+      expect(settings.read()).toEqual({
+        platform: { label: "Platform", colorId: "red", notifications: "parents" },
+      });
+      yield* __testing
+        .groupSave({ label: "Platform", notifications: "all" })
+        .pipe(provide(settings.service));
+      expect(settings.read()).toEqual({ platform: { label: "Platform", colorId: "red" } });
     }),
   );
 
@@ -249,11 +274,24 @@ it.effect("lists saved groups and label-only groups the caller can see", () =>
     const listed = yield* __testing.groupList({}).pipe(provide(settings.service));
     expect(listed.colors).toEqual([...THREAD_CUSTOM_GROUP_COLOR_IDS]);
     expect(listed.groups).toEqual([
-      { label: "Bugs", colorId: null, registered: false, sessionCount: 1 },
-      { label: "Empty one", colorId: "slate", registered: true, sessionCount: 0 },
+      { label: "Bugs", colorId: null, notifications: "all", registered: false, sessionCount: 1 },
+      {
+        label: "Empty one",
+        colorId: "slate",
+        notifications: "all",
+        registered: true,
+        sessionCount: 0,
+      },
       // Two visible sessions, case-insensitively; the stranger's is not counted.
-      { label: "Sprint 42", colorId: "blue", registered: true, sessionCount: 2 },
+      {
+        label: "Sprint 42",
+        colorId: "blue",
+        notifications: "all",
+        registered: true,
+        sessionCount: 2,
+      },
     ]);
+    expect(listed.defaultGroup).toBeNull();
 
     const one = yield* __testing.groupList({ label: "SPRINT 42" }).pipe(provide(settings.service));
     expect(one.groups.map((group) => group.label)).toEqual(["Sprint 42"]);

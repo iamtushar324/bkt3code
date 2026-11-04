@@ -12,13 +12,19 @@ import {
   phaseSidebarCustomGroupRegistryEnvironmentIds,
   planPhaseSidebarCustomGroupCreate,
   planPhaseSidebarCustomGroupDelete,
+  planPhaseSidebarCustomGroupNotifications,
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
   type PhaseSidebarCustomGroupRegistry,
   type PhaseSidebarCustomGroupWritePlan,
 } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
-import { AuthSettingsWriteScope, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type ServerConfig,
+  type ThreadCustomGroupNotificationMode,
+} from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
@@ -37,6 +43,12 @@ export interface PhaseSidebarCustomGroupRegistryControls {
   readonly deleteGroup: (id: string) => void;
   /** `colorId` null restores the default look. */
   readonly recolorGroup: (id: string, label: string, colorId: string | null) => void;
+  /** T3-CUSTOM(expbkt3): which of the group's sessions may alert. */
+  readonly setGroupNotifications: (
+    id: string,
+    label: string,
+    notifications: ThreadCustomGroupNotificationMode,
+  ) => void;
 }
 
 const EMPTY_SERVER_CONFIGS: ReadonlyMap<EnvironmentId, ServerConfig> = new Map();
@@ -141,8 +153,40 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
     [homeEnvironmentId, registry, send, writableEnvironmentIds],
   );
 
+  // T3-CUSTOM(expbkt3): per-group notification mode, written like a recolour.
+  const setGroupNotifications = useCallback(
+    (id: string, label: string, notifications: ThreadCustomGroupNotificationMode) =>
+      send(
+        planPhaseSidebarCustomGroupNotifications({
+          registry,
+          id,
+          label,
+          notifications,
+          writableEnvironmentIds,
+          homeEnvironmentId,
+        }),
+      ),
+    [homeEnvironmentId, registry, send, writableEnvironmentIds],
+  );
+
   return useMemo(
-    () => ({ registry, homeEnvironmentId, createGroup, renameGroup, deleteGroup, recolorGroup }),
-    [createGroup, deleteGroup, homeEnvironmentId, recolorGroup, registry, renameGroup],
+    () => ({
+      registry,
+      homeEnvironmentId,
+      createGroup,
+      renameGroup,
+      deleteGroup,
+      recolorGroup,
+      setGroupNotifications,
+    }),
+    [
+      createGroup,
+      deleteGroup,
+      homeEnvironmentId,
+      recolorGroup,
+      registry,
+      renameGroup,
+      setGroupNotifications,
+    ],
   );
 }

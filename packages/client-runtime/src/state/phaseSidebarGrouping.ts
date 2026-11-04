@@ -26,7 +26,11 @@
 //
 // HERMES: this also runs under React Native. Sort a copy with `.sort()`,
 // never `.toSorted()`.
-import { normalizeThreadCustomGroup, THREAD_CUSTOM_GROUP_MAX_LENGTH } from "@t3tools/contracts";
+import {
+  normalizeThreadCustomGroup,
+  THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  type ThreadCustomGroupNotificationMode,
+} from "@t3tools/contracts";
 
 import {
   isRunningSessionPhase,
@@ -441,6 +445,8 @@ export interface PhaseSidebarCustomGroupOption {
   /** The group's colour id and hex value; absent for the default look. */
   readonly colorId?: string;
   readonly color?: string;
+  /** T3-CUSTOM(expbkt3): a shared group's mode when it is not "all"; absent means "all". */
+  readonly notifications?: ThreadCustomGroupNotificationMode;
 }
 
 /**
@@ -492,6 +498,8 @@ export function listPhaseSidebarCustomGroups(
       ...(shared.colorId !== null && shared.color !== null
         ? { colorId: shared.colorId, color: shared.color }
         : {}),
+      // T3-CUSTOM(expbkt3): absent means "all".
+      ...(shared.notifications !== "all" ? { notifications: shared.notifications } : {}),
     };
   });
   options.sort((left, right) => {
@@ -537,6 +545,8 @@ export interface PhaseSidebarSection {
   /** A custom group's colour id and hex value, from the shared registry; absent otherwise. */
   readonly colorId?: string;
   readonly color?: string;
+  /** T3-CUSTOM(expbkt3): a custom group's notification mode when it is not "all". */
+  readonly notifications?: ThreadCustomGroupNotificationMode;
 }
 
 export interface PhaseSidebarSectionsResult {
@@ -777,6 +787,8 @@ export function buildPhaseSidebarSections(
           ...(group.colorId !== undefined && group.color !== undefined
             ? { colorId: group.colorId, color: group.color }
             : {}),
+          // T3-CUSTOM(expbkt3)
+          ...(group.notifications !== undefined ? { notifications: group.notifications } : {}),
         };
       });
       const allUngrouped = nodesById.get(PHASE_SIDEBAR_UNGROUPED_ID) ?? [];

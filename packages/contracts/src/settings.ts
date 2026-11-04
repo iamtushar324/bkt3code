@@ -38,7 +38,11 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 // T3-CUSTOM(expbkt3): shared custom sidebar groups.
-import { ThreadCustomGroupRegistry, ThreadCustomGroupRegistryPatch } from "./threadCustomGroup.ts";
+import {
+  ThreadCustomGroup,
+  ThreadCustomGroupRegistry,
+  ThreadCustomGroupRegistryPatch,
+} from "./threadCustomGroup.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 // T3-CUSTOM(expbkt3): default thread interaction mode.
@@ -1358,6 +1362,12 @@ export const ServerSettings = Schema.Struct({
   threadCustomGroups: ThreadCustomGroupRegistry.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // T3-CUSTOM(expbkt3): the group a new top-level session joins when its
+  // creator names none; null keeps it ungrouped. A label, compared like
+  // thread labels; a label with no registry entry is ignored at create time.
+  defaultThreadCustomGroup: Schema.NullOr(ThreadCustomGroup).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1804,6 +1814,7 @@ export const ServerSettingsPatch = Schema.Struct({
   previewBrowser: Schema.optionalKey(PreviewBrowserHostSetting), // T3-CUSTOM(expbkt3)
   // T3-CUSTOM(expbkt3): per-entry upsert; a null entry removes that group.
   threadCustomGroups: Schema.optionalKey(ThreadCustomGroupRegistryPatch),
+  defaultThreadCustomGroup: Schema.optionalKey(Schema.NullOr(ThreadCustomGroup)), // T3-CUSTOM(expbkt3)
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(

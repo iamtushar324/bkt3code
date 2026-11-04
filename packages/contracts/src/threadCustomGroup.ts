@@ -76,10 +76,40 @@ export function isThreadCustomGroupColorId(value: string): value is ThreadCustom
 export const ThreadCustomGroupColor = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 export type ThreadCustomGroupColor = typeof ThreadCustomGroupColor.Type;
 
+// T3-CUSTOM(expbkt3): BEGIN — per-group notification mode.
+/**
+ * Which sessions of a group may alert: every session, only top-level sessions
+ * (no parent session), or none. Absent means "all", so a group saved by an
+ * older client keeps alerting. Kept a bounded string for the same reason as
+ * the colour: a mode added later still decodes, and readers treat an unknown
+ * value as "all".
+ */
+export const THREAD_CUSTOM_GROUP_NOTIFICATION_MODES = ["all", "parents", "off"] as const;
+export type ThreadCustomGroupNotificationMode =
+  (typeof THREAD_CUSTOM_GROUP_NOTIFICATION_MODES)[number];
+
+export const ThreadCustomGroupNotifications = TrimmedNonEmptyString.check(Schema.isMaxLength(16));
+
+export function resolveThreadCustomGroupNotificationMode(
+  value: string | undefined | null,
+): ThreadCustomGroupNotificationMode {
+  return value === "parents" || value === "off" ? value : "all";
+}
+
+/** The next mode in the header button's cycle: all → parents → off → all. */
+export function nextThreadCustomGroupNotificationMode(
+  mode: ThreadCustomGroupNotificationMode,
+): ThreadCustomGroupNotificationMode {
+  return mode === "all" ? "parents" : mode === "parents" ? "off" : "all";
+}
+// T3-CUSTOM(expbkt3): END
+
 export const ThreadCustomGroupDefinition = Schema.Struct({
   /** The label as the user typed it; threads carry the same label. */
   label: ThreadCustomGroup,
   colorId: Schema.optionalKey(ThreadCustomGroupColor),
+  // T3-CUSTOM(expbkt3): absent means "all"; see `resolveThreadCustomGroupNotificationMode`.
+  notifications: Schema.optionalKey(ThreadCustomGroupNotifications),
 });
 export type ThreadCustomGroupDefinition = typeof ThreadCustomGroupDefinition.Type;
 
@@ -93,4 +123,26 @@ export const ThreadCustomGroupRegistryPatch = Schema.Record(
   Schema.NullOr(ThreadCustomGroupDefinition),
 );
 export type ThreadCustomGroupRegistryPatch = typeof ThreadCustomGroupRegistryPatch.Type;
+// T3-CUSTOM(expbkt3): END
+
+// T3-CUSTOM(expbkt3): BEGIN — the default group for new sessions.
+/**
+ * The label a new top-level session gets from `defaultThreadCustomGroup`: the
+ * registry's spelling of that group, or null when no default is set or the
+ * registry no longer holds it.
+ */
+export function resolveDefaultThreadCustomGroup(settings: {
+  readonly defaultThreadCustomGroup: string | null;
+  readonly threadCustomGroups: ThreadCustomGroupRegistry;
+}): string | null {
+  const label = settings.defaultThreadCustomGroup;
+  if (label === null || isReservedThreadCustomGroup(label)) return null;
+  const key = normalizeThreadCustomGroup(label);
+  const definition =
+    settings.threadCustomGroups[key] ??
+    Object.values(settings.threadCustomGroups).find(
+      (candidate) => normalizeThreadCustomGroup(candidate.label) === key,
+    );
+  return definition?.label ?? null;
+}
 // T3-CUSTOM(expbkt3): END

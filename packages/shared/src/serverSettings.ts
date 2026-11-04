@@ -34,7 +34,10 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 // T3-CUSTOM(expbkt3): shared custom-group registry, merged per entry (XFN-59).
-import { mergeThreadCustomGroupRegistry } from "./threadCustomGroupRegistry.expbkt3.ts";
+import {
+  followDefaultThreadCustomGroup,
+  mergeThreadCustomGroupRegistry,
+} from "./threadCustomGroupRegistry.expbkt3.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
@@ -604,6 +607,17 @@ export function applyServerSettingsPatch(
           ),
         }
       : {}),
+    // T3-CUSTOM(expbkt3): a renamed default group stays the default; a deleted one stops being it.
+    ...(() => {
+      if (threadCustomGroupsPatch === undefined || patch.defaultThreadCustomGroup !== undefined) {
+        return {};
+      }
+      const followed = followDefaultThreadCustomGroup(
+        current.defaultThreadCustomGroup,
+        threadCustomGroupsPatch,
+      );
+      return followed === undefined ? {} : { defaultThreadCustomGroup: followed };
+    })(),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

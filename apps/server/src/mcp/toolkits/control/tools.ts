@@ -866,7 +866,7 @@ const groupLabel = (description: string) => described(Schema.String, description
 
 export const T3GroupListTool = readonlyTool(
   Tool.make("t3_group_list", {
-    description: `List the custom groups that organise sessions in the sidebar's Custom view: every saved group (shared by all users and agents of this host, with its colour) and every group label carried by a session you can see. Each group reports its label, colorId (null for the default look), registered (true when it is saved, so it stays even with no sessions in it) and sessionCount (your visible, non-archived sessions in it). The result also lists the colour ids t3_group_save accepts: ${groupColorIds}. Call this before filing a session so you reuse an existing group's exact name.`,
+    description: `List the custom groups that organise sessions in the sidebar's Custom view: every saved group (shared by all users and agents of this host, with its colour) and every group label carried by a session you can see. Each group reports its label, colorId (null for the default look), notifications (which of its sessions alert people: all, parents for top-level sessions only, or off), registered (true when it is saved, so it stays even with no sessions in it) and sessionCount (your visible, non-archived sessions in it). defaultGroup is the group a new top-level session joins when its creator names none (null keeps it ungrouped); a child session joins its parent's group. The result also lists the colour ids t3_group_save accepts: ${groupColorIds}. Call this before filing a session so you reuse an existing group's exact name.`,
     parameters: Schema.Struct({
       // An empty struct serializes as `anyOf [object, array]`, which some
       // providers reject, so the list takes one optional filter.
@@ -885,7 +885,7 @@ export const T3GroupListTool = readonlyTool(
 export const T3GroupSaveTool = mutatingTool(
   Tool.make("t3_group_save", {
     description:
-      "Save a custom group in the sidebar's Custom view, or change its colour. Use it to make an empty group before any session is in it, or to give a group a colour; every user and agent of this host sees the same groups and colours. Saving a group that already exists keeps its colour unless you pass color, and adopts your spelling of its name. This does not move any session: to put a session in a group, call t3_update_session with customGroup (or pass customGroup to t3_create_session). Saved groups are host settings, so this needs a full-access caller, as t3_update_server_settings does. The name Ungrouped is reserved for the built-in section.",
+      "Save a custom group in the sidebar's Custom view, or change its colour. Use it to make an empty group before any session is in it, or to give a group a colour; every user and agent of this host sees the same groups and colours. Saving a group that already exists keeps its colour and notification mode unless you pass color or notifications, and adopts your spelling of its name. This does not move any session: to put a session in a group, call t3_update_session with customGroup (or pass customGroup to t3_create_session). Saved groups are host settings, so this needs a full-access caller, as t3_update_server_settings does. The name Ungrouped is reserved for the built-in section.",
     parameters: Schema.Struct({
       label: groupLabel(
         `Name of the group, 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. Matched case-insensitively against existing groups, so "Sprint 42" and "sprint 42" are the same group.`,
@@ -894,6 +894,13 @@ export const T3GroupSaveTool = mutatingTool(
         described(
           Schema.NullOr(Schema.String),
           `Colour id for the group, one of: ${groupColorIds}. Pass null to clear the colour and use the default look; omit to keep the current colour.`,
+        ),
+      ),
+      // T3-CUSTOM(expbkt3): per-group notification mode.
+      notifications: Schema.optional(
+        described(
+          Schema.Literals(["all", "parents", "off"]),
+          "Which of the group's sessions alert people on web and desktop: all (the default), parents (top-level sessions only, not child sessions) or off. Omit to keep the current mode.",
         ),
       ),
     }),

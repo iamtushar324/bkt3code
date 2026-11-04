@@ -7,12 +7,14 @@ import {
   buildPhaseSidebarCustomGroupRegistry,
   EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY,
   PHASE_SIDEBAR_CUSTOM_GROUP_COLOR_OPTIONS,
+  phaseSidebarCustomGroupAllowsNotification,
   phaseSidebarCustomGroupColorValue,
   phaseSidebarCustomGroupDefinition,
   phaseSidebarCustomGroupRegistryEnvironmentIds,
   phaseSidebarCustomGroupRegistrySupported,
   planPhaseSidebarCustomGroupCreate,
   planPhaseSidebarCustomGroupDelete,
+  planPhaseSidebarCustomGroupNotifications,
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
@@ -104,6 +106,7 @@ describe("buildPhaseSidebarCustomGroupRegistry", () => {
       label: "Sprint 42",
       colorId: null,
       color: null,
+      notifications: "all",
       environmentIds: ["primary", "remote"],
     });
     expect(registry.get("ops")).toEqual({
@@ -111,6 +114,7 @@ describe("buildPhaseSidebarCustomGroupRegistry", () => {
       label: "Ops",
       colorId: null,
       color: null,
+      notifications: "all",
       environmentIds: ["remote"],
     });
   });
@@ -334,5 +338,105 @@ describe("planning custom group writes", () => {
         writableEnvironmentIds: ["primary"],
       }),
     ).toEqual({ nextId: "agents", writes: [], skippedEnvironmentIds: [] });
+  });
+});
+
+// T3-CUSTOM(expbkt3): per-group notification mode.
+describe("custom group notification mode", () => {
+  const registry = buildPhaseSidebarCustomGroupRegistry(
+    configs([
+      [
+        "primary",
+        config({
+          quiet: { label: "Quiet", notifications: "off" },
+          leads: { label: "Leads", colorId: "teal", notifications: "parents" },
+          loud: { label: "Loud" },
+          future: { label: "Future", notifications: "digest-only" },
+        }),
+      ],
+    ]),
+    "primary",
+  );
+
+  it("reads an absent or unknown mode as all", () => {
+    expect(registry.get("loud")?.notifications).toBe("all");
+    expect(registry.get("future")?.notifications).toBe("all");
+    expect(registry.get("quiet")?.notifications).toBe("off");
+    expect(registry.get("leads")?.notifications).toBe("parents");
+  });
+
+  it("stores the mode only when it is not all", () => {
+    expect(phaseSidebarCustomGroupDefinition("Bugs", "teal", "off")).toEqual({
+      label: "Bugs",
+      colorId: "teal",
+      notifications: "off",
+    });
+    expect(phaseSidebarCustomGroupDefinition("Bugs", null, "all")).toEqual({ label: "Bugs" });
+  });
+
+  it("decides per session: all alerts, parents skips children, off skips everyone", () => {
+    const allows = (group: string | null, isChild: boolean) =>
+      phaseSidebarCustomGroupAllowsNotification(registry, group, isChild);
+    expect(allows("Loud", true)).toBe(true);
+    expect(allows("LEADS", false)).toBe(true);
+    expect(allows("Leads", true)).toBe(false);
+    expect(allows("Quiet", false)).toBe(false);
+    expect(allows("Quiet", true)).toBe(false);
+    expect(allows(null, true)).toBe(true);
+    expect(allows("Not registered", true)).toBe(true);
+  });
+
+  it("keeps the colour when the mode changes, and the mode on recolour and rename", () => {
+    expect(
+      planPhaseSidebarCustomGroupNotifications({
+        registry,
+        id: "leads",
+        label: "Leads",
+        notifications: "off",
+        writableEnvironmentIds: ["primary"],
+        homeEnvironmentId: "primary",
+      }).writes,
+    ).toEqual([
+      {
+        environmentId: "primary",
+        patch: { leads: { label: "Leads", colorId: "teal", notifications: "off" } },
+      },
+    ]);
+    expect(
+      planPhaseSidebarCustomGroupRecolor({
+        registry,
+        id: "quiet",
+        label: "Quiet",
+        colorId: "red",
+        writableEnvironmentIds: ["primary"],
+        homeEnvironmentId: "primary",
+      }).writes[0]?.patch,
+    ).toEqual({ quiet: { label: "Quiet", colorId: "red", notifications: "off" } });
+    expect(
+      planPhaseSidebarCustomGroupRename({
+        registry,
+        id: "quiet",
+        label: "Silent",
+        writableEnvironmentIds: ["primary"],
+      }).writes[0]?.patch,
+    ).toEqual({ quiet: null, silent: { label: "Silent", notifications: "off" } });
+  });
+
+  it("registers a thread-only group on the home host with its mode", () => {
+    expect(
+      planPhaseSidebarCustomGroupNotifications({
+        registry,
+        id: "agent work",
+        label: "Agent work",
+        notifications: "parents",
+        writableEnvironmentIds: ["primary"],
+        homeEnvironmentId: "primary",
+      }).writes,
+    ).toEqual([
+      {
+        environmentId: "primary",
+        patch: { "agent work": { label: "Agent work", notifications: "parents" } },
+      },
+    ]);
   });
 });
