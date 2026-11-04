@@ -499,15 +499,16 @@ export function PhaseSidebarPane(props: {
           }
           // T3-CUSTOM(expbkt3)
           if (actionId.startsWith("notifications:")) {
-            setCustomGroupNotifications(
-              section.id,
-              resolveThreadCustomGroupNotificationMode(actionId.slice("notifications:".length)),
+            const mode = resolveThreadCustomGroupNotificationMode(
+              actionId.slice("notifications:".length),
             );
+            if (section.isUngrouped) customGroupRegistry.setUngroupedNotifications(mode);
+            else setCustomGroupNotifications(section.id, mode);
           }
           return;
       }
     },
-    [deleteCustomGroup, recolorCustomGroup, setCustomGroupNotifications],
+    [customGroupRegistry, deleteCustomGroup, recolorCustomGroup, setCustomGroupNotifications],
   );
   // "New group…" from a row files that row; from the sheet it is an empty
   // group until a session is moved in. Either way it is registered on a host
@@ -647,6 +648,7 @@ export function PhaseSidebarPane(props: {
         contentInsetAdjustmentBehavior={props.contentInsetAdjustmentBehavior}
         canRecolorGroups={canRecolorCustomGroups}
         customGroupRegistry={sharedCustomGroups}
+        ungroupedNotifications={customGroupRegistry.ungroupedNotifications}
         drafts={drafts}
         environmentAppearanceFor={environmentAppearanceFor}
         environmentLabelFor={environmentLabelFor}

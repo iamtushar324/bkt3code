@@ -8,6 +8,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import {
   buildPhaseSidebarCustomGroupRegistry,
   phaseSidebarCustomGroupAllowsNotification,
+  resolvePhaseSidebarUngroupedNotifications,
 } from "@t3tools/client-runtime/state/phase-sidebar-custom-group-registry";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
@@ -99,20 +100,24 @@ export function startThreadNotifications(
   // T3-CUSTOM(expbkt3): BEGIN — a custom group's notification mode (all, parents, off).
   // The mode lives in the shared group registry, merged across hosts the way the
   // sidebar shows it, so the bell a user sees is the rule that applies.
-  const currentGroupRegistry = () =>
-    buildPhaseSidebarCustomGroupRegistry(
-      registry.get(environmentServerConfigsAtom),
-      registry.get(primaryEnvironmentIdAtom),
-    );
+  const currentGroupRegistry = () => {
+    const configs = registry.get(environmentServerConfigsAtom);
+    const primary = registry.get(primaryEnvironmentIdAtom);
+    return {
+      groups: buildPhaseSidebarCustomGroupRegistry(configs, primary),
+      ungrouped: resolvePhaseSidebarUngroupedNotifications(configs, primary),
+    };
+  };
   // A task delegated from another host is a child even where its parent is not listed.
   const groupAllows = (
     groups: ReturnType<typeof currentGroupRegistry>,
     thread: Pick<EnvironmentThreadShell, "customGroup" | "parentThreadId" | "delegatedFrom">,
   ) =>
     phaseSidebarCustomGroupAllowsNotification(
-      groups,
+      groups.groups,
       thread.customGroup,
       thread.parentThreadId !== null || thread.delegatedFrom !== null,
+      groups.ungrouped,
     );
   // Muting a group also closes what its sessions already have on screen.
   const closeMutedPending = () => {

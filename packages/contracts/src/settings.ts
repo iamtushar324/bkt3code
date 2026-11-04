@@ -40,6 +40,7 @@ import { ModelSelection } from "./modelSelection.ts";
 // T3-CUSTOM(expbkt3): shared custom sidebar groups.
 import {
   ThreadCustomGroup,
+  ThreadCustomGroupNotifications,
   ThreadCustomGroupRegistry,
   ThreadCustomGroupRegistryPatch,
 } from "./threadCustomGroup.ts";
@@ -1368,6 +1369,10 @@ export const ServerSettings = Schema.Struct({
   defaultThreadCustomGroup: Schema.NullOr(ThreadCustomGroup).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // T3-CUSTOM(expbkt3): the notification mode of the built-in "Ungrouped" section.
+  ungroupedThreadNotifications: ThreadCustomGroupNotifications.pipe(
+    Schema.withDecodingDefault(Effect.succeed("all")),
+  ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1815,6 +1820,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // T3-CUSTOM(expbkt3): per-entry upsert; a null entry removes that group.
   threadCustomGroups: Schema.optionalKey(ThreadCustomGroupRegistryPatch),
   defaultThreadCustomGroup: Schema.optionalKey(Schema.NullOr(ThreadCustomGroup)), // T3-CUSTOM(expbkt3)
+  ungroupedThreadNotifications: Schema.optionalKey(ThreadCustomGroupNotifications), // T3-CUSTOM(expbkt3)
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(

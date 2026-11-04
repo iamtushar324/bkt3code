@@ -18,6 +18,7 @@ import {
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
+  resolvePhaseSidebarUngroupedNotifications,
   type PhaseSidebarCustomGroupRegistryConfig,
 } from "./phaseSidebarCustomGroupRegistry.ts";
 
@@ -438,5 +439,43 @@ describe("custom group notification mode", () => {
         patch: { "agent work": { label: "Agent work", notifications: "parents" } },
       },
     ]);
+  });
+});
+
+// T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode.
+describe("ungrouped notification mode", () => {
+  const withUngrouped = (
+    mode: string | undefined,
+    supported = true,
+  ): PhaseSidebarCustomGroupRegistryConfig => ({
+    environment: { capabilities: supported ? { threadCustomGroupRegistry: true } : {} },
+    settings: mode === undefined ? {} : { ungroupedThreadNotifications: mode },
+  });
+
+  it("reads the preferred host, else the first host that keeps the registry", () => {
+    const hosts = configs([
+      ["old", withUngrouped("off", false)],
+      ["remote", withUngrouped("parents")],
+      ["primary", withUngrouped("off")],
+    ]);
+    expect(resolvePhaseSidebarUngroupedNotifications(hosts, "primary")).toBe("off");
+    expect(resolvePhaseSidebarUngroupedNotifications(hosts, null)).toBe("parents");
+    expect(resolvePhaseSidebarUngroupedNotifications(configs([]), null)).toBe("all");
+    expect(
+      resolvePhaseSidebarUngroupedNotifications(configs([["h", withUngrouped(undefined)]]), "h"),
+    ).toBe("all");
+  });
+
+  it("applies it to sessions with no group only", () => {
+    const allows = (group: string | null, isChild: boolean) =>
+      phaseSidebarCustomGroupAllowsNotification(
+        EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY,
+        group,
+        isChild,
+        "parents",
+      );
+    expect(allows(null, false)).toBe(true);
+    expect(allows(null, true)).toBe(false);
+    expect(allows("Unregistered", true)).toBe(true);
   });
 });

@@ -591,6 +591,8 @@ export interface BuildPhaseSidebarSectionsInput {
    * groups render in custom mode even with no session, with their colours.
    */
   readonly customGroupRegistry?: PhaseSidebarCustomGroupRegistry;
+  /** T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode; absent means "all". */
+  readonly ungroupedNotifications?: ThreadCustomGroupNotificationMode;
 }
 
 /**
@@ -805,6 +807,10 @@ export function buildPhaseSidebarSections(
           summary: placedSummary(allUngrouped, ungrouped),
           isUngrouped: true,
           collapsedByDefault: false,
+          // T3-CUSTOM(expbkt3)
+          ...(input.ungroupedNotifications !== undefined && input.ungroupedNotifications !== "all"
+            ? { notifications: input.ungroupedNotifications }
+            : {}),
         });
       }
       const manualIndex = new Map(registry.map((group, index) => [group.id, index]));

@@ -412,7 +412,9 @@ and desktop: every thread, **only parent threads** (threads with no parent
 session, so agent-created child sessions stay quiet), or none. A quieted group
 shows its bell even when the header actions are hidden. The setting is shared
 like the colour, and on iOS and Android it is under **Notifications** in the
-group's header menu. Phone push notifications do not follow it yet.
+group's header menu. **Ungrouped** has the same bell, for threads in no
+group. Phone push notifications do not follow it yet. The desktop app shows
+the bell once its own app update includes it.
 
 To stop new threads landing in **Ungrouped**, pick a **Default group for new
 sessions** for each environment under **Settings → BK Add-ons**. A new thread
