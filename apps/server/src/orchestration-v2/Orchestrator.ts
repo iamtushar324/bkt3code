@@ -6,6 +6,8 @@ import {
   assertManagerBootstrapDispatch,
   type ManagerDispatchOptions,
 } from "./managerGuard.expbkt3.ts";
+// T3-CUSTOM(expbkt3): the default custom group for new sessions.
+import { resolveDefaultThreadCustomGroup } from "@t3tools/contracts";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -2794,6 +2796,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { concurrency: 1, discard: true },
     );
 
+  // T3-CUSTOM(expbkt3): BEGIN — the group a new session joins when its creator names none.
+  // A child takes its local parent's group (else none); a top-level session
+  // takes the host default; imported and remotely delegated sessions take none.
+  const resolveCreatedThreadCustomGroup = Effect.fn(
+    "orchestrationV2.dispatch.threadCreate.customGroup",
+  )(function* (command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>) {
+    // A task delegated from another host is a child whose parent is not here.
+    if (command.importedNativeThread !== undefined || command.delegatedFrom !== undefined) {
+      return null;
+    }
+    if (command.parentThreadId != null) {
+      const parent = yield* findThread(command.parentThreadId).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      return parent?.customGroup ?? null;
+    }
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    return resolveDefaultThreadCustomGroup(settings);
+  });
+  // T3-CUSTOM(expbkt3): END
+
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -2819,6 +2842,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    // T3-CUSTOM(expbkt3): a session created with no group joins its parent's
+    // group, or, at the top level, the host's default group for new sessions.
+    const customGroup =
+      command.customGroup !== undefined
+        ? command.customGroup
+        : yield* resolveCreatedThreadCustomGroup(command);
+
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -2827,7 +2857,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       memberUserIds: command.memberUserIds ?? [],
       sourceControlProfileId: command.sourceControlProfileId ?? null,
       priority: command.priority ?? null,
-      customGroup: command.customGroup ?? null,
+      customGroup,
       // Canonical, so the legacy one-tag read and later tag changes agree on
       // its URL; a value that does not parse is kept as given.
       linearIssueUrl:

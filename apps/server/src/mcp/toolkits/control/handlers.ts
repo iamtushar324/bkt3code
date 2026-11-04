@@ -25,6 +25,10 @@ import {
   type ThreadCustomGroupColorId,
   type ThreadCustomGroupDefinition,
   type ThreadCustomGroupRegistry,
+  // T3-CUSTOM(expbkt3): per-group notification mode and the default group.
+  resolveDefaultThreadCustomGroup,
+  resolveThreadCustomGroupNotificationMode,
+  type ThreadCustomGroupNotificationMode,
   type OrchestrationCommand,
   type OrchestrationThread,
   type OrchestrationThreadShell,
@@ -673,6 +677,8 @@ function sessionsInGroup<T extends Pick<OrchestrationThreadShell, "customGroup">
 interface CustomGroupSummary {
   readonly label: string;
   readonly colorId: string | null;
+  // T3-CUSTOM(expbkt3): per-group notification mode.
+  readonly notifications: ThreadCustomGroupNotificationMode;
   readonly registered: boolean;
   sessionCount: number;
 }
@@ -691,6 +697,7 @@ function describeCustomGroups(
     groups.set(normalizeThreadCustomGroup(definition.label), {
       label: definition.label,
       colorId: definition.colorId ?? null,
+      notifications: resolveThreadCustomGroupNotificationMode(definition.notifications),
       registered: true,
       sessionCount: 0,
     });
@@ -701,7 +708,13 @@ function describeCustomGroups(
     const key = normalizeThreadCustomGroup(label);
     const group = groups.get(key);
     if (group === undefined) {
-      groups.set(key, { label, colorId: null, registered: false, sessionCount: 1 });
+      groups.set(key, {
+        label,
+        colorId: null,
+        notifications: "all",
+        registered: false,
+        sessionCount: 1,
+      });
     } else {
       group.sessionCount += 1;
     }
@@ -1211,6 +1224,8 @@ export const createSession = Effect.fn("T3ControlToolkit.createSession")(functio
           };
         }).pipe(mapControlError(operation))
       : undefined;
+  // T3-CUSTOM(expbkt3): validated before the command is built; undefined means "not named".
+  const customGroup = yield* resolveCustomGroupInput(operation, input.customGroup);
   const createThread = {
     projectId,
     title,
@@ -1227,8 +1242,9 @@ export const createSession = Effect.fn("T3ControlToolkit.createSession")(functio
     memberUserIds,
     createdAt,
     priority: input.priority ?? null,
-    // T3-CUSTOM(expbkt3): custom sidebar group.
-    customGroup: (yield* resolveCustomGroupInput(operation, input.customGroup)) ?? null,
+    // T3-CUSTOM(expbkt3): custom sidebar group. Omitted when the caller names
+    // none, so the server applies the parent's group or the host default.
+    ...(customGroup === undefined ? {} : { customGroup }),
     // T3-CUSTOM(expbkt3): session lineage.
     parentThreadId,
   } as const;
@@ -2095,6 +2111,11 @@ const handlers = {
         filter === undefined
           ? groups
           : groups.filter((group) => normalizeThreadCustomGroup(group.label) === filter),
+      // T3-CUSTOM(expbkt3): the group new top-level sessions join.
+      defaultGroup: resolveDefaultThreadCustomGroup(settings),
+      ungroupedNotifications: resolveThreadCustomGroupNotificationMode(
+        settings.ungroupedThreadNotifications,
+      ),
       colors: [...THREAD_CUSTOM_GROUP_COLOR_IDS],
     };
   }),
@@ -2115,9 +2136,12 @@ const handlers = {
     const existing = current.threadCustomGroups[key];
     // An omitted colour keeps the saved one; null clears it.
     const colorId = color === undefined ? existing?.colorId : (color ?? undefined);
+    // T3-CUSTOM(expbkt3): an omitted mode keeps the saved one; "all" is stored as absent.
+    const notifications = input.notifications ?? existing?.notifications;
     const definition: ThreadCustomGroupDefinition = {
       label,
       ...(colorId === undefined ? {} : { colorId }),
+      ...(notifications === undefined || notifications === "all" ? {} : { notifications }),
     };
     const settings = yield* settingsService
       .updateSettings({ threadCustomGroups: { [key]: definition } })
@@ -2126,7 +2150,11 @@ const handlers = {
     return {
       saved: true,
       created: existing === undefined,
-      group: { label: saved.label, colorId: saved.colorId ?? null },
+      group: {
+        label: saved.label,
+        colorId: saved.colorId ?? null,
+        notifications: resolveThreadCustomGroupNotificationMode(saved.notifications),
+      },
     };
   }),
 
@@ -2184,6 +2212,8 @@ const handlers = {
       patch[newKey] = {
         label: newLabel,
         ...(existing.colorId === undefined ? {} : { colorId: existing.colorId }),
+        // T3-CUSTOM(expbkt3): the notification mode moves with the group.
+        ...(existing.notifications === undefined ? {} : { notifications: existing.notifications }),
       };
       yield* settingsService
         .updateSettings({ threadCustomGroups: patch })
@@ -2200,6 +2230,8 @@ const handlers = {
       group: {
         label: newLabel,
         colorId: existing?.colorId ?? null,
+        // T3-CUSTOM(expbkt3): per-group notification mode.
+        notifications: resolveThreadCustomGroupNotificationMode(existing?.notifications),
         registered: existing !== undefined,
       },
       sessionsMoved: moved.length,

@@ -25,6 +25,9 @@ import {
   type ThreadId,
   type VcsStatusResult,
   isReservedThreadCustomGroup,
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  nextThreadCustomGroupNotificationMode,
+  type ThreadCustomGroupNotificationMode,
 } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import {
@@ -50,6 +53,10 @@ import {
   ListTreeIcon,
   // T3-CUSTOM(expbkt3): a custom group's colour (XFN-59).
   PaletteIcon,
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  BellIcon,
+  BellMinusIcon,
+  BellOffIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -2995,9 +3002,11 @@ export function PhaseGroupedSidebar() {
         projectLabelFor,
         environmentLabelFor,
         customGroupRegistry: sharedCustomGroups,
+        ungroupedNotifications: customGroupRegistry.ungroupedNotifications, // T3-CUSTOM(expbkt3)
       }),
     [
       activeRows,
+      customGroupRegistry.ungroupedNotifications,
       environmentLabelFor,
       filters,
       grouping,
@@ -3062,6 +3071,7 @@ export function PhaseGroupedSidebar() {
     renameGroup: renameSharedCustomGroup,
     deleteGroup: deleteSharedCustomGroup,
     recolorGroup: recolorSharedCustomGroup,
+    setGroupNotifications: setSharedCustomGroupNotifications,
   } = customGroupRegistry;
   const canRecolorCustomGroups = customGroupRegistry.homeEnvironmentId !== null;
   const createCustomGroup = useCallback(
@@ -3094,6 +3104,16 @@ export function PhaseGroupedSidebar() {
       for (const row of rowsInCustomGroup(groupId)) void setThreadCustomGroup(row, null);
     },
     [deleteSharedCustomGroup, forgetCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
+  );
+  // T3-CUSTOM(expbkt3): the header bell cycles all → parents → off.
+  const setCustomGroupNotifications = useCallback(
+    (groupId: string, notifications: ThreadCustomGroupNotificationMode) =>
+      setSharedCustomGroupNotifications(
+        groupId,
+        customGroupLabels.get(groupId) ?? groupId,
+        notifications,
+      ),
+    [customGroupLabels, setSharedCustomGroupNotifications],
   );
   const recolorCustomGroup = useCallback(
     (groupId: string, colorId: string | null) =>
@@ -4337,9 +4357,16 @@ export function PhaseGroupedSidebar() {
                       ? {
                           onRecolorGroup: (colorId: string | null) =>
                             recolorCustomGroup(section.id, colorId),
+                          // T3-CUSTOM(expbkt3): shared like the colour, so the same hosts can write it.
+                          onSetGroupNotifications: (mode: ThreadCustomGroupNotificationMode) =>
+                            setCustomGroupNotifications(section.id, mode),
                         }
                       : {}),
                   }
+                : {})}
+              {...(section.kind === "custom" && section.isUngrouped && canRecolorCustomGroups
+                ? // T3-CUSTOM(expbkt3): "Ungrouped" has a bell too, kept as a host setting.
+                  { onSetGroupNotifications: customGroupRegistry.setUngroupedNotifications }
                 : {})}
             />
           ))}
@@ -4472,6 +4499,19 @@ export function PhaseGroupedSidebar() {
   );
 }
 
+// T3-CUSTOM(expbkt3): BEGIN — a custom group's notification mode, as the header shows it.
+const GROUP_NOTIFICATION_ICONS = {
+  all: BellIcon,
+  parents: BellMinusIcon,
+  off: BellOffIcon,
+} satisfies Record<ThreadCustomGroupNotificationMode, unknown>;
+const GROUP_NOTIFICATION_LABELS = {
+  all: "All sessions notify",
+  parents: "Only parent sessions notify",
+  off: "Notifications off",
+} satisfies Record<ThreadCustomGroupNotificationMode, string>;
+// T3-CUSTOM(expbkt3): END
+
 /**
  * T3-CUSTOM(expbkt3): one section of the list — a lifecycle phase, a project,
  * or a custom group. The header is the collapse toggle; when closed it keeps
@@ -4492,6 +4532,7 @@ function PhaseSidebarSectionBlock({
   onRenameGroup,
   onDeleteGroup,
   onRecolorGroup,
+  onSetGroupNotifications,
 }: {
   readonly section: PhaseSidebarGroupSection;
   readonly collapsed: boolean;
@@ -4503,12 +4544,20 @@ function PhaseSidebarSectionBlock({
   readonly onDeleteGroup?: () => void;
   /** Absent when no connected host keeps shared groups for this session. */
   readonly onRecolorGroup?: (colorId: string | null) => void;
+  /** T3-CUSTOM(expbkt3): absent when no connected host keeps shared groups for this session. */
+  readonly onSetGroupNotifications?: (mode: ThreadCustomGroupNotificationMode) => void;
 }) {
   const { summary } = section;
   const phaseId = phaseSidebarSectionPhase(section);
   const headerPhaseId = section.kind === "lifecycle" ? section.phaseId : phaseId;
   const manageable =
-    onRenameGroup !== undefined || onDeleteGroup !== undefined || onRecolorGroup !== undefined;
+    onRenameGroup !== undefined ||
+    onDeleteGroup !== undefined ||
+    onRecolorGroup !== undefined ||
+    onSetGroupNotifications !== undefined;
+  // T3-CUSTOM(expbkt3): absent on the section means "all".
+  const notificationMode = section.notifications ?? "all";
+  const NotificationIcon = GROUP_NOTIFICATION_ICONS[notificationMode];
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   // A custom group says in words what needs you, open or closed, in place of
   // its session count and the closed-header pills.
@@ -4565,6 +4614,51 @@ function PhaseSidebarSectionBlock({
       <span className="truncate text-[11px] font-bold uppercase tracking-[0.1em]">
         {section.label}
       </span>
+      {/* T3-CUSTOM(expbkt3): the bell follows the label: on hover, or always while muted. */}
+      {onSetGroupNotifications ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`Notifications for group ${section.label}: ${GROUP_NOTIFICATION_LABELS[notificationMode]}. Change to ${GROUP_NOTIFICATION_LABELS[nextThreadCustomGroupNotificationMode(notificationMode)]}.`}
+                data-testid="phase-sidebar-section-notifications"
+                className={cn(
+                  "shrink-0 items-center rounded p-0.5 text-current/60 outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+                  notificationMode === "all"
+                    ? "hidden group-hover/section:inline-flex group-has-[:focus-visible]/section:inline-flex"
+                    : "inline-flex",
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSetGroupNotifications(nextThreadCustomGroupNotificationMode(notificationMode));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSetGroupNotifications(nextThreadCustomGroupNotificationMode(notificationMode));
+                }}
+              />
+            }
+          >
+            <NotificationIcon aria-hidden className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {GROUP_NOTIFICATION_LABELS[notificationMode]} · click for{" "}
+            {GROUP_NOTIFICATION_LABELS[
+              nextThreadCustomGroupNotificationMode(notificationMode)
+            ].toLowerCase()}
+          </TooltipPopup>
+        </Tooltip>
+      ) : notificationMode !== "all" ? (
+        <NotificationIcon
+          aria-label={GROUP_NOTIFICATION_LABELS[notificationMode]}
+          className="size-3 shrink-0 text-current/60"
+          data-testid="phase-sidebar-section-notifications"
+        />
+      ) : null}
       {summaryWords.length > 0 ? (
         <span
           className="min-w-0 flex-1 truncate text-[9px] font-semibold"
@@ -4625,59 +4719,62 @@ function PhaseSidebarSectionBlock({
       {manageable ? (
         <div className={PHASE_SIDEBAR_SECTION_MANAGED_HEADER_CLASS_NAME}>
           {toggle}
-          <span
-            className={phaseSidebarSectionActionsClassName(colorPickerOpen)}
-            data-testid="phase-sidebar-section-actions"
-          >
-            {onRecolorGroup ? (
-              <Popover open={colorPickerOpen} onOpenChange={setColorPickerOpen}>
-                <PopoverTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={`Change colour of group ${section.label}`}
-                      className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
+          {/* T3-CUSTOM(expbkt3): a bell-only header ("Ungrouped") has no hover overlay. */}
+          {onRecolorGroup || onRenameGroup || onDeleteGroup ? (
+            <span
+              className={phaseSidebarSectionActionsClassName(colorPickerOpen)}
+              data-testid="phase-sidebar-section-actions"
+            >
+              {onRecolorGroup ? (
+                <Popover open={colorPickerOpen} onOpenChange={setColorPickerOpen}>
+                  <PopoverTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={`Change colour of group ${section.label}`}
+                        className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
+                      />
+                    }
+                  >
+                    <PaletteIcon aria-hidden className="size-3" />
+                  </PopoverTrigger>
+                  <PopoverPopup align="end" padding="compact">
+                    <PhaseSidebarGroupColorSwatches
+                      groupLabel={section.label}
+                      value={section.colorId ?? null}
+                      onSelect={(colorId) => {
+                        onRecolorGroup(colorId);
+                        setColorPickerOpen(false);
+                      }}
                     />
-                  }
+                  </PopoverPopup>
+                </Popover>
+              ) : null}
+              {onRenameGroup ? (
+                <button
+                  type="button"
+                  aria-label={`Rename group ${section.label}`}
+                  onClick={onRenameGroup}
+                  className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
                 >
-                  <PaletteIcon aria-hidden className="size-3" />
-                </PopoverTrigger>
-                <PopoverPopup align="end" padding="compact">
-                  <PhaseSidebarGroupColorSwatches
-                    groupLabel={section.label}
-                    value={section.colorId ?? null}
-                    onSelect={(colorId) => {
-                      onRecolorGroup(colorId);
-                      setColorPickerOpen(false);
-                    }}
-                  />
-                </PopoverPopup>
-              </Popover>
-            ) : null}
-            {onRenameGroup ? (
-              <button
-                type="button"
-                aria-label={`Rename group ${section.label}`}
-                onClick={onRenameGroup}
-                className={PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME}
-              >
-                <PencilIcon aria-hidden className="size-3" />
-              </button>
-            ) : null}
-            {onDeleteGroup ? (
-              <button
-                type="button"
-                aria-label={`Delete group ${section.label}`}
-                onClick={onDeleteGroup}
-                className={cn(
-                  PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
-                  "hover:text-destructive",
-                )}
-              >
-                <Trash2Icon aria-hidden className="size-3" />
-              </button>
-            ) : null}
-          </span>
+                  <PencilIcon aria-hidden className="size-3" />
+                </button>
+              ) : null}
+              {onDeleteGroup ? (
+                <button
+                  type="button"
+                  aria-label={`Delete group ${section.label}`}
+                  onClick={onDeleteGroup}
+                  className={cn(
+                    PHASE_SIDEBAR_SECTION_ACTION_BUTTON_CLASS_NAME,
+                    "hover:text-destructive",
+                  )}
+                >
+                  <Trash2Icon aria-hidden className="size-3" />
+                </button>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       ) : (
         toggle

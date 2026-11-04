@@ -21,10 +21,12 @@
 import {
   isThreadCustomGroupColorId,
   normalizeThreadCustomGroup,
+  resolveThreadCustomGroupNotificationMode,
   THREAD_CUSTOM_GROUP_COLOR_IDS,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
   type ThreadCustomGroupColorId,
   type ThreadCustomGroupDefinition,
+  type ThreadCustomGroupNotificationMode,
   type ThreadCustomGroupRegistry,
   type ThreadCustomGroupRegistryPatch,
 } from "@t3tools/contracts";
@@ -66,6 +68,8 @@ export interface PhaseSidebarCustomGroupRegistryEntry {
   readonly colorId: ThreadCustomGroupColorId | null;
   /** The resolved hex value of `colorId`. */
   readonly color: string | null;
+  /** T3-CUSTOM(expbkt3): which of the group's sessions may alert; "all" when unset. */
+  readonly notifications: ThreadCustomGroupNotificationMode;
   /** Every host whose registry holds this group, the winning host first. */
   readonly environmentIds: ReadonlyArray<string>;
 }
@@ -84,7 +88,11 @@ export interface PhaseSidebarCustomGroupRegistryConfig {
     readonly capabilities: { readonly threadCustomGroupRegistry?: boolean | undefined };
   };
   readonly settings?:
-    | { readonly threadCustomGroups?: ThreadCustomGroupRegistry | undefined }
+    | {
+        readonly threadCustomGroups?: ThreadCustomGroupRegistry | undefined;
+        /** T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode. */
+        readonly ungroupedThreadNotifications?: string | undefined;
+      }
     | undefined;
 }
 
@@ -133,7 +141,12 @@ export function buildPhaseSidebarCustomGroupRegistry(
 
   const merged = new Map<
     string,
-    { label: string; colorId: ThreadCustomGroupColorId | null; environmentIds: string[] }
+    {
+      label: string;
+      colorId: ThreadCustomGroupColorId | null;
+      notifications: ThreadCustomGroupNotificationMode;
+      environmentIds: string[];
+    }
   >();
   for (const [environmentId, registry] of sources) {
     for (const definition of Object.values(registry)) {
@@ -152,7 +165,12 @@ export function buildPhaseSidebarCustomGroupRegistry(
         definition.colorId !== undefined && isThreadCustomGroupColorId(definition.colorId)
           ? definition.colorId
           : null;
-      merged.set(id, { label, colorId, environmentIds: [environmentId] });
+      merged.set(id, {
+        label,
+        colorId,
+        notifications: resolveThreadCustomGroupNotificationMode(definition.notifications),
+        environmentIds: [environmentId],
+      });
     }
   }
   if (merged.size === 0) return EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY;
@@ -163,6 +181,7 @@ export function buildPhaseSidebarCustomGroupRegistry(
       label: entry.label,
       colorId: entry.colorId,
       color: phaseSidebarCustomGroupColorValue(entry.colorId),
+      notifications: entry.notifications,
       environmentIds: entry.environmentIds,
     });
   }
@@ -184,14 +203,24 @@ export interface PhaseSidebarCustomGroupWritePlan {
 
 const EMPTY_PLAN: PhaseSidebarCustomGroupWritePlan = { writes: [], skippedEnvironmentIds: [] };
 
-/** A registry definition; an unknown colour id is dropped, which reads as the default look. */
+/**
+ * A registry definition; an unknown colour id is dropped, which reads as the
+ * default look. The notification mode is stored only when it is not "all",
+ * the default. A definition replaces the stored one whole, so every write
+ * must pass the group's current mode to keep it.
+ */
 export function phaseSidebarCustomGroupDefinition(
   label: string,
   colorId: string | null | undefined,
+  notifications: ThreadCustomGroupNotificationMode = "all",
 ): ThreadCustomGroupDefinition {
-  return colorId !== null && colorId !== undefined && isThreadCustomGroupColorId(colorId)
-    ? { label, colorId }
-    : { label };
+  return {
+    label,
+    ...(colorId !== null && colorId !== undefined && isThreadCustomGroupColorId(colorId)
+      ? { colorId }
+      : {}),
+    ...(notifications === "all" ? {} : { notifications }),
+  };
 }
 
 /**
@@ -269,7 +298,11 @@ export function planPhaseSidebarCustomGroupRecolor(input: {
   const entry = input.registry.get(input.id);
   if (entry !== undefined) {
     return planForHolders(entry, input.writableEnvironmentIds, {
-      [entry.id]: phaseSidebarCustomGroupDefinition(entry.label, input.colorId),
+      [entry.id]: phaseSidebarCustomGroupDefinition(
+        entry.label,
+        input.colorId,
+        entry.notifications,
+      ),
     });
   }
   const label = sanitizeLabel(input.label);
@@ -304,11 +337,98 @@ export function planPhaseSidebarCustomGroupRename(input: {
   const entry = input.registry.get(input.id);
   if (entry === undefined) return { ...EMPTY_PLAN, nextId };
   const target = nextId === entry.id ? undefined : input.registry.get(nextId);
-  const definition = phaseSidebarCustomGroupDefinition(label, target?.colorId ?? entry.colorId);
+  const definition = phaseSidebarCustomGroupDefinition(
+    label,
+    target?.colorId ?? entry.colorId,
+    target?.notifications ?? entry.notifications,
+  );
   const patch: ThreadCustomGroupRegistryPatch =
     nextId === entry.id ? { [nextId]: definition } : { [entry.id]: null, [nextId]: definition };
   return { ...planForHolders(entry, input.writableEnvironmentIds, patch), nextId };
 }
+
+// T3-CUSTOM(expbkt3): BEGIN — per-group notification mode.
+/**
+ * Sets a group's notification mode on every host that holds it. Like a
+ * recolour, a group that exists only as a thread label is registered on the
+ * home host with that mode.
+ */
+export function planPhaseSidebarCustomGroupNotifications(input: {
+  readonly registry: PhaseSidebarCustomGroupRegistry;
+  readonly id: string;
+  /** The label shown for the group, used when it is not registered yet. */
+  readonly label: string;
+  readonly notifications: ThreadCustomGroupNotificationMode;
+  readonly writableEnvironmentIds: ReadonlyArray<string>;
+  readonly homeEnvironmentId: string | null;
+}): PhaseSidebarCustomGroupWritePlan {
+  if (input.id === PHASE_SIDEBAR_UNGROUPED_ID) return EMPTY_PLAN;
+  const entry = input.registry.get(input.id);
+  if (entry !== undefined) {
+    return planForHolders(entry, input.writableEnvironmentIds, {
+      [entry.id]: phaseSidebarCustomGroupDefinition(
+        entry.label,
+        entry.colorId,
+        input.notifications,
+      ),
+    });
+  }
+  const label = sanitizeLabel(input.label);
+  if (label.length === 0 || input.homeEnvironmentId === null) return EMPTY_PLAN;
+  return {
+    writes: [
+      {
+        environmentId: input.homeEnvironmentId,
+        patch: {
+          [input.id]: phaseSidebarCustomGroupDefinition(label, null, input.notifications),
+        },
+      },
+    ],
+    skippedEnvironmentIds: [],
+  };
+}
+
+/**
+ * The "Ungrouped" section's mode across hosts, read like the registry: the
+ * preferred host wins, else the first host that keeps the registry.
+ */
+export function resolvePhaseSidebarUngroupedNotifications(
+  serverConfigs: ReadonlyMap<string, PhaseSidebarCustomGroupRegistryConfig | null | undefined>,
+  preferredEnvironmentId: string | null,
+): ThreadCustomGroupNotificationMode {
+  const preferred =
+    preferredEnvironmentId === null ? undefined : serverConfigs.get(preferredEnvironmentId);
+  if (phaseSidebarCustomGroupRegistrySupported(preferred)) {
+    return resolveThreadCustomGroupNotificationMode(
+      preferred?.settings?.ungroupedThreadNotifications,
+    );
+  }
+  for (const config of serverConfigs.values()) {
+    if (!phaseSidebarCustomGroupRegistrySupported(config)) continue;
+    return resolveThreadCustomGroupNotificationMode(config?.settings?.ungroupedThreadNotifications);
+  }
+  return "all";
+}
+
+/**
+ * Whether a session may alert under its group's mode. `customGroup` is the
+ * session's label; `isChild` is true when it has a parent session. A session
+ * with no group follows `ungrouped`; one whose group has no registry entry
+ * always may.
+ */
+export function phaseSidebarCustomGroupAllowsNotification(
+  registry: PhaseSidebarCustomGroupRegistry,
+  customGroup: string | null | undefined,
+  isChild: boolean,
+  ungrouped: ThreadCustomGroupNotificationMode = "all",
+): boolean {
+  const mode =
+    customGroup === null || customGroup === undefined
+      ? ungrouped
+      : (registry.get(normalizeThreadCustomGroup(customGroup))?.notifications ?? "all");
+  return mode === "all" || (mode === "parents" && !isChild);
+}
+// T3-CUSTOM(expbkt3): END
 
 /** Removes a registered group from every host that holds it. */
 export function planPhaseSidebarCustomGroupDelete(input: {

@@ -1211,6 +1211,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["experiments bk add-ons addons webhook delivery history retry notification"],
   },
   {
+    id: "default-custom-group",
+    title: "Default group for new sessions",
+    to: "/settings/experiments",
+    searchTerms: ["experiments bk add-ons addons custom group ungrouped sidebar new session"],
+  },
+  {
     id: "connect-phone-local",
     title: "Connect phone to local server",
     to: "/settings/experiments",
