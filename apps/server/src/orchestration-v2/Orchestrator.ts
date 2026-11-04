@@ -2797,10 +2797,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   // T3-CUSTOM(expbkt3): BEGIN — the group a new session joins when its creator names none.
-  // A child copies its local parent's group, so it stays in the parent's
-  // sidebar tree; a child whose parent this host does not hold (or a task
-  // delegated from another host) stays ungrouped. A top-level session takes `defaultThreadCustomGroup` while the
-  // registry still holds that group. Imported provider sessions keep no group.
+  // A child takes its local parent's group (else none); a top-level session
+  // takes the host default; imported and remotely delegated sessions take none.
   const resolveCreatedThreadCustomGroup = Effect.fn(
     "orchestrationV2.dispatch.threadCreate.customGroup",
   )(function* (command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>) {

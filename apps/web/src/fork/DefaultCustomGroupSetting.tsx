@@ -1,9 +1,5 @@
-// T3-CUSTOM(expbkt3): the host's default custom group for new sessions.
-//
-// A new top-level session with no group named by its creator joins this group
-// on the server (a child joins its parent's group instead). The choices are the
-// host's shared group registry; a renamed group stays the default and a
-// deleted one stops being it (packages/shared threadCustomGroupRegistry).
+// T3-CUSTOM(expbkt3): the host's default custom group for new sessions; the
+// server applies it in thread.create, and the settings merge follows renames.
 import {
   AuthSettingsWriteScope,
   normalizeThreadCustomGroup,

@@ -332,7 +332,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("t3_group_rename"
         .pipe(provide(settings.service, dispatcher.service));
       expect(settings.patches).toHaveLength(0);
       expect(dispatcher.dispatched.map((command) => command.threadId)).toEqual(["thread-bugs"]);
-      expect(result.group).toEqual({ label: "Defects", colorId: null, registered: false });
+      expect(result.group).toEqual({
+        label: "Defects",
+        colorId: null,
+        notifications: "all",
+        registered: false,
+      });
     }),
   );
 

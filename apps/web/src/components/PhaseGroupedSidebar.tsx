@@ -4710,7 +4710,6 @@ function PhaseSidebarSectionBlock({
               <button
                 type="button"
                 aria-label={`Notifications for group ${section.label}: ${GROUP_NOTIFICATION_LABELS[notificationMode]}. Change to ${GROUP_NOTIFICATION_LABELS[nextThreadCustomGroupNotificationMode(notificationMode)]}.`}
-                title={`${GROUP_NOTIFICATION_LABELS[notificationMode]} — click for ${GROUP_NOTIFICATION_LABELS[nextThreadCustomGroupNotificationMode(notificationMode)].toLowerCase()}`}
                 onClick={() =>
                   onSetGroupNotifications(nextThreadCustomGroupNotificationMode(notificationMode))
                 }
