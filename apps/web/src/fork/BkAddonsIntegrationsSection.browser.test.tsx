@@ -64,6 +64,10 @@ vi.mock(import("./SessionWebhookSettingsSection"), async (original) => ({
     />
   )) as never,
 }));
+vi.mock(import("./DefaultCustomGroupSetting"), async (original) => ({
+  ...(await original()),
+  EnvironmentDefaultCustomGroupSetting: (() => null) as never,
+}));
 vi.mock(import("../components/settings/settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsSearchTarget: (({ children, id }: { children: ReactNode; id?: string }) => (

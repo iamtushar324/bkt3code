@@ -51,6 +51,8 @@ import {
   // T3-CUSTOM(expbkt3): Linear tags on a session.
   type LinearIssueStatusSummary,
   type SidebarThreadSortOrder,
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  type ThreadCustomGroupNotificationMode,
   type UserId,
 } from "@t3tools/contracts";
 import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
@@ -130,7 +132,30 @@ export type PhaseSidebarSectionActionId =
   | "move-up"
   | "move-down"
   | "color:default"
-  | `color:${string}`;
+  | `color:${string}`
+  // T3-CUSTOM(expbkt3): a custom group's notification mode.
+  | `notifications:${ThreadCustomGroupNotificationMode}`;
+
+// T3-CUSTOM(expbkt3): BEGIN — a section's notification mode, as a header submenu.
+function notificationsMenuAction(section: PhaseSidebarSection): MenuAction {
+  return {
+    id: "notifications",
+    title: "Notifications",
+    image: section.notifications === "off" ? "bell.slash" : "bell",
+    subactions: (
+      [
+        ["all", "All sessions"],
+        ["parents", "Parent sessions only"],
+        ["off", "Off"],
+      ] as const
+    ).map(([mode, title]) => ({
+      id: `notifications:${mode}`,
+      title,
+      state: (section.notifications ?? "all") === mode ? ("on" as const) : ("off" as const),
+    })),
+  };
+}
+// T3-CUSTOM(expbkt3): END
 
 export interface PhaseSidebarListProps {
   readonly rows: ReadonlyArray<PhaseSidebarRow>;
@@ -146,6 +171,8 @@ export interface PhaseSidebarListProps {
   readonly customGroupRegistry?: PhaseSidebarCustomGroupRegistry;
   /** Offer "Change colour" on a custom group's header. */
   readonly canRecolorGroups?: boolean;
+  /** T3-CUSTOM(expbkt3): the "Ungrouped" section's notification mode. */
+  readonly ungroupedNotifications?: ThreadCustomGroupNotificationMode;
   readonly onChangeGrouping: (
     apply: (current: PhaseSidebarGroupingPreferences) => PhaseSidebarGroupingPreferences,
   ) => void;
@@ -335,6 +362,10 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
       ...(props.projectLabelFor ? { projectLabelFor: props.projectLabelFor } : {}),
       ...(props.environmentLabelFor ? { environmentLabelFor: props.environmentLabelFor } : {}),
       ...(props.customGroupRegistry ? { customGroupRegistry: props.customGroupRegistry } : {}),
+      // T3-CUSTOM(expbkt3)
+      ...(props.ungroupedNotifications
+        ? { ungroupedNotifications: props.ungroupedNotifications }
+        : {}),
     });
     return {
       sections: [
@@ -351,6 +382,7 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
     grouping,
     partition,
     props.customGroupRegistry,
+    props.ungroupedNotifications,
     props.environmentLabelFor,
     props.projectLabelFor,
     sort,
@@ -543,6 +575,8 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
                   })),
                 ],
               },
+              // T3-CUSTOM(expbkt3): which of the group's sessions alert on web and desktop.
+              notificationsMenuAction(section),
             ]
           : []),
         ...(manual
@@ -663,6 +697,22 @@ export function PhaseSidebarList(props: PhaseSidebarListProps) {
         </Text>
       </Pressable>
     );
+    // T3-CUSTOM(expbkt3): "Ungrouped" offers only its notification mode.
+    if (section.kind === "custom" && section.isUngrouped && canRecolorGroups) {
+      return (
+        <Menu
+          actions={[notificationsMenuAction(section)]}
+          isAnchoredToRight
+          onPressAction={(event: NativeActionEvent) =>
+            onSectionAction(section, event.nativeEvent.event as PhaseSidebarSectionActionId)
+          }
+          shouldOpenOnLongPress
+          title={section.label}
+        >
+          {header}
+        </Menu>
+      );
+    }
     if (section.kind !== "custom" || section.isUngrouped) return header;
     // A custom group's header is also where it is managed: hold for rename,
     // reorder and delete, the same way a row is managed.

@@ -49,3 +49,12 @@ it.each(["Preview browser", "headless", "webview"])(
     );
   },
 );
+
+it.each(["default group", "ungrouped", "custom group"])(
+  "finds the default group for new sessions for %s",
+  (query) => {
+    expect(searchSettings(query)).toContainEqual(
+      expect.objectContaining({ id: "default-custom-group", to: "/settings/experiments" }),
+    );
+  },
+);

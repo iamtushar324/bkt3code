@@ -405,6 +405,23 @@ every connected environment that has it. On iOS and Android, hold a group's
 header for the same actions, or use the **Group by** sheet. A group's
 position and whether it is collapsed stay on each device.
 
+<!-- T3-CUSTOM(expbkt3): per-group notifications and the default group. -->
+
+The bell in a group's header sets which of its threads notify you on the web
+and desktop: every thread, **only parent threads** (threads with no parent
+session, so agent-created child sessions stay quiet), or none. A quieted group
+shows its bell even when the header actions are hidden. The setting is shared
+like the colour, and on iOS and Android it is under **Notifications** in the
+group's header menu. **Ungrouped** has the same bell, for threads in no
+group. Phone push notifications do not follow it yet. The desktop app shows
+the bell once its own app update includes it.
+
+To stop new threads landing in **Ungrouped**, pick a **Default group for new
+sessions** for each environment under **Settings → BK Add-ons**. A new thread
+with no group joins that group; a child session joins its parent's group
+instead. Renaming the group keeps it as the default, and deleting it clears
+the default.
+
 Creating, recolouring, renaming, and deleting a shared group needs permission
 to change the environment's settings. Agents do it with the `t3_group_*` MCP
 tools, which need a full-access caller, the same as `t3_update_server_settings`. An environment whose server is too old
