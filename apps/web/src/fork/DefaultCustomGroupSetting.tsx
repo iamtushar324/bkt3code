@@ -14,7 +14,13 @@ import {
 import { useMemo } from "react";
 
 import { SettingsRow } from "../components/settings/settingsLayout";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentsWithScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -29,7 +35,7 @@ export function EnvironmentDefaultCustomGroupSetting({
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly serverConfig: ServerConfig;
+  readonly serverConfig: Pick<ServerConfig, "environment" | "settings">;
 }) {
   const environments = useMemo(() => [{ environmentId }], [environmentId]);
   const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope).has(

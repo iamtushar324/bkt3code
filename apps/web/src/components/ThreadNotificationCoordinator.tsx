@@ -25,6 +25,7 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
+// T3-CUSTOM(expbkt3): per-group notification mode.
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { environmentServerConfigsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
@@ -103,14 +104,15 @@ export function startThreadNotifications(
       registry.get(environmentServerConfigsAtom),
       registry.get(primaryEnvironmentIdAtom),
     );
+  // A task delegated from another host is a child even where its parent is not listed.
   const groupAllows = (
     groups: ReturnType<typeof currentGroupRegistry>,
-    thread: Pick<EnvironmentThreadShell, "customGroup" | "parentThreadId">,
+    thread: Pick<EnvironmentThreadShell, "customGroup" | "parentThreadId" | "delegatedFrom">,
   ) =>
     phaseSidebarCustomGroupAllowsNotification(
       groups,
       thread.customGroup,
-      thread.parentThreadId !== null,
+      thread.parentThreadId !== null || thread.delegatedFrom !== null,
     );
   // Muting a group also closes what its sessions already have on screen.
   const closeMutedPending = () => {
@@ -331,6 +333,17 @@ export function startThreadNotifications(
     }
     entry.reconnecting = false;
     entry.previous = next;
+    // T3-CUSTOM(expbkt3): a session moved into a quieted group drops what it already shows.
+    if (
+      changed.some(
+        ([prior, state]) =>
+          prior !== undefined &&
+          (prior.thread.customGroup !== state.thread.customGroup ||
+            prior.thread.parentThreadId !== state.thread.parentThreadId),
+      )
+    ) {
+      closeMutedPending();
+    }
     entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {

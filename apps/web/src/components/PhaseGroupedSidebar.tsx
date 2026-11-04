@@ -4493,17 +4493,6 @@ export function PhaseGroupedSidebar() {
   );
 }
 
-/**
- * T3-CUSTOM(expbkt3): one section of the list — a lifecycle phase, a project,
- * or a custom group. The header is the collapse toggle; when closed it keeps
- * saying what it hides (running / needs input / unread) so nothing goes quiet
- * just because it was folded away.
- *
- * A custom group's header also carries its colour (a dot and a tint, from the
- * shared registry) and its actions — colour, rename, delete — which float
- * inside the right end of the pill on hover or keyboard focus, so a managed
- * header is exactly as wide as every other one (XFN-59).
- */
 // T3-CUSTOM(expbkt3): BEGIN — a custom group's notification mode, as the header shows it.
 const GROUP_NOTIFICATION_ICONS = {
   all: BellIcon,
@@ -4517,6 +4506,17 @@ const GROUP_NOTIFICATION_LABELS = {
 } satisfies Record<ThreadCustomGroupNotificationMode, string>;
 // T3-CUSTOM(expbkt3): END
 
+/**
+ * T3-CUSTOM(expbkt3): one section of the list — a lifecycle phase, a project,
+ * or a custom group. The header is the collapse toggle; when closed it keeps
+ * saying what it hides (running / needs input / unread) so nothing goes quiet
+ * just because it was folded away.
+ *
+ * A custom group's header also carries its colour (a dot and a tint, from the
+ * shared registry) and its actions — colour, rename, delete — which float
+ * inside the right end of the pill on hover or keyboard focus, so a managed
+ * header is exactly as wide as every other one (XFN-59).
+ */
 function PhaseSidebarSectionBlock({
   section,
   collapsed,

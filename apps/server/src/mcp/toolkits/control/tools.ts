@@ -536,7 +536,7 @@ export const T3CreateSessionTool = mutatingTool(
       customGroup: Schema.optional(
         described(
           Schema.String,
-          `Optional custom group to file the new session under: a shared label that groups sessions in the sidebar's Custom view. Agents may file the sessions they create, for example under the feature or ticket they are fanning out. Matched case-insensitively against existing labels; 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. Omit to leave the session ungrouped.`,
+          `Optional custom group to file the new session under: a shared label that groups sessions in the sidebar's Custom view. Agents may file the sessions they create, for example under the feature or ticket they are fanning out. Matched case-insensitively against existing labels; 1 to ${THREAD_CUSTOM_GROUP_MAX_LENGTH} characters. Omit to file it under its parent session's group, or, for a top-level session, under the host's default group for new sessions (ungrouped when none is set).`,
         ),
       ),
       // T3-CUSTOM(expbkt3): BEGIN — session lineage. The description is
