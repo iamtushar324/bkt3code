@@ -23,6 +23,8 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
+// T3-CUSTOM(expbkt3): the group a custom group's "+" gave a draft.
+import { clearDraftCustomGroupTarget } from "../fork/draftCustomGroupStore";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -266,6 +268,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
+    // T3-CUSTOM(expbkt3): a reused empty draft forgets the group a custom group's "+" gave it; that "+" sets it again after this resolves.
+    if (emptyStoredDraftThread) clearDraftCustomGroupTarget(emptyStoredDraftThread.threadId);
     const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
       ? currentRouteTarget.kind === "server"
         ? getDraftThread(currentRouteTarget.threadRef)

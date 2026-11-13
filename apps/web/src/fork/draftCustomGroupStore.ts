@@ -121,3 +121,8 @@ export function readDraftCustomGroupCreateFields(threadId: ThreadId | string | n
 } {
   return draftCustomGroupCreateFields(useDraftCustomGroupStore.getState().targets, threadId);
 }
+
+/** Forgets a draft's group; every New thread path other than a group's "+" calls this. */
+export function clearDraftCustomGroupTarget(threadId: ThreadId | string): void {
+  useDraftCustomGroupStore.getState().setTarget(threadId, null);
+}

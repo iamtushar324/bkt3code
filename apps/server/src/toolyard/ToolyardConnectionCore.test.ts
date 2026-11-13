@@ -7,6 +7,7 @@ import {
   ToolyardConnectionCore,
   canonicalToolyardUrl,
   type CoreOptions,
+  isOutageFailureCode,
 } from "./ToolyardConnectionCore.ts";
 import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 
@@ -787,5 +788,13 @@ describe("seamless team sign-in", () => {
       connection: "connected",
       connectionError: null,
     });
+  });
+
+  it("retries only outage-class failures in the background", () => {
+    expect(isOutageFailureCode(undefined)).toBe(true);
+    expect(isOutageFailureCode("instance_unavailable")).toBe(true);
+    expect(isOutageFailureCode("membership_unavailable")).toBe(true);
+    expect(isOutageFailureCode("invalid_assertion")).toBe(false);
+    expect(isOutageFailureCode("conflict")).toBe(false);
   });
 });

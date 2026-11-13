@@ -20,8 +20,10 @@ export function summarizeSessionWebhooks(
   for (const webhook of webhooks) {
     counts[webhook.status] += 1;
     // The removed-webhook issue list is the same three checks the cards show for any webhook.
-    if (sessionWebhookRemovedIssues(webhook, sessionCallbackEvents(webhook)).length > 0)
-      needsAttention += 1;
+    // A removed webhook's old failed deliveries cannot be acted on any more, so for it only
+    // its own sync state counts; otherwise the warning would stay for good.
+    const events = webhook.status === "removed" ? [] : sessionCallbackEvents(webhook);
+    if (sessionWebhookRemovedIssues(webhook, events).length > 0) needsAttention += 1;
   }
   return { total: webhooks.length, counts, needsAttention };
 }

@@ -1138,14 +1138,19 @@ export class ToolyardConnectionCore {
   }
   async reconcileCredentials() {
     // Team connections lost to an outage hold no token; retry them too so users
-    // recover without opening Settings or starting a session.
+    // recover without opening Settings or starting a session. Only outage-class
+    // failures retry here: a refusal such as `invalid_assertion` would otherwise
+    // call Toolyard every minute forever; it still retries on demand.
     const userIds = Object.values(this.state.connections)
       .filter(
         (c) =>
           c.userId &&
           c.state !== "revoked" &&
           c.state !== "disabled" &&
-          (c.token || (c.state === "unavailable" && (c.mode ?? "team") === "team")),
+          (c.token ||
+            (c.state === "unavailable" &&
+              (c.mode ?? "team") === "team" &&
+              isOutageFailureCode(c.lastError))),
       )
       .map((c) => c.userId!);
     for (const userId of userIds) {
@@ -1470,4 +1475,9 @@ export class ToolyardConnectionCore {
       throw new ToolyardIntegrationFailure("callback_update_failed", response.status);
     return object(await response.json());
   }
+}
+
+/** A connect failure that a later retry can fix by itself: an outage, not a refusal. */
+export function isOutageFailureCode(code: string | null | undefined): boolean {
+  return code === null || code === undefined || /unavailable|timeout/.test(code);
 }
