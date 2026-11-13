@@ -2,8 +2,10 @@
 /** T3-CUSTOM(expbkt3): Environment/instance/user-isolated, server-owned federation. */
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
+import { DEFAULT_TOOLYARD_BASE_URL } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
+import type { ToolyardDefaultUrlSource } from "./toolyardDefaultUrl.ts";
 
 const REQUIRED_INSTANCE_CAPABILITIES = [
   "inbox.batch.v1",
@@ -33,6 +35,8 @@ interface Connection {
   version: number;
   state: ConnectionState;
   retryAfter?: number;
+  /** Toolyard's code for the last failed attempt; cleared by the next success. Never a secret. */
+  lastError?: string;
 }
 interface PendingHostConnection {
   requestId: string;
@@ -81,6 +85,9 @@ export interface CoreOptions {
   now?: () => number;
   hostName?: string;
   platform?: string;
+  /** The instance offered before an administrator saves one (`T3_TOOLYARD_URL` or the built-in). */
+  defaultBaseUrl?: string;
+  defaultBaseUrlSource?: ToolyardDefaultUrlSource;
 }
 const digest = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 export function canonicalToolyardUrl(value: string): string {
@@ -235,6 +242,15 @@ export class ToolyardConnectionCore {
   baseUrl() {
     return this.state.settings.baseUrl;
   }
+  defaultBaseUrl() {
+    return this.options.defaultBaseUrl ?? DEFAULT_TOOLYARD_BASE_URL;
+  }
+  /** An empty base URL on save means the saved instance, or else the server default. */
+  private requestedBaseUrl(value: string) {
+    if (value.trim() !== "") return value;
+    const settings = this.state.settings;
+    return settings.baseUrl && !settings.removed ? settings.baseUrl : this.defaultBaseUrl();
+  }
   binding() {
     const settings = this.state.settings;
     return settings.enabled && !settings.removed && settings.instanceId && settings.origin
@@ -347,10 +363,13 @@ export class ToolyardConnectionCore {
       apiKey?: string | undefined;
       disconnect?: boolean | undefined;
       hostAction?: "begin" | "poll" | "cancel" | undefined;
+      reconnect?: boolean | undefined;
     },
   ) {
     const user = await this.options.verifyUser(userId);
     if (input.disconnect) return this.disconnect(userId, input.expectedRevision);
+    if (input.reconnect) return this.reconnectTeam(userId, input.expectedRevision);
+    input = { ...input, baseUrl: this.requestedBaseUrl(input.baseUrl) };
     if (input.mode === "host" && input.enabled && !input.remove)
       return this.configureHost(userId, input, user.admin);
     if (input.mode === "team" && !input.remove && input.enabled) {
@@ -399,10 +418,14 @@ export class ToolyardConnectionCore {
         await this.persistSettingsChange((candidate) => {
           if (old.enabled) this.advanceTrustGeneration(candidate);
           candidate.settings = { ...old, enabled: false, revision: old.revision + 1 };
+          // A user's own revoked access stays revoked; re-enabling reopens only "disabled".
           candidate.connections = Object.fromEntries(
             Object.entries(this.state.connections).map(([key, connection]) => [
               key,
-              this.connectionTombstone(connection, "disabled"),
+              this.connectionTombstone(
+                connection,
+                connection.state === "revoked" ? "revoked" : "disabled",
+              ),
             ]),
           );
           if (old.enabled) this.enqueueRevocation(old, userId, candidate);
@@ -475,6 +498,9 @@ export class ToolyardConnectionCore {
         if (changed || old.enabled !== input.enabled) this.advanceTrustGeneration(candidate);
         // Never transmit old credentials to a replacement URL or trust binding.
         if (changed || !input.enabled) candidate.connections = {};
+        // Re-registering a disabled instance reopens team access: Toolyard marks the
+        // environment's connections reconnectable, so T3 asks again for each team user.
+        else if (!old.enabled) candidate.connections = this.reopenTeamConnections(candidate);
         candidate.settings = {
           revision: old.revision + 1,
           enabled: input.enabled,
@@ -928,6 +954,63 @@ export class ToolyardConnectionCore {
         : {}),
     };
   }
+  private reopenTeamConnections(state: Persisted): Record<string, Connection> {
+    return Object.fromEntries(
+      Object.entries(state.connections).map(([key, connection]) => [
+        key,
+        (connection.mode ?? "team") === "team" && connection.state === "disabled"
+          ? { ...this.connectionTombstone(connection, "disabled"), state: "unavailable" as const }
+          : connection,
+      ]),
+    );
+  }
+  /**
+   * The user's own request to use their team connection again after T3 stopped
+   * using it (a rejected credential, a refusal, an outage). T3 asks Toolyard once
+   * more; Toolyard alone decides, so access it revoked stays revoked.
+   */
+  private async reconnectTeam(userId: string, expectedRevision: number) {
+    if (!userId.startsWith("user_"))
+      throw new ToolyardIntegrationFailure("team_identity_required", 403);
+    await this.serialized(async () => {
+      const settings = this.state.settings;
+      if (expectedRevision !== settings.revision)
+        throw new ToolyardIntegrationFailure("settings_revision_conflict", 409);
+      if (!settings.enabled || settings.removed || !settings.baseUrl || !settings.instanceId)
+        throw new ToolyardIntegrationFailure("integration_disabled", 403);
+      if (settings.origin === settings.baseUrl)
+        throw new ToolyardIntegrationFailure("team_connection_unavailable", 409);
+      const key = this.key(userId);
+      const prior = this.state.connections[key];
+      if (prior?.mode !== undefined && prior.mode !== "team")
+        throw new ToolyardIntegrationFailure("disconnect_before_mode_change", 409);
+      if (this.state.pendingConnections[key]?.status === "pending")
+        throw new ToolyardIntegrationFailure("cancel_host_request_before_mode_change", 409);
+      if (!prior || (prior.state === "connected" && prior.token)) return;
+      // A revocation still queued for this user would end the new connection.
+      const blocks = (job: Persisted["pendingRevocations"][number]) =>
+        job.userId === userId && job.settings.instanceId === settings.instanceId;
+      if (this.state.pendingRevocations.some(blocks)) {
+        await this.flushRevocationsUnlocked();
+        if (this.state.pendingRevocations.some(blocks))
+          throw new ToolyardIntegrationFailure("revocation_cleanup_pending", 409);
+      }
+      // Keep the credential version: Toolyard compares it before it issues or reuses a token.
+      await this.persistSettingsChange((candidate) => {
+        candidate.connections = {
+          ...candidate.connections,
+          [key]: {
+            ...this.connectionTombstone(prior, "revoked"),
+            mode: "team",
+            userId,
+            state: "unavailable",
+          },
+        };
+      });
+    });
+    await this.credential(userId);
+    return this.status(userId, false);
+  }
   private async disconnect(userId: string, expectedRevision: number) {
     return this.serialized(async () => {
       if (expectedRevision !== this.state.settings.revision)
@@ -1054,8 +1137,21 @@ export class ToolyardConnectionCore {
     return this.serialized(() => this.flushRevocationsUnlocked());
   }
   async reconcileCredentials() {
+    // Team connections lost to an outage hold no token; retry them too so users
+    // recover without opening Settings or starting a session. Only outage-class
+    // failures retry here: a refusal such as `invalid_assertion` would otherwise
+    // call Toolyard every minute forever; it still retries on demand.
     const userIds = Object.values(this.state.connections)
-      .filter((c) => c.token && c.userId && c.state !== "revoked" && c.state !== "disabled")
+      .filter(
+        (c) =>
+          c.userId &&
+          c.state !== "revoked" &&
+          c.state !== "disabled" &&
+          (c.token ||
+            (c.state === "unavailable" &&
+              (c.mode ?? "team") === "team" &&
+              isOutageFailureCode(c.lastError))),
+      )
       .map((c) => c.userId!);
     for (const userId of userIds) {
       try {
@@ -1176,6 +1272,7 @@ export class ToolyardConnectionCore {
                 version: prior?.version ?? 0,
                 state,
                 retryAfter: this.now + 30_000,
+                lastError: failure.code,
               },
             };
           });
@@ -1198,7 +1295,11 @@ export class ToolyardConnectionCore {
       await this.persistSettingsChange((candidate) => {
         candidate.connections = {
           ...candidate.connections,
-          [key]: { ...this.connectionTombstone(prior, "revoked"), userId },
+          [key]: {
+            ...this.connectionTombstone(prior, "revoked"),
+            userId,
+            lastError: "credential_rejected",
+          },
         };
       });
       return true;
@@ -1224,8 +1325,11 @@ export class ToolyardConnectionCore {
       callbackTransport:
         this.connectionMode(userId) !== "team" ? ("pull" as const) : ("push" as const),
       connection: connection?.state ?? ("not_connected" as const),
+      connectionError: connection?.lastError ?? null,
       email: connection?.email ?? null,
       expiresAt: connection?.expiresAt ?? null,
+      defaultBaseUrl: this.defaultBaseUrl(),
+      defaultBaseUrlSource: this.options.defaultBaseUrlSource ?? ("built-in" as const),
     };
   }
   async handoff(userId: string) {
@@ -1371,4 +1475,9 @@ export class ToolyardConnectionCore {
       throw new ToolyardIntegrationFailure("callback_update_failed", response.status);
     return object(await response.json());
   }
+}
+
+/** A connect failure that a later retry can fix by itself: an outage, not a refusal. */
+export function isOutageFailureCode(code: string | null | undefined): boolean {
+  return code === null || code === undefined || /unavailable|timeout/.test(code);
 }

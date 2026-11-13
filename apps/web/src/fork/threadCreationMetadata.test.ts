@@ -7,6 +7,7 @@ import {
   type SourceControlProfilesListResult,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
+import { useDraftCustomGroupStore } from "./draftCustomGroupStore";
 import { resolveThreadCreationProfile, threadCreationForkFields } from "./threadCreationMetadata";
 
 const profileId = SourceControlProfileId.make("owner-profile");
@@ -55,4 +56,20 @@ it("carries both parent identifiers for a draft started on another environment",
   expect(threadCreationForkFields(null, { parentThreadId: null, parentEnvironmentId })).toEqual({
     sourceControlProfileId: null,
   });
+});
+
+it("creates a draft started from a group header's + in that group", () => {
+  const threadId = ThreadId.make("draft-thread");
+  useDraftCustomGroupStore.getState().setTarget(threadId, "Sprint 42");
+  try {
+    expect(threadCreationForkFields(null, { threadId })).toEqual({
+      sourceControlProfileId: null,
+      customGroup: "Sprint 42",
+    });
+    expect(threadCreationForkFields(null, { threadId: ThreadId.make("other") })).toEqual({
+      sourceControlProfileId: null,
+    });
+  } finally {
+    useDraftCustomGroupStore.getState().setTarget(threadId, null);
+  }
 });

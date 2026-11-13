@@ -29,6 +29,7 @@
 import {
   normalizeThreadCustomGroup,
   THREAD_CUSTOM_GROUP_MAX_LENGTH,
+  THREAD_CUSTOM_GROUP_NOTIFICATION_MODES,
   type ThreadCustomGroupNotificationMode,
 } from "@t3tools/contracts";
 
@@ -44,6 +45,7 @@ import {
 import {
   EMPTY_PHASE_SIDEBAR_CUSTOM_GROUP_REGISTRY,
   type PhaseSidebarCustomGroupRegistry,
+  type PhaseSidebarGroupNotificationOverrides,
 } from "./phaseSidebarCustomGroupRegistry.ts";
 import {
   buildPhaseSidebarFilteredTree,
@@ -108,6 +110,12 @@ export interface PhaseSidebarGroupingPreferences {
    * their group for the Running shelf. Absent means off.
    */
   readonly runningShelf?: boolean;
+  /**
+   * This device's own notification mode per group id ("ungrouped" for the
+   * built-in section). It outranks the shared mode from the host registry and
+   * never leaves the device. Absent means no override anywhere.
+   */
+  readonly notificationOverrides?: PhaseSidebarGroupNotificationOverrides;
 }
 
 export const DEFAULT_PHASE_SIDEBAR_GROUPING: PhaseSidebarGroupingPreferences = {
@@ -169,6 +177,40 @@ function sanitizeCustomGroups(value: unknown): PhaseSidebarCustomGroup[] {
   return groups;
 }
 
+function sanitizeNotificationOverrides(
+  value: unknown,
+): PhaseSidebarGroupNotificationOverrides | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const overrides: Record<string, ThreadCustomGroupNotificationMode> = {};
+  for (const [id, mode] of Object.entries(value)) {
+    if (id.length === 0) continue;
+    const known = THREAD_CUSTOM_GROUP_NOTIFICATION_MODES.find((candidate) => candidate === mode);
+    if (known !== undefined) overrides[id] = known;
+  }
+  return Object.keys(overrides).length === 0 ? undefined : overrides;
+}
+
+/** The device's notification overrides without the one for `id`. */
+function withoutNotificationOverride(
+  preferences: PhaseSidebarGroupingPreferences,
+  id: string,
+): Record<string, ThreadCustomGroupNotificationMode> {
+  const overrides: Record<string, ThreadCustomGroupNotificationMode> = {
+    ...preferences.notificationOverrides,
+  };
+  delete overrides[id];
+  return overrides;
+}
+
+/** Sets or replaces (`overrides` empty → absent) the device's notification overrides. */
+function withNotificationOverrides(
+  preferences: PhaseSidebarGroupingPreferences,
+  overrides: Readonly<Record<string, ThreadCustomGroupNotificationMode>>,
+): PhaseSidebarGroupingPreferences {
+  const { notificationOverrides: _previous, ...rest } = preferences;
+  return Object.keys(overrides).length === 0 ? rest : { ...rest, notificationOverrides: overrides };
+}
+
 export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupingPreferences {
   if (value === null || typeof value !== "object") return DEFAULT_PHASE_SIDEBAR_GROUPING;
   const candidate = value as {
@@ -178,7 +220,9 @@ export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupi
     readonly customGroupOrder?: unknown;
     readonly collapsedSectionKeys?: unknown;
     readonly runningShelf?: unknown;
+    readonly notificationOverrides?: unknown;
   };
+  const notificationOverrides = sanitizeNotificationOverrides(candidate.notificationOverrides);
   const groupBy = PHASE_SIDEBAR_GROUP_BY_MODES.find((mode) => mode === candidate.groupBy);
   const groupOrder = PHASE_SIDEBAR_GROUP_ORDERS.find((order) => order === candidate.groupOrder);
   return {
@@ -190,6 +234,7 @@ export function sanitizePhaseSidebarGrouping(value: unknown): PhaseSidebarGroupi
     ),
     collapsedSectionKeys: sanitizeStringList(candidate.collapsedSectionKeys),
     ...(candidate.runningShelf === true ? { runningShelf: true } : {}),
+    ...(notificationOverrides !== undefined ? { notificationOverrides } : {}),
   };
 }
 
@@ -218,6 +263,23 @@ export function setPhaseSidebarRunningShelf(
   if ((preferences.runningShelf === true) === enabled) return preferences;
   const { runningShelf: _previous, ...rest } = preferences;
   return enabled ? { ...rest, runningShelf: true } : rest;
+}
+
+/**
+ * This device's notification mode for a group (`id` is the section id;
+ * "ungrouped" for the built-in section). The shared registry is not touched:
+ * the override outranks it here only.
+ */
+export function setPhaseSidebarGroupNotificationOverride(
+  preferences: PhaseSidebarGroupingPreferences,
+  id: string,
+  mode: ThreadCustomGroupNotificationMode,
+): PhaseSidebarGroupingPreferences {
+  if (id.length === 0 || preferences.notificationOverrides?.[id] === mode) return preferences;
+  return withNotificationOverrides(preferences, {
+    ...preferences.notificationOverrides,
+    [id]: mode,
+  });
 }
 
 /** The section id a legacy local group renders under. */
@@ -287,10 +349,12 @@ export function renamePhaseSidebarCustomGroup(
   const orderIndex = preferences.customGroupOrder.indexOf(id);
   const oldKey = phaseSidebarSectionKey("custom", id);
   const newKey = phaseSidebarSectionKey("custom", nextId);
+  const override = preferences.notificationOverrides?.[id];
   if (
     affected.length === 0 &&
     orderIndex === -1 &&
-    !preferences.collapsedSectionKeys.includes(oldKey)
+    !preferences.collapsedSectionKeys.includes(oldKey) &&
+    (override === undefined || nextId === id)
   ) {
     return preferences;
   }
@@ -317,7 +381,15 @@ export function renamePhaseSidebarCustomGroup(
   const collapsedSectionKeys = preferences.collapsedSectionKeys
     .map((key) => (key === oldKey ? newKey : key))
     .filter((key, index, all) => all.indexOf(key) === index);
-  return { ...preferences, customGroups, customGroupOrder, collapsedSectionKeys };
+  const renamed = { ...preferences, customGroups, customGroupOrder, collapsedSectionKeys };
+  // The device's notification override follows the group. Renaming onto a
+  // group that has its own override keeps that one, as the registry keeps the
+  // target's shared mode.
+  if (override === undefined || nextId === id) return renamed;
+  return withNotificationOverrides(renamed, {
+    [nextId]: override,
+    ...withoutNotificationOverride(preferences, id),
+  });
 }
 
 /**
@@ -335,14 +407,18 @@ export function deletePhaseSidebarCustomGroup(
   );
   const customGroupOrder = preferences.customGroupOrder.filter((entry) => entry !== id);
   const collapsedSectionKeys = preferences.collapsedSectionKeys.filter((key) => key !== sectionKey);
+  const hasOverride = preferences.notificationOverrides?.[id] !== undefined;
   if (
     customGroups.length === preferences.customGroups.length &&
     customGroupOrder.length === preferences.customGroupOrder.length &&
-    collapsedSectionKeys.length === preferences.collapsedSectionKeys.length
+    collapsedSectionKeys.length === preferences.collapsedSectionKeys.length &&
+    !hasOverride
   ) {
     return preferences;
   }
-  return { ...preferences, customGroups, customGroupOrder, collapsedSectionKeys };
+  const next = { ...preferences, customGroups, customGroupOrder, collapsedSectionKeys };
+  if (!hasOverride) return next;
+  return withNotificationOverrides(next, withoutNotificationOverride(preferences, id));
 }
 
 /**
@@ -445,7 +521,10 @@ export interface PhaseSidebarCustomGroupOption {
   /** The group's colour id and hex value; absent for the default look. */
   readonly colorId?: string;
   readonly color?: string;
-  /** T3-CUSTOM(expbkt3): a shared group's mode when it is not "all"; absent means "all". */
+  /**
+   * T3-CUSTOM(expbkt3): the group's mode when it is not "all" — this device's
+   * override, else the shared registry's; absent means "all".
+   */
   readonly notifications?: ThreadCustomGroupNotificationMode;
 }
 
@@ -490,7 +569,10 @@ export function listPhaseSidebarCustomGroups(
   }
   const options = [...byId.entries()].map(([id, entry]): PhaseSidebarCustomGroupOption => {
     const shared = registry.get(id);
-    if (shared === undefined) return { id, ...entry };
+    // T3-CUSTOM(expbkt3): this device's override outranks the shared mode; absent means "all".
+    const notifications = preferences.notificationOverrides?.[id] ?? shared?.notifications ?? "all";
+    const mode = notifications !== "all" ? { notifications } : {};
+    if (shared === undefined) return { id, ...entry, ...mode };
     return {
       id,
       ...entry,
@@ -498,8 +580,7 @@ export function listPhaseSidebarCustomGroups(
       ...(shared.colorId !== null && shared.color !== null
         ? { colorId: shared.colorId, color: shared.color }
         : {}),
-      // T3-CUSTOM(expbkt3): absent means "all".
-      ...(shared.notifications !== "all" ? { notifications: shared.notifications } : {}),
+      ...mode,
     };
   });
   options.sort((left, right) => {
@@ -795,6 +876,11 @@ export function buildPhaseSidebarSections(
       });
       const allUngrouped = nodesById.get(PHASE_SIDEBAR_UNGROUPED_ID) ?? [];
       const ungrouped = placedNodes(allUngrouped);
+      // T3-CUSTOM(expbkt3): this device's override outranks the host setting.
+      const ungroupedNotifications =
+        grouping.notificationOverrides?.[PHASE_SIDEBAR_UNGROUPED_ID] ??
+        input.ungroupedNotifications ??
+        "all";
       if (ungrouped.length > 0) {
         sections.push({
           key: phaseSidebarSectionKey("custom", PHASE_SIDEBAR_UNGROUPED_ID),
@@ -808,9 +894,7 @@ export function buildPhaseSidebarSections(
           isUngrouped: true,
           collapsedByDefault: false,
           // T3-CUSTOM(expbkt3)
-          ...(input.ungroupedNotifications !== undefined && input.ungroupedNotifications !== "all"
-            ? { notifications: input.ungroupedNotifications }
-            : {}),
+          ...(ungroupedNotifications !== "all" ? { notifications: ungroupedNotifications } : {}),
         });
       }
       const manualIndex = new Map(registry.map((group, index) => [group.id, index]));
