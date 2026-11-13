@@ -18,6 +18,7 @@ import {
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
+  resolvePhaseSidebarGroupNotificationMode,
   resolvePhaseSidebarUngroupedNotifications,
   type PhaseSidebarCustomGroupRegistryConfig,
 } from "./phaseSidebarCustomGroupRegistry.ts";
@@ -477,5 +478,63 @@ describe("ungrouped notification mode", () => {
     expect(allows(null, false)).toBe(true);
     expect(allows(null, true)).toBe(false);
     expect(allows("Unregistered", true)).toBe(true);
+  });
+});
+
+// T3-CUSTOM(expbkt3): this device's own mode per group, kept in local storage.
+describe("device notification overrides", () => {
+  const registry = buildPhaseSidebarCustomGroupRegistry(
+    configs([
+      [
+        "primary",
+        config({
+          loud: { label: "Loud" },
+          quiet: { label: "Quiet", notifications: "off" },
+        }),
+      ],
+    ]),
+    "primary",
+  );
+
+  it("outranks the shared mode, for registered, label-only and ungrouped sessions", () => {
+    const overrides = {
+      loud: "off",
+      quiet: "all",
+      "label only": "parents",
+      ungrouped: "off",
+    } as const;
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "loud", "all", overrides)).toBe(
+      "off",
+    );
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "quiet", "all", overrides)).toBe(
+      "all",
+    );
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "label only", "all", overrides)).toBe(
+      "parents",
+    );
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "ungrouped", "all", overrides)).toBe(
+      "off",
+    );
+
+    const allows = (group: string | null, isChild: boolean) =>
+      phaseSidebarCustomGroupAllowsNotification(registry, group, isChild, "all", overrides);
+    expect(allows("LOUD", false)).toBe(false);
+    expect(allows("Quiet", true)).toBe(true);
+    expect(allows("Label only", false)).toBe(true);
+    expect(allows("Label only", true)).toBe(false);
+    expect(allows(null, false)).toBe(false);
+  });
+
+  it("falls back to the shared mode where the device has none, as mobile does", () => {
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "quiet")).toBe("off");
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "loud", "all", {})).toBe("all");
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "ungrouped", "parents", {})).toBe(
+      "parents",
+    );
+    expect(resolvePhaseSidebarGroupNotificationMode(registry, "unregistered")).toBe("all");
+    expect(phaseSidebarCustomGroupAllowsNotification(registry, "Quiet", false)).toBe(false);
+    expect(
+      phaseSidebarCustomGroupAllowsNotification(registry, "Quiet", false, "all", undefined),
+    ).toBe(false);
   });
 });

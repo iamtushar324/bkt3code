@@ -82,6 +82,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -269,6 +270,13 @@ import {
 // T3-CUSTOM(expbkt3): shared custom groups and their colours (XFN-59).
 import { PhaseSidebarGroupColorSwatches } from "./sidebar/PhaseSidebarGroupColorSwatches";
 import { usePhaseSidebarCustomGroupRegistry } from "./sidebar/usePhaseSidebarCustomGroupRegistry";
+// T3-CUSTOM(expbkt3): drag a session onto a group; "+" starts a session in a group.
+import {
+  PHASE_SIDEBAR_ROW_DRAG_TYPE,
+  phaseSidebarSupportsMouseDrag,
+  resolvePhaseSidebarRowDrop,
+} from "./sidebar/PhaseSidebarGroupDrop.logic";
+import { useDraftCustomGroupStore } from "../fork/draftCustomGroupStore";
 import { MoveUnderSessionDialog } from "./sidebar/MoveUnderSessionDialog";
 import { NewThreadProjectPicker } from "./sidebar/NewThreadProjectPicker";
 // T3-CUSTOM(expbkt3): the dedicated unstarted-drafts group shares normal composer state.
@@ -1133,6 +1141,8 @@ interface PhaseThreadRowProps {
   readonly customGroupLabel?: string | null;
   /** The group's colour (a hex value) from the shared registry, tinting that chip. */
   readonly customGroupColor?: string | null;
+  /** Present in Custom mode with a mouse: the row drags onto a group section. */
+  readonly dragActions?: PhaseThreadRowDragActions;
   // T3-CUSTOM(expbkt3): END
 }
 
@@ -1141,6 +1151,19 @@ interface PhaseThreadRowGroupActions {
   readonly groups: ReadonlyArray<{ readonly id: string; readonly label: string }>;
   readonly onAssign: (row: PhaseSidebarRow, groupId: string | null) => void;
   readonly onCreateGroupWith: (row: PhaseSidebarRow) => void;
+}
+
+/** T3-CUSTOM(expbkt3): dragging a row onto a custom group section; one stable object. */
+interface PhaseThreadRowDragActions {
+  readonly onDragStart: (row: PhaseSidebarRow) => void;
+  readonly onDragEnd: () => void;
+}
+
+/** T3-CUSTOM(expbkt3): a custom group section as a drop target for a dragged row. */
+interface PhaseSidebarSectionRowDropTarget {
+  /** Whether the row being dragged may be dropped on `section` (not its own group). */
+  readonly accepts: (section: PhaseSidebarGroupSection) => boolean;
+  readonly drop: (section: PhaseSidebarGroupSection) => void;
 }
 
 /**
@@ -1225,6 +1248,7 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
     customGroupId,
     customGroupLabel,
     customGroupColor,
+    dragActions,
   } = props;
   const threadRef = scopeThreadRef(row.thread.environmentId, row.thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -1820,6 +1844,19 @@ const PhaseThreadRow = memo(function PhaseThreadRow(props: PhaseThreadRowProps) 
                 : undefined
         }
         data-testid={`phase-thread-row-${row.thread.id}`}
+        // T3-CUSTOM(expbkt3): Custom mode drags the row onto a group section. Only a
+        // custom payload type is set, so the search box never takes the drop.
+        {...(dragActions !== undefined && !renaming && !isArchiving
+          ? {
+              draggable: true,
+              onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData(PHASE_SIDEBAR_ROW_DRAG_TYPE, threadKey);
+                dragActions.onDragStart(row);
+              },
+              onDragEnd: () => dragActions.onDragEnd(),
+            }
+          : {})}
         onClick={handleClick}
         onDoubleClick={() => onStartRename(row)}
         onContextMenu={(event) => {
@@ -2946,6 +2983,10 @@ export function PhaseGroupedSidebar() {
   const forgetCustomGroup = usePhaseSidebarGroupingStore((state) => state.forgetGroup);
   const moveCustomGroup = usePhaseSidebarGroupingStore((state) => state.moveGroup);
   const pruneGrouping = usePhaseSidebarGroupingStore((state) => state.prune);
+  // The header bell: this device's own mode, kept in local storage (see below).
+  const setGroupNotificationsLocally = usePhaseSidebarGroupingStore(
+    (state) => state.setGroupNotifications,
+  );
   // "New group…" from a row files that row; "Rename" on a section renames it.
   const [groupNameDialogRow, setGroupNameDialogRow] = useState<PhaseSidebarRow | null>(null);
   const [groupRenameTarget, setGroupRenameTarget] = useState<{
@@ -3071,7 +3112,6 @@ export function PhaseGroupedSidebar() {
     renameGroup: renameSharedCustomGroup,
     deleteGroup: deleteSharedCustomGroup,
     recolorGroup: recolorSharedCustomGroup,
-    setGroupNotifications: setSharedCustomGroupNotifications,
   } = customGroupRegistry;
   const canRecolorCustomGroups = customGroupRegistry.homeEnvironmentId !== null;
   const createCustomGroup = useCallback(
@@ -3105,16 +3145,6 @@ export function PhaseGroupedSidebar() {
     },
     [deleteSharedCustomGroup, forgetCustomGroup, rowsInCustomGroup, setThreadCustomGroup],
   );
-  // T3-CUSTOM(expbkt3): the header bell cycles all → parents → off.
-  const setCustomGroupNotifications = useCallback(
-    (groupId: string, notifications: ThreadCustomGroupNotificationMode) =>
-      setSharedCustomGroupNotifications(
-        groupId,
-        customGroupLabels.get(groupId) ?? groupId,
-        notifications,
-      ),
-    [customGroupLabels, setSharedCustomGroupNotifications],
-  );
   const recolorCustomGroup = useCallback(
     (groupId: string, colorId: string | null) =>
       recolorSharedCustomGroup(groupId, customGroupLabels.get(groupId) ?? groupId, colorId),
@@ -3133,6 +3163,41 @@ export function PhaseGroupedSidebar() {
       onCreateGroupWith: (row) => setGroupNameDialogRow(row),
     }),
     [customGroupLabels, customGroupOptions, setThreadCustomGroup],
+  );
+  // Custom mode: drag a session with the mouse onto a group's section to file
+  // it there, or onto "Ungrouped" to take it out — the same write as "Move to
+  // group". The dragged row sits in a ref, so a drag re-renders only the
+  // section it hovers.
+  const draggedRowRef = useRef<PhaseSidebarRow | null>(null);
+  const rowDragActions = useMemo<PhaseThreadRowDragActions | undefined>(
+    () =>
+      grouping.groupBy === "custom" && phaseSidebarSupportsMouseDrag()
+        ? {
+            onDragStart: (row) => {
+              draggedRowRef.current = row;
+            },
+            onDragEnd: () => {
+              draggedRowRef.current = null;
+            },
+          }
+        : undefined,
+    [grouping.groupBy],
+  );
+  const sectionRowDropTarget = useMemo<PhaseSidebarSectionRowDropTarget>(
+    () => ({
+      accepts: (section) => {
+        const row = draggedRowRef.current;
+        return row !== null && resolvePhaseSidebarRowDrop(row.customGroup, section) !== null;
+      },
+      drop: (section) => {
+        const row = draggedRowRef.current;
+        draggedRowRef.current = null;
+        if (row === null) return;
+        const target = resolvePhaseSidebarRowDrop(row.customGroup, section);
+        if (target !== null) void setThreadCustomGroup(row, target.customGroup);
+      },
+    }),
+    [setThreadCustomGroup],
   );
   /** The lifecycle groups, kept for the callers that reason about phases. */
   const groups = sections;
@@ -4087,20 +4152,63 @@ export function PhaseGroupedSidebar() {
     (row: PhaseSidebarRow) => void requestArchive(row),
     [requestArchive],
   );
-  const startGlobalNewThread = useCallback(() => {
-    if (projects.length === 1 && projects[0]) {
-      void handleNewThread(scopeProjectRef(projects[0].environmentId, projects[0].id));
-      return;
-    }
-    setProjectPickerOpen(true);
-  }, [handleNewThread, projects]);
+  // T3-CUSTOM(expbkt3): BEGIN — a custom group header's "+" starts a session
+  // in that group. The draft remembers the group (by its thread id) until its
+  // first send names it in the create input; a plain New thread clears it, so
+  // a reused draft never carries an old choice.
+  const setDraftCustomGroup = useDraftCustomGroupStore((state) => state.setTarget);
+  const pendingNewThreadGroupRef = useRef<string | null>(null);
+  const openNewThread = useCallback(
+    (project: Pick<Project, "environmentId" | "id">, customGroup: string | null) => {
+      void handleNewThread(scopeProjectRef(project.environmentId, project.id)).then((draft) => {
+        if (draft) setDraftCustomGroup(draft.threadId, customGroup);
+      });
+    },
+    [handleNewThread, setDraftCustomGroup],
+  );
+  // One project goes straight to its draft; several open the picker, which
+  // then knows which group the session is for.
+  const startNewThreadIn = useCallback(
+    (customGroup: string | null) => {
+      pendingNewThreadGroupRef.current = customGroup;
+      if (projects.length === 1 && projects[0]) {
+        openNewThread(projects[0], customGroup);
+        return;
+      }
+      setProjectPickerOpen(true);
+    },
+    [openNewThread, projects],
+  );
+  const startGlobalNewThread = useCallback(() => startNewThreadIn(null), [startNewThreadIn]);
   const selectNewThreadProject = useCallback(
     (project: Project) => {
       setProjectPickerOpen(false);
-      void handleNewThread(scopeProjectRef(project.environmentId, project.id));
+      openNewThread(project, pendingNewThreadGroupRef.current);
+      pendingNewThreadGroupRef.current = null;
     },
-    [handleNewThread],
+    [openNewThread],
   );
+  // Forget the group of a draft that is gone: sent (its create input already
+  // named the group) or discarded. Cheap when no draft has a group.
+  useEffect(() => {
+    const prune = () => {
+      const { targets, prune: pruneTargets } = useDraftCustomGroupStore.getState();
+      if (Object.keys(targets).length === 0) return;
+      if (!useComposerDraftStore.persist.hasHydrated()) return;
+      pruneTargets(
+        new Set(
+          Object.values(useComposerDraftStore.getState().draftThreadsByThreadKey).map(
+            (draft) => draft.threadId,
+          ),
+        ),
+      );
+    };
+    prune();
+    return useComposerDraftStore.subscribe((state, previous) => {
+      if (state.draftThreadsByThreadKey !== previous.draftThreadsByThreadKey) prune();
+    });
+  }, []);
+  // T3-CUSTOM(expbkt3): END
   // T3-CUSTOM(expbkt3): BEGIN — the project picker names the machine a project
   // lives on, so two same-named projects are told apart by where they run.
   // Stable identities: the picker memoizes its option list on these.
@@ -4188,6 +4296,7 @@ export function PhaseGroupedSidebar() {
         onCreateThread={createThreadFromRow}
         // T3-CUSTOM(expbkt3): custom groups.
         {...(groupActions ? { groupActions } : {})}
+        {...(rowDragActions ? { dragActions: rowDragActions } : {})}
         customGroupId={phaseSidebarCustomGroupIdForRow(row)}
         // T3-CUSTOM(expbkt3): in Custom mode a chip names the group as the
         // registry spells it (the section header's label), not the row's own spelling.
@@ -4353,20 +4462,23 @@ export function PhaseGroupedSidebar() {
                     onRenameGroup: () =>
                       setGroupRenameTarget({ id: section.id, label: section.label }),
                     onDeleteGroup: () => deleteCustomGroup(section.id),
+                    onNewSessionInGroup: () => startNewThreadIn(section.label),
                     ...(canRecolorCustomGroups
                       ? {
                           onRecolorGroup: (colorId: string | null) =>
                             recolorCustomGroup(section.id, colorId),
-                          // T3-CUSTOM(expbkt3): shared like the colour, so the same hosts can write it.
-                          onSetGroupNotifications: (mode: ThreadCustomGroupNotificationMode) =>
-                            setCustomGroupNotifications(section.id, mode),
                         }
                       : {}),
                   }
                 : {})}
-              {...(section.kind === "custom" && section.isUngrouped && canRecolorCustomGroups
-                ? // T3-CUSTOM(expbkt3): "Ungrouped" has a bell too, kept as a host setting.
-                  { onSetGroupNotifications: customGroupRegistry.setUngroupedNotifications }
+              // T3-CUSTOM(expbkt3): every group's bell, "Ungrouped" included, is this
+              // device's own mode, so it needs no host this session may write.
+              {...(section.kind === "custom"
+                ? {
+                    onSetGroupNotifications: (mode: ThreadCustomGroupNotificationMode) =>
+                      setGroupNotificationsLocally(section.id, mode),
+                    ...(rowDragActions ? { rowDropTarget: sectionRowDropTarget } : {}),
+                  }
                 : {})}
             />
           ))}
@@ -4521,7 +4633,12 @@ const GROUP_NOTIFICATION_LABELS = {
  * A custom group's header also carries its colour (a dot and a tint, from the
  * shared registry) and its actions — colour, rename, delete — which float
  * inside the right end of the pill on hover or keyboard focus, so a managed
- * header is exactly as wide as every other one (XFN-59).
+ * header is exactly as wide as every other one (XFN-59). Beside its label sit
+ * the notification bell and a "+" that starts a session in the group.
+ *
+ * In Custom mode the whole section (header and rows) is a drop target for a
+ * dragged session row; the highlight is this section's own state, so a drag
+ * re-renders nothing else.
  */
 function PhaseSidebarSectionBlock({
   section,
@@ -4533,6 +4650,8 @@ function PhaseSidebarSectionBlock({
   onDeleteGroup,
   onRecolorGroup,
   onSetGroupNotifications,
+  onNewSessionInGroup,
+  rowDropTarget,
 }: {
   readonly section: PhaseSidebarGroupSection;
   readonly collapsed: boolean;
@@ -4544,8 +4663,12 @@ function PhaseSidebarSectionBlock({
   readonly onDeleteGroup?: () => void;
   /** Absent when no connected host keeps shared groups for this session. */
   readonly onRecolorGroup?: (colorId: string | null) => void;
-  /** T3-CUSTOM(expbkt3): absent when no connected host keeps shared groups for this session. */
+  /** T3-CUSTOM(expbkt3): this device's notification mode for the group. */
   readonly onSetGroupNotifications?: (mode: ThreadCustomGroupNotificationMode) => void;
+  /** T3-CUSTOM(expbkt3): the header's "+"; absent on "Ungrouped" and other sections. */
+  readonly onNewSessionInGroup?: () => void;
+  /** T3-CUSTOM(expbkt3): Custom mode with a mouse: dragged rows drop here. */
+  readonly rowDropTarget?: PhaseSidebarSectionRowDropTarget;
 }) {
   const { summary } = section;
   const phaseId = phaseSidebarSectionPhase(section);
@@ -4559,6 +4682,52 @@ function PhaseSidebarSectionBlock({
   const notificationMode = section.notifications ?? "all";
   const NotificationIcon = GROUP_NOTIFICATION_ICONS[notificationMode];
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  // T3-CUSTOM(expbkt3): BEGIN — a dragged session row over this section.
+  const [rowDropActive, setRowDropActive] = useState(false);
+  // A drag cancelled (Escape) or dropped elsewhere may never send this section
+  // a dragleave, so the highlight also clears when any drag ends.
+  useEffect(() => {
+    if (!rowDropActive) return;
+    const clear = () => setRowDropActive(false);
+    window.addEventListener("dragend", clear, true);
+    window.addEventListener("drop", clear, true);
+    return () => {
+      window.removeEventListener("dragend", clear, true);
+      window.removeEventListener("drop", clear, true);
+    };
+  }, [rowDropActive]);
+  const acceptsRowDrag = (event: ReactDragEvent<HTMLElement>) =>
+    rowDropTarget !== undefined &&
+    event.dataTransfer.types.includes(PHASE_SIDEBAR_ROW_DRAG_TYPE) &&
+    rowDropTarget.accepts(section);
+  const rowDropHandlers =
+    rowDropTarget === undefined
+      ? {}
+      : {
+          onDragEnter: (event: ReactDragEvent<HTMLElement>) => {
+            if (!acceptsRowDrag(event)) return;
+            event.preventDefault();
+            setRowDropActive(true);
+          },
+          onDragOver: (event: ReactDragEvent<HTMLElement>) => {
+            if (!acceptsRowDrag(event)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            if (!rowDropActive) setRowDropActive(true);
+          },
+          onDragLeave: (event: ReactDragEvent<HTMLElement>) => {
+            const next = event.relatedTarget;
+            if (next instanceof Node && event.currentTarget.contains(next)) return;
+            setRowDropActive(false);
+          },
+          onDrop: (event: ReactDragEvent<HTMLElement>) => {
+            setRowDropActive(false);
+            if (!acceptsRowDrag(event)) return;
+            event.preventDefault();
+            rowDropTarget?.drop(section);
+          },
+        };
+  // T3-CUSTOM(expbkt3): END
   // A custom group says in words what needs you, open or closed, in place of
   // its session count and the closed-header pills.
   const summaryWords =
@@ -4646,7 +4815,7 @@ function PhaseSidebarSectionBlock({
             <NotificationIcon aria-hidden className="size-3" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {GROUP_NOTIFICATION_LABELS[notificationMode]} · click for{" "}
+            {GROUP_NOTIFICATION_LABELS[notificationMode]} on this device · click for{" "}
             {GROUP_NOTIFICATION_LABELS[
               nextThreadCustomGroupNotificationMode(notificationMode)
             ].toLowerCase()}
@@ -4658,6 +4827,35 @@ function PhaseSidebarSectionBlock({
           className="size-3 shrink-0 text-current/60"
           data-testid="phase-sidebar-section-notifications"
         />
+      ) : null}
+      {/* T3-CUSTOM(expbkt3): "+" starts a session in this group; on hover, like the bell. */}
+      {onNewSessionInGroup ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`New session in ${section.label}`}
+                data-testid="phase-sidebar-section-new-session"
+                className="hidden shrink-0 items-center rounded p-0.5 text-current/60 outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring group-hover/section:inline-flex group-has-[:focus-visible]/section:inline-flex"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onNewSessionInGroup();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onNewSessionInGroup();
+                }}
+              />
+            }
+          >
+            <PlusIcon aria-hidden className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">New session in {section.label}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {summaryWords.length > 0 ? (
         <span
@@ -4709,10 +4907,16 @@ function PhaseSidebarSectionBlock({
   );
   return (
     <section
-      className="mb-3"
+      className={cn(
+        "mb-3",
+        // T3-CUSTOM(expbkt3): a static highlight while a row may drop here; no animation.
+        rowDropActive && "rounded-md bg-primary/5 ring-1 ring-primary/50 ring-inset",
+      )}
       data-phase-id={section.phaseId ?? undefined}
       data-section-key={section.key}
       data-testid="phase-sidebar-section"
+      data-row-drop-active={rowDropActive || undefined}
+      {...rowDropHandlers}
     >
       {/* A quiet boundary before live agent work. */}
       {showRunningDivider ? <RunningSessionDivider /> : null}
@@ -4781,7 +4985,10 @@ function PhaseSidebarSectionBlock({
       )}
       {collapsed ? null : section.nodes.length === 0 ? (
         <p className="px-2 py-1 text-[10px] text-muted-foreground/60">
-          Empty — use “Move to group” on a session.
+          {/* T3-CUSTOM(expbkt3): rows drag onto a group in Custom mode. */}
+          {rowDropTarget
+            ? "Empty — drag a session here, or use “Move to group” on it."
+            : "Empty — use “Move to group” on a session."}
         </p>
       ) : (
         <ul ref={autoAnimatedListRef} className="space-y-0.5">
