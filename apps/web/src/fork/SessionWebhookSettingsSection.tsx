@@ -5,7 +5,6 @@ import {
   callbackDispatchLabel,
   callbackTransportLabel,
   sessionCallbackAttempts,
-  sessionCallbackAttentionCount,
   sessionCallbackEvents,
   sessionCallbackHistoryWarning,
   sessionCallbackOpen,
@@ -35,7 +34,7 @@ import {
   MinusIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useEnvironmentSessionState } from "../state/session";
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 import { useThreadShell } from "../state/entities";
@@ -56,6 +55,11 @@ import { Button } from "../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
 import { SettingsSection } from "../components/settings/settingsLayout";
+import {
+  sessionWebhookAttentionText,
+  sessionWebhookCountsText,
+  summarizeSessionWebhooks,
+} from "./sessionWebhookSummary";
 
 interface PendingChange {
   readonly webhook: SessionWebhookView;
@@ -123,7 +127,9 @@ export function SessionWebhookSettingsSection() {
 
 /**
  * Session callbacks for one server. `compact` renders the card inside a per-server group whose
- * Refresh bumps `refreshVersion`; the standalone form keeps its own Refresh.
+ * Refresh bumps `refreshVersion`; the standalone form keeps its own Refresh. The card shows a
+ * one-line summary; the webhook list and its delivery history open on demand, or when
+ * `expandRequested` turns true (a settings search jump).
  */
 export function EnvironmentSessionWebhookSettings({
   environmentId,
@@ -131,12 +137,14 @@ export function EnvironmentSessionWebhookSettings({
   serverConfig,
   compact = false,
   refreshVersion,
+  expandRequested = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly serverConfig: EnvironmentServerConfig;
   readonly compact?: boolean;
   readonly refreshVersion?: number;
+  readonly expandRequested?: boolean;
 }) {
   const { data: session } = useEnvironmentSessionState(environmentId);
   const userScope = session?.authenticated
@@ -150,6 +158,7 @@ export function EnvironmentSessionWebhookSettings({
       userScope={userScope}
       compact={compact}
       refreshVersion={refreshVersion}
+      expandRequested={expandRequested}
     />
   ) : (
     <SettingsSection title={sectionTitle(compact, label)}>
@@ -166,12 +175,14 @@ function SessionWebhookSettingsContent({
   userScope,
   compact,
   refreshVersion,
+  expandRequested,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly userScope: string;
   readonly compact: boolean;
   readonly refreshVersion: number | undefined;
+  readonly expandRequested: boolean;
 }) {
   const atom = useMemo(
     () => serverEnvironment.sessionWebhooksList({ environmentId, input: { userScope } }),
@@ -195,17 +206,22 @@ function SessionWebhookSettingsContent({
   // A confirmed Remove moves the card into a closed section, unmounting the focus target.
   const listRef = useRef<HTMLDivElement>(null);
   const [focusList, setFocusList] = useState(false);
+  // The list, with every delivery and reply, stays folded behind the summary until asked for.
+  const [expanded, setExpanded] = useState(expandRequested);
+  const [seenExpandRequest, setSeenExpandRequest] = useState(expandRequested);
+  if (seenExpandRequest !== expandRequested) {
+    setSeenExpandRequest(expandRequested);
+    if (expandRequested) setExpanded(true);
+  }
+  const bodyId = useId();
+  const summary = useMemo(() => summarizeSessionWebhooks(webhooks ?? []), [webhooks]);
+  const attentionText = sessionWebhookAttentionText(summary);
   const views = useMemo(
     () => (webhooks ?? []).map((webhook) => ({ webhook, events: sessionCallbackEvents(webhook) })),
     [webhooks],
   );
   const current = views.filter(({ webhook }) => webhook.status !== "removed");
   const removed = views.filter(({ webhook }) => webhook.status === "removed");
-  // Removed webhooks surface their issues beside the section instead of in this badge.
-  const attentionCount = current.reduce(
-    (count, { events }) => count + sessionCallbackAttentionCount(events),
-    0,
-  );
   const change = async ({ webhook, action }: PendingChange) => {
     setBusy(webhook.id);
     setFocusList(false);
@@ -259,50 +275,64 @@ function SessionWebhookSettingsContent({
     <SettingsSection
       title={sectionTitle(compact, label)}
       headerAction={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {attentionCount > 0 ? (
-            <Badge variant="warning">
-              <TriangleAlertIcon aria-hidden />
-              {attentionCount === 1
-                ? "1 event needs attention"
-                : `${attentionCount} events need attention`}
-            </Badge>
-          ) : null}
-          {compact ? null : (
+        compact ? null : (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={result.waiting}
+            onClick={() => appAtomRegistry.refresh(atom)}
+          >
+            {result.waiting ? "Refreshing…" : "Refresh status"}
+          </Button>
+        )
+      }
+    >
+      <div className="min-w-0 space-y-3 px-3 py-3 sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {webhooks === null ? (
+            <p className="text-sm text-muted-foreground">
+              {refreshFailed
+                ? "Callback status is unavailable. Check the server connection, then refresh."
+                : "Loading callback status…"}
+            </p>
+          ) : views.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              None yet. Agents create these for a session.
+            </p>
+          ) : (
+            <p className="min-w-0 text-sm">
+              <span>{sessionWebhookCountsText(summary)}</span>
+              {attentionText ? (
+                <span className="text-warning-foreground"> · {attentionText}</span>
+              ) : null}
+            </p>
+          )}
+          {views.length > 0 ? (
             <Button
               size="xs"
               variant="outline"
-              disabled={result.waiting}
-              onClick={() => appAtomRegistry.refresh(atom)}
+              aria-expanded={expanded}
+              aria-controls={expanded ? bodyId : undefined}
+              aria-label={`${expanded ? "Hide" : "Show"} session callbacks for ${label}`}
+              onClick={() => setExpanded((open) => !open)}
             >
-              {result.waiting ? "Refreshing…" : "Refresh status"}
+              {expanded ? "Hide" : "Show"}
+              <ChevronDownIcon aria-hidden className={expanded ? "rotate-180" : undefined} />
             </Button>
-          )}
+          ) : null}
         </div>
-      }
-    >
-      <div ref={listRef} tabIndex={-1} className="min-w-0 space-y-3 px-3 py-3 outline-none sm:px-4">
-        <p className="text-xs text-muted-foreground">
-          Agents create a callback for one session. Toolyard decisions queue after the active turn.
-          Callbacks report decisions; they do not grant permission. Only recent events are listed.
-        </p>
         {refreshFailed && webhooks !== null ? (
           <Notice tone="warning">
             The last refresh failed. Showing the status loaded earlier.
           </Notice>
         ) : null}
-        {webhooks === null ? (
-          <p className="text-sm text-muted-foreground">
-            {refreshFailed
-              ? "Callback status is unavailable. Check the server connection, then refresh."
-              : "Loading callback status…"}
-          </p>
-        ) : views.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            None yet. Agents create these for a session.
-          </p>
-        ) : (
-          <>
+        {expanded && views.length > 0 ? (
+          <div id={bodyId} ref={listRef} tabIndex={-1} className="min-w-0 space-y-3 outline-none">
+            <p className="text-xs text-muted-foreground">
+              Agents create a callback for one session. Toolyard decisions queue after the active
+              turn. Callbacks report decisions; they do not grant permission. Only recent events are
+              listed.
+            </p>
             {current.map(card)}
             {removed.length > 0 ? (
               <>
@@ -319,8 +349,8 @@ function SessionWebhookSettingsContent({
                 </Disclosure>
               </>
             ) : null}
-          </>
-        )}
+          </div>
+        ) : null}
       </div>
       <AlertDialog
         open={confirmOpen}
