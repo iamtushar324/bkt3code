@@ -1,17 +1,7 @@
-/**
- * T3-CUSTOM(expbkt3): The Toolyard instance a server offers when an
- * administrator has not saved one.
- *
- * Precedence, highest first:
- * 1. The instance an administrator saved and verified (persisted with the
- *    server trust; changing it needs a new trust registration).
- * 2. `T3_TOOLYARD_URL` in the server environment.
- * 3. `DEFAULT_TOOLYARD_BASE_URL` (https://toolyard.beknown.live).
- *
- * The default only pre-fills setup and answers an empty base URL on save; it
- * never connects anyone by itself, because registering trust still needs an
- * administrator.
- */
+// T3-CUSTOM(expbkt3): the Toolyard instance offered before an admin saves one.
+// Precedence: the saved, verified instance > `T3_TOOLYARD_URL` > the built-in
+// DEFAULT_TOOLYARD_BASE_URL. The default only pre-fills setup; registering
+// trust still needs an administrator.
 import { DEFAULT_TOOLYARD_BASE_URL, KNOWN_TOOLYARD_MCP_URLS } from "@t3tools/contracts";
 
 export const TOOLYARD_URL_ENV = "T3_TOOLYARD_URL";

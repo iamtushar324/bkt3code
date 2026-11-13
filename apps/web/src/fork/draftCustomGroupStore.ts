@@ -1,15 +1,7 @@
-// T3-CUSTOM(expbkt3): the custom group a new session lands in.
-//
-// A custom group header's "+" opens a draft like the New thread button does,
-// but the session it becomes must be filed in that group from its first send.
-// The draft does not exist on the server yet, so the choice waits here, keyed
-// by the draft's thread id, until the send builds the thread's create input
-// (`threadCreationForkFields`), which then names the group explicitly; an
-// explicit group outranks the host's default group on the server.
-//
-// Persisted with the drafts themselves (both live in local storage), so a
-// reload keeps the choice. The sidebar prunes entries whose draft is gone
-// (sent or discarded) with `pruneDraftCustomGroupTargets`.
+// T3-CUSTOM(expbkt3): the custom group a draft from a group's "+" lands in,
+// keyed by draft thread id until the first send names it in the create input
+// (an explicit group outranks the host default). Persisted like the drafts;
+// the sidebar prunes entries whose draft is gone.
 import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";

@@ -1,5 +1,5 @@
 /** T3-CUSTOM(expbkt3): group user-owned connections and callbacks by selected server. */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -59,16 +59,18 @@ function ServerAddons({
   const [open, setOpen] = useState(
     () => toolyardReturnPending() || readRememberedOpen(environment.environmentId),
   );
-  useEffect(() => {
+  // Only the user's own toggle is remembered, not a search jump's.
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
     try {
       window.localStorage.setItem(
         FOLD_STORAGE_PREFIX + environment.environmentId,
-        open ? "1" : "0",
+        next ? "1" : "0",
       );
     } catch {
       // Storage can be blocked; the fold still works for this visit.
     }
-  }, [environment.environmentId, open]);
+  };
   // A search jump lands inside the first server's fold, so open it before its target mounts.
   const searchTargetId = useSettingsSearchTargetId();
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
@@ -101,7 +103,7 @@ function ServerAddons({
 
   return (
     <section className="min-w-0" aria-label={sectionLabel}>
-      <Collapsible open={open} onOpenChange={setOpen}>
+      <Collapsible open={open} onOpenChange={changeOpen}>
         <div className="flex min-h-9 items-center gap-2 px-3 sm:px-4">
           <h3 className="min-w-0 flex-1">
             <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 rounded-md py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">

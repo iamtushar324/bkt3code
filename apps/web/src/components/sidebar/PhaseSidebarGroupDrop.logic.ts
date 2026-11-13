@@ -1,9 +1,5 @@
-// T3-CUSTOM(expbkt3): dragging a session onto a custom group section.
-//
-// In Custom mode a session row can be dragged with the mouse onto any custom
-// group's section (its header or its rows) to file it there, and onto
-// "Ungrouped" to take it out of its group. The write is the same
-// thread.meta.update { customGroup } that "Move to group" sends.
+// T3-CUSTOM(expbkt3): dragging a session onto a custom group section (header
+// or rows) files it there; "Ungrouped" takes it out. Same write as "Move to group".
 import { isReservedThreadCustomGroup, normalizeThreadCustomGroup } from "@t3tools/contracts";
 
 /** The drag payload type. Custom, so a text field (the search box) never accepts the drop. */
