@@ -150,8 +150,11 @@ it.effect.each(defaultUrlCases)(
         defaultBaseUrlSource: source,
       });
     }).pipe(
-      Effect.provide(integrationTestLayer(false)),
-      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+      Effect.provide(
+        integrationTestLayer(false).pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+        ),
+      ),
     ),
 );
 it.effect("never converts an anonymous team transport into the local owner", () =>

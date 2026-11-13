@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
-import { PersonalMcpSettingsError } from "@t3tools/contracts";
+import { DEFAULT_TOOLYARD_BASE_URL, PersonalMcpSettingsError } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { createToolyardSettingsContinuation } from "@t3tools/client-runtime/toolyard-trust-setup";
 import { act, render, stubGlobal } from "../../../test/render";
@@ -939,7 +939,8 @@ it("applies a browser continuation only to its selected server when two servers 
   await using view = await mount();
   const sections = view.container.querySelectorAll("section");
   expect(sections).toHaveLength(2);
-  expect(view.input("Toolyard base URL", sections[0]).value).toBe("");
+  // The untouched server shows the default URL, not the other server's continuation.
+  expect(view.input("Toolyard base URL", sections[0]).value).toBe(DEFAULT_TOOLYARD_BASE_URL);
   expect(view.input("Toolyard base URL", sections[1]).value).toBe("https://other-toolyard.test");
   expect(readToolyardSettingsDraft(toolyardDraftKey("env_other", "user_admin"))?.baseUrl).toBe(
     "https://other-toolyard.test",

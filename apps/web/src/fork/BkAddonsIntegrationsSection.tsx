@@ -175,8 +175,8 @@ export function BkAddonsIntegrationsSection() {
     <SettingsSection id="toolyard" title="Connections" variant="plain">
       <div className="space-y-3">
         <p className="px-3 text-xs text-muted-foreground sm:px-4">
-          Toolyard, session callbacks and the default group, saved per server for your account.
-          The project selection filters this list.
+          Toolyard, session callbacks and the default group, saved per server for your account. The
+          project selection filters this list.
         </p>
         {environments.length === 0 ? (
           <SettingsSearchTarget id="session-webhooks">

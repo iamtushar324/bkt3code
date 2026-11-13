@@ -1153,6 +1153,14 @@ interface PhaseThreadRowGroupActions {
   readonly onCreateGroupWith: (row: PhaseSidebarRow) => void;
 }
 
+/**
+ * T3-CUSTOM(expbkt3): the session row being dragged right now. Module state,
+ * not a React ref: only one mouse drag runs at a time, and the drop handlers
+ * read it outside render (a ref read from handlers passed through render makes
+ * React Compiler bail).
+ */
+const phaseSidebarDrag: { row: PhaseSidebarRow | null } = { row: null };
+
 /** T3-CUSTOM(expbkt3): dragging a row onto a custom group section; one stable object. */
 interface PhaseThreadRowDragActions {
   readonly onDragStart: (row: PhaseSidebarRow) => void;
@@ -3166,18 +3174,17 @@ export function PhaseGroupedSidebar() {
   );
   // Custom mode: drag a session with the mouse onto a group's section to file
   // it there, or onto "Ungrouped" to take it out — the same write as "Move to
-  // group". The dragged row sits in a ref, so a drag re-renders only the
-  // section it hovers.
-  const draggedRowRef = useRef<PhaseSidebarRow | null>(null);
+  // group". The dragged row sits outside React state (`phaseSidebarDrag`), so
+  // a drag re-renders only the section it hovers.
   const rowDragActions = useMemo<PhaseThreadRowDragActions | undefined>(
     () =>
       grouping.groupBy === "custom" && phaseSidebarSupportsMouseDrag()
         ? {
             onDragStart: (row) => {
-              draggedRowRef.current = row;
+              phaseSidebarDrag.row = row;
             },
             onDragEnd: () => {
-              draggedRowRef.current = null;
+              phaseSidebarDrag.row = null;
             },
           }
         : undefined,
@@ -3186,12 +3193,12 @@ export function PhaseGroupedSidebar() {
   const sectionRowDropTarget = useMemo<PhaseSidebarSectionRowDropTarget>(
     () => ({
       accepts: (section) => {
-        const row = draggedRowRef.current;
+        const row = phaseSidebarDrag.row;
         return row !== null && resolvePhaseSidebarRowDrop(row.customGroup, section) !== null;
       },
       drop: (section) => {
-        const row = draggedRowRef.current;
-        draggedRowRef.current = null;
+        const row = phaseSidebarDrag.row;
+        phaseSidebarDrag.row = null;
         if (row === null) return;
         const target = resolvePhaseSidebarRowDrop(row.customGroup, section);
         if (target !== null) void setThreadCustomGroup(row, target.customGroup);
@@ -4157,7 +4164,7 @@ export function PhaseGroupedSidebar() {
   // first send names it in the create input; a plain New thread clears it, so
   // a reused draft never carries an old choice.
   const setDraftCustomGroup = useDraftCustomGroupStore((state) => state.setTarget);
-  const pendingNewThreadGroupRef = useRef<string | null>(null);
+  const [pendingNewThreadGroup, setPendingNewThreadGroup] = useState<string | null>(null);
   const openNewThread = useCallback(
     (project: Pick<Project, "environmentId" | "id">, customGroup: string | null) => {
       void handleNewThread(scopeProjectRef(project.environmentId, project.id)).then((draft) => {
@@ -4170,7 +4177,7 @@ export function PhaseGroupedSidebar() {
   // then knows which group the session is for.
   const startNewThreadIn = useCallback(
     (customGroup: string | null) => {
-      pendingNewThreadGroupRef.current = customGroup;
+      setPendingNewThreadGroup(customGroup);
       if (projects.length === 1 && projects[0]) {
         openNewThread(projects[0], customGroup);
         return;
@@ -4183,10 +4190,10 @@ export function PhaseGroupedSidebar() {
   const selectNewThreadProject = useCallback(
     (project: Project) => {
       setProjectPickerOpen(false);
-      openNewThread(project, pendingNewThreadGroupRef.current);
-      pendingNewThreadGroupRef.current = null;
+      openNewThread(project, pendingNewThreadGroup);
+      setPendingNewThreadGroup(null);
     },
-    [openNewThread],
+    [openNewThread, pendingNewThreadGroup],
   );
   // Forget the group of a draft that is gone: sent (its create input already
   // named the group) or discarded. Cheap when no draft has a group.
