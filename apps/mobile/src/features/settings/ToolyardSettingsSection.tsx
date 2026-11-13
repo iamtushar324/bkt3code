@@ -7,7 +7,10 @@ import * as Option from "effect/Option";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  canReconnectToolyardTeam,
   toolyardConnectionPresentation,
+  toolyardConnectionProblem,
+  toolyardInstanceHost,
   toolyardMethodLabel,
 } from "@t3tools/client-runtime/bk-toolyard-presentation";
 import {
@@ -18,7 +21,7 @@ import {
   toolyardSettingsOrigin,
   type ToolyardSettingsDraft,
 } from "@t3tools/client-runtime/toolyard-trust-setup";
-import type { ToolyardIntegrationStatus } from "@t3tools/contracts";
+import { DEFAULT_TOOLYARD_BASE_URL, type ToolyardIntegrationStatus } from "@t3tools/contracts";
 import { Alert, Linking, Pressable, Switch, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
@@ -302,12 +305,19 @@ function EnvironmentToolyardContent({
     setBrowserDraft(null);
     setError(null);
   }
+  // The server names its default instance; an unconfigured server starts from it.
+  const defaultBaseUrl = status?.defaultBaseUrl ?? DEFAULT_TOOLYARD_BASE_URL;
+  const unconfigured = status !== null && (!status.baseUrl || status.removed);
   const current = draft ?? {
-    baseUrl: status?.baseUrl ?? "",
-    enabled: status?.enabled ?? false,
+    baseUrl: unconfigured ? defaultBaseUrl : (status?.baseUrl ?? ""),
+    enabled: unconfigured ? true : (status?.enabled ?? false),
     revision: status?.revision ?? 0,
   };
   const mode = current.mode ?? status?.mode ?? "team";
+  const setupReady = Boolean(status?.administrator && unconfigured && mode === "team");
+  const canReconnect = mode === "team" && canReconnectToolyardTeam(status);
+  const problem = toolyardConnectionProblem(status);
+  const instanceHost = toolyardInstanceHost(status?.baseUrl);
   const modeChange = status?.connection === "connected" && mode !== (status.mode ?? "team");
   const canDisconnect =
     status?.connection === "connected" &&
@@ -417,6 +427,39 @@ function EnvironmentToolyardContent({
     const timer = setInterval(() => appAtomRegistry.refresh(atom), 3000);
     return () => clearInterval(timer);
   }, [status?.pendingConnection?.status, atom]);
+  // The request runs outside the try: the React Compiler cannot lower a conditional inside one.
+  const submitReconnect = async () => {
+    if (!status) return;
+    const saved = await configure({
+      environmentId: target.environmentId,
+      input: {
+        expectedRevision: status.revision,
+        baseUrl: status.baseUrl ?? "",
+        origin: status.origin ?? "",
+        enabled: true,
+        mode: "team",
+        reconnect: true,
+      },
+    });
+    appAtomRegistry.refresh(atom);
+    if (!AsyncResult.isSuccess(saved))
+      setError(toolyardSettingsFailureMessage(toolyardSettingsFailureCode(saved.cause)));
+    else if (saved.value.connection !== "connected")
+      setError(
+        toolyardConnectionProblem(saved.value) ??
+          "Toolyard did not restore the connection. Select Refresh, then try again.",
+      );
+  };
+  const reconnect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await submitReconnect();
+    } catch {
+      setError("The reconnect request failed. Select Refresh, then try again.");
+    }
+    setBusy(false);
+  };
   const consentAction = async (cancel: boolean) => {
     if (!status?.pendingConnection || !status.baseUrl) return;
     setError(null);
@@ -493,7 +536,7 @@ function EnvironmentToolyardContent({
     modeChange ||
     (mode === "team" && status.teamAvailable === false) ||
     (mode === "host" && status.pendingConnection?.status === "pending") ||
-    (!draft && !apiKey && !status.removed && mode !== "host") ||
+    (!draft && !apiKey && !status.removed && !setupReady && mode !== "host") ||
     ((mode === "api-key" || mode === "host") && !status.baseUrl && !status.administrator);
   const saveLabel =
     mode === "host" && current.enabled
@@ -512,6 +555,7 @@ function EnvironmentToolyardContent({
       : bkAddonTone(presentation.label, presentation.tone);
   const summary = connected
     ? [
+        instanceHost ? `Toolyard ${instanceHost}` : null,
         presentation.host ?? target.label,
         presentation.method,
         status?.expiresAt ? `Access expires ${bkAddonTime(status.expiresAt)}` : null,
@@ -540,16 +584,26 @@ function EnvironmentToolyardContent({
           </Text>
           {summary ? <Text className="text-sm text-foreground-muted">{summary}</Text> : null}
           <Text className="text-sm text-foreground-muted">
-            Toolyard Inbox asks you to decide on restricted calls.
+            {status.mode === "team"
+              ? "T3 signed you in automatically with your account on this server. Toolyard Inbox asks you to decide on restricted calls."
+              : "Toolyard Inbox asks you to decide on restricted calls."}
           </Text>
         </View>
       ) : (
         <>
           <Text className="text-sm text-foreground-muted">{presentation.description}</Text>
-          {status?.mode === "team" && presentation.phase === "revoked" ? (
+          {presentation.phase === "not_configured" ? (
             <Text className="text-sm text-foreground-muted">
-              Select an available method under Connect your account to authorize access. A settings
-              save does not restore revoked access.
+              {status.administrator
+                ? "Open Server setup, check the Toolyard URL, then select Save and verify trust. T3 then signs in every user of this server automatically."
+                : "Ask an administrator of this server to set up Toolyard. T3 then signs you in automatically."}
+            </Text>
+          ) : null}
+          {problem ? <AlertText>{problem}</AlertText> : null}
+          {canReconnect ? (
+            <Text className="text-sm text-foreground-muted">
+              Select Reconnect to ask Toolyard again. Toolyard decides, so access it revoked stays
+              revoked.
             </Text>
           ) : null}
         </>
@@ -600,6 +654,15 @@ function EnvironmentToolyardContent({
         </View>
       ) : null}
       <View className="flex-row flex-wrap gap-2">
+        {canReconnect ? (
+          <BkAddonButton
+            tone="primary"
+            label="Reconnect"
+            accessibilityLabel={`Reconnect Toolyard on ${target.label}`}
+            disabled={busy}
+            onPress={() => void reconnect()}
+          />
+        ) : null}
         {status === null || status.connection === "unavailable" ? (
           <BkAddonButton
             label="Retry"
@@ -777,9 +840,15 @@ function EnvironmentToolyardContent({
                 autoCapitalize="none"
                 autoCorrect={false}
                 value={current.baseUrl}
-                placeholder="https://toolyard.dev.beknown.live"
+                placeholder={defaultBaseUrl}
                 onChangeText={(baseUrl) => setDraft({ ...current, baseUrl })}
               />
+              <Text className="text-sm text-foreground-muted">
+                Server default: {defaultBaseUrl}
+                {status.defaultBaseUrlSource === "environment"
+                  ? " (set by T3_TOOLYARD_URL)."
+                  : ". Set T3_TOOLYARD_URL on the server to change it."}
+              </Text>
               <View className="flex-row items-center justify-between gap-3">
                 <Text className="flex-1 text-foreground">Enable integration</Text>
                 <Switch

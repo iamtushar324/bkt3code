@@ -3,10 +3,18 @@
 import { describe, it, expect } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
-import { ToolyardConnectionCore, canonicalToolyardUrl } from "./ToolyardConnectionCore.ts";
+import {
+  ToolyardConnectionCore,
+  canonicalToolyardUrl,
+  type CoreOptions,
+} from "./ToolyardConnectionCore.ts";
 import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 
-function fixture(environmentId = "environment-one", storage = { value: null as string | null }) {
+function fixture(
+  environmentId = "environment-one",
+  storage = { value: null as string | null },
+  options: Partial<CoreOptions> = {},
+) {
   let now = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T00:00:00Z"));
   let connects = 0;
   let failNextWrite = false;
@@ -124,6 +132,7 @@ function fixture(environmentId = "environment-one", storage = { value: null as s
       if (id === "user_blocked") throw new Error("blocked");
       return { email: `${id}@beknown.work`, admin: id === "user_admin" };
     },
+    ...options,
   });
   const configure = (expectedRevision = 0, extras = {}) =>
     core.configure("user_admin", {
@@ -653,6 +662,130 @@ describe("server-owned Toolyard federation", () => {
       expect(() => canonicalToolyardUrl(value)).toThrow();
     await expect(f.core.credential("anonymous")).rejects.toMatchObject({
       code: "verified_identity_required",
+    });
+  });
+});
+
+describe("seamless team sign-in", () => {
+  const teamReconnect = (core: ToolyardConnectionCore, userId: string, expectedRevision: number) =>
+    core.configure(userId, {
+      expectedRevision,
+      baseUrl: "",
+      origin: "",
+      enabled: true,
+      mode: "team",
+      reconnect: true,
+    });
+
+  it("offers the server default and uses it, or the saved instance, for an empty base URL", async () => {
+    const builtIn = fixture();
+    await builtIn.core.initialize();
+    expect(await builtIn.core.status("user_admin")).toMatchObject({
+      baseUrl: null,
+      defaultBaseUrl: "https://toolyard.beknown.live",
+      defaultBaseUrlSource: "built-in",
+    });
+    const f = fixture(
+      "environment-one",
+      { value: null },
+      {
+        defaultBaseUrl: "https://toolyard.test",
+        defaultBaseUrlSource: "environment",
+      },
+    );
+    await f.core.initialize();
+    expect(await f.core.status("user_admin")).toMatchObject({
+      defaultBaseUrl: "https://toolyard.test",
+      defaultBaseUrlSource: "environment",
+    });
+    await f.configure(0, { baseUrl: "" });
+    expect(f.core.baseUrl()).toBe("https://toolyard.test");
+    const generation = f.core.binding()?.trustGeneration;
+    // A later save without a URL keeps the saved instance and its trust.
+    await f.configure(1, { baseUrl: "  " });
+    expect(f.core.baseUrl()).toBe("https://toolyard.test");
+    expect(f.core.binding()?.trustGeneration).toBe(generation);
+  });
+
+  it("reconnects every team user after an administrator disables and re-enables the instance", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    expect((await f.core.status("user_a")).connection).toBe("connected");
+    const revoked = await f.core.credential("user_b");
+    expect(await f.core.retire("user_b", revoked!.token!)).toBe(true);
+    await f.configure(1, { enabled: false });
+    expect((await f.core.status("user_a")).connection).toBe("disabled");
+    await f.configure(2);
+    // Toolyard marks the environment's connections reconnectable on re-registration.
+    expect(await f.core.status("user_a")).toMatchObject({
+      connection: "connected",
+      connectionError: null,
+    });
+    // An access T3 retired stays retired; only its owner asks again.
+    expect((await f.core.status("user_b")).connection).toBe("revoked");
+  });
+
+  it("lets a team user reconnect their own retired connection while Toolyard decides", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    const first = await f.core.credential("user_a");
+    expect(await f.core.retire("user_a", first!.token!)).toBe(true);
+    expect(await f.core.status("user_a")).toMatchObject({
+      connection: "revoked",
+      connectionError: "credential_rejected",
+    });
+    const connects = f.connects;
+    const reconnected = await teamReconnect(f.core, "user_a", 1);
+    expect(reconnected).toMatchObject({ connection: "connected", connectionError: null });
+    expect(f.connects).toBe(connects + 1);
+    // Toolyard still holds the same credential, so nothing rotated.
+    expect((await f.core.credential("user_a"))?.token).toBe(first!.token);
+    // The server settings and trust stay as they were.
+    expect(f.core.binding()?.trustGeneration).toBe(1);
+    expect((await f.core.status("user_admin")).revision).toBe(1);
+
+    expect(await f.core.retire("user_a", first!.token!)).toBe(true);
+    f.setRevoked();
+    expect(await teamReconnect(f.core, "user_a", 1)).toMatchObject({
+      connection: "revoked",
+      connectionError: "connection_revoked",
+    });
+    await expect(teamReconnect(f.core, "user_a", 0)).rejects.toMatchObject({
+      code: "settings_revision_conflict",
+    });
+    await expect(teamReconnect(f.core, "local-user", 1)).rejects.toMatchObject({
+      code: "team_identity_required",
+    });
+  });
+
+  it("refuses a team reconnect while the instance is disabled", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    await f.configure(1, { enabled: false });
+    await expect(teamReconnect(f.core, "user_a", 2)).rejects.toMatchObject({
+      code: "integration_disabled",
+    });
+  });
+
+  it("recovers a team connection after an outage in the background, without a status read", async () => {
+    const f = fixture();
+    await f.core.initialize();
+    await f.configure();
+    f.setOutage(true);
+    expect(await f.core.credential("user_a")).toBeNull();
+    expect(await f.core.status("user_a", false)).toMatchObject({
+      connection: "unavailable",
+      connectionError: "instance_unavailable",
+    });
+    f.advance(31_000);
+    f.setOutage(false);
+    await f.core.reconcileCredentials();
+    expect(await f.core.status("user_a", false)).toMatchObject({
+      connection: "connected",
+      connectionError: null,
     });
   });
 });

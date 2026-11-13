@@ -32,8 +32,11 @@ const mocks = vi.hoisted(() => ({
     origin: null as string | null,
     administrator: true,
     connection: "not_connected",
+    connectionError: null as string | null,
     email: null as string | null,
     expiresAt: null as string | null,
+    defaultBaseUrl: undefined as string | undefined,
+    defaultBaseUrlSource: undefined as "environment" | "built-in" | undefined,
   },
   // The page origin the component compares a continuation against. A browser test cannot
   // change its real origin, so the continuation reader sees this one instead.
@@ -379,8 +382,11 @@ function setup(): Disposable {
     baseUrl: null,
     removed: false,
     connection: "not_connected",
+    connectionError: null,
     email: null,
     expiresAt: null,
+    defaultBaseUrl: undefined,
+    defaultBaseUrlSource: undefined,
   };
   mocks.userId = "user_admin";
   mocks.clerkUserId = "user_admin";
@@ -428,7 +434,9 @@ async function mount(ui: ReactNode = <ToolyardSettingsSection />) {
   }
   async function edit() {
     await type("Toolyard base URL", "https://toolyard.test");
-    await click(only('[data-testid="switch"]'));
+    // An unconfigured server starts enabled; the edit always ends with the integration on.
+    const toggle = only('[data-testid="switch"]');
+    if (toggle.getAttribute("aria-checked") !== "true") await click(toggle);
   }
   return Object.assign(screen, {
     only,
@@ -1096,19 +1104,61 @@ it("clears the consent instruction after a pending request becomes connected", a
   expect(view.text()).not.toContain("Review the account and host");
   expect(view.button("Connect my Toolyard account")).toBeUndefined();
 });
-it("does not offer an ineffective team reconnect through a settings save", async () => {
+it("offers a team Reconnect instead of a settings save, and reports Toolyard's answer", async () => {
   using _setup = setup();
   mocks.status = {
     ...mocks.status,
     mode: "team",
+    administrator: false,
     enabled: true,
     baseUrl: "https://toolyard.test",
+    origin: "https://stage.test",
     connection: "revoked",
+    connectionError: "credential_rejected",
     revision: 4,
   };
+  mocks.configure.mockResolvedValue(
+    AsyncResult.success({
+      ...mocks.status,
+      connection: "revoked",
+      connectionError: "connection_revoked",
+    }),
+  );
   await using view = await mount();
   expect(view.button("Save and verify trust")).toBeUndefined();
-  expect(view.text()).toContain("A settings save does not restore revoked access");
+  expect(view.text()).toContain("Toolyard rejected the stored credential");
   expect(view.method("host")).toBeDefined();
   expect(mocks.configure).not.toHaveBeenCalled();
+  await click(view.button("Reconnect"));
+  expect(mocks.configure).toHaveBeenCalledOnce();
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    reconnect: true,
+    mode: "team",
+    enabled: true,
+    expectedRevision: 4,
+  });
+  expect(mocks.configure.mock.calls[0]![0].input).not.toHaveProperty("adminToken");
+  expect(mocks.token).not.toHaveBeenCalled();
+  expect(view.text()).toContain("Ask a Toolyard administrator to restore your access");
+});
+it("starts an unconfigured server from the server default and saves it in one step", async () => {
+  using _setup = setup();
+  mocks.status = {
+    ...mocks.status,
+    defaultBaseUrl: "https://toolyard.example.test",
+    defaultBaseUrlSource: "environment",
+  };
+  mocks.token.mockResolvedValue("fresh-browser-token");
+  mocks.configure.mockResolvedValue(AsyncResult.success({ ...mocks.status, revision: 1 }));
+  await using view = await mount();
+  expect(view.input("Toolyard base URL").value).toBe("https://toolyard.example.test");
+  expect(view.text()).toContain("set by T3_TOOLYARD_URL");
+  expect(view.text()).toContain("T3 then signs in every user of this server automatically");
+  await click(view.button("Save and verify trust"));
+  expect(mocks.configure.mock.calls[0]![0].input).toMatchObject({
+    baseUrl: "https://toolyard.example.test",
+    enabled: true,
+    mode: "team",
+    adminToken: "fresh-browser-token",
+  });
 });

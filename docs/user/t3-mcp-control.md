@@ -111,8 +111,16 @@ another user's key.
 Bifrost integrations normally use `x-bf-vk`. Bearer, `x-api-key`, and validated
 custom-header authentication are also supported.
 
-Toolyard is built in. On a team server, T3 connects each eligible user through
-their team identity. Agents see the tools as `mcp__toolyard__*`.
+Toolyard is built in. On a team server, an administrator sets it up once in
+**Settings → BK Add-ons → Toolyard → Server setup**: check the Toolyard URL, then
+select **Save and verify trust**. After that, T3 signs in each eligible user
+automatically, on every client. Agents see the tools as `mcp__toolyard__*`.
+
+The URL starts as `https://toolyard.beknown.live`. To use another instance, set
+`T3_TOOLYARD_URL` in the server's environment and restart it; a URL that an
+administrator already saved stays in use until they save the new one. If T3
+stops using your team connection (for example, Toolyard rejected it), the
+Toolyard card says why and offers **Reconnect**.
 
 For a local server without team access, open **Settings → BK Add-ons → Toolyard**
 on that server. Select **API key connection**. Enter the hosted Toolyard URL and

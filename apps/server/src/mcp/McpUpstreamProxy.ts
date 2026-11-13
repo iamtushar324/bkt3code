@@ -28,6 +28,7 @@ import {
   hasManagedToolyardRuntime,
   managedToolyardActor,
   managedToolyardCredentialForUrl,
+  managedToolyardMcpUrls,
   retireManagedToolyardCredential,
 } from "../toolyard/ToolyardIntegration.ts";
 
@@ -121,7 +122,10 @@ const makeForwardedRequest = Effect.fn("McpUpstreamProxy.makeForwardedRequest")(
       );
       break;
   }
-  if (options.integrationId === TOOLYARD_MCP_INTEGRATION_ID || isToolyardGatewayUrl(options.url)) {
+  if (
+    options.integrationId === TOOLYARD_MCP_INTEGRATION_ID ||
+    isToolyardGatewayUrl(options.url, managedToolyardMcpUrls())
+  ) {
     outgoing = outgoing.pipe(HttpClientRequest.setHeader(T3_SESSION_ID_HEADER, options.threadId));
   }
   return outgoing;
