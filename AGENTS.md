@@ -308,3 +308,11 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Where this file comes from
+
+`AGENTS.md` and `CLAUDE.md` at the root of this repository are copies, on the `bkmain` and `stage` branches. Their source is `Tech/Global Instructions/repos/` in [bk-docs](https://github.com/beknown-work/bk-docs/tree/main/Tech/Global%20Instructions), which keeps every BeKnown system prompt in one place (TEC-1995, Tushar 2026-11-13; how the layers fit: its `README.md`).
+
+- The common rules for every repository (the work lifecycle, human gates, hard rules) are not in this repository. Each server loads them from `~/.claude/CLAUDE.md`, which bk-docs `tools/setup.sh` builds from the common rules plus that server's own file. The files here hold only what is specific to this repository; they win where they differ from the common rules, and may tighten a hard rule, never relax one.
+- To change a file here, change its bk-docs copy first (`repos/bkt3code.<file name>`), then raise the PR here that makes the file equal to that copy, in the same session. The branch rules above still decide the merge: a merge to `bkmain` restarts bkt3 and needs Tushar, so the standing grant for exact copy PRs in the bk-docs `CLAUDE.md` does not cover this repository.
+- When a file here and its bk-docs copy differ, someone edited one side only. Judge the edit: bring a good one into the bk-docs copy, replace a bad one with the copy. It is not urgent, but leave the two equal whenever you can.
