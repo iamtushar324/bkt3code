@@ -19,12 +19,12 @@ import type {
   HookCallbackMatcher,
   HookEvent,
   HookInput,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   ownerFromEnvironment,
   senderIdentityBlock,
-  senderIdentityText,
   sessionIdentityText,
 } from "../identity/senderIdentityText.ts";
 
@@ -41,43 +41,46 @@ export function claudeSessionIdentitySystemPrompt(
   return identity === undefined ? undefined : `T3 Code session identity:\n${identity}`;
 }
 
-/** Fallback block from the process environment, used before any message was recorded. */
-export function claudeSessionIdentityTurnContext(
-  environment: NodeJS.ProcessEnv,
-): string | undefined {
-  return senderIdentityText(environment);
-}
-
 /**
- * T3-CUSTOM(expbkt3): the identity block of each message sent to one Claude process.
- * Start and steer record it before the prompt is queued; the hook takes the block of
- * the matching prompt, else the latest one, so a steer or slash command keeps its own.
+ * T3-CUSTOM(expbkt3): the identity block of each prompt T3 queued on one Claude process.
+ * The hook names a human only for a prompt that equals one of these exactly; every other
+ * prompt (a native wake, an unknown prompt) gets the automation block.
  */
 export interface ClaudeTurnIdentity {
-  readonly record: (prompt: string, identity: string | undefined) => void;
+  readonly record: (prompts: ReadonlyArray<string>, identity: string | undefined) => void;
   readonly take: (prompt: string | undefined) => string | undefined;
 }
 
 const MAX_PENDING_PROMPTS = 32;
 
 export function makeClaudeTurnIdentity(): ClaudeTurnIdentity {
-  const pending: Array<{ readonly prompt: string; readonly identity: string }> = [];
-  let latest: string | undefined;
+  const pending: Array<{ readonly prompts: ReadonlySet<string>; readonly identity: string }> = [];
   return {
-    record: (prompt, identity) => {
-      if (identity === undefined) return;
-      pending.push({ prompt: prompt.trim(), identity });
+    record: (prompts, identity) => {
+      const exact = new Set(prompts.map((prompt) => prompt.trim()).filter((p) => p.length > 0));
+      if (identity === undefined || exact.size === 0) return;
+      pending.push({ prompts: exact, identity });
       if (pending.length > MAX_PENDING_PROMPTS) pending.shift();
-      latest = identity;
     },
     take: (prompt) => {
       const key = prompt?.trim();
-      const index = pending.findIndex((entry) => entry.prompt === key);
-      if (index === -1) return latest;
-      const [entry] = pending.splice(index, 1);
-      return entry?.identity ?? latest;
+      if (key === undefined || key.length === 0) return undefined;
+      const index = pending.findIndex((entry) => entry.prompts.has(key));
+      if (index === -1) return undefined;
+      return pending.splice(index, 1)[0]?.identity;
     },
   };
+}
+
+/**
+ * The texts of a queued Claude user message that the CLI can report as the hook prompt:
+ * the string content, each text block, and the text blocks joined.
+ */
+export function claudePromptTexts(message: SDKUserMessage): ReadonlyArray<string> {
+  const content = message.message.content;
+  if (typeof content === "string") return [content];
+  const texts = content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+  return [...texts, texts.join("\n"), texts.join("\n\n"), texts.join("")];
 }
 
 /**
@@ -98,8 +101,7 @@ export function withClaudeSessionIdentityTurnHook<Options extends ClaudeIdentity
   environment: NodeJS.ProcessEnv,
   turnIdentity?: ClaudeTurnIdentity,
 ): Options {
-  const fallback = claudeSessionIdentityTurnContext(environment);
-  if (fallback === undefined) {
+  if (sessionIdentityText(environment) === undefined) {
     return options;
   }
 
@@ -112,7 +114,7 @@ export function withClaudeSessionIdentityTurnHook<Options extends ClaudeIdentity
       hookEventName: "UserPromptSubmit",
       additionalContext: isNativeWake(input)
         ? automation
-        : (turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? fallback),
+        : (turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? automation),
     },
   });
   const existingHooks = options.hooks ?? {};
