@@ -5,11 +5,13 @@ import type {
   UserPromptSubmitHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
 import {
   claudePromptTexts,
   claudeSessionIdentitySystemPrompt,
   makeClaudeTurnIdentity,
+  recordClaudePromptSubmission,
   withClaudeSessionIdentityTurnHook,
 } from "./claudeSessionIdentity.expbkt3.ts";
 import { buildSessionIdentityEnvironment } from "../identity/SessionIdentityEnvironment.ts";
@@ -66,6 +68,56 @@ describe("makeClaudeTurnIdentity", () => {
     assert.isUndefined(store.take("next"));
     assert.isUndefined(store.take(""));
   });
+});
+
+describe("prompt submissions", () => {
+  const sdkMessage = (text: string) =>
+    ({
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+    }) as SDKUserMessage;
+
+  it("gives automation to a prompt that matches a failed submission's text", () => {
+    const store = makeClaudeTurnIdentity();
+    const release = store.record(["check the deploy"], "ALICE");
+    release();
+    assert.isUndefined(store.take("check the deploy"));
+  });
+
+  it("gives a retried submission its block exactly once, then nothing is pending", () => {
+    const store = makeClaudeTurnIdentity();
+    store.record(["check the deploy"], "ALICE (failed steer)")();
+    store.record(["check the deploy"], "ALICE (retry)");
+    assert.equal(store.take("check the deploy"), "ALICE (retry)");
+    assert.isUndefined(store.take("check the deploy"));
+  });
+
+  it("gives automation when two pending submissions have the same text", () => {
+    const store = makeClaudeTurnIdentity();
+    store.record(["check the deploy"], "ALICE");
+    store.record(["check the deploy"], "BOB");
+    assert.isUndefined(store.take("check the deploy"));
+    assert.isUndefined(store.take("check the deploy"));
+  });
+
+  it.effect("releases a submission's record when the submission fails", () =>
+    Effect.gen(function* () {
+      const store = makeClaudeTurnIdentity();
+      const failed = yield* Effect.scoped(
+        recordClaudePromptSubmission(store, sdkMessage("check the deploy"), "ALICE").pipe(
+          Effect.andThen(Effect.fail("steer ended before it was sent")),
+        ),
+      ).pipe(Effect.flip);
+      assert.equal(failed, "steer ended before it was sent");
+      assert.isUndefined(store.take("check the deploy"));
+      yield* Effect.scoped(
+        recordClaudePromptSubmission(store, sdkMessage("check the deploy"), "ALICE (retry)"),
+      );
+      assert.equal(store.take("check the deploy"), "ALICE (retry)");
+      assert.isUndefined(store.take("check the deploy"));
+    }),
+  );
 });
 
 describe("claudePromptTexts", () => {
