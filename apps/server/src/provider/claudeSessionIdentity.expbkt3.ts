@@ -16,24 +16,22 @@
 
 import type { HookCallback, HookCallbackMatcher, HookEvent } from "@anthropic-ai/claude-agent-sdk";
 
-import { senderIdentityText } from "../identity/senderIdentityText.ts";
+import { senderIdentityText, sessionIdentityText } from "../identity/senderIdentityText.ts";
 
 /** Structural shape of the Claude SDK query options this module folds hooks into. */
 interface ClaudeIdentityHookOptions {
   readonly hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 }
 
+/** Session-level text: the owner, and that each message carries its own CURRENT USER block. */
 export function claudeSessionIdentitySystemPrompt(
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  const identity = senderIdentityText(environment);
+  const identity = sessionIdentityText(environment);
   return identity === undefined ? undefined : `T3 Code session identity:\n${identity}`;
 }
 
-// T3-CUSTOM(expbkt3): the appended system prompt alone is not enough. Sonnet 5 still
-// answered with the native `# userEmail` value, which arrives later in context. A
-// `UserPromptSubmit` hook re-states the sender at user-message position on every turn,
-// which does win (verified 2026-08-21).
+/** Fallback block from the process environment, used before any message was recorded. */
 export function claudeSessionIdentityTurnContext(
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
@@ -41,23 +39,56 @@ export function claudeSessionIdentityTurnContext(
 }
 
 /**
- * T3-CUSTOM(expbkt3): folds the per-turn identity hook into Claude SDK query
- * options. Merges with whatever hooks the caller already registered instead of
- * replacing them, so an upstream `hooks` option keeps working after a merge.
+ * T3-CUSTOM(expbkt3): the identity block of each message sent to one Claude process.
+ * Start and steer record it before the prompt is queued; the hook takes the block of
+ * the matching prompt, else the latest one, so a steer or slash command keeps its own.
  */
+export interface ClaudeTurnIdentity {
+  readonly record: (prompt: string, identity: string | undefined) => void;
+  readonly take: (prompt: string | undefined) => string | undefined;
+}
+
+const MAX_PENDING_PROMPTS = 32;
+
+export function makeClaudeTurnIdentity(): ClaudeTurnIdentity {
+  const pending: Array<{ readonly prompt: string; readonly identity: string }> = [];
+  let latest: string | undefined;
+  return {
+    record: (prompt, identity) => {
+      if (identity === undefined) return;
+      pending.push({ prompt: prompt.trim(), identity });
+      if (pending.length > MAX_PENDING_PROMPTS) pending.shift();
+      latest = identity;
+    },
+    take: (prompt) => {
+      const key = prompt?.trim();
+      const index = pending.findIndex((entry) => entry.prompt === key);
+      if (index === -1) return latest;
+      const [entry] = pending.splice(index, 1);
+      return entry?.identity ?? latest;
+    },
+  };
+}
+
+// T3-CUSTOM(expbkt3): the system prompt alone is not enough. Sonnet 5 still answered with
+// the native `# userEmail` value, which arrives later in context. A `UserPromptSubmit`
+// hook states the sender at user-message position on every prompt, which does win
+// (verified 2026-08-21). Existing hooks are kept, so an upstream `hooks` option works.
 export function withClaudeSessionIdentityTurnHook<Options extends ClaudeIdentityHookOptions>(
   options: Options,
   environment: NodeJS.ProcessEnv,
+  turnIdentity?: ClaudeTurnIdentity,
 ): Options {
-  const additionalContext = claudeSessionIdentityTurnContext(environment);
-  if (additionalContext === undefined) {
+  const fallback = claudeSessionIdentityTurnContext(environment);
+  if (fallback === undefined) {
     return options;
   }
 
-  const identityHook: HookCallback = async () => ({
+  const identityHook: HookCallback = async (input) => ({
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext,
+      additionalContext:
+        turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? fallback,
     },
   });
   const existingHooks = options.hooks ?? {};

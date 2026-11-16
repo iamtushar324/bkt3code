@@ -213,6 +213,8 @@ it.effect(
               BK_SESSION_OWNER_EMAIL: String(ownerUserId),
               BK_MESSAGE_SENDER_EMAIL: String(senderUserId),
             }),
+          resolvePerson: (userId) =>
+            Effect.succeed({ userId: String(userId), name: null, email: String(userId) }),
         }),
       );
       yield* Effect.gen(function* () {

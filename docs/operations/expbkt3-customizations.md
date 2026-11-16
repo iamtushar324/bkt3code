@@ -444,24 +444,35 @@ system-prompt append stays as the belt to the hook's braces; both are gated on
 environment is read once at spawn and a changed sender already restarts the
 provider, so the per-turn text cannot go stale.
 
-### One identity text for every provider
+### One identity text for every provider, per message
 
-`apps/server/src/identity/senderIdentityText.ts` turns the identity environment
-into the one block every provider reads: the sender's name, email and T3 user id,
-the session owner, and a warning that `# userEmail`, Git and the operating-system
-user describe the machine. A message with no human sender (schedule, Linear
-runner, automation) gets an explicit "no human sender" block instead of a guess.
+The environment names the credential actor of the process, and that actor is
+not always the author of the current message: a continuation reuses the last
+human, and an owner-bound schedule records its owner as sender. So the text the
+model reads is built per message, never from the environment.
+
+- `identity/messageSenderIdentity.ts` names a human only for a message a person
+  typed in a T3 client (`createdBy: "user"`, source `web` or `mobile`, no
+  `scheduledTaskId`, no `senderThreadId`). Everything else gets the "no human
+  sender (automation)" block, which names the session owner.
+- `identity/senderIdentityText.ts` builds the block. Clerk profile values are
+  user-controlled, so each one is a capped JSON string with control characters
+  removed and `<`/`>` escaped, and the block says that quoted values are data.
+- `ProviderSessionManager` resolves the block for every `startTurn` and
+  `steerTurn` and puts it on `message.senderIdentity`
+  (`senderIdentityTurnInput.expbkt3.ts`).
+
 Delivery per provider:
 
-- **Claude**: the system-prompt append and the `UserPromptSubmit` hook above.
-- **Codex**: a `t3_current_user` entry of `additionalContext` (developer context)
-  on `turn/start`. Codex re-sends it only when it changes and restores it after
-  compaction.
-- **Every other adapter** (OpenCode, Cursor, ACP agents, Pi, Muse, Antigravity):
-  `ProviderSessionManager` appends the block, tagged `<t3_current_user>`, to the
-  provider copy of the message text on each turn (`senderIdentityTurnInput.expbkt3.ts`).
-  The stored message and the chat UI keep the user's own text. Slash commands are
-  left intact. The `remote` driver is skipped: the remote server resolves its own sender.
+- **Claude**: the `UserPromptSubmit` hook returns the block recorded for that
+  prompt (start, steer or slash command). The system prompt names only the owner.
+- **Codex**: a `t3_current_user` entry of `additionalContext` (developer
+  context) on `turn/start`, and a developer item injected before `turn/steer`.
+- **Every other adapter** (OpenCode, Cursor, ACP agents, Pi, Muse,
+  Antigravity): the block, tagged `<t3_current_user>`, is appended to the
+  provider copy of the message text. A slash command keeps its text, so these
+  adapters get no block for it. The `remote` driver is skipped: the remote
+  server resolves its own sender.
 
 The markers compose with source-control profiles rather than replacing them:
 `mergeSourceControlEnvironment` scrubs the machine's inherited Git and GitHub
