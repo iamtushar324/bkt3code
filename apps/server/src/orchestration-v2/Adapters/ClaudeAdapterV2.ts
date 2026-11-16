@@ -3,9 +3,9 @@ import { EventId } from "@t3tools/contracts";
 import { emitForkProviderEvent } from "../../provider/ForkProviderSessions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): sender identity, personal MCP and sticky Claude account placement.
 import {
-  claudePromptTexts,
   claudeSessionIdentitySystemPrompt,
   makeClaudeTurnIdentity,
+  recordClaudePromptSubmission,
   type ClaudeTurnIdentity,
   withClaudeSessionIdentityTurnHook,
 } from "../../provider/claudeSessionIdentity.expbkt3.ts";
@@ -10934,7 +10934,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // T3-CUSTOM(expbkt3): the exact prompt texts name this message's sender to the hook. A
             // native continuation queues no prompt, so its native wake gets the automation block.
             if (userMessage !== null)
-              turnIdentity.record(claudePromptTexts(userMessage), turnInput.message.senderIdentity);
+              yield* recordClaudePromptSubmission(
+                turnIdentity,
+                userMessage,
+                turnInput.message.senderIdentity,
+              );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
@@ -11383,8 +11387,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-            // T3-CUSTOM(expbkt3): the exact steer prompt texts name the steer's own sender.
-            turnIdentity.record(claudePromptTexts(userMessage), turnInput.message.senderIdentity);
+            // T3-CUSTOM(expbkt3): the exact steer prompt texts name the steer's own sender; a
+            // failed or abandoned steer releases its record.
+            yield* recordClaudePromptSubmission(
+              turnIdentity,
+              userMessage,
+              turnInput.message.senderIdentity,
+            );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
             // then would start a new turn the orchestrator never asked for, so

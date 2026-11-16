@@ -21,6 +21,8 @@ import type {
   HookInput,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import {
   ownerFromEnvironment,
@@ -42,35 +44,62 @@ export function claudeSessionIdentitySystemPrompt(
 }
 
 /**
- * T3-CUSTOM(expbkt3): the identity block of each prompt T3 queued on one Claude process.
- * The hook names a human only for a prompt that equals one of these exactly; every other
- * prompt (a native wake, an unknown prompt) gets the automation block.
+ * T3-CUSTOM(expbkt3): the identity block of each prompt submission T3 queued on one Claude
+ * process. The hook names a human only for a prompt that exactly matches one pending
+ * submission; no match or more than one match gets the automation block.
  */
 export interface ClaudeTurnIdentity {
-  readonly record: (prompts: ReadonlyArray<string>, identity: string | undefined) => void;
+  /** Returns the release of this submission's record. */
+  readonly record: (prompts: ReadonlyArray<string>, identity: string | undefined) => () => void;
   readonly take: (prompt: string | undefined) => string | undefined;
 }
 
 const MAX_PENDING_PROMPTS = 32;
 
+interface PendingPrompt {
+  readonly prompts: ReadonlySet<string>;
+  readonly identity: string;
+}
+
 export function makeClaudeTurnIdentity(): ClaudeTurnIdentity {
-  const pending: Array<{ readonly prompts: ReadonlySet<string>; readonly identity: string }> = [];
+  let pending: ReadonlyArray<PendingPrompt> = [];
+  const remove = (entries: ReadonlyArray<PendingPrompt>) => {
+    pending = pending.filter((entry) => !entries.includes(entry));
+  };
   return {
     record: (prompts, identity) => {
       const exact = new Set(prompts.map((prompt) => prompt.trim()).filter((p) => p.length > 0));
-      if (identity === undefined || exact.size === 0) return;
-      pending.push({ prompts: exact, identity });
-      if (pending.length > MAX_PENDING_PROMPTS) pending.shift();
+      if (identity === undefined || exact.size === 0) return () => undefined;
+      const entry: PendingPrompt = { prompts: exact, identity };
+      pending = [...pending, entry].slice(-MAX_PENDING_PROMPTS);
+      return () => remove([entry]);
     },
     take: (prompt) => {
       const key = prompt?.trim();
       if (key === undefined || key.length === 0) return undefined;
-      const index = pending.findIndex((entry) => entry.prompts.has(key));
-      if (index === -1) return undefined;
-      return pending.splice(index, 1)[0]?.identity;
+      const matches = pending.filter((entry) => entry.prompts.has(key));
+      remove(matches);
+      return matches.length === 1 ? matches[0]?.identity : undefined;
     },
   };
 }
+
+/**
+ * Records the block of one prompt submission for the hook, and releases it when the
+ * submission fails or is interrupted, so a stale block can never match a later prompt.
+ */
+export const recordClaudePromptSubmission = Effect.fn("ClaudeTurnIdentity.recordSubmission")(
+  function* (
+    turnIdentity: ClaudeTurnIdentity,
+    message: SDKUserMessage,
+    identity: string | undefined,
+  ) {
+    const release = turnIdentity.record(claudePromptTexts(message), identity);
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isSuccess(exit) ? Effect.void : Effect.sync(release),
+    );
+  },
+);
 
 /**
  * The texts of a queued Claude user message that the CLI can report as the hook prompt:
