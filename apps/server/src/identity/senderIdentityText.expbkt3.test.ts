@@ -1,12 +1,21 @@
 // T3-CUSTOM(expbkt3): proves the identity text every provider receives, per message.
-import { MessageId, ProviderDriverKind, UserId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ProviderDriverKind,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunId,
+  ThreadId,
+  UserId,
+} from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
-  withSenderIdentityMessage,
+  prepareSenderIdentity,
+  SENDER_IDENTITY_REQUIRED_MESSAGE,
   withSenderIdentityRuntime,
 } from "../orchestration-v2/senderIdentityTurnInput.expbkt3.ts";
 import { humanSenderOf, type MessageAttribution } from "./messageSenderIdentity.ts";
@@ -164,52 +173,64 @@ const message = (
   ...overrides,
 });
 
-describe("withSenderIdentityMessage", () => {
+describe("prepareSenderIdentity", () => {
   const block = senderIdentityBlock({ owner: alice, sender: bob });
+  const prepare = (
+    text: string,
+    driver: string,
+    lastDelivered: string | undefined = undefined,
+    sender = bob.userId,
+  ) =>
+    prepareSenderIdentity({
+      message: message(text),
+      driver: ProviderDriverKind.make(driver),
+      identity: block,
+      sender,
+      lastDelivered,
+    });
 
-  it("appends the block for adapters without a native channel", () => {
+  it("appends the block to a normal message for adapters without a native channel", () => {
     for (const driver of ["opencode", "cursor", "acpRegistry", "pi", "grok", "antigravity"]) {
-      const result = withSenderIdentityMessage(
-        message("who am I?"),
-        ProviderDriverKind.make(driver),
-        block,
-      );
-      assert.equal(result.text, appendSenderIdentityText("who am I?", block));
-      assert.equal(result.senderIdentity, block);
+      const result = prepare("who am I?", driver);
+      assert.equal(result.message.text, appendSenderIdentityText("who am I?", block));
+      assert.equal(result.message.senderIdentity, block);
+      assert.equal(result.delivers, bob.userId);
+      assert.isFalse(result.rejected);
     }
   });
 
-  it("gives Claude, Codex and remote the block only as context", () => {
+  it("gives Claude, Codex and remote the block only as context, slash commands included", () => {
     for (const driver of ["claudeAgent", "codex", "remote"]) {
-      const result = withSenderIdentityMessage(
-        message("who am I?"),
-        ProviderDriverKind.make(driver),
-        block,
-      );
-      assert.equal(result.text, "who am I?");
-      assert.equal(result.senderIdentity, block);
+      for (const text of ["who am I?", "/review"]) {
+        const result = prepare(text, driver);
+        assert.equal(result.message.text, text);
+        assert.equal(result.message.senderIdentity, block);
+        assert.isFalse(result.rejected);
+      }
     }
   });
 
-  it("keeps a slash command first and puts the block in its arguments", () => {
-    const result = withSenderIdentityMessage(
-      message("/review the diff"),
-      ProviderDriverKind.make("opencode"),
-      block,
-    );
-    assert.isTrue(result.text.startsWith("/review the diff\n\n<t3_current_user>\n"));
-    assert.equal(result.text, appendSenderIdentityText("/review the diff", block));
-    assert.equal(result.senderIdentity, block);
+  it("never puts identity text into a slash command", () => {
+    for (const lastDelivered of [undefined, alice.userId, bob.userId]) {
+      const result = prepare("/run-script $ARGUMENTS", "opencode", lastDelivered);
+      assert.equal(result.message.text, "/run-script $ARGUMENTS");
+      assert.notInclude(result.message.text, "Bob Example");
+      assert.isUndefined(result.delivers);
+    }
   });
 
-  it("leaves maintenance commands, which produce no answer, unchanged", () => {
+  it("refuses a slash command whose sender the agent was not told", () => {
+    assert.isTrue(prepare("/review", "opencode", undefined).rejected);
+    assert.isTrue(prepare("/review", "opencode", alice.userId).rejected);
+    assert.isTrue(prepare("/review", "pi", "automation").rejected);
+    assert.isFalse(prepare("/review", "opencode", bob.userId).rejected);
+  });
+
+  it("leaves maintenance commands, which produce no answer, unchanged and allowed", () => {
     for (const text of ["/compact", "/logout"]) {
-      const result = withSenderIdentityMessage(
-        message(text),
-        ProviderDriverKind.make("opencode"),
-        block,
-      );
-      assert.equal(result.text, text);
+      const result = prepare(text, "opencode", undefined);
+      assert.equal(result.message.text, text);
+      assert.isFalse(result.rejected);
     }
   });
 });
@@ -238,10 +259,16 @@ describe("withSenderIdentityRuntime", () => {
     );
     return { started, steered, wrapped };
   };
+  const ids = {
+    threadId: ThreadId.make("thread-identity"),
+    runId: RunId.make("run-identity"),
+    providerThread: { id: ProviderThreadId.make("provider-thread-identity") },
+    providerTurnId: ProviderTurnId.make("provider-turn-identity"),
+  };
   const turn = (turnMessage: ProviderAdapter.ProviderAdapterV2TurnMessage) =>
-    ({ message: turnMessage }) as unknown as ProviderAdapter.ProviderAdapterV2TurnInput;
+    ({ ...ids, message: turnMessage }) as unknown as ProviderAdapter.ProviderAdapterV2TurnInput;
   const steer = (turnMessage: ProviderAdapter.ProviderAdapterV2TurnMessage) =>
-    ({ message: turnMessage }) as unknown as ProviderAdapter.ProviderAdapterV2SteerInput;
+    ({ ...ids, message: turnMessage }) as unknown as ProviderAdapter.ProviderAdapterV2SteerInput;
 
   it.effect("gives an automated steer in a human turn the automation block", () =>
     Effect.gen(function* () {
@@ -267,15 +294,43 @@ describe("withSenderIdentityRuntime", () => {
     }),
   );
 
-  it.effect("names the new sender on a text-only adapter's slash command", () =>
+  it.effect("refuses a shell-template command after a sender change and never runs it", () =>
     Effect.gen(function* () {
       const { started, wrapped } = recordingRuntime("opencode");
       yield* wrapped.startTurn(turn(message("hello")));
-      yield* wrapped.startTurn(turn(message("/review", { sentByUserId: UserId.make(bob.userId) })));
-      assert.include(started[0]!.text, '- Name: "Alice Example"');
-      assert.isTrue(started[1]!.text.startsWith("/review\n\n<t3_current_user>\n"));
-      assert.include(started[1]!.text, '- Name: "Bob Example"');
-      assert.notInclude(started[1]!.text, 'Alice Example"\n- Email');
+      const command = message("/deploy $ARGUMENTS", { sentByUserId: UserId.make(bob.userId) });
+      const refused = yield* wrapped.startTurn(turn(command)).pipe(Effect.flip);
+      assert.equal(refused._tag, "ProviderAdapterTurnStartError");
+      assert.equal(
+        (refused as { readonly cause?: { readonly message?: string } }).cause?.message,
+        SENDER_IDENTITY_REQUIRED_MESSAGE,
+      );
+      assert.equal(started.length, 1);
+      assert.isFalse(started.some((sent) => sent.text.includes("Bob Example")));
+      const refusedSteer = yield* wrapped.steerTurn(steer(command)).pipe(Effect.flip);
+      assert.equal(refusedSteer._tag, "ProviderAdapterSteerRunError");
+    }),
+  );
+
+  it.effect("runs a slash command unchanged after the same sender was introduced", () =>
+    Effect.gen(function* () {
+      const { started, wrapped } = recordingRuntime("opencode");
+      const bobSays = (text: string) => message(text, { sentByUserId: UserId.make(bob.userId) });
+      yield* wrapped.startTurn(turn(bobSays("hello")));
+      yield* wrapped.startTurn(turn(bobSays("/review")));
+      assert.include(started[0]!.text, '- Name: "Bob Example"');
+      assert.equal(started[1]!.text, "/review");
+    }),
+  );
+
+  it.effect("refuses a slash command before any identity reached the provider", () =>
+    Effect.gen(function* () {
+      const { started, wrapped } = recordingRuntime("pi");
+      const refused = yield* wrapped.startTurn(turn(message("/review"))).pipe(Effect.flip);
+      assert.equal(refused._tag, "ProviderAdapterTurnStartError");
+      assert.equal(started.length, 0);
+      yield* wrapped.startTurn(turn(message("/compact")));
+      assert.equal(started[0]!.text, "/compact");
     }),
   );
 

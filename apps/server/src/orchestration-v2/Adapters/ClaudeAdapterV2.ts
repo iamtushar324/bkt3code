@@ -3,6 +3,7 @@ import { EventId } from "@t3tools/contracts";
 import { emitForkProviderEvent } from "../../provider/ForkProviderSessions.expbkt3.ts";
 // T3-CUSTOM(expbkt3): sender identity, personal MCP and sticky Claude account placement.
 import {
+  claudePromptTexts,
   claudeSessionIdentitySystemPrompt,
   makeClaudeTurnIdentity,
   type ClaudeTurnIdentity,
@@ -10860,10 +10861,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
-            // T3-CUSTOM(expbkt3): record this message's sender before its prompt is queued. A
-            // native continuation sends no prompt: the hook names automation for native wakes.
-            if (!isClaudeProviderContinuationTurn(turnInput))
-              turnIdentity.record(turnInput.message.text, turnInput.message.senderIdentity);
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
@@ -10934,6 +10931,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
+            // T3-CUSTOM(expbkt3): the exact prompt texts name this message's sender to the hook. A
+            // native continuation queues no prompt, so its native wake gets the automation block.
+            if (userMessage !== null)
+              turnIdentity.record(claudePromptTexts(userMessage), turnInput.message.senderIdentity);
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
@@ -11340,8 +11341,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
-            // T3-CUSTOM(expbkt3): record the steer's own sender before its prompt is queued.
-            turnIdentity.record(turnInput.message.text, turnInput.message.senderIdentity);
             // Measured from the request, not from when the moves are forked:
             // building the message and the moves can take clock time a timer
             // started later would not count, and the steer would wait past it.
@@ -11384,6 +11383,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
+            // T3-CUSTOM(expbkt3): the exact steer prompt texts name the steer's own sender.
+            turnIdentity.record(claudePromptTexts(userMessage), turnInput.message.senderIdentity);
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
             // then would start a new turn the orchestrator never asked for, so

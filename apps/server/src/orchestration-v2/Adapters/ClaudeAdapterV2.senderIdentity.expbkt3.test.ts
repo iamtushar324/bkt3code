@@ -1,5 +1,5 @@
 // T3-CUSTOM(expbkt3): proves the Claude query hook names each prompt's own sender, and
-// automation for a native wake (task notification, auto-continuation) that T3 never sent.
+// automation for a native wake (task notification, auto-continuation, no source) T3 never sent.
 import type { HookInput, UserPromptSubmitHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -48,11 +48,14 @@ it("names the human for a T3 prompt and automation for a native wake that follow
   };
 
   const human = senderIdentityBlock({ owner: alice, sender: alice, messageId: "message-1" });
-  turnIdentity.record("Run the tests in the background.", human);
+  turnIdentity.record(["Run the tests in the background."], human);
   assert.equal(await run(prompt("Run the tests in the background.", "sdk")), human);
+  turnIdentity.record(["Check the deploy."], human);
+  assert.equal(await run(prompt("Check the deploy.", undefined)), human);
 
   const automation = senderIdentityBlock({ owner: alice, sender: null });
-  for (const source of ["system", "loop_wakeup", "schedule_wakeup", "poll_event"] as const) {
+  const sources = ["system", "loop_wakeup", "schedule_wakeup", "poll_event", undefined] as const;
+  for (const source of sources) {
     const wake = prompt("<task-notification>tests passed</task-notification>", source);
     const context = await run(wake);
     assert.equal(context, automation);

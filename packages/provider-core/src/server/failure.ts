@@ -115,6 +115,8 @@ function curatedCauseMessages(cause: unknown): {
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
+        // T3-CUSTOM(expbkt3): a slash command the agent cannot attribute is refused with this text.
+        case "SenderIdentityRequiredError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
         case "CodexAppServerRequestError": {
           // Only Codex's fixed-shape goal validation text is actionable and

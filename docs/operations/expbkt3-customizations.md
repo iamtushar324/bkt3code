@@ -464,15 +464,23 @@ model reads is built per message, never from the environment.
 
 Delivery per provider:
 
-- **Claude**: the `UserPromptSubmit` hook returns the block recorded for that
-  prompt (start, steer or slash command). The system prompt names only the owner.
+- **Claude**: the `UserPromptSubmit` hook returns the block recorded for the
+  exact prompt text T3 queued (start, steer or slash command). Every other
+  prompt, including a native task notification or auto-continuation with or
+  without a `source`, gets the automation block. The system prompt names only
+  the owner.
 - **Codex**: a `t3_current_user` entry of `additionalContext` (developer
   context) on `turn/start`, and a developer item injected before `turn/steer`.
+  A failed injection fails the steer.
 - **Every other adapter** (OpenCode, Cursor, ACP agents, Pi, Muse,
   Antigravity): the block, tagged `<t3_current_user>`, is appended to the
-  provider copy of the message text. A slash command keeps its text, so these
-  adapters get no block for it. The `remote` driver is skipped: the remote
-  server resolves its own sender.
+  provider copy of a normal message. Identity text never enters a slash
+  command, because command templates and shells expand their arguments. The
+  wrapper remembers whose block each provider thread last received, and
+  refuses a slash command (other than `/compact` and `/logout`) from anyone
+  else, or before any block was delivered, with "Send a normal message first
+  so the agent knows who you are, then repeat the command." The `remote`
+  driver is skipped: the remote server resolves its own sender.
 
 The markers compose with source-control profiles rather than replacing them:
 `mergeSourceControlEnvironment` scrubs the machine's inherited Git and GitHub
