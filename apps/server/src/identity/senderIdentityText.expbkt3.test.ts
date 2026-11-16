@@ -3,9 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  withSenderIdentityTurnInput,
-} from "../orchestration-v2/senderIdentityTurnInput.expbkt3.ts";
+import { withSenderIdentityTurnInput } from "../orchestration-v2/senderIdentityTurnInput.expbkt3.ts";
 import { buildSessionIdentityEnvironment } from "./SessionIdentityEnvironment.ts";
 import { appendSenderIdentityText, senderIdentityText } from "./senderIdentityText.ts";
 
