@@ -10860,8 +10860,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
-            // T3-CUSTOM(expbkt3): record this message's sender before its prompt is queued.
-            turnIdentity.record(turnInput.message.text, turnInput.message.senderIdentity);
+            // T3-CUSTOM(expbkt3): record this message's sender before its prompt is queued. A
+            // native continuation sends no prompt: the hook names automation for native wakes.
+            if (!isClaudeProviderContinuationTurn(turnInput))
+              turnIdentity.record(turnInput.message.text, turnInput.message.senderIdentity);
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;

@@ -14,9 +14,19 @@
 // the sender at user-message position on every turn rather than in the system
 // prompt. Both are gated on the same runtime marker.
 
-import type { HookCallback, HookCallbackMatcher, HookEvent } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallback,
+  HookCallbackMatcher,
+  HookEvent,
+  HookInput,
+} from "@anthropic-ai/claude-agent-sdk";
 
-import { senderIdentityText, sessionIdentityText } from "../identity/senderIdentityText.ts";
+import {
+  ownerFromEnvironment,
+  senderIdentityBlock,
+  senderIdentityText,
+  sessionIdentityText,
+} from "../identity/senderIdentityText.ts";
 
 /** Structural shape of the Claude SDK query options this module folds hooks into. */
 interface ClaudeIdentityHookOptions {
@@ -70,6 +80,15 @@ export function makeClaudeTurnIdentity(): ClaudeTurnIdentity {
   };
 }
 
+/**
+ * A prompt the Claude CLI wrote itself: a task notification, an auto-continuation, a
+ * loop or schedule wakeup. T3 sends every prompt it owns with source `sdk`.
+ */
+export function isNativeWake(input: HookInput): boolean {
+  if (input.hook_event_name !== "UserPromptSubmit") return false;
+  return input.source !== undefined && input.source !== "sdk" && input.source !== "user";
+}
+
 // T3-CUSTOM(expbkt3): the system prompt alone is not enough. Sonnet 5 still answered with
 // the native `# userEmail` value, which arrives later in context. A `UserPromptSubmit`
 // hook states the sender at user-message position on every prompt, which does win
@@ -84,11 +103,16 @@ export function withClaudeSessionIdentityTurnHook<Options extends ClaudeIdentity
     return options;
   }
 
+  const automation = senderIdentityBlock({
+    owner: ownerFromEnvironment(environment),
+    sender: null,
+  });
   const identityHook: HookCallback = async (input) => ({
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext:
-        turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? fallback,
+      additionalContext: isNativeWake(input)
+        ? automation
+        : (turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? fallback),
     },
   });
   const existingHooks = options.hooks ?? {};

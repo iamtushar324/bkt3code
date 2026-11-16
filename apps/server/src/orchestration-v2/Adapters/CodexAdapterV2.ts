@@ -6767,12 +6767,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
-        // T3-CUSTOM(expbkt3): BEGIN a steering message's sender, as developer context.
+        // T3-CUSTOM(expbkt3): BEGIN a steering message's sender, as developer context. Errors
+        // propagate, so the steer never reaches Codex when its identity was not delivered.
         const injectSenderIdentity = (threadId: string, identity: string | undefined) =>
           identity === undefined
             ? Effect.void
-            : client
-                .request("thread/inject_items", {
+            : Effect.asVoid(
+                client.request("thread/inject_items", {
                   threadId,
                   items: [
                     {
@@ -6786,13 +6787,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ],
                     },
                   ],
-                })
-                .pipe(
-                  Effect.asVoid,
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("Codex steer sender identity was not injected.", { cause }),
-                  ),
-                );
+                }),
+              );
         // T3-CUSTOM(expbkt3): END
         // Codex refuses to resume a session archived elsewhere until it is unarchived.
         const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
@@ -7323,6 +7319,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
               const codexInput = yield* toCodexInput(turnInput);
               // T3-CUSTOM(expbkt3): turn/steer takes no context, so the steer's sender goes first.
+              // A failed injection fails the steer: no steer is sent without its own sender.
               yield* injectSenderIdentity(threadId, turnInput.message.senderIdentity);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
