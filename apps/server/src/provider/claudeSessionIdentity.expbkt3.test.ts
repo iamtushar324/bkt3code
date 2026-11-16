@@ -108,7 +108,7 @@ describe("withClaudeSessionIdentityTurnHook", () => {
     sender: null,
   });
   const output = (additionalContext: string) => ({
-    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext },
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit" as const, additionalContext },
   });
 
   it("returns the block recorded for each prompt, steers and slash commands included", async () => {
