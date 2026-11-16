@@ -191,14 +191,26 @@ describe("withSenderIdentityMessage", () => {
     }
   });
 
-  it("keeps a slash command intact and still carries its own sender", () => {
+  it("keeps a slash command first and puts the block in its arguments", () => {
     const result = withSenderIdentityMessage(
       message("/review the diff"),
       ProviderDriverKind.make("opencode"),
       block,
     );
-    assert.equal(result.text, "/review the diff");
+    assert.isTrue(result.text.startsWith("/review the diff\n\n<t3_current_user>\n"));
+    assert.equal(result.text, appendSenderIdentityText("/review the diff", block));
     assert.equal(result.senderIdentity, block);
+  });
+
+  it("leaves maintenance commands, which produce no answer, unchanged", () => {
+    for (const text of ["/compact", "/logout"]) {
+      const result = withSenderIdentityMessage(
+        message(text),
+        ProviderDriverKind.make("opencode"),
+        block,
+      );
+      assert.equal(result.text, text);
+    }
   });
 });
 
@@ -252,6 +264,18 @@ describe("withSenderIdentityRuntime", () => {
       );
       assert.include(started[0]!.senderIdentity!, '- Name: "Alice Example"');
       assert.include(steered[0]!.senderIdentity!, '- Name: "Bob Example"');
+    }),
+  );
+
+  it.effect("names the new sender on a text-only adapter's slash command", () =>
+    Effect.gen(function* () {
+      const { started, wrapped } = recordingRuntime("opencode");
+      yield* wrapped.startTurn(turn(message("hello")));
+      yield* wrapped.startTurn(turn(message("/review", { sentByUserId: UserId.make(bob.userId) })));
+      assert.include(started[0]!.text, '- Name: "Alice Example"');
+      assert.isTrue(started[1]!.text.startsWith("/review\n\n<t3_current_user>\n"));
+      assert.include(started[1]!.text, '- Name: "Bob Example"');
+      assert.notInclude(started[1]!.text, "Alice Example\"\n- Email");
     }),
   );
 

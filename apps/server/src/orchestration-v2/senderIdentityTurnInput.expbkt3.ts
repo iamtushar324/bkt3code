@@ -12,6 +12,7 @@ import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/ser
 import { describeMessageSender } from "../identity/messageSenderIdentity.ts";
 import type { SessionIdentityEnvironmentService } from "../identity/SessionIdentityEnvironment.ts";
 import { appendSenderIdentityText } from "../identity/senderIdentityText.ts";
+import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 
 /**
  * Claude takes the block through its `UserPromptSubmit` hook, Codex as developer context.
@@ -26,7 +27,9 @@ const DRIVERS_WITHOUT_APPENDED_IDENTITY: ReadonlySet<ProviderDriverKind> = new S
 
 /**
  * Sets the block on the message and, for adapters without a native channel, appends it
- * to the text. A slash command keeps its text, so the adapter still parses the command.
+ * to the text. A slash command keeps its name first, so it still parses, and the block
+ * reaches the model through the command's arguments. Only maintenance commands
+ * (`/compact`, `/logout`), which produce no answer, stay unchanged.
  */
 export function withSenderIdentityMessage(
   message: ProviderAdapter.ProviderAdapterV2TurnMessage,
@@ -35,7 +38,7 @@ export function withSenderIdentityMessage(
 ): ProviderAdapter.ProviderAdapterV2TurnMessage {
   if (identity === undefined) return message;
   const appends =
-    !DRIVERS_WITHOUT_APPENDED_IDENTITY.has(driver) && !message.text.trimStart().startsWith("/");
+    !DRIVERS_WITHOUT_APPENDED_IDENTITY.has(driver) && !isNativeMaintenanceCommand(message);
   return {
     ...message,
     senderIdentity: identity,

@@ -1308,6 +1308,95 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  // T3-CUSTOM(expbkt3): a steer whose sender identity was not delivered never reaches Codex.
+  it.effect("fails a steer instead of sending it when its sender identity is not injected", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "identity-steer-thread";
+      const nativeTurnId = "identity-steer-turn";
+      const identity = "CURRENT USER: no human sender for this message (automation).";
+      const requests: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "identity-steer-inject-fails",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
+            {
+              type: "expect_outbound",
+              label: "thread/inject_items",
+              frame: {
+                id: 4,
+                method: "thread/inject_items",
+                params: {
+                  threadId: nativeThreadId,
+                  items: [
+                    {
+                      type: "message",
+                      role: "developer",
+                      content: [
+                        {
+                          type: "input_text",
+                          text: `<t3_current_user>${identity}</t3_current_user>`,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/inject_items",
+              frame: { id: 4, error: { code: -32603, message: "inject failed" } },
+            },
+          ],
+        }),
+        () => Effect.void,
+        (method) => Effect.sync(() => void requests.push(method)),
+      );
+      const first = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("identity-steer"),
+        text: "work",
+      });
+      yield* harness.runtime.startTurn(first);
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        ),
+      );
+      const running = harness.events.find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running?.type !== "provider_turn.updated") return assert.fail("no running turn");
+      const steered = yield* harness.runtime
+        .steerTurn({
+          threadId: first.threadId,
+          runId: first.runId,
+          providerThread: first.providerThread,
+          providerTurnId: running.providerTurn.id,
+          message: { ...first.message, text: "scheduled check", senderIdentity: identity },
+        })
+        .pipe(Effect.result);
+      assert.equal(steered._tag, "Failure");
+      assert.include(requests, "thread/inject_items");
+      assert.notInclude(requests, "turn/steer");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "rejects a previous run's native turn when it completes %s the new start response",
     (completionOrder) =>
