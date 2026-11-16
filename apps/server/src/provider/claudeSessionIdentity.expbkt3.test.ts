@@ -108,7 +108,10 @@ describe("withClaudeSessionIdentityTurnHook", () => {
     const additionalContext = claudeSessionIdentityTurnContext(humanEnvironment);
     assert.include(additionalContext!, '- Name: "Bob Example"');
     assert.deepEqual(await callback!(hookInput("who am i"), undefined, signal), {
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext },
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: additionalContext!,
+      },
     });
     assert.equal(
       senderIdentityText(automationEnvironment),

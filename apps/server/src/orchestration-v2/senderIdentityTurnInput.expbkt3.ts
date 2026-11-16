@@ -43,29 +43,31 @@ export function withSenderIdentityMessage(
   };
 }
 
-type WithMessage = { readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage };
-
 /** Wraps a runtime's `startTurn` and `steerTurn` with the identity of each message. */
 export function withSenderIdentityRuntime(
   runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
   executionOptions: ProviderSessionExecutionOptions,
   identityService: Option.Option<SessionIdentityEnvironmentService["Service"]>,
 ): Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "startTurn" | "steerTurn"> {
-  const identified = <Input extends WithMessage>(input: Input): Effect.Effect<Input> =>
-    Effect.gen(function* () {
-      if (Option.isNone(identityService)) return input;
-      const identity = yield* describeMessageSender(
-        identityService.value,
-        executionOptions.identityEnvironment,
-        input.message,
-      );
-      return {
-        ...input,
-        message: withSenderIdentityMessage(input.message, runtime.driver, identity),
-      };
-    });
+  const identifyMessage = Effect.fn("SenderIdentity.identifyMessage")(function* (
+    message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+  ) {
+    if (Option.isNone(identityService)) return message;
+    const identity = yield* describeMessageSender(
+      identityService.value,
+      executionOptions.identityEnvironment,
+      message,
+    );
+    return withSenderIdentityMessage(message, runtime.driver, identity);
+  });
   return {
-    startTurn: (input) => identified(input).pipe(Effect.flatMap(runtime.startTurn)),
-    steerTurn: (input) => identified(input).pipe(Effect.flatMap(runtime.steerTurn)),
+    startTurn: (input) =>
+      identifyMessage(input.message).pipe(
+        Effect.flatMap((message) => runtime.startTurn({ ...input, message })),
+      ),
+    steerTurn: (input) =>
+      identifyMessage(input.message).pipe(
+        Effect.flatMap((message) => runtime.steerTurn({ ...input, message })),
+      ),
   };
 }
