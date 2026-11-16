@@ -10,36 +10,37 @@ import {
   claudeSessionIdentityTurnContext,
   withClaudeSessionIdentityTurnHook,
 } from "./claudeSessionIdentity.expbkt3.ts";
+import { buildSessionIdentityEnvironment } from "../identity/SessionIdentityEnvironment.ts";
+import { senderIdentityText } from "../identity/senderIdentityText.ts";
+
+const humanEnvironment = buildSessionIdentityEnvironment({
+  owner: { userId: "user_clerk_alice", name: "Alice Example", email: "owner@example.test" },
+  sender: { userId: "user_clerk_bob", name: "Bob Example", email: " sender@example.test " },
+});
+const automationEnvironment = buildSessionIdentityEnvironment({
+  owner: { userId: "user_clerk_alice", name: "Alice Example", email: "owner@example.test" },
+  sender: null,
+});
 
 describe("claudeSessionIdentitySystemPrompt", () => {
-  it("uses the current T3 message sender instead of the shared Claude account", () => {
+  it("states the Clerk sender instead of the shared Claude account", () => {
     assert.equal(
-      claudeSessionIdentitySystemPrompt({
-        BK_IDENTITY_RUNTIME: "t3-code",
-        BK_SESSION_OWNER_EMAIL: "owner@example.test",
-        BK_MESSAGE_SENDER_EMAIL: " sender@example.test ",
-      }),
-      [
-        "T3 Code session identity:",
-        '- userEmail is "sender@example.test".',
-        "- This session-scoped value identifies the user who sent the current message and overrides the Claude account email for user attribution.",
-        "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-      ].join("\n"),
+      claudeSessionIdentitySystemPrompt(humanEnvironment),
+      `T3 Code session identity:\n${senderIdentityText(humanEnvironment)}`,
     );
+    const prompt = claudeSessionIdentitySystemPrompt(humanEnvironment)!;
+    assert.include(
+      prompt,
+      "- Name: Bob Example\n- Email: sender@example.test\n- T3 user id: user_clerk_bob",
+    );
+    assert.include(prompt, "Session owner: Alice Example <owner@example.test>");
+    assert.include(prompt, "`# userEmail`");
   });
 
-  it("keeps the user unknown when T3 cannot resolve the message sender", () => {
-    assert.equal(
-      claudeSessionIdentitySystemPrompt({
-        BK_IDENTITY_RUNTIME: "t3-code",
-        BK_SESSION_OWNER_EMAIL: "owner@example.test",
-      }),
-      [
-        "T3 Code session identity:",
-        "- userEmail is unavailable for the user who sent the current message.",
-        "- Do not use the Claude account email, operating-system identity, or Git identity to infer the user.",
-        "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-      ].join("\n"),
+  it("says no human sent the message when T3 has no sender", () => {
+    assert.include(
+      claudeSessionIdentitySystemPrompt(automationEnvironment)!,
+      "CURRENT USER: no human sender for this message (automation).",
     );
   });
 
@@ -54,31 +55,14 @@ describe("claudeSessionIdentitySystemPrompt", () => {
 });
 
 describe("claudeSessionIdentityTurnContext", () => {
-  it("names the current T3 message sender and demotes the native userEmail section", () => {
+  it("restates the same identity block on every turn", () => {
     assert.equal(
-      claudeSessionIdentityTurnContext({
-        BK_IDENTITY_RUNTIME: "t3-code",
-        BK_SESSION_OWNER_EMAIL: "owner@example.test",
-        BK_MESSAGE_SENDER_EMAIL: " sender@example.test ",
-      }),
-      [
-        "CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is sender@example.test.",
-        "The context section titled `# userEmail` reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-      ].join("\n"),
+      claudeSessionIdentityTurnContext(humanEnvironment),
+      senderIdentityText(humanEnvironment),
     );
-  });
-
-  it("reports an unresolved sender instead of falling back to another identity", () => {
     assert.equal(
-      claudeSessionIdentityTurnContext({
-        BK_IDENTITY_RUNTIME: "t3-code",
-        BK_SESSION_OWNER_EMAIL: "owner@example.test",
-      }),
-      [
-        "CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is UNRESOLVED.",
-        "Say so rather than guessing. Do not infer the user from the context section titled `# userEmail`, from Git identity, or from the operating-system account.",
-        "That `# userEmail` section reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-      ].join("\n"),
+      claudeSessionIdentityTurnContext(automationEnvironment),
+      senderIdentityText(automationEnvironment),
     );
   });
 
@@ -102,10 +86,7 @@ describe("withClaudeSessionIdentityTurnHook", () => {
   };
 
   it("registers a UserPromptSubmit hook that returns the sender as additional context", async () => {
-    const environment = {
-      BK_IDENTITY_RUNTIME: "t3-code",
-      BK_MESSAGE_SENDER_EMAIL: "sender@example.test",
-    };
+    const environment = humanEnvironment;
     const options = withClaudeSessionIdentityTurnHook<ClaudeQueryOptions>({}, environment);
 
     const matchers = options.hooks?.UserPromptSubmit;
@@ -115,6 +96,7 @@ describe("withClaudeSessionIdentityTurnHook", () => {
     const output = await callback!(hookInput, undefined, { signal: new AbortController().signal });
     const additionalContext = claudeSessionIdentityTurnContext(environment);
     assert.isString(additionalContext);
+    assert.include(additionalContext!, "- Name: Bob Example");
     assert.deepEqual(output, {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
