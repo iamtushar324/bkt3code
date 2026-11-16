@@ -68,6 +68,10 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
   scheduledTaskId: OrchestrationV2ConversationMessage.fields.scheduledTaskId,
   senderThreadId: OrchestrationV2ConversationMessage.fields.senderThreadId,
+  // T3-CUSTOM(expbkt3): BEGIN who sent this exact message, and the identity block for it.
+  sentByUserId: OrchestrationV2ConversationMessage.fields.sentByUserId,
+  senderIdentity: Schema.optionalKey(Schema.String),
+  // T3-CUSTOM(expbkt3): END
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
 
