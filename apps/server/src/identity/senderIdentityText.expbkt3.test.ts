@@ -275,7 +275,7 @@ describe("withSenderIdentityRuntime", () => {
       assert.include(started[0]!.text, '- Name: "Alice Example"');
       assert.isTrue(started[1]!.text.startsWith("/review\n\n<t3_current_user>\n"));
       assert.include(started[1]!.text, '- Name: "Bob Example"');
-      assert.notInclude(started[1]!.text, "Alice Example\"\n- Email");
+      assert.notInclude(started[1]!.text, 'Alice Example"\n- Email');
     }),
   );
 
