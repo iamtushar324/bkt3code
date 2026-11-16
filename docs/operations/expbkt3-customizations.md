@@ -379,11 +379,20 @@ Every provider session spawns with additive environment variables naming the
 people behind the turn, so an agent never has to infer them from the shared
 machine:
 
-| Variable                  | Value                                                                   |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `BK_IDENTITY_RUNTIME`     | Always `t3-code`. Marks the runtime even when nobody could be resolved. |
-| `BK_SESSION_OWNER_EMAIL`  | Primary email of the thread owner, from the environment-user directory. |
-| `BK_MESSAGE_SENDER_EMAIL` | Primary email of the user who actually sent the message being answered. |
+| Variable                  | Value                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `BK_IDENTITY_RUNTIME`     | Always `t3-code`. Marks the runtime even when nobody could be resolved.                    |
+| `BK_SENDER_NAME`          | Clerk full name of the user who actually sent the message being answered.                  |
+| `BK_SENDER_EMAIL`         | Clerk primary email of that sender.                                                        |
+| `BK_SENDER_USER_ID`       | T3 (Clerk) user id of that sender. Present for every human sender, even without a profile. |
+| `BK_OWNER_NAME`           | Clerk full name of the thread owner.                                                       |
+| `BK_OWNER_EMAIL`          | Clerk primary email of the thread owner.                                                   |
+| `BK_OWNER_USER_ID`        | T3 (Clerk) user id of the thread owner.                                                    |
+| `BK_SESSION_OWNER_EMAIL`  | Deprecated alias of `BK_OWNER_EMAIL`, kept for one release.                                |
+| `BK_MESSAGE_SENDER_EMAIL` | Deprecated alias of `BK_SENDER_EMAIL`, kept for one release.                               |
+
+Names and emails come from the `environment_users` row that each Clerk login
+upserts (`EnvironmentUserService.admit`). An absent value is omitted, never empty.
 
 Four rules carry the behaviour:
 
@@ -391,7 +400,7 @@ Four rules carry the behaviour:
   dotfiles describe the machine; on a shared box they attribute one
   contributor's session to another, which is the bug this replaces.
 - **The sender is never inferred.** Owner fallback is applied for credential
-  binding, but `BK_MESSAGE_SENDER_EMAIL` is set only from a real sender. An
+  binding, but the `BK_SENDER_*` variables are set only from a real sender. An
   absent variable means "unknown", and an agent must say so rather than guess.
 - **Unresolvable identity degrades, never blocks.** A missing user record or an
   unreadable directory leaves the marker alone and the turn proceeds.
@@ -434,6 +443,25 @@ system-prompt append stays as the belt to the hook's braces; both are gated on
 `BK_IDENTITY_RUNTIME`, so upstream Claude sessions get neither. The identity
 environment is read once at spawn and a changed sender already restarts the
 provider, so the per-turn text cannot go stale.
+
+### One identity text for every provider
+
+`apps/server/src/identity/senderIdentityText.ts` turns the identity environment
+into the one block every provider reads: the sender's name, email and T3 user id,
+the session owner, and a warning that `# userEmail`, Git and the operating-system
+user describe the machine. A message with no human sender (schedule, Linear
+runner, automation) gets an explicit "no human sender" block instead of a guess.
+Delivery per provider:
+
+- **Claude**: the system-prompt append and the `UserPromptSubmit` hook above.
+- **Codex**: a `t3_current_user` entry of `additionalContext` (developer context)
+  on `turn/start`. Codex re-sends it only when it changes and restores it after
+  compaction.
+- **Every other adapter** (OpenCode, Cursor, ACP agents, Pi, Muse, Antigravity):
+  `ProviderSessionManager` appends the block, tagged `<t3_current_user>`, to the
+  provider copy of the message text on each turn (`senderIdentityTurnInput.expbkt3.ts`).
+  The stored message and the chat UI keep the user's own text. Slash commands are
+  left intact. The `remote` driver is skipped: the remote server resolves its own sender.
 
 The markers compose with source-control profiles rather than replacing them:
 `mergeSourceControlEnvironment` scrubs the machine's inherited Git and GitHub

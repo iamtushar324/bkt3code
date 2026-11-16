@@ -16,11 +16,7 @@
 
 import type { HookCallback, HookCallbackMatcher, HookEvent } from "@anthropic-ai/claude-agent-sdk";
 
-import {
-  MESSAGE_SENDER_EMAIL_KEY,
-  SESSION_IDENTITY_RUNTIME,
-  SESSION_IDENTITY_RUNTIME_KEY,
-} from "../identity/SessionIdentityEnvironment.ts";
+import { senderIdentityText } from "../identity/senderIdentityText.ts";
 
 /** Structural shape of the Claude SDK query options this module folds hooks into. */
 interface ClaudeIdentityHookOptions {
@@ -30,53 +26,18 @@ interface ClaudeIdentityHookOptions {
 export function claudeSessionIdentitySystemPrompt(
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  if (environment[SESSION_IDENTITY_RUNTIME_KEY] !== SESSION_IDENTITY_RUNTIME) {
-    return undefined;
-  }
-
-  const senderEmail = environment[MESSAGE_SENDER_EMAIL_KEY]?.trim();
-  if (!senderEmail) {
-    return [
-      "T3 Code session identity:",
-      "- userEmail is unavailable for the user who sent the current message.",
-      "- Do not use the Claude account email, operating-system identity, or Git identity to infer the user.",
-      "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-    ].join("\n");
-  }
-
-  return [
-    "T3 Code session identity:",
-    `- userEmail is ${JSON.stringify(senderEmail)}.`,
-    "- This session-scoped value identifies the user who sent the current message and overrides the Claude account email for user attribution.",
-    "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-  ].join("\n");
+  const identity = senderIdentityText(environment);
+  return identity === undefined ? undefined : `T3 Code session identity:\n${identity}`;
 }
 
-// T3-CUSTOM(expbkt3): the appended system prompt alone is not enough. Sonnet 5
-// reproduces the countermand verbatim and still answers with the native
-// `# userEmail` value, because that section arrives later in context than the
-// system prompt and outranks it. A `UserPromptSubmit` hook re-states the sender
-// at user-message position on every turn, which does win (verified 2026-08-21).
+// T3-CUSTOM(expbkt3): the appended system prompt alone is not enough. Sonnet 5 still
+// answered with the native `# userEmail` value, which arrives later in context. A
+// `UserPromptSubmit` hook re-states the sender at user-message position on every turn,
+// which does win (verified 2026-08-21).
 export function claudeSessionIdentityTurnContext(
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  if (environment[SESSION_IDENTITY_RUNTIME_KEY] !== SESSION_IDENTITY_RUNTIME) {
-    return undefined;
-  }
-
-  const senderEmail = environment[MESSAGE_SENDER_EMAIL_KEY]?.trim();
-  if (!senderEmail) {
-    return [
-      "CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is UNRESOLVED.",
-      "Say so rather than guessing. Do not infer the user from the context section titled `# userEmail`, from Git identity, or from the operating-system account.",
-      "That `# userEmail` section reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-    ].join("\n");
-  }
-
-  return [
-    `CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is ${senderEmail}.`,
-    "The context section titled `# userEmail` reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-  ].join("\n");
+  return senderIdentityText(environment);
 }
 
 /**

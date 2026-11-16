@@ -12,6 +12,12 @@ import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import {
   MESSAGE_SENDER_EMAIL_KEY,
+  OWNER_EMAIL_KEY,
+  OWNER_NAME_KEY,
+  OWNER_USER_ID_KEY,
+  SENDER_EMAIL_KEY,
+  SENDER_NAME_KEY,
+  SENDER_USER_ID_KEY,
   SESSION_IDENTITY_RUNTIME,
   SESSION_IDENTITY_RUNTIME_KEY,
   SESSION_OWNER_EMAIL_KEY,
@@ -31,12 +37,21 @@ const alice = UserId.make("user_clerk_alice");
 const bob = UserId.make("user_clerk_bob");
 const seenAt = DateTime.makeUnsafe("2026-08-18T10:00:00.000Z");
 
-const seedUser = (userId: UserId, primaryEmail: string | null) =>
+const names: Record<string, string> = {
+  [String(alice)]: "Alice Example",
+  [String(bob)]: "Bob Example",
+};
+
+const seedUser = (
+  userId: UserId,
+  primaryEmail: string | null,
+  displayName: string | null = names[String(userId)] ?? null,
+) =>
   Effect.gen(function* () {
     const users = yield* EnvironmentUsers.EnvironmentUserRepository;
     yield* users.upsert({
       userId: EnvironmentUserId.make(String(userId)),
-      displayName: String(userId),
+      displayName,
       primaryEmail,
       avatarUrl: null,
       role: "member",
@@ -56,7 +71,13 @@ it.effect("names the thread owner and the user who actually sent the message", (
 
     expect(environment).toStrictEqual({
       [SESSION_IDENTITY_RUNTIME_KEY]: SESSION_IDENTITY_RUNTIME,
+      [OWNER_NAME_KEY]: "Alice Example",
+      [OWNER_EMAIL_KEY]: "alice@example.com",
+      [OWNER_USER_ID_KEY]: "user_clerk_alice",
       [SESSION_OWNER_EMAIL_KEY]: "alice@example.com",
+      [SENDER_NAME_KEY]: "Bob Example",
+      [SENDER_EMAIL_KEY]: "bob@example.com",
+      [SENDER_USER_ID_KEY]: "user_clerk_bob",
       [MESSAGE_SENDER_EMAIL_KEY]: "bob@example.com",
     });
   }).pipe(Effect.provide(serviceLayer)),
@@ -71,10 +92,12 @@ it.effect("never manufactures a sender from the owner", () =>
 
     expect(environment[SESSION_OWNER_EMAIL_KEY]).toBe("alice@example.com");
     expect(environment[MESSAGE_SENDER_EMAIL_KEY]).toBeUndefined();
+    expect(environment[SENDER_USER_ID_KEY]).toBeUndefined();
+    expect(environment[SENDER_NAME_KEY]).toBeUndefined();
   }).pipe(Effect.provide(serviceLayer)),
 );
 
-it.effect("reports the runtime alone when the directory has no record of the users", () =>
+it.effect("keeps only the user ids when the directory has no record of the users", () =>
   Effect.gen(function* () {
     const identity = yield* SessionIdentityEnvironmentService;
 
@@ -82,20 +105,24 @@ it.effect("reports the runtime alone when the directory has no record of the use
 
     expect(environment).toStrictEqual({
       [SESSION_IDENTITY_RUNTIME_KEY]: SESSION_IDENTITY_RUNTIME,
+      [OWNER_USER_ID_KEY]: "user_clerk_alice",
+      [SENDER_USER_ID_KEY]: "user_clerk_bob",
     });
   }).pipe(Effect.provide(serviceLayer)),
 );
 
-it.effect("omits an email the directory records as blank", () =>
+it.effect("omits a name or email the directory records as blank", () =>
   Effect.gen(function* () {
-    yield* seedUser(alice, null);
-    yield* seedUser(bob, "   ");
+    yield* seedUser(alice, null, null);
+    yield* seedUser(bob, "   ", "  ");
     const identity = yield* SessionIdentityEnvironmentService;
 
     const environment = yield* identity.resolve({ ownerUserId: alice, senderUserId: bob });
 
     expect(environment).toStrictEqual({
       [SESSION_IDENTITY_RUNTIME_KEY]: SESSION_IDENTITY_RUNTIME,
+      [OWNER_USER_ID_KEY]: "user_clerk_alice",
+      [SENDER_USER_ID_KEY]: "user_clerk_bob",
     });
   }).pipe(Effect.provide(serviceLayer)),
 );
@@ -127,6 +154,21 @@ it.effect("restarts the provider when a different contributor sends the next mes
   }).pipe(Effect.provide(serviceLayer)),
 );
 
+it.effect("restarts the provider when the sender's Clerk name changes", () =>
+  Effect.gen(function* () {
+    yield* seedUser(alice, "alice@example.com");
+    yield* seedUser(bob, "bob@example.com", "Bob Example");
+    const identity = yield* SessionIdentityEnvironmentService;
+
+    const bound = yield* identity.resolve({ ownerUserId: alice, senderUserId: bob });
+    yield* seedUser(bob, "bob@example.com", "Robert Example");
+    const renamed = yield* identity.resolve({ ownerUserId: alice, senderUserId: bob });
+
+    expect(renamed[SENDER_NAME_KEY]).toBe("Robert Example");
+    expect(sessionIdentityFingerprint(renamed)).not.toBe(sessionIdentityFingerprint(bound));
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
 it.effect("restarts the provider when the thread is transferred to a new owner", () =>
   Effect.gen(function* () {
     yield* seedUser(alice, "alice@example.com");
@@ -142,10 +184,10 @@ it.effect("restarts the provider when the thread is transferred to a new owner",
 );
 
 it("distinguishes an unresolved identity from a resolved one", () => {
-  const unresolved = buildSessionIdentityEnvironment({ ownerEmail: null, senderEmail: null });
+  const unresolved = buildSessionIdentityEnvironment({ owner: null, sender: null });
   const resolved = buildSessionIdentityEnvironment({
-    ownerEmail: "alice@example.com",
-    senderEmail: null,
+    owner: { userId: null, name: null, email: "alice@example.com" },
+    sender: null,
   });
 
   expect(unresolved[SESSION_IDENTITY_RUNTIME_KEY]).toBe(SESSION_IDENTITY_RUNTIME);
@@ -172,8 +214,8 @@ it("composes with a thread profile without displacing its Git identity", () => {
       GIT_AUTHOR_EMAIL: "alice@users.noreply.github.com",
     },
     identityEnvironment: buildSessionIdentityEnvironment({
-      ownerEmail: "alice@example.com",
-      senderEmail: "bob@example.com",
+      owner: { userId: null, name: null, email: "alice@example.com" },
+      sender: { userId: null, name: null, email: "bob@example.com" },
     }),
   });
 
@@ -182,7 +224,9 @@ it("composes with a thread profile without displacing its Git identity", () => {
     GIT_AUTHOR_NAME: "Alice Example",
     GIT_AUTHOR_EMAIL: "alice@users.noreply.github.com",
     [SESSION_IDENTITY_RUNTIME_KEY]: SESSION_IDENTITY_RUNTIME,
+    [OWNER_EMAIL_KEY]: "alice@example.com",
     [SESSION_OWNER_EMAIL_KEY]: "alice@example.com",
+    [SENDER_EMAIL_KEY]: "bob@example.com",
     [MESSAGE_SENDER_EMAIL_KEY]: "bob@example.com",
   });
 });

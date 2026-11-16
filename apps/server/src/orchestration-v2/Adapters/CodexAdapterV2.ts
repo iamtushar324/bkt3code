@@ -2,6 +2,8 @@
 import { presenceEnvironmentFor } from "../../presence/presenceEnvironment.expbkt3.ts";
 // T3-CUSTOM(expbkt3): fork execution environment overlays the provider instance.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
+// T3-CUSTOM(expbkt3): the Clerk sender identity rides as developer context on each turn.
+import { senderIdentityText } from "../../identity/senderIdentityText.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -757,6 +759,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly senderIdentity?: string; // T3-CUSTOM(expbkt3): Clerk sender identity block.
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -793,10 +796,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+    // T3-CUSTOM(expbkt3): BEGIN sender identity is trusted application context, after app context.
+    const identityContext =
+      input.senderIdentity === undefined
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { t3_current_user: { kind: "application" as const, value: input.senderIdentity } };
+    const additionalContext =
+      t3Context === undefined &&
+      identityContext === undefined &&
+      Object.keys(appContext).length === 0
+        ? undefined
+        : { ...t3Context, ...appContext, ...identityContext };
+    // T3-CUSTOM(expbkt3): END
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -1754,6 +1765,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // T3-CUSTOM(expbkt3): spawned tools inherit the thread's bearer and presence endpoint.
           mcpSession: yield* readMcpSession(input.threadId),
         });
+        // T3-CUSTOM(expbkt3): a sender change restarts the session, so open-time identity holds.
+        const senderIdentity = senderIdentityText(
+          input.executionOptions?.identityEnvironment ?? {},
+        );
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -6793,6 +6808,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(senderIdentity === undefined ? {} : { senderIdentity }), // T3-CUSTOM(expbkt3): Clerk sender.
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
