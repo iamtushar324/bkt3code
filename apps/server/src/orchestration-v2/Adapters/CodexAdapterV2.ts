@@ -2,8 +2,6 @@
 import { presenceEnvironmentFor } from "../../presence/presenceEnvironment.expbkt3.ts";
 // T3-CUSTOM(expbkt3): fork execution environment overlays the provider instance.
 import { mergeSourceControlEnvironment } from "../../sourceControl/SourceControlExecutionEnvironment.ts";
-// T3-CUSTOM(expbkt3): the Clerk sender identity rides as developer context on each turn.
-import { senderIdentityText } from "../../identity/senderIdentityText.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -1765,10 +1763,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // T3-CUSTOM(expbkt3): spawned tools inherit the thread's bearer and presence endpoint.
           mcpSession: yield* readMcpSession(input.threadId),
         });
-        // T3-CUSTOM(expbkt3): a sender change restarts the session, so open-time identity holds.
-        const senderIdentity = senderIdentityText(
-          input.executionOptions?.identityEnvironment ?? {},
-        );
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -6773,6 +6767,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        // T3-CUSTOM(expbkt3): BEGIN a steering message's sender, as developer context.
+        const injectSenderIdentity = (threadId: string, identity: string | undefined) =>
+          identity === undefined
+            ? Effect.void
+            : client
+                .request("thread/inject_items", {
+                  threadId,
+                  items: [
+                    {
+                      type: "message",
+                      role: "developer",
+                      content: [
+                        {
+                          type: "input_text",
+                          text: `<t3_current_user>${identity}</t3_current_user>`,
+                        },
+                      ],
+                    },
+                  ],
+                })
+                .pipe(
+                  Effect.asVoid,
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Codex steer sender identity was not injected.", { cause }),
+                  ),
+                );
+        // T3-CUSTOM(expbkt3): END
         // Codex refuses to resume a session archived elsewhere until it is unarchived.
         const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
           threadId: string,
@@ -6808,7 +6829,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
-              ...(senderIdentity === undefined ? {} : { senderIdentity }), // T3-CUSTOM(expbkt3): Clerk sender.
+              // T3-CUSTOM(expbkt3): the Clerk identity of this exact message.
+              ...(turnInput.message.senderIdentity === undefined
+                ? {}
+                : { senderIdentity: turnInput.message.senderIdentity }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
@@ -7298,6 +7322,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
 
               const codexInput = yield* toCodexInput(turnInput);
+              // T3-CUSTOM(expbkt3): turn/steer takes no context, so the steer's sender goes first.
+              yield* injectSenderIdentity(threadId, turnInput.message.senderIdentity);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

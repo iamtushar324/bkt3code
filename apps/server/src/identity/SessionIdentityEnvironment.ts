@@ -147,6 +147,8 @@ export class SessionIdentityEnvironmentService extends Context.Service<
   SessionIdentityEnvironmentService,
   {
     readonly resolve: (input: SessionIdentityRequest) => Effect.Effect<NodeJS.ProcessEnv>;
+    /** One directory person by T3 user id; an unknown or unreadable row keeps only the id. */
+    readonly resolvePerson: (userId: UserId) => Effect.Effect<SessionIdentityPerson>;
   }
 >()("t3/identity/SessionIdentityEnvironment/SessionIdentityEnvironmentService") {}
 
@@ -188,7 +190,7 @@ export const make = Effect.gen(function* () {
     return buildSessionIdentityEnvironment({ owner, sender });
   });
 
-  return SessionIdentityEnvironmentService.of({ resolve });
+  return SessionIdentityEnvironmentService.of({ resolve, resolvePerson });
 });
 
 export const layer = Layer.effect(SessionIdentityEnvironmentService, make);

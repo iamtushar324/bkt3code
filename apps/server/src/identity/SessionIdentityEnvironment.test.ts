@@ -236,3 +236,21 @@ it("leaves execution options untouched when no identity was resolved", () => {
   const sourceControlOnly = { environment: { GH_TOKEN: "alice-token" } };
   expect(withSessionIdentityEnvironment(sourceControlOnly)).toBe(sourceControlOnly);
 });
+
+it.effect("resolves one directory person and keeps the id of an unknown one", () =>
+  Effect.gen(function* () {
+    yield* seedUser(bob, "bob@example.com");
+    const identity = yield* SessionIdentityEnvironmentService;
+
+    expect(yield* identity.resolvePerson(bob)).toStrictEqual({
+      userId: "user_clerk_bob",
+      name: "Bob Example",
+      email: "bob@example.com",
+    });
+    expect(yield* identity.resolvePerson(alice)).toStrictEqual({
+      userId: "user_clerk_alice",
+      name: null,
+      email: null,
+    });
+  }).pipe(Effect.provide(serviceLayer)),
+);

@@ -67,8 +67,8 @@ import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/ser
 import { makeBackgroundTurnGuard } from "./backgroundTurnGrant.expbkt3.ts";
 // T3-CUSTOM(expbkt3): a released session settles the subagents it leaves open.
 import { settleReleasedSessionSubagents } from "./releasedSessionSubagents.expbkt3.ts";
-// T3-CUSTOM(expbkt3): sender identity for adapters without a native channel.
-import { withSenderIdentityStartTurn } from "./senderIdentityTurnInput.expbkt3.ts";
+// T3-CUSTOM(expbkt3): every turn and steer names the sender of its own message.
+import { withSenderIdentityRuntime } from "./senderIdentityTurnInput.expbkt3.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -1895,8 +1895,8 @@ export const layerWithOptions = (
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
-        // T3-CUSTOM(expbkt3): every adapter turn carries the session's Clerk sender identity.
-        const identityStartTurn = withSenderIdentityStartTurn(runtime, executionOptions);
+        // T3-CUSTOM(expbkt3): every turn and steer carries its own message's Clerk sender.
+        const named = withSenderIdentityRuntime(runtime, executionOptions, identityService);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -2065,7 +2065,7 @@ export const layerWithOptions = (
                   ),
                   // T3-CUSTOM(expbkt3): the Clerk sender identity reaches every provider's turn.
                   () =>
-                    identityStartTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    named.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -2078,7 +2078,8 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              // T3-CUSTOM(expbkt3): a steer names the sender of its own message too.
+              Effect.andThen(named.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>

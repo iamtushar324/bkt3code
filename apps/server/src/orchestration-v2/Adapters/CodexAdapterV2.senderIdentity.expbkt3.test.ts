@@ -29,7 +29,7 @@ it.effect("sends the sender identity as trusted developer context on the turn", 
     assert.deepEqual(alone.additionalContext, {
       t3_current_user: { kind: "application", value: senderIdentity },
     });
-    assert.include(senderIdentity, "- Name: Bob Example");
+    assert.include(senderIdentity, '- Name: "Bob Example"');
     assert.deepEqual(alone.input, [{ type: "text", text: "who am I?" }]);
 
     const withEverything = yield* CodexAdapterV2.buildCodexTurnStartParams({
