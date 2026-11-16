@@ -97,6 +97,7 @@ export function withSenderIdentityRuntime(
       executionOptions.identityEnvironment,
       message,
     );
+    if (identity === undefined) return { message, rejected: false };
     return prepareSenderIdentity({
       message,
       driver: runtime.driver,
