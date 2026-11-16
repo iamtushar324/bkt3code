@@ -757,6 +757,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly senderIdentity?: string; // T3-CUSTOM(expbkt3): Clerk sender identity block.
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -793,10 +794,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+    // T3-CUSTOM(expbkt3): BEGIN sender identity is trusted application context, after app context.
+    const identityContext =
+      input.senderIdentity === undefined
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { t3_current_user: { kind: "application" as const, value: input.senderIdentity } };
+    const additionalContext =
+      t3Context === undefined &&
+      identityContext === undefined &&
+      Object.keys(appContext).length === 0
+        ? undefined
+        : { ...t3Context, ...appContext, ...identityContext };
+    // T3-CUSTOM(expbkt3): END
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -6758,6 +6767,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        // T3-CUSTOM(expbkt3): BEGIN a steering message's sender, as developer context. Errors
+        // propagate, so the steer never reaches Codex when its identity was not delivered.
+        const injectSenderIdentity = (threadId: string, identity: string | undefined) =>
+          identity === undefined
+            ? Effect.void
+            : Effect.asVoid(
+                client.request("thread/inject_items", {
+                  threadId,
+                  items: [
+                    {
+                      type: "message",
+                      role: "developer",
+                      content: [
+                        {
+                          type: "input_text",
+                          text: `<t3_current_user>${identity}</t3_current_user>`,
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              );
+        // T3-CUSTOM(expbkt3): END
         // Codex refuses to resume a session archived elsewhere until it is unarchived.
         const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
           threadId: string,
@@ -6793,6 +6825,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              // T3-CUSTOM(expbkt3): the Clerk identity of this exact message.
+              ...(turnInput.message.senderIdentity === undefined
+                ? {}
+                : { senderIdentity: turnInput.message.senderIdentity }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
@@ -7282,6 +7318,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
 
               const codexInput = yield* toCodexInput(turnInput);
+              // T3-CUSTOM(expbkt3): turn/steer takes no context, so the steer's sender goes first.
+              // A failed injection fails the steer: no steer is sent without its own sender.
+              yield* injectSenderIdentity(threadId, turnInput.message.senderIdentity);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

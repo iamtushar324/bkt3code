@@ -19,7 +19,15 @@ import * as EnvironmentUsers from "../persistence/EnvironmentUsers.ts";
 import type { ProviderSessionExecutionOptions } from "@t3tools/provider-core/server/sessionExecutionOptions.expbkt3";
 
 export const SESSION_IDENTITY_RUNTIME_KEY = "BK_IDENTITY_RUNTIME";
+export const SENDER_NAME_KEY = "BK_SENDER_NAME";
+export const SENDER_EMAIL_KEY = "BK_SENDER_EMAIL";
+export const SENDER_USER_ID_KEY = "BK_SENDER_USER_ID";
+export const OWNER_NAME_KEY = "BK_OWNER_NAME";
+export const OWNER_EMAIL_KEY = "BK_OWNER_EMAIL";
+export const OWNER_USER_ID_KEY = "BK_OWNER_USER_ID";
+/** Deprecated alias of `BK_OWNER_EMAIL`, kept for one release while readers move. */
 export const SESSION_OWNER_EMAIL_KEY = "BK_SESSION_OWNER_EMAIL";
+/** Deprecated alias of `BK_SENDER_EMAIL`, kept for one release while readers move. */
 export const MESSAGE_SENDER_EMAIL_KEY = "BK_MESSAGE_SENDER_EMAIL";
 
 /** Names this runtime so an agent can tell T3 Code from a local launcher. */
@@ -27,6 +35,12 @@ export const SESSION_IDENTITY_RUNTIME = "t3-code";
 
 export const SESSION_IDENTITY_ENVIRONMENT_KEYS = [
   SESSION_IDENTITY_RUNTIME_KEY,
+  SENDER_NAME_KEY,
+  SENDER_EMAIL_KEY,
+  SENDER_USER_ID_KEY,
+  OWNER_NAME_KEY,
+  OWNER_EMAIL_KEY,
+  OWNER_USER_ID_KEY,
   SESSION_OWNER_EMAIL_KEY,
   MESSAGE_SENDER_EMAIL_KEY,
 ] as const;
@@ -41,32 +55,59 @@ export interface SessionIdentityRequest {
   readonly senderUserId: UserId | null;
 }
 
-const normalizeEmail = (email: string | null): string | null => {
-  const trimmed = email?.trim() ?? "";
+/** One person as the Clerk-backed environment-user directory records them. */
+export interface SessionIdentityPerson {
+  readonly userId: string | null;
+  readonly name: string | null;
+  readonly email: string | null;
+}
+
+const normalize = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const personEnvironment = (
+  person: SessionIdentityPerson | null | undefined,
+  keys: { readonly userId: string; readonly name: string; readonly email: string },
+  legacyEmailKey: string,
+): NodeJS.ProcessEnv => {
+  const userId = normalize(person?.userId);
+  const name = normalize(person?.name);
+  const email = normalize(person?.email);
+  return {
+    ...(name === null ? {} : { [keys.name]: name }),
+    ...(email === null ? {} : { [keys.email]: email, [legacyEmailKey]: email }),
+    ...(userId === null ? {} : { [keys.userId]: userId }),
+  };
+};
+
 /**
- * Builds the additive environment. Absent emails are omitted rather than set
- * empty, so `BK_SESSION_OWNER_EMAIL` in the environment always means a real
- * resolved identity.
+ * Builds the additive environment. Absent values are omitted rather than set
+ * empty, so a present `BK_SENDER_EMAIL` always means a real resolved identity.
  */
 export function buildSessionIdentityEnvironment(input: {
-  readonly ownerEmail: string | null;
-  readonly senderEmail: string | null;
+  readonly owner?: SessionIdentityPerson | null;
+  readonly sender?: SessionIdentityPerson | null;
 }): NodeJS.ProcessEnv {
-  const ownerEmail = normalizeEmail(input.ownerEmail);
-  const senderEmail = normalizeEmail(input.senderEmail);
   return {
     [SESSION_IDENTITY_RUNTIME_KEY]: SESSION_IDENTITY_RUNTIME,
-    ...(ownerEmail === null ? {} : { [SESSION_OWNER_EMAIL_KEY]: ownerEmail }),
-    ...(senderEmail === null ? {} : { [MESSAGE_SENDER_EMAIL_KEY]: senderEmail }),
+    ...personEnvironment(
+      input.owner,
+      { userId: OWNER_USER_ID_KEY, name: OWNER_NAME_KEY, email: OWNER_EMAIL_KEY },
+      SESSION_OWNER_EMAIL_KEY,
+    ),
+    ...personEnvironment(
+      input.sender,
+      { userId: SENDER_USER_ID_KEY, name: SENDER_NAME_KEY, email: SENDER_EMAIL_KEY },
+      MESSAGE_SENDER_EMAIL_KEY,
+    ),
   };
 }
 
 /** Marker-only environment: the runtime is known, the people are not. */
 export const unresolvedSessionIdentityEnvironment = (): NodeJS.ProcessEnv =>
-  buildSessionIdentityEnvironment({ ownerEmail: null, senderEmail: null });
+  buildSessionIdentityEnvironment({});
 
 /**
  * Compares two identity environments for equality. A provider process reads its
@@ -106,6 +147,8 @@ export class SessionIdentityEnvironmentService extends Context.Service<
   SessionIdentityEnvironmentService,
   {
     readonly resolve: (input: SessionIdentityRequest) => Effect.Effect<NodeJS.ProcessEnv>;
+    /** One directory person by T3 user id; an unknown or unreadable row keeps only the id. */
+    readonly resolvePerson: (userId: UserId) => Effect.Effect<SessionIdentityPerson>;
   }
 >()("t3/identity/SessionIdentityEnvironment/SessionIdentityEnvironmentService") {}
 
@@ -114,19 +157,22 @@ export const make = Effect.gen(function* () {
 
   // An unreadable directory row must not stop a turn. Identity is metadata for
   // the agent, not an authorization decision — those already ran upstream of
-  // this — so every failure degrades to "unknown".
-  const resolveEmail = (userId: UserId): Effect.Effect<string | null> =>
+  // this — so every failure degrades to "unknown" while the user id stays known.
+  const resolvePerson = (userId: UserId): Effect.Effect<SessionIdentityPerson> =>
     repository.get(EnvironmentUserId.make(String(userId))).pipe(
       Effect.map(
         Option.match({
-          onNone: () => null,
-          onSome: (user: EnvironmentUsers.EnvironmentUserRecord) =>
-            normalizeEmail(user.primaryEmail),
+          onNone: () => ({ userId: String(userId), name: null, email: null }),
+          onSome: (user: EnvironmentUsers.EnvironmentUserRecord) => ({
+            userId: String(userId),
+            name: normalize(user.displayName),
+            email: normalize(user.primaryEmail),
+          }),
         }),
       ),
       Effect.catchCause((cause) =>
         Effect.logWarning("session identity lookup failed", { userId, cause }).pipe(
-          Effect.as(null),
+          Effect.as({ userId: String(userId), name: null, email: null }),
         ),
       ),
     );
@@ -134,17 +180,17 @@ export const make = Effect.gen(function* () {
   const resolve: SessionIdentityEnvironmentService["Service"]["resolve"] = Effect.fn(
     "SessionIdentityEnvironmentService.resolve",
   )(function* (input) {
-    const ownerEmail = input.ownerUserId === null ? null : yield* resolveEmail(input.ownerUserId);
-    const senderEmail =
+    const owner = input.ownerUserId === null ? null : yield* resolvePerson(input.ownerUserId);
+    const sender =
       input.senderUserId === null
         ? null
         : String(input.senderUserId) === String(input.ownerUserId)
-          ? ownerEmail
-          : yield* resolveEmail(input.senderUserId);
-    return buildSessionIdentityEnvironment({ ownerEmail, senderEmail });
+          ? owner
+          : yield* resolvePerson(input.senderUserId);
+    return buildSessionIdentityEnvironment({ owner, sender });
   });
 
-  return SessionIdentityEnvironmentService.of({ resolve });
+  return SessionIdentityEnvironmentService.of({ resolve, resolvePerson });
 });
 
 export const layer = Layer.effect(SessionIdentityEnvironmentService, make);

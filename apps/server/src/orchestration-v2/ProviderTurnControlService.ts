@@ -387,6 +387,10 @@ export const layer: Layer.Layer<
                 ...(message.senderThreadId === undefined
                   ? {}
                   : { senderThreadId: message.senderThreadId }),
+                // T3-CUSTOM(expbkt3): the identity block names this message's own sender.
+                ...(message.sentByUserId === undefined
+                  ? {}
+                  : { sentByUserId: message.sentByUserId }),
               },
             })
             .pipe(

@@ -4,6 +4,9 @@ import { emitForkProviderEvent } from "../../provider/ForkProviderSessions.expbk
 // T3-CUSTOM(expbkt3): sender identity, personal MCP and sticky Claude account placement.
 import {
   claudeSessionIdentitySystemPrompt,
+  makeClaudeTurnIdentity,
+  recordClaudePromptSubmission,
+  type ClaudeTurnIdentity,
   withClaudeSessionIdentityTurnHook,
 } from "../../provider/claudeSessionIdentity.expbkt3.ts";
 import { applyClaudeAccountProfile } from "../../claudeAccounts/applyClaudeAccountProfile.ts";
@@ -1565,6 +1568,7 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  readonly turnIdentity?: ClaudeTurnIdentity; // T3-CUSTOM(expbkt3): each prompt's own sender.
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1703,7 +1707,7 @@ export function makeClaudeQueryOptions(input: {
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
   // T3-CUSTOM(expbkt3): restate the sender at each user prompt, alongside native SDK hooks.
   const identityAware = input.environment
-    ? withClaudeSessionIdentityTurnHook(withDirectories, input.environment)
+    ? withClaudeSessionIdentityTurnHook(withDirectories, input.environment, input.turnIdentity)
     : withDirectories;
   return input.cwd === null ? identityAware : { ...identityAware, cwd: input.cwd };
 }
@@ -4850,6 +4854,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // T3-CUSTOM(expbkt3): callback input shadows the open-session input.
         const sessionAppThreadId = input.threadId;
         const sessionProviderId = input.providerSessionId;
+        // T3-CUSTOM(expbkt3): the identity block of each prompt, read by the identity hook.
+        const turnIdentity = makeClaudeTurnIdentity();
         const sessionEnvironment = yield* applyClaudeAccountProfile(
           input.threadId,
           input.executionOptions?.environment
@@ -10711,6 +10717,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            turnIdentity, // T3-CUSTOM(expbkt3): each prompt's own sender.
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -10924,6 +10931,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
+            // T3-CUSTOM(expbkt3): the exact prompt texts name this message's sender to the hook. A
+            // native continuation queues no prompt, so its native wake gets the automation block.
+            if (userMessage !== null)
+              yield* recordClaudePromptSubmission(
+                turnIdentity,
+                userMessage,
+                turnInput.message.senderIdentity,
+              );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
@@ -11371,6 +11386,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
+            );
+            // T3-CUSTOM(expbkt3): the exact steer prompt texts name the steer's own sender; a
+            // failed or abandoned steer releases its record.
+            yield* recordClaudePromptSubmission(
+              turnIdentity,
+              userMessage,
+              turnInput.message.senderIdentity,
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered

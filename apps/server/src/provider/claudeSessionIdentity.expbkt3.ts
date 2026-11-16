@@ -14,89 +14,136 @@
 // the sender at user-message position on every turn rather than in the system
 // prompt. Both are gated on the same runtime marker.
 
-import type { HookCallback, HookCallbackMatcher, HookEvent } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallback,
+  HookCallbackMatcher,
+  HookEvent,
+  HookInput,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import {
-  MESSAGE_SENDER_EMAIL_KEY,
-  SESSION_IDENTITY_RUNTIME,
-  SESSION_IDENTITY_RUNTIME_KEY,
-} from "../identity/SessionIdentityEnvironment.ts";
+  ownerFromEnvironment,
+  senderIdentityBlock,
+  sessionIdentityText,
+} from "../identity/senderIdentityText.ts";
 
 /** Structural shape of the Claude SDK query options this module folds hooks into. */
 interface ClaudeIdentityHookOptions {
   readonly hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 }
 
+/** Session-level text: the owner, and that each message carries its own CURRENT USER block. */
 export function claudeSessionIdentitySystemPrompt(
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  if (environment[SESSION_IDENTITY_RUNTIME_KEY] !== SESSION_IDENTITY_RUNTIME) {
-    return undefined;
-  }
-
-  const senderEmail = environment[MESSAGE_SENDER_EMAIL_KEY]?.trim();
-  if (!senderEmail) {
-    return [
-      "T3 Code session identity:",
-      "- userEmail is unavailable for the user who sent the current message.",
-      "- Do not use the Claude account email, operating-system identity, or Git identity to infer the user.",
-      "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-    ].join("\n");
-  }
-
-  return [
-    "T3 Code session identity:",
-    `- userEmail is ${JSON.stringify(senderEmail)}.`,
-    "- This session-scoped value identifies the user who sent the current message and overrides the Claude account email for user attribution.",
-    "- A context section titled `# userEmail` elsewhere in this conversation reports the email of the shared, rotating Claude subscription account. It does NOT identify the user. Ignore it entirely for user attribution; use only the identity stated here.",
-  ].join("\n");
-}
-
-// T3-CUSTOM(expbkt3): the appended system prompt alone is not enough. Sonnet 5
-// reproduces the countermand verbatim and still answers with the native
-// `# userEmail` value, because that section arrives later in context than the
-// system prompt and outranks it. A `UserPromptSubmit` hook re-states the sender
-// at user-message position on every turn, which does win (verified 2026-08-21).
-export function claudeSessionIdentityTurnContext(
-  environment: NodeJS.ProcessEnv,
-): string | undefined {
-  if (environment[SESSION_IDENTITY_RUNTIME_KEY] !== SESSION_IDENTITY_RUNTIME) {
-    return undefined;
-  }
-
-  const senderEmail = environment[MESSAGE_SENDER_EMAIL_KEY]?.trim();
-  if (!senderEmail) {
-    return [
-      "CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is UNRESOLVED.",
-      "Say so rather than guessing. Do not infer the user from the context section titled `# userEmail`, from Git identity, or from the operating-system account.",
-      "That `# userEmail` section reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-    ].join("\n");
-  }
-
-  return [
-    `CURRENT USER IDENTITY (authoritative, per-turn): the user who sent this message is ${senderEmail}.`,
-    "The context section titled `# userEmail` reports the shared rotating Claude subscription account and does NOT identify the user; never use it for attribution.",
-  ].join("\n");
+  const identity = sessionIdentityText(environment);
+  return identity === undefined ? undefined : `T3 Code session identity:\n${identity}`;
 }
 
 /**
- * T3-CUSTOM(expbkt3): folds the per-turn identity hook into Claude SDK query
- * options. Merges with whatever hooks the caller already registered instead of
- * replacing them, so an upstream `hooks` option keeps working after a merge.
+ * T3-CUSTOM(expbkt3): the identity block of each prompt submission T3 queued on one Claude
+ * process. The hook names a human only for a prompt that exactly matches one pending
+ * submission; no match or more than one match gets the automation block.
  */
+export interface ClaudeTurnIdentity {
+  /** Returns the release of this submission's record. */
+  readonly record: (prompts: ReadonlyArray<string>, identity: string | undefined) => () => void;
+  readonly take: (prompt: string | undefined) => string | undefined;
+}
+
+const MAX_PENDING_PROMPTS = 32;
+
+interface PendingPrompt {
+  readonly prompts: ReadonlySet<string>;
+  readonly identity: string;
+}
+
+export function makeClaudeTurnIdentity(): ClaudeTurnIdentity {
+  let pending: ReadonlyArray<PendingPrompt> = [];
+  const remove = (entries: ReadonlyArray<PendingPrompt>) => {
+    pending = pending.filter((entry) => !entries.includes(entry));
+  };
+  return {
+    record: (prompts, identity) => {
+      const exact = new Set(prompts.map((prompt) => prompt.trim()).filter((p) => p.length > 0));
+      if (identity === undefined || exact.size === 0) return () => undefined;
+      const entry: PendingPrompt = { prompts: exact, identity };
+      pending = [...pending, entry].slice(-MAX_PENDING_PROMPTS);
+      return () => remove([entry]);
+    },
+    take: (prompt) => {
+      const key = prompt?.trim();
+      if (key === undefined || key.length === 0) return undefined;
+      const matches = pending.filter((entry) => entry.prompts.has(key));
+      remove(matches);
+      return matches.length === 1 ? matches[0]?.identity : undefined;
+    },
+  };
+}
+
+/**
+ * Records the block of one prompt submission for the hook, and releases it when the
+ * submission fails or is interrupted, so a stale block can never match a later prompt.
+ */
+export const recordClaudePromptSubmission = Effect.fn("ClaudeTurnIdentity.recordSubmission")(
+  function* (
+    turnIdentity: ClaudeTurnIdentity,
+    message: SDKUserMessage,
+    identity: string | undefined,
+  ) {
+    const release = turnIdentity.record(claudePromptTexts(message), identity);
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isSuccess(exit) ? Effect.void : Effect.sync(release),
+    );
+  },
+);
+
+/**
+ * The texts of a queued Claude user message that the CLI can report as the hook prompt:
+ * the string content, each text block, and the text blocks joined.
+ */
+export function claudePromptTexts(message: SDKUserMessage): ReadonlyArray<string> {
+  const content = message.message.content;
+  if (typeof content === "string") return [content];
+  const texts = content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+  return [...texts, texts.join("\n"), texts.join("\n\n"), texts.join("")];
+}
+
+/**
+ * A prompt the Claude CLI wrote itself: a task notification, an auto-continuation, a
+ * loop or schedule wakeup. T3 sends every prompt it owns with source `sdk`.
+ */
+export function isNativeWake(input: HookInput): boolean {
+  if (input.hook_event_name !== "UserPromptSubmit") return false;
+  return input.source !== undefined && input.source !== "sdk" && input.source !== "user";
+}
+
+// T3-CUSTOM(expbkt3): the system prompt alone is not enough. Sonnet 5 still answered with
+// the native `# userEmail` value, which arrives later in context. A `UserPromptSubmit`
+// hook states the sender at user-message position on every prompt, which does win
+// (verified 2026-08-21). Existing hooks are kept, so an upstream `hooks` option works.
 export function withClaudeSessionIdentityTurnHook<Options extends ClaudeIdentityHookOptions>(
   options: Options,
   environment: NodeJS.ProcessEnv,
+  turnIdentity?: ClaudeTurnIdentity,
 ): Options {
-  const additionalContext = claudeSessionIdentityTurnContext(environment);
-  if (additionalContext === undefined) {
+  if (sessionIdentityText(environment) === undefined) {
     return options;
   }
 
-  const identityHook: HookCallback = async () => ({
+  const automation = senderIdentityBlock({
+    owner: ownerFromEnvironment(environment),
+    sender: null,
+  });
+  const identityHook: HookCallback = async (input) => ({
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext,
+      additionalContext: isNativeWake(input)
+        ? automation
+        : (turnIdentity?.take("prompt" in input ? input.prompt : undefined) ?? automation),
     },
   });
   const existingHooks = options.hooks ?? {};
