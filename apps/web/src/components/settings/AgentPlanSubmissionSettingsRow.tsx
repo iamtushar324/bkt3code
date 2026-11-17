@@ -4,6 +4,7 @@ import {
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
+import { SettingDescription } from "../../fork/SettingDescription";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -17,7 +18,12 @@ export function AgentPlanSubmissionSettingsRow() {
   return (
     <SettingsRow
       {...searchableSetting("plan-submission-tool")}
-      description="Let agents use t3_submit_plan for a separate plan review. By default, this tool is disabled. Agents must write those plans in chat. This setting applies to every session on this server. Provider plan modes remain available."
+      description={
+        <SettingDescription
+          summary="Let agents submit plans with t3_submit_plan, for every session on this server."
+          details="By default, this tool is disabled and agents must write their plans in chat. Provider plan modes remain available."
+        />
+      }
       control={
         <Switch
           checked={enabled}

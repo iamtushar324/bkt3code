@@ -173,7 +173,7 @@ const captureLogs = (lines: string[]) =>
 
 describe("personalMcp.connectToolyard", () => {
   it("derives the connect endpoint from the MCP URL's origin", () => {
-    expect(toolyardConnectUrl()).toBe("https://toolyard.dev.beknown.live/v1/connect/t3");
+    expect(toolyardConnectUrl()).toBe("https://toolyard.beknown.live/v1/connect/t3");
     expect(toolyardConnectUrl("https://toolyard.example/mcp")).toBe(
       "https://toolyard.example/v1/connect/t3",
     );

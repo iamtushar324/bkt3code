@@ -110,4 +110,34 @@ describe("phase sidebar grouping store", () => {
 
     expect(collapsedKeys().has(readyKey)).toBe(false);
   });
+
+  // T3-CUSTOM(expbkt3): the group bell is this device's own setting, so a mute
+  // must survive a restart (a rehydrate from storage) without any host.
+  it("keeps a group mute across a restart, and moves or drops it with the group", async () => {
+    store().setGroupNotifications("bugs", "off");
+    store().setGroupNotifications("ungrouped", "parents");
+    expect((await readStoredGrouping())?.notificationOverrides).toEqual({
+      bugs: "off",
+      ungrouped: "parents",
+    });
+
+    // A restart starts from the stored blob, never from component state.
+    await usePhaseSidebarGroupingStore.persist.rehydrate();
+    expect(store().grouping.notificationOverrides).toEqual({ bugs: "off", ungrouped: "parents" });
+
+    store().renameGroup("bugs", "Defects");
+    expect(store().grouping.notificationOverrides).toEqual({
+      defects: "off",
+      ungrouped: "parents",
+    });
+    store().forgetGroup("defects");
+    expect(store().grouping.notificationOverrides).toEqual({ ungrouped: "parents" });
+  });
+
+  it("reads a blob saved before the bell was local", async () => {
+    await writeFromAnotherTab({ ...DEFAULT_PHASE_SIDEBAR_GROUPING, groupBy: "custom" });
+    await usePhaseSidebarGroupingStore.persist.rehydrate();
+    expect(store().grouping.groupBy).toBe("custom");
+    expect(store().grouping).not.toHaveProperty("notificationOverrides");
+  });
 });

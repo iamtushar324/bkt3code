@@ -29,8 +29,14 @@ export const ToolyardIntegrationStatus = Schema.Struct({
   teamAvailable: Schema.optional(Schema.Boolean),
   callbackTransport: Schema.optional(Schema.Literals(["push", "pull"])),
   connection: Schema.Literals(["connected", "not_connected", "unavailable", "revoked", "disabled"]),
+  /** Toolyard's code for the last failed attempt on this connection, if one failed. */
+  connectionError: Schema.optional(Schema.NullOr(Schema.String)),
   email: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(Schema.String),
+  /** The instance this server offers before an administrator saves one. */
+  defaultBaseUrl: Schema.optional(Schema.String),
+  /** Where the default came from: `T3_TOOLYARD_URL` or the built-in URL. */
+  defaultBaseUrlSource: Schema.optional(Schema.Literals(["environment", "built-in"])),
 });
 export type ToolyardIntegrationStatus = typeof ToolyardIntegrationStatus.Type;
 export const ToolyardIntegrationConfigureInput = Schema.Struct({
@@ -44,6 +50,8 @@ export const ToolyardIntegrationConfigureInput = Schema.Struct({
   apiKey: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
   hostAction: Schema.optional(Schema.Literals(["begin", "poll", "cancel"])),
   disconnect: Schema.optional(Schema.Boolean),
+  /** Ask Toolyard again for the caller's own team connection; no settings change. */
+  reconnect: Schema.optional(Schema.Boolean),
 });
 export const ToolyardDashboardHandoff = Schema.Struct({
   url: Schema.String,

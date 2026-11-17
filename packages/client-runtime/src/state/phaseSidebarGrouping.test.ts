@@ -30,6 +30,7 @@ import {
   rememberPhaseSidebarCustomGroupOrder,
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
+  setPhaseSidebarGroupNotificationOverride,
   setPhaseSidebarRunningShelf,
   setPhaseSidebarSectionsCollapsed,
   togglePhaseSidebarSectionCollapsed,
@@ -671,5 +672,119 @@ describe("custom groups from the shared registry", () => {
     expect(first.customGroupOrder).toEqual(["bugs", "backlog"]);
     expect(rememberPhaseSidebarCustomGroupOrder(first, "backlog")).toBe(first);
     expect(rememberPhaseSidebarCustomGroupOrder(first, "ungrouped")).toBe(first);
+  });
+});
+
+// T3-CUSTOM(expbkt3): this device's own notification mode per group (the bell).
+describe("device notification overrides", () => {
+  const custom: PhaseSidebarGroupingPreferences = {
+    ...DEFAULT_PHASE_SIDEBAR_GROUPING,
+    groupBy: "custom",
+  };
+
+  it("reads a stored blob without overrides, and drops unknown modes and blank ids", () => {
+    expect(sanitizePhaseSidebarGrouping({ groupBy: "custom" })).not.toHaveProperty(
+      "notificationOverrides",
+    );
+    expect(
+      sanitizePhaseSidebarGrouping({
+        groupBy: "custom",
+        notificationOverrides: { bugs: "off", ungrouped: "parents", "": "off", odd: "loud" },
+      }).notificationOverrides,
+    ).toEqual({ bugs: "off", ungrouped: "parents" });
+    expect(sanitizePhaseSidebarGrouping({ notificationOverrides: ["off"] })).not.toHaveProperty(
+      "notificationOverrides",
+    );
+  });
+
+  it("sets a mode, keeps an explicit all, and returns the same object when nothing changes", () => {
+    const muted = setPhaseSidebarGroupNotificationOverride(custom, "bugs", "off");
+    expect(muted.notificationOverrides).toEqual({ bugs: "off" });
+    expect(setPhaseSidebarGroupNotificationOverride(muted, "bugs", "off")).toBe(muted);
+    // "all" is stored too: it must outrank a shared "off".
+    expect(
+      setPhaseSidebarGroupNotificationOverride(muted, "bugs", "all").notificationOverrides,
+    ).toEqual({ bugs: "all" });
+    expect(sanitizePhaseSidebarGrouping(muted)).toEqual(muted);
+  });
+
+  it("moves the override with a rename, and keeps the target's own on a merge", () => {
+    const muted = setPhaseSidebarGroupNotificationOverride(custom, "bugs", "off");
+    expect(renamePhaseSidebarCustomGroup(muted, "bugs", "Defects").notificationOverrides).toEqual({
+      defects: "off",
+    });
+    // A case-only rename keeps the same id.
+    expect(renamePhaseSidebarCustomGroup(muted, "bugs", "BUGS").notificationOverrides).toEqual({
+      bugs: "off",
+    });
+    const both = setPhaseSidebarGroupNotificationOverride(muted, "defects", "parents");
+    expect(renamePhaseSidebarCustomGroup(both, "bugs", "Defects").notificationOverrides).toEqual({
+      defects: "parents",
+    });
+  });
+
+  it("drops the override with the group, and leaves other groups' alone", () => {
+    const muted = setPhaseSidebarGroupNotificationOverride(
+      setPhaseSidebarGroupNotificationOverride(custom, "bugs", "off"),
+      "ungrouped",
+      "parents",
+    );
+    expect(deletePhaseSidebarCustomGroup(muted, "bugs").notificationOverrides).toEqual({
+      ungrouped: "parents",
+    });
+    expect(
+      deletePhaseSidebarCustomGroup(
+        setPhaseSidebarGroupNotificationOverride(custom, "bugs", "off"),
+        "bugs",
+      ),
+    ).not.toHaveProperty("notificationOverrides");
+  });
+
+  it("shows the override on the section header over the shared mode", () => {
+    const registry = buildPhaseSidebarCustomGroupRegistry(
+      new Map([
+        [
+          "primary",
+          {
+            environment: { capabilities: { threadCustomGroupRegistry: true } },
+            settings: { threadCustomGroups: { quiet: { label: "Quiet", notifications: "off" } } },
+          },
+        ],
+      ]),
+      "primary",
+    );
+    const grouping = setPhaseSidebarGroupNotificationOverride(
+      setPhaseSidebarGroupNotificationOverride(
+        setPhaseSidebarGroupNotificationOverride(custom, "quiet", "all"),
+        "label only",
+        "parents",
+      ),
+      "ungrouped",
+      "off",
+    );
+    const result = sections(
+      [
+        makeRow("a", { customGroup: "Quiet" }),
+        makeRow("b", { customGroup: "Label only" }),
+        makeRow("c"),
+      ],
+      grouping,
+      { customGroupRegistry: registry, ungroupedNotifications: "parents" },
+    );
+    expect(result.map((section) => [section.id, section.notifications])).toEqual([
+      ["label only", "parents"],
+      ["quiet", undefined],
+      ["ungrouped", "off"],
+    ]);
+    // Without overrides the shared modes show, as on mobile.
+    expect(
+      sections([makeRow("a", { customGroup: "Quiet" }), makeRow("c")], custom, {
+        customGroupRegistry: registry,
+        ungroupedNotifications: "parents",
+      }).map((section) => [section.id, section.notifications]),
+    ).toEqual([
+      ["quiet", "off"],
+      ["ungrouped", "parents"],
+    ]);
   });
 });

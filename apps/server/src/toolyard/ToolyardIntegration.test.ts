@@ -1,5 +1,6 @@
 /** T3-CUSTOM(expbkt3): Callback history is bounded, typed, and excludes credentials/results. */
 import { expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
@@ -120,6 +121,41 @@ it.effect("permits the authenticated local profile only when Clerk team mode is 
       (yield* Effect.result(service.assertConnectionOwner(UserId.make("other-local-owner"))))._tag,
     ).toBe("Failure");
   }).pipe(Effect.provide(integrationTestLayer(false))),
+);
+const defaultUrlCases: ReadonlyArray<{
+  readonly env: Record<string, string>;
+  readonly url: string;
+  readonly source: "environment" | "built-in";
+}> = [
+  { env: {}, url: "https://toolyard.beknown.live", source: "built-in" },
+  {
+    env: { T3_TOOLYARD_URL: "https://toolyard.example.test/mcp" },
+    url: "https://toolyard.example.test",
+    source: "environment",
+  },
+  {
+    env: { T3_TOOLYARD_URL: "http://insecure.example.test" },
+    url: "https://toolyard.beknown.live",
+    source: "built-in",
+  },
+];
+it.effect.each(defaultUrlCases)(
+  "offers the default Toolyard URL before an administrator saves one ($url, $source)",
+  ({ env, url, source }) =>
+    Effect.gen(function* () {
+      const service = yield* ToolyardIntegration;
+      expect(yield* service.status(UserId.make("local-user"))).toMatchObject({
+        baseUrl: null,
+        defaultBaseUrl: url,
+        defaultBaseUrlSource: source,
+      });
+    }).pipe(
+      Effect.provide(
+        integrationTestLayer(false).pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+        ),
+      ),
+    ),
 );
 it.effect("never converts an anonymous team transport into the local owner", () =>
   Effect.gen(function* () {

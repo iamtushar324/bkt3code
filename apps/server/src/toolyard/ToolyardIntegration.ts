@@ -1,11 +1,13 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard trust and credentials. No browser token renewal. */
 import {
   EnvironmentUserId,
+  LEGACY_TOOLYARD_MCP_URLS,
   PersonalMcpSettingsError,
   UserId,
   type PersonalMcpIntegration,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +20,11 @@ import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { EnvironmentUserRepository } from "../persistence/EnvironmentUsers.ts";
 import { toolyardManagedProfile } from "./ToolyardManagedProfile.ts";
 import { ToolyardConnectionCore, ToolyardIntegrationFailure } from "./ToolyardConnectionCore.ts";
+import {
+  resolveToolyardDefaultUrl,
+  TOOLYARD_URL_ENV,
+  toolyardMcpUrlCandidates,
+} from "./toolyardDefaultUrl.ts";
 
 export type ToolyardStatus = Awaited<ReturnType<ToolyardConnectionCore["status"]>>;
 export type ToolyardConfigureInput = Parameters<ToolyardConnectionCore["configure"]>[1];
@@ -162,9 +169,24 @@ export const toolyardIntegrationLayer = Layer.effect(
     const environmentId = yield* environment.getEnvironmentId;
     const secretName = `toolyard-federation-${environmentId}`;
     const platform = yield* HostProcess.Platform;
+    const defaultUrl = resolveToolyardDefaultUrl(
+      Option.getOrUndefined(
+        yield* Config.String(TOOLYARD_URL_ENV).pipe(
+          Config.option,
+          Effect.orElseSucceed(() => Option.none<string>()),
+        ),
+      ),
+    );
+    if (defaultUrl.rejected !== undefined)
+      yield* Effect.logWarning(
+        `${TOOLYARD_URL_ENV} must be an https origin; using the built-in Toolyard URL`,
+        { value: defaultUrl.rejected, url: defaultUrl.url },
+      );
     const core = new ToolyardConnectionCore({
       environmentId,
       platform,
+      defaultBaseUrl: defaultUrl.url,
+      defaultBaseUrlSource: defaultUrl.source,
       read: () =>
         Effect.runPromise(secrets.get(secretName)).then((value) =>
           Option.isSome(value) ? new TextDecoder().decode(value.value) : null,
@@ -301,4 +323,19 @@ export const managedToolyardCredentialForUrl = (userId: UserId, url: string) =>
       )
     : Effect.succeed(undefined);
 
-export const managedToolyardBaseUrl = () => activeCore?.baseUrl() ?? null;
+/**
+ * Every MCP endpoint this server treats as Toolyard's: the saved instance, the
+ * server default and the endpoints every build recognises. Used where being
+ * broad is the safe side (never re-point a Toolyard key, tag Toolyard calls).
+ */
+export const managedToolyardMcpUrls = () =>
+  toolyardMcpUrlCandidates([activeCore?.baseUrl(), activeCore?.defaultBaseUrl()]);
+
+/**
+ * The endpoints the server-owned connection stands in for: the saved instance
+ * and earlier builds' built-in endpoint. A manual integration at one of them is
+ * hidden and refused; a manual entry at another Toolyard instance stays the
+ * user's own.
+ */
+export const managedToolyardOwnedMcpUrls = () =>
+  toolyardMcpUrlCandidates([activeCore?.baseUrl()], LEGACY_TOOLYARD_MCP_URLS);

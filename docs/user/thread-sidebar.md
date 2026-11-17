@@ -375,6 +375,13 @@ thread sees the same group, on every device. To file a thread, open its menu
 and choose **Move to group**, pick an existing group or **New group…**, or
 **Remove from group**.
 
+<!-- T3-CUSTOM(expbkt3): drag to a group, and "+" on a group header. -->
+
+On the web and desktop, in Custom mode, you can also drag a thread with the
+mouse onto a group's header or threads to move it there, or onto **Ungrouped**
+to remove it from its group. To start a thread in a group, hover its header
+and click **+**; the thread joins that group when you send its first message.
+
 <!-- T3-CUSTOM(expbkt3): a nested session's own group chip. -->
 
 In Custom mode, a session nested under a parent session stays under that
@@ -410,11 +417,13 @@ position and whether it is collapsed stay on each device.
 The bell in a group's header sets which of its threads notify you on the web
 and desktop: every thread, **only parent threads** (threads with no parent
 session, so agent-created child sessions stay quiet), or none. A quieted group
-shows its bell even when the header actions are hidden. The setting is shared
-like the colour, and on iOS and Android it is under **Notifications** in the
-group's header menu. **Ungrouped** has the same bell, for threads in no
-group. Phone push notifications do not follow it yet. The desktop app shows
-the bell once its own app update includes it.
+shows its bell even when the header actions are hidden. On the web and desktop
+the bell is a setting of that browser or app only: it is kept on the device,
+survives restarts, follows the group when you rename it, and outranks the
+group's shared setting. The shared setting, which other devices without their
+own choice follow, is under **Notifications** in the group's header menu on
+iOS and Android. **Ungrouped** has the same bell, for threads in no group.
+Phone push notifications do not follow it yet.
 
 To stop new threads landing in **Ungrouped**, pick a **Default group for new
 sessions** for each environment under **Settings → BK Add-ons**. A new thread

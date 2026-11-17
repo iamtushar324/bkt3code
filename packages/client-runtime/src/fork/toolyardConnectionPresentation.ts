@@ -174,3 +174,61 @@ export function toolyardConnectionPresentation(
     "Your account has no Toolyard connection on this server.",
   );
 }
+
+const connectionProblems: Record<string, string> = {
+  credential_rejected:
+    "Toolyard rejected the stored credential. Select Reconnect to ask Toolyard again.",
+  connection_revoked:
+    "Toolyard revoked this connection. Ask a Toolyard administrator to restore your access, then select Reconnect.",
+  not_org_member:
+    "Toolyard refused this account because it is not an eligible team member. Ask a Toolyard administrator for access.",
+  trust_revoked:
+    "Toolyard no longer trusts this server. A server administrator must verify the instance again.",
+  invalid_assertion:
+    "Toolyard refused this server's identity. A server administrator must verify the instance again.",
+  instance_unavailable: "Toolyard did not respond. T3 tries again automatically.",
+  membership_unavailable:
+    "Toolyard could not check the team membership. T3 tries again automatically.",
+  conflict: "Toolyard reported a credential conflict. T3 tries again automatically.",
+};
+
+/**
+ * Why the server's last attempt to sign this user in failed, in plain words, or
+ * null when nothing failed or the user is connected. An unknown code still
+ * names the code for whoever investigates.
+ */
+export function toolyardConnectionProblem(status: ToolyardIntegrationStatus | null): string | null {
+  const code = status?.connectionError;
+  if (!status || !code || status.connection === "connected") return null;
+  return (
+    (Object.hasOwn(connectionProblems, code) && connectionProblems[code]) ||
+    `Toolyard refused the connection (${code}).`
+  );
+}
+
+/**
+ * Whether this user may ask the server to sign them in to their team
+ * connection again: the instance is enabled, the method is the team
+ * connection, and the server stopped using it. Toolyard still decides.
+ */
+export function canReconnectToolyardTeam(status: ToolyardIntegrationStatus | null): boolean {
+  return (
+    status !== null &&
+    status.enabled &&
+    !status.removed &&
+    status.baseUrl !== null &&
+    (status.mode ?? "team") === "team" &&
+    status.teamAvailable !== false &&
+    (status.connection === "revoked" || status.connection === "disabled")
+  );
+}
+
+/** The host name of the Toolyard instance this server uses, for a one-line summary. */
+export function toolyardInstanceHost(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl) return null;
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return null;
+  }
+}

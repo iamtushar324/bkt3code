@@ -20,7 +20,8 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { SettingResetButton, SettingsRow } from "./settingsLayout";
 
 const DEFAULTS = DEFAULT_UNIFIED_SETTINGS.experimental.sessionArchive;
 const MAX_RETENTION_DAYS = 365;
@@ -50,8 +51,19 @@ export function SessionArchiveSettingsSection() {
       ? `Deletes regenerable directories from worktrees archived more than ${archive.autoSweep.minArchivedDays} days ago.`
       : `Removes worktrees archived more than ${archive.autoSweep.minArchivedDays} days ago, when they are clean and pushed.`;
 
+  // Folded: these rows are set once, so the page shows only where they stand.
+  const foldSummary = !archive.enabled
+    ? "Off"
+    : !archive.autoSweep.enabled
+      ? "On · reclaim by hand"
+      : `On · ${archive.autoSweep.mode === "slim" ? "slims" : "removes"} worktrees after ${archive.autoSweep.minArchivedDays} days`;
+
   return (
-    <SettingsSection title="Archived session storage">
+    <FoldedSettingsSection
+      id="session-archive"
+      title="Archived session storage"
+      summary={foldSummary}
+    >
       <SettingsRow
         title="Keep session history when reclaiming"
         description="Archiving a session keeps its worktree on disk forever, so the only way to free the space is to delete the session. Turning this on lets the Archived page reclaim that disk after exporting the session's history — a digest plus a full transcript — to a directory outside the worktree."
@@ -190,6 +202,6 @@ export function SessionArchiveSettingsSection() {
           </NumberField>
         }
       />
-    </SettingsSection>
+    </FoldedSettingsSection>
   );
 }

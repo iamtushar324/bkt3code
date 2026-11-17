@@ -168,13 +168,14 @@ const failure = (code: string) =>
     Cause.fail(new PersonalMcpSettingsError({ operation: "Session webhook", message: code })),
   );
 const serverConfig = (clerk: boolean) => ({ auth: clerk ? { clerk: {} } : {} }) as never;
-function server(environmentId: string, clerk = true) {
+function server(environmentId: string, clerk = true, expandRequested = false) {
   return (
     <EnvironmentSessionWebhookSettings
       key={environmentId}
       environmentId={environmentId as never}
       label={environmentId}
       serverConfig={serverConfig(clerk)}
+      expandRequested={expandRequested}
     />
   );
 }
@@ -209,9 +210,45 @@ function setup() {
   mocks.webhooks.set("env_stage", [webhook()]);
 }
 
+it("folds the webhook list and its callbacks behind a one-line summary", async () => {
+  setup();
+  mocks.webhooks.set("env_stage", [
+    webhook({
+      deliveries: [
+        {
+          eventId: "evt_done",
+          state: "delivered",
+          attempts: 1,
+          receivedAt: "2026-10-01T10:01:00.000Z",
+          updatedAt: "2026-10-01T10:01:01.000Z",
+          terminalReason: null,
+        },
+      ],
+    }),
+  ]);
+  await using view = await mount();
+  expect(view.text()).toContain("1 callback: 1 active");
+  expect(view.text()).not.toContain("Fix login");
+  expect(view.buttons("Earlier callbacks")).toHaveLength(0);
+  await view.press("Show");
+  expect(view.text()).toContain("Fix login");
+  expect(view.buttons("Earlier callbacks (1)")).toHaveLength(1);
+  await view.press("Hide");
+  expect(view.text()).not.toContain("Fix login");
+});
+
+it("opens the list when a settings search lands on it", async () => {
+  setup();
+  await using view = await mount();
+  expect(view.text()).not.toContain("Fix login");
+  await view.rerender(<>{server("env_stage", true, true)}</>);
+  expect(view.text()).toContain("Fix login");
+});
+
 it("cancelling a confirmation sends no change", async () => {
   setup();
   await using view = await mount();
+  await view.press("Show");
   await view.press("Disable");
   expect(textOf(view.dialog()!)).toContain("Disable callbacks for Fix login?");
   await view.press("Cancel", view.dialog()!);
@@ -223,6 +260,7 @@ it("confirming sends the exact server, webhook and revision the user saw", async
   setup();
   mocks.update.mockResolvedValue(AsyncResult.success({}));
   await using view = await mount();
+  await view.press("Show");
   await view.press("Remove");
   await view.press("Remove", view.dialog()!);
   expect(mocks.update).toHaveBeenCalledTimes(1);
@@ -238,6 +276,7 @@ it("shows a failed change inline on its card without leaking unknown text", asyn
   setup();
   mocks.update.mockResolvedValueOnce(failure("webhook-revision-conflict"));
   await using view = await mount();
+  await view.press("Show");
   await view.press("Rotate secret");
   await view.press("Rotate secret", view.dialog()!);
   expect(view.dialog()).toBeUndefined();
@@ -269,6 +308,7 @@ it("keys each server's list by its authenticated user and resets state on a user
   expect(view.text().match(/Authenticate with this server/g)).toHaveLength(2);
 
   mocks.update.mockResolvedValueOnce(failure("webhook-not-found"));
+  await view.press("Show");
   await view.press("Disable");
   await view.press("Disable", view.dialog()!);
   expect(view.alerts().join()).toContain("This webhook no longer exists for your account.");
@@ -278,7 +318,10 @@ it("keys each server's list by its authenticated user and resets state on a user
     environmentId: "env_stage",
     input: { userScope: "user_b" },
   });
-  // Another user's error must not survive into this user's view.
+  // Another user's error must not survive into this user's view, folded or open.
+  expect(view.text()).not.toContain("no longer exists");
+  await view.press("Show");
+  expect(view.text()).toContain("Fix login");
   expect(view.text()).not.toContain("no longer exists");
 });
 
@@ -304,6 +347,11 @@ it("keeps sync failures visible, including removed webhooks outside their closed
     }),
   ]);
   await using view = await mount();
+  // Folded, the summary still flags both webhooks; the details open on demand.
+  expect(view.text()).toContain("2 callbacks: 1 disabled · 1 removed");
+  expect(view.text()).toContain("2 webhooks need attention");
+  expect(view.alerts()).toEqual([]);
+  await view.press("Show");
   const visible = view.alerts().join();
   expect(visible).toContain(
     "Disable could not sync with Toolyard, and the server stopped retrying",
@@ -338,6 +386,8 @@ it("leaves a deliberate Disable as history without an attention badge", async ()
     }),
   ]);
   await using view = await mount();
+  expect(view.text()).not.toMatch(/needs? attention/);
+  await view.press("Show");
   expect(view.text()).not.toMatch(/\d+ events? needs? attention/);
   expect(view.alerts()).toEqual([]);
   expect(view.text()).toContain("No callbacks need attention.");

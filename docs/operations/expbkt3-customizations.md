@@ -252,71 +252,71 @@ fork's RPC handler map: that map is rebuilt per connection, so a cache created
 there would collapse one client's tabs and nothing else — which is not where the
 multiplication comes from.
 
-## toolyard (built in, auto-connected)
+## toolyard (server-owned, signs every user in)
 
-Every signed-in user has a `toolyard` integration (`TOOLYARD_MCP_INTEGRATION_ID`
-in `packages/contracts/src/personalMcp.ts`): id and MCP server name `toolyard`,
-so agents see `mcp__toolyard__*`; URL `TOOLYARD_MCP_URL`; bearer auth; always
-enabled. `UserMcpProfileStore` presents it on every read and re-adds it to every
-write, and `canonicalizePersonalMcpIntegration` pins its name, URL, auth mode
-and enabled state, so a client can neither remove it nor point it elsewhere.
-Its credential is written only by the connect flow; a credential a client sends
-for it is ignored.
+The server owns the Toolyard connection (`apps/server/src/toolyard/`). An
+administrator sets it up once per server under Settings → BK Add-ons →
+Toolyard → Server setup; the browser never holds a Toolyard credential.
 
-Connecting needs no pasted key. After sign-in the web app
-(`fork/toolyardAutoConnect.tsx`, mounted from `AppRoot` because the Clerk shell
-sits outside the atom registry) sees a profile whose toolyard entry has no
-credential and calls `personalMcp.connectToolyard` once per app load with a
-fresh Clerk session token from `state/teamIdentityToken`. The server
-(`mcp/ToolyardConnect.ts`) posts `{"token"}` to
-`POST <toolyard origin>/v1/connect/t3` and, on 200, stores the returned toolyard
-agent token through `UserMcpProfileStore.setIntegrationCredential` with the
-connected email and time. Neither token is logged or returned; the client gets
-`{connected, email?, error?}`. toolyard rotates the agent token on every
-successful call, which is why the client connects only while T3 holds none and
-why Settings → BK Add-ons → toolyard offers an explicit Reconnect instead of
-reconnecting on its own. toolyard's refusals (`not_org_member`, `user_disabled`,
-`agent_disabled`, …) come back as codes and are worded in
-`fork/toolyardConnect.ts`; a code that list does not know still reaches the
-client unchanged (the server accepts only `^[a-z_]{1,64}$` as a code).
+**Which instance.** Precedence, highest first:
 
-Only a user-bound connection may connect, and only for itself: the server
-refuses an unbound local/owner session (`not_signed_in`) and a token whose
-`sub` is not the connection's actor (`identity_mismatch`; read without
-verifying, toolyard verifies the signature), so a shared or paired session
-cannot rotate someone's token into the shared `local-user` profile. Connects
-for one user run one at a time (`mcp/PerUserLock.ts`), as do all profile
-read-modify-writes inside `UserMcpProfileStore`.
+1. The instance an administrator saved and verified. It is persisted with the
+   server trust (`toolyard-federation-<environmentId>` in the secret store), so
+   changing it is a new trust registration, never an environment edit.
+2. `T3_TOOLYARD_URL` in the server environment: an https origin; a trailing
+   `/mcp` is accepted. Anything else is logged and ignored.
+3. `DEFAULT_TOOLYARD_BASE_URL` in `packages/contracts/src/personalMcp.ts`
+   (`https://toolyard.beknown.live`).
 
-A stored token can die outside T3: another T3 origin connecting through
-toolyard's allowlist, the agent rotated or disabled on toolyard's Agents page.
-When toolyard answers 401 twice in a row for the same stored token within ten
-minutes (`UpstreamRejectionTracker`; one 401 can be a transient verification
-error, and an accepted call in between forgets the first), the proxy calls
-`retireIntegrationCredential` with the token it actually sent. The store
-retires only if that is still the stored token — compare-and-swap under the
-user's lock — so a Reconnect that raced an in-flight call keeps its new token.
-Retiring removes the secret and marks toolyard unconnected (`connectedAt`
-cleared), so the card reads "Not connected" and the next app load reconnects;
-the agent's call still gets that 401. toolyard counts
-as connected only while `connectedAt` is set, which only the connect flow
-writes: a pre-existing hand-made `toolyard` entry is demoted on first read and
-its stale secret removed.
+The default (2 or 3) only pre-fills setup and answers a save with an empty base
+URL (`toolyardDefaultUrl.ts`); it never connects anyone, because registering
+trust needs an administrator's Clerk token. The status RPC reports it as
+`defaultBaseUrl` and `defaultBaseUrlSource`, so web and mobile never hard-code
+it. Setting `T3_TOOLYARD_URL` on a server that already saved an instance
+changes nothing until an administrator saves the new URL (and, for host or API
+key setups, removes the old instance first).
 
-Provider sessions include the toolyard proxy exactly when the user is connected
-(`McpSessionRegistry` filters on `credentialConfigured`, like any integration);
-`McpUpstreamProxy` adds the bearer token and `x-t3-session-id` toward toolyard.
-Bifrost (bk-toolhub) stays alongside, always appended as `mcp__bifrost__*`, for
-side-by-side testing.
+**Seamless team sign-in.** In team mode (Clerk on, origin different from the
+Toolyard origin) the server signs each `user_*` in with a signed federation
+assertion (`/v1/federation/connect`) the first time it needs that user's
+credential: a profile read, a provider session start, or an MCP call through
+the proxy. No user clicks anything, on any client. Failures are recorded on the
+connection as `connectionError` (Toolyard's code, never a secret) and shown in
+Settings:
 
-`x-bf-vk` integrations are pinned to bk-toolhub alone (`BIFROST_GATEWAYS` has a
-single entry). The earlier opt-in — any `x-bf-vk` integration pointed at
-toolyard, whatever its id, with a toolyard key stored under that id — would now
-canonicalize to bk-toolhub and send that key to the wrong gateway, so the store
-retires any such stored entry on first read and drops it from any update,
-secret included. The
-Linear status fallback above is unchanged: it always posts to bk-toolhub with
-the Bifrost key.
+- An outage leaves the connection `unavailable`; the minute reconciler retries
+  it in the background (`reconcileCredentials`), so users recover without
+  opening Settings.
+- `revoked` and `disabled` are terminal for automation. The user can select
+  Reconnect (`reconnect: true` on configure): T3 asks Toolyard once more,
+  keeping the stored credential version. Toolyard decides; a user-scope
+  revocation on Toolyard stays terminal there.
+- An administrator who disables and re-enables the same instance re-registers
+  trust; Toolyard then marks the environment's connections reconnectable, so T3
+  reopens each team user's `disabled` connection. A user's own `revoked`
+  connection stays revoked through the disable.
+
+Account consent (`host`) and API key connections are per user by design and
+keep their own flows.
+
+**Credential retirement.** When Toolyard answers 401 twice in a row for the
+same token within ten minutes (`UpstreamRejectionTracker`; one 401 can be a
+transient verification error), `McpUpstreamProxy` retires that exact token
+(`retire`, compare-and-swap) and the connection reads `revoked` with
+`connectionError: credential_rejected`. It is never re-provisioned
+automatically; the user's Reconnect is the decision.
+
+**Which URLs are Toolyard's.** `managedToolyardMcpUrls` (the saved instance,
+the server default and `KNOWN_TOOLYARD_MCP_URLS`) decides where calls get
+`x-t3-session-id` and which old `x-bf-vk` entries are dropped with their secret
+instead of being re-pointed at bk-toolhub (`BIFROST_GATEWAYS` has one entry);
+broad is the safe side there. `managedToolyardOwnedMcpUrls` (the saved instance
+and `LEGACY_TOOLYARD_MCP_URLS`) decides which manual integrations are hidden and
+refused, so a user's own entry for a different Toolyard instance keeps working.
+
+The older browser flow (`personalMcp.connectToolyard`, `mcp/ToolyardConnect.ts`,
+`POST <origin>/v1/connect/t3` with the Clerk session token) runs only when no
+server-owned runtime exists; with the runtime it reports the server's status.
 
 ## Row change-request badge and settle-on-merge
 

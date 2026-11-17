@@ -29,7 +29,25 @@ export const BIFROST_MCP_URL = "https://bk-toolhub.beknown.live/mcp" as const;
  * sign-in both apps share; nobody pastes a key.
  */
 export const TOOLYARD_MCP_INTEGRATION_ID = "toolyard" as const;
-export const TOOLYARD_MCP_URL = "https://toolyard.dev.beknown.live/mcp" as const;
+/**
+ * The Toolyard instance a server uses when nothing else names one. A server
+ * overrides it with `T3_TOOLYARD_URL`, and an administrator's saved instance
+ * (Settings → BK Add-ons → Toolyard) wins over both. Clients never use this
+ * value to connect; they read the effective URL from the Toolyard status RPC.
+ */
+export const DEFAULT_TOOLYARD_BASE_URL = "https://toolyard.beknown.live" as const;
+export const TOOLYARD_MCP_URL = `${DEFAULT_TOOLYARD_BASE_URL}/mcp` as const;
+/**
+ * Toolyard endpoints earlier builds used. Recognised (never connected to) so
+ * a stored entry that points at one is still treated as Toolyard's, and its
+ * key is never re-pointed at another gateway.
+ */
+export const LEGACY_TOOLYARD_MCP_URLS = ["https://toolyard.dev.beknown.live/mcp"] as const;
+/** Every Toolyard MCP endpoint a client can recognise without asking a server. */
+export const KNOWN_TOOLYARD_MCP_URLS: ReadonlyArray<string> = [
+  TOOLYARD_MCP_URL,
+  ...LEGACY_TOOLYARD_MCP_URLS,
+];
 /** Display name of the built-in integration; also its MCP server name (`mcp__toolyard__*`). */
 export const TOOLYARD_MCP_INTEGRATION_NAME = "toolyard" as const;
 
@@ -68,10 +86,20 @@ export const resolveBifrostGateway = (url: string): BifrostGateway | undefined =
 export const isAllowedBifrostGatewayUrl = (url: string): boolean =>
   resolveBifrostGateway(url) !== undefined;
 
-/** Whether `url` is the toolyard MCP endpoint, matched like the gateway allowlist. */
-export const isToolyardGatewayUrl = (url: string): boolean => {
+/**
+ * Whether `url` is a toolyard MCP endpoint, matched like the gateway
+ * allowlist. A server passes its effective endpoints (the configured instance
+ * and its default); without them the known endpoints apply.
+ */
+export const isToolyardGatewayUrl = (
+  url: string,
+  gatewayUrls: ReadonlyArray<string> = KNOWN_TOOLYARD_MCP_URLS,
+): boolean => {
   const normalized = normalizeGatewayUrl(url);
-  return normalized !== undefined && normalized === normalizeGatewayUrl(TOOLYARD_MCP_URL);
+  return (
+    normalized !== undefined &&
+    gatewayUrls.some((gatewayUrl) => normalizeGatewayUrl(gatewayUrl) === normalized)
+  );
 };
 
 /**

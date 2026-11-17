@@ -1,7 +1,7 @@
 /** T3-CUSTOM(expbkt3): Server-owned Toolyard connection and browser handoff. */
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_TOOLYARD_BASE_URL, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,8 +48,11 @@ import {
   toolyardSettingsOrigin,
 } from "@t3tools/client-runtime/toolyard-trust-setup";
 import {
+  canReconnectToolyardTeam,
   shortToolyardId,
   toolyardConnectionPresentation,
+  toolyardConnectionProblem,
+  toolyardInstanceHost,
   type ToolyardConnectionTone,
 } from "@t3tools/client-runtime/bk-toolyard-presentation";
 import {
@@ -239,9 +242,12 @@ function ToolyardSettingsContent({
     target: "Toolyard identifier",
   });
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  // The server names its default instance; an unconfigured server starts from it.
+  const defaultBaseUrl = status?.defaultBaseUrl ?? DEFAULT_TOOLYARD_BASE_URL;
+  const unconfigured = status !== null && (!status.baseUrl || status.removed);
   const current = draft ?? {
-    baseUrl: status?.baseUrl ?? "",
-    enabled: status?.enabled ?? false,
+    baseUrl: unconfigured ? defaultBaseUrl : (status?.baseUrl ?? ""),
+    enabled: unconfigured ? true : (status?.enabled ?? false),
     revision: status?.revision ?? 0,
   };
   const mode = current.mode ?? status?.mode ?? "team";
@@ -250,6 +256,11 @@ function ToolyardSettingsContent({
     status?.connection === "connected" &&
     (status.mode === "api-key" || status.mode === "host" || modeChange);
   const view = toolyardConnectionPresentation(status);
+  const problem = toolyardConnectionProblem(status);
+  const canReconnect = mode === "team" && canReconnectToolyardTeam(status);
+  const instanceHost = toolyardInstanceHost(status?.baseUrl);
+  // An administrator can save the server default without editing the field first.
+  const setupReady = Boolean(status?.administrator && unconfigured && mode === "team");
   const pendingRequest =
     status?.pendingConnection?.status === "pending" ? status.pendingConnection : null;
   const revisionConflict = draft !== null && status !== null && status.revision !== draft.revision;
@@ -490,6 +501,41 @@ function ToolyardSettingsContent({
       setBusy(false);
     });
   };
+  const reconnect = async () => {
+    if (!status) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await configure({
+        environmentId,
+        input: {
+          expectedRevision: status.revision,
+          baseUrl: status.baseUrl ?? "",
+          origin: status.origin ?? "",
+          enabled: true,
+          mode: "team",
+          reconnect: true,
+        },
+      });
+      refresh();
+      if (AsyncResult.isSuccess(saved)) {
+        if (saved.value.connection === "connected")
+          setNotice(
+            saved.value.email ? `Reconnected as ${saved.value.email}.` : "Reconnected to Toolyard.",
+          );
+        else
+          setError(
+            toolyardConnectionProblem(saved.value) ??
+              "Toolyard did not restore the connection. Select Refresh, then try again.",
+          );
+      } else if (AsyncResult.isFailure(saved))
+        setError(toolyardSettingsFailureMessage(toolyardSettingsFailureCode(saved.cause)));
+    } catch {
+      setError("The reconnect request failed. Select Refresh, then try again.");
+    }
+    setBusy(false);
+  };
   const cancelConsent = async () => {
     if (!status?.baseUrl) return;
     setBusy(true);
@@ -566,6 +612,7 @@ function ToolyardSettingsContent({
     status !== null &&
     (draft !== null ||
       apiKey !== "" ||
+      setupReady ||
       ((view.phase === "not_connected" ||
         view.phase === "request_ended" ||
         view.phase === "revoked") &&
@@ -581,6 +628,7 @@ function ToolyardSettingsContent({
         ? "Save and connect"
         : "Save and verify trust";
   const meta = [
+    ...(instanceHost ? [`Toolyard ${instanceHost}`] : []),
     view.host ?? `${label} (host name not reported)`,
     view.method ?? "Method not reported",
     ...(view.connected
@@ -749,13 +797,27 @@ function ToolyardSettingsContent({
           {status ? <p className="text-xs break-words text-muted-foreground">{meta}</p> : null}
           <p className="text-xs text-muted-foreground">
             {view.connected
-              ? "Toolyard Inbox asks you to decide on restricted calls."
+              ? status?.mode === "team"
+                ? "T3 signed you in automatically with your account on this server. Toolyard Inbox asks you to decide on restricted calls."
+                : "Toolyard Inbox asks you to decide on restricted calls."
               : view.description}
           </p>
-          {status?.mode === "team" && view.phase === "revoked" ? (
+          {view.phase === "not_configured" ? (
             <p className="text-xs text-muted-foreground">
-              Select an available connection method below to authorize access. A settings save does
-              not restore revoked access.
+              {status?.administrator
+                ? "Open Server setup, check the Toolyard URL, then select Save and verify trust. T3 then signs in every user of this server automatically."
+                : "Ask an administrator of this server to set up Toolyard. T3 then signs you in automatically."}
+            </p>
+          ) : null}
+          {problem ? (
+            <p role="alert" className="text-xs text-destructive-foreground">
+              {problem}
+            </p>
+          ) : null}
+          {canReconnect ? (
+            <p className="text-xs text-muted-foreground">
+              Select Reconnect to ask Toolyard again. Toolyard decides, so access it revoked stays
+              revoked.
             </p>
           ) : null}
           {userScope === "local-user" ? (
@@ -852,6 +914,17 @@ function ToolyardSettingsContent({
                 </Button>
               </>
             ) : null}
+            {canReconnect ? (
+              <Button
+                size="sm"
+                aria-label={`Reconnect Toolyard on ${label}`}
+                onClick={() => void reconnect()}
+                disabled={busy}
+              >
+                <RefreshCwIcon />
+                Reconnect
+              </Button>
+            ) : null}
             {retryable ? (
               <Button
                 size="sm"
@@ -940,11 +1013,21 @@ function ToolyardSettingsContent({
                   aria-label="Toolyard base URL"
                   className="w-full sm:w-80"
                   value={current.baseUrl}
-                  placeholder="https://toolyard.dev.beknown.live"
+                  placeholder={defaultBaseUrl}
                   onChange={(event) => setDraft({ ...current, baseUrl: event.target.value })}
                 />
               }
-            />
+            >
+              <p className="my-2 text-xs text-muted-foreground">
+                Server default: {defaultBaseUrl}
+                {status.defaultBaseUrlSource === "environment"
+                  ? " (set by T3_TOOLYARD_URL)."
+                  : ". Set T3_TOOLYARD_URL on the server to change it."}
+                {status.baseUrl && !status.removed && status.baseUrl !== defaultBaseUrl
+                  ? ` This server uses ${status.baseUrl}.`
+                  : ""}
+              </p>
+            </SettingsRow>
             <SettingsRow
               title="Enable integration"
               description="Enable Toolyard access on this server. Disable it to stop new Toolyard requests."
@@ -983,7 +1066,7 @@ function ToolyardSettingsContent({
               modeChange ||
               (mode === "team" && status.teamAvailable === false) ||
               (mode === "host" && status.pendingConnection?.status === "pending") ||
-              (!draft && !apiKey && !status.removed && mode !== "host") ||
+              (!draft && !apiKey && !status.removed && !setupReady && mode !== "host") ||
               ((mode === "api-key" || mode === "host") && !status.baseUrl && !status.administrator)
             }
             onClick={() => void save()}

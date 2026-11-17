@@ -35,8 +35,9 @@ import { makePerUserLock } from "./PerUserLock.ts";
 import {
   managedToolyardIntegration,
   managedToolyardCredential,
-  managedToolyardBaseUrl,
   hasManagedToolyardRuntime,
+  managedToolyardMcpUrls,
+  managedToolyardOwnedMcpUrls,
 } from "../toolyard/ToolyardIntegration.ts";
 
 const textEncoder = new TextEncoder();
@@ -109,7 +110,9 @@ export const builtInToolyardIntegration = (): PersonalMcpIntegration => ({
 export const isLegacyToolyardIntegration = (integration: {
   readonly url: string;
   readonly authMode: string;
-}): boolean => integration.authMode === "x-bf-vk" && isToolyardGatewayUrl(integration.url);
+}): boolean =>
+  integration.authMode === "x-bf-vk" &&
+  isToolyardGatewayUrl(integration.url, managedToolyardMcpUrls());
 
 /**
  * Pins what a client may not change. The built-in `toolyard` integration keeps
@@ -207,7 +210,7 @@ const validateIntegration = (integration: PersonalMcpProfileUpdate["integrations
   if (
     hasManagedToolyardRuntime() &&
     integration.id !== TOOLYARD_MCP_INTEGRATION_ID &&
-    (isToolyardGatewayUrl(integration.url) || integration.url === `${managedToolyardBaseUrl()}/mcp`)
+    isToolyardGatewayUrl(integration.url, managedToolyardOwnedMcpUrls())
   ) {
     throw new Error(
       "Toolyard uses the environment's server-owned connection. Remove the manual Toolyard integration.",
@@ -342,8 +345,7 @@ export const layer = Layer.effect(
                   ...presentIntegrations(stored.integrations).filter(
                     (entry) =>
                       entry.id !== TOOLYARD_MCP_INTEGRATION_ID &&
-                      !isToolyardGatewayUrl(entry.url) &&
-                      entry.url !== `${managedToolyardBaseUrl()}/mcp`,
+                      !isToolyardGatewayUrl(entry.url, managedToolyardOwnedMcpUrls()),
                   ),
                 ],
           ),

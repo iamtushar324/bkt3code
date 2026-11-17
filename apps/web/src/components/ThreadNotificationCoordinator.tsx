@@ -26,7 +26,8 @@ import {
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
-// T3-CUSTOM(expbkt3): per-group notification mode.
+// T3-CUSTOM(expbkt3): per-group notification mode, and this device's own override of it.
+import { usePhaseSidebarGroupingStore } from "../phaseSidebarGroupingStore";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { environmentServerConfigsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
@@ -98,14 +99,16 @@ export function startThreadNotifications(
     } else openToasts.set(key, remaining);
   };
   // T3-CUSTOM(expbkt3): BEGIN — a custom group's notification mode (all, parents, off).
-  // The mode lives in the shared group registry, merged across hosts the way the
-  // sidebar shows it, so the bell a user sees is the rule that applies.
+  // The shared mode lives in the group registry, merged across hosts the way the
+  // sidebar shows it; this device's own mode (the sidebar bell, kept in local
+  // storage) outranks it, so the bell a user sees is the rule that applies.
   const currentGroupRegistry = () => {
     const configs = registry.get(environmentServerConfigsAtom);
     const primary = registry.get(primaryEnvironmentIdAtom);
     return {
       groups: buildPhaseSidebarCustomGroupRegistry(configs, primary),
       ungrouped: resolvePhaseSidebarUngroupedNotifications(configs, primary),
+      overrides: usePhaseSidebarGroupingStore.getState().grouping.notificationOverrides,
     };
   };
   // A task delegated from another host is a child even where its parent is not listed.
@@ -118,6 +121,7 @@ export function startThreadNotifications(
       thread.customGroup,
       thread.parentThreadId !== null || thread.delegatedFrom !== null,
       groups.ungrouped,
+      groups.overrides,
     );
   // Muting a group also closes what its sessions already have on screen.
   const closeMutedPending = () => {
@@ -478,8 +482,14 @@ export function startThreadNotifications(
     registry.subscribe(environmentThreadShells.hiddenThreadKeysAtom, closeHiddenPending),
     registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, closeHiddenPending),
     registry.subscribe(environmentThreadShells.threadRefsAtom, closeHiddenPending),
-    // T3-CUSTOM(expbkt3): a group's mode changes through its host's server settings.
+    // T3-CUSTOM(expbkt3): a group's mode changes through its host's server settings,
+    // or through this device's override in the grouping store.
     registry.subscribe(environmentServerConfigsAtom, closeMutedPending),
+    usePhaseSidebarGroupingStore.subscribe((state, previous) => {
+      if (state.grouping.notificationOverrides !== previous.grouping.notificationOverrides) {
+        closeMutedPending();
+      }
+    }),
   ];
   onSettings();
 

@@ -411,21 +411,51 @@ export function resolvePhaseSidebarUngroupedNotifications(
 }
 
 /**
+ * This device's own notification mode per group, keyed by the group id (the
+ * section id), with "Ungrouped" under `PHASE_SIDEBAR_UNGROUPED_ID`. Kept with
+ * the device's grouping preferences (phaseSidebarGrouping.ts), not on a host:
+ * a mute set here silences this device only, and outranks the shared mode.
+ */
+export type PhaseSidebarGroupNotificationOverrides = Readonly<
+  Record<string, ThreadCustomGroupNotificationMode>
+>;
+
+/**
+ * The mode that applies to a group on this device: its local override, else
+ * the shared mode (the registry's for a custom group, `ungrouped` for the
+ * built-in section), else "all". `groupId` is a section id.
+ */
+export function resolvePhaseSidebarGroupNotificationMode(
+  registry: PhaseSidebarCustomGroupRegistry,
+  groupId: string,
+  ungrouped: ThreadCustomGroupNotificationMode = "all",
+  overrides?: PhaseSidebarGroupNotificationOverrides,
+): ThreadCustomGroupNotificationMode {
+  const override = overrides?.[groupId];
+  if (override !== undefined) return resolveThreadCustomGroupNotificationMode(override);
+  if (groupId === PHASE_SIDEBAR_UNGROUPED_ID) return ungrouped;
+  return registry.get(groupId)?.notifications ?? "all";
+}
+
+/**
  * Whether a session may alert under its group's mode. `customGroup` is the
  * session's label; `isChild` is true when it has a parent session. A session
  * with no group follows `ungrouped`; one whose group has no registry entry
- * always may.
+ * always may. `overrides` (this device's own modes) outrank both; mobile
+ * passes none, which keeps the shared behaviour.
  */
 export function phaseSidebarCustomGroupAllowsNotification(
   registry: PhaseSidebarCustomGroupRegistry,
   customGroup: string | null | undefined,
   isChild: boolean,
   ungrouped: ThreadCustomGroupNotificationMode = "all",
+  overrides?: PhaseSidebarGroupNotificationOverrides,
 ): boolean {
-  const mode =
+  const groupId =
     customGroup === null || customGroup === undefined
-      ? ungrouped
-      : (registry.get(normalizeThreadCustomGroup(customGroup))?.notifications ?? "all");
+      ? PHASE_SIDEBAR_UNGROUPED_ID
+      : normalizeThreadCustomGroup(customGroup);
+  const mode = resolvePhaseSidebarGroupNotificationMode(registry, groupId, ungrouped, overrides);
   return mode === "all" || (mode === "parents" && !isChild);
 }
 // T3-CUSTOM(expbkt3): END

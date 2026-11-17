@@ -13,7 +13,6 @@ import {
   phaseSidebarCustomGroupRegistryEnvironmentIds,
   planPhaseSidebarCustomGroupCreate,
   planPhaseSidebarCustomGroupDelete,
-  planPhaseSidebarCustomGroupNotifications,
   planPhaseSidebarCustomGroupRecolor,
   planPhaseSidebarCustomGroupRename,
   resolvePhaseSidebarCustomGroupHome,
@@ -54,15 +53,13 @@ export interface PhaseSidebarCustomGroupRegistryControls {
   readonly deleteGroup: (id: string) => void;
   /** `colorId` null restores the default look. */
   readonly recolorGroup: (id: string, label: string, colorId: string | null) => void;
-  /** T3-CUSTOM(expbkt3): which of the group's sessions may alert. */
-  readonly setGroupNotifications: (
-    id: string,
-    label: string,
-    notifications: ThreadCustomGroupNotificationMode,
-  ) => void;
-  /** T3-CUSTOM(expbkt3): the "Ungrouped" section's mode, and its setter (every writable host). */
+  /**
+   * T3-CUSTOM(expbkt3): the "Ungrouped" section's shared mode (a host setting).
+   * Web only reads the shared modes: its bell writes this device's own mode
+   * (phaseSidebarGroupingStore), which outranks them. Mobile and the MCP
+   * control tools still write the shared ones.
+   */
   readonly ungroupedNotifications: ThreadCustomGroupNotificationMode;
-  readonly setUngroupedNotifications: (notifications: ThreadCustomGroupNotificationMode) => void;
 }
 
 export function usePhaseSidebarCustomGroupRegistry(input: {
@@ -155,38 +152,11 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
     [homeEnvironmentId, registry, send, writableEnvironmentIds],
   );
 
-  // T3-CUSTOM(expbkt3): per-group notification mode, written like a recolour.
-  const setGroupNotifications = useCallback(
-    (id: string, label: string, notifications: ThreadCustomGroupNotificationMode) =>
-      send(
-        planPhaseSidebarCustomGroupNotifications({
-          registry,
-          id,
-          label,
-          notifications,
-          writableEnvironmentIds,
-          homeEnvironmentId,
-        }),
-      ),
-    [homeEnvironmentId, registry, send, writableEnvironmentIds],
-  );
-
-  // T3-CUSTOM(expbkt3): "Ungrouped" has no registry entry, so its mode is a
-  // plain host setting, written to every host this session may write.
+  // T3-CUSTOM(expbkt3): "Ungrouped" has no registry entry, so its shared mode
+  // is a plain host setting.
   const ungroupedNotifications = useMemo(
     () => resolvePhaseSidebarUngroupedNotifications(serverConfigs, primaryEnvironmentId),
     [primaryEnvironmentId, serverConfigs],
-  );
-  const setUngroupedNotifications = useCallback(
-    (notifications: ThreadCustomGroupNotificationMode) => {
-      for (const environmentId of writableEnvironmentIds) {
-        void updateSettings({
-          environmentId: environmentId as EnvironmentId,
-          input: { patch: { ungroupedThreadNotifications: notifications } },
-        });
-      }
-    },
-    [updateSettings, writableEnvironmentIds],
   );
 
   return useMemo(
@@ -197,9 +167,7 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
       renameGroup,
       deleteGroup,
       recolorGroup,
-      setGroupNotifications,
       ungroupedNotifications,
-      setUngroupedNotifications,
     }),
     [
       createGroup,
@@ -208,8 +176,6 @@ export function usePhaseSidebarCustomGroupRegistry(input: {
       recolorGroup,
       registry,
       renameGroup,
-      setGroupNotifications,
-      setUngroupedNotifications,
       ungroupedNotifications,
     ],
   );

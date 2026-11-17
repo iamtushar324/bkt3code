@@ -6,6 +6,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { readDraftCustomGroupCreateFields } from "./draftCustomGroupStore";
+
 export function resolveThreadCreationProfile(
   result: SourceControlProfilesListResult | null,
   ownerUserId: string | null,
@@ -20,6 +22,7 @@ export function resolveThreadCreationProfile(
 export function threadCreationForkFields(
   sourceControlProfileId: SourceControlProfileId | null,
   draft: {
+    readonly threadId?: ThreadId;
     readonly parentThreadId?: ThreadId | null;
     readonly parentEnvironmentId?: EnvironmentId | null;
   } | null,
@@ -30,5 +33,7 @@ export function threadCreationForkFields(
     ...(draft?.parentThreadId && draft.parentEnvironmentId
       ? { parentEnvironmentId: draft.parentEnvironmentId }
       : {}),
+    // A draft started from a custom group's "+" is created in that group.
+    ...readDraftCustomGroupCreateFields(draft?.threadId),
   };
 }

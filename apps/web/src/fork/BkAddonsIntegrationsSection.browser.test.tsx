@@ -64,6 +64,11 @@ vi.mock(import("./SessionWebhookSettingsSection"), async (original) => ({
     />
   )) as never,
 }));
+// The folded header's status line reads live server queries.
+vi.mock(import("./BkAddonsServerSummary"), async (original) => ({
+  ...(await original()),
+  BkAddonsServerSummary: (() => null) as never,
+}));
 vi.mock(import("./DefaultCustomGroupSetting"), async (original) => ({
   ...(await original()),
   EnvironmentDefaultCustomGroupSetting: (() => null) as never,
@@ -78,10 +83,15 @@ vi.mock(import("../components/settings/settingsLayout"), async (original) => ({
 import { BkAddonsIntegrationsSection } from "./BkAddonsIntegrationsSection";
 
 const rowsIn = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>("[data-kind]")];
+const serverGroups = (root: ParentNode) => [
+  ...root.querySelectorAll<HTMLElement>('section[aria-label^="BK Add-ons for"]'),
+];
+const foldKey = (environmentId: string) => `t3-bk-addons-server-open:${environmentId}`;
 
 it("groups only selected connected servers and retains the offline server", async () => {
   await using screen = await render(<BkAddonsIntegrationsSection />);
-  const groups = [...screen.container.querySelectorAll("section")];
+  // Folded servers keep their cards mounted, so a Toolyard sign-in can finish while closed.
+  const groups = serverGroups(screen.container);
   expect(groups).toHaveLength(3);
   for (const [index, environmentId] of ["stage", "mac"].entries()) {
     const rows = rowsIn(groups[index]!);
@@ -106,4 +116,18 @@ it("refreshes only the chosen server's connection and callbacks", async () => {
     "1",
     "1",
   ]);
+});
+
+it("folds each connected server until opened, and remembers it on this device", async () => {
+  for (const id of ["stage", "mac"]) window.localStorage.removeItem(foldKey(id));
+  await using screen = await render(<BkAddonsIntegrationsSection />);
+  const stage = screen.getByRole("button", { name: /^Stage/ });
+  await expect.element(stage).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(stage);
+  await expect.element(stage).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(() => window.localStorage.getItem(foldKey("stage"))).toBe("1");
+  await expect
+    .element(screen.getByRole("button", { name: /^Mac/ }))
+    .toHaveAttribute("aria-expanded", "false");
+  window.localStorage.removeItem(foldKey("stage"));
 });

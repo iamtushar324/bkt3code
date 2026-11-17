@@ -6,8 +6,10 @@
 // operations, and keeping it here adds no hunks to an upstream-owned file.
 // Only presentation lives here — the manual section order, collapse state
 // (the lifecycle, project and custom groups, and the snoozed and settled
-// shelves) and this device's legacy placements. Which group a session is IN is the thread's
-// own `customGroup` label on the server, written through thread.meta.update.
+// shelves), this device's legacy placements, and this device's notification
+// mode per group (the header bell; it outranks the host's shared mode). Which
+// group a session is IN is the thread's own `customGroup` label on the
+// server, written through thread.meta.update.
 import {
   createPhaseSidebarCustomGroup,
   DEFAULT_PHASE_SIDEBAR_GROUPING,
@@ -18,6 +20,7 @@ import {
   renamePhaseSidebarCustomGroup,
   sanitizePhaseSidebarGrouping,
   setPhaseSidebarGroupBy,
+  setPhaseSidebarGroupNotificationOverride,
   setPhaseSidebarGroupOrder,
   setPhaseSidebarRunningShelf,
   setPhaseSidebarSectionsCollapsed,
@@ -26,6 +29,7 @@ import {
   type PhaseSidebarGroupOrder,
   type PhaseSidebarGroupingPreferences,
 } from "@t3tools/client-runtime/state/phase-sidebar-grouping";
+import type { ThreadCustomGroupNotificationMode } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -50,6 +54,8 @@ interface PhaseSidebarGroupingStoreState {
   /** `orderedIds` is the custom section order currently on screen. */
   moveGroup: (orderedIds: ReadonlyArray<string>, id: string, direction: "up" | "down") => void;
   toggleSectionCollapsed: (sectionKey: string) => void;
+  /** The header bell: this device's mode for a group id ("ungrouped" for the built-in section). */
+  setGroupNotifications: (id: string, mode: ThreadCustomGroupNotificationMode) => void;
   /** The collapse-all button: every given section closed, or every one open. */
   setSectionsCollapsed: (
     sections: ReadonlyArray<{ readonly key: string; readonly collapsedByDefault: boolean }>,
@@ -90,6 +96,11 @@ export const usePhaseSidebarGroupingStore = create<PhaseSidebarGroupingStoreStat
         set((state) => ({
           grouping: togglePhaseSidebarSectionCollapsed(state.grouping, sectionKey),
         })),
+      setGroupNotifications: (id, mode) =>
+        set((state) => {
+          const next = setPhaseSidebarGroupNotificationOverride(state.grouping, id, mode);
+          return next === state.grouping ? state : { grouping: next };
+        }),
       setSectionsCollapsed: (sections, collapsed) =>
         set((state) => {
           const next = setPhaseSidebarSectionsCollapsed(state.grouping, sections, collapsed);

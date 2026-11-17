@@ -2,8 +2,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ToolyardIntegrationStatus } from "@t3tools/contracts";
 import {
+  canReconnectToolyardTeam,
   shortToolyardId,
   toolyardConnectionPresentation,
+  toolyardConnectionProblem,
+  toolyardInstanceHost,
   toolyardMethodLabel,
 } from "./toolyardConnectionPresentation.ts";
 
@@ -129,4 +132,48 @@ it("distinguishes a disabled connection from a disabled integration without infe
   expect(account.description).toContain("will not reconnect automatically");
   expect(account.description).not.toContain("administrator can enable it");
   expect(integration.label).toBe("Integration disabled");
+});
+
+describe("team sign-in problems", () => {
+  it("explains the server's last failed attempt only while the user is not connected", () => {
+    expect(toolyardConnectionProblem(status({ connection: "revoked" }))).toBeNull();
+    expect(
+      toolyardConnectionProblem(
+        status({ connection: "revoked", connectionError: "credential_rejected" }),
+      ),
+    ).toContain("Select Reconnect");
+    expect(
+      toolyardConnectionProblem(
+        status({ connection: "connected", connectionError: "credential_rejected" }),
+      ),
+    ).toBeNull();
+    expect(
+      toolyardConnectionProblem(status({ connection: "disabled", connectionError: "brand_new" })),
+    ).toBe("Toolyard refused the connection (brand_new).");
+    expect(
+      toolyardConnectionProblem(status({ connection: "revoked", connectionError: "toString" })),
+    ).toBe("Toolyard refused the connection (toString).");
+  });
+
+  it("offers a team reconnect only for a team connection the server stopped using", () => {
+    expect(canReconnectToolyardTeam(status({ mode: "team", connection: "revoked" }))).toBe(true);
+    expect(canReconnectToolyardTeam(status({ mode: "team", connection: "disabled" }))).toBe(true);
+    for (const overrides of [
+      { mode: "team", connection: "connected" },
+      { mode: "team", connection: "unavailable" },
+      { mode: "host", connection: "revoked" },
+      { mode: "team", connection: "revoked", enabled: false },
+      { mode: "team", connection: "revoked", removed: true },
+      { mode: "team", connection: "revoked", teamAvailable: false },
+      { mode: "team", connection: "revoked", baseUrl: null },
+    ] as const)
+      expect(canReconnectToolyardTeam(status(overrides))).toBe(false);
+    expect(canReconnectToolyardTeam(null)).toBe(false);
+  });
+
+  it("names the instance host for the summary", () => {
+    expect(toolyardInstanceHost("https://toolyard.beknown.live")).toBe("toolyard.beknown.live");
+    expect(toolyardInstanceHost(null)).toBeNull();
+    expect(toolyardInstanceHost("not a url")).toBeNull();
+  });
 });
