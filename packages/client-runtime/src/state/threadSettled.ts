@@ -44,6 +44,8 @@ interface QueuedThreadShell {
  * Bound the pending window so those threads can eventually settle.
  */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+// T3-CUSTOM(expbkt3): inactivity auto-settle threshold unit (upstream dropped it).
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export function hasQueuedTurnStart(
   shell: QueuedThreadShell,

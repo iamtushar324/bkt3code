@@ -143,15 +143,13 @@ interface IssuedDpopToken {
 
 // T3-CUSTOM(expbkt3): BEGIN — team mode: recover which operator a bootstrap token belongs to,
 // so the cached DPoP token can carry that identity forward.
-function identitySubject(token: string | undefined): string | null {
-  if (!token) return null;
-  try {
-    const subject = decodeRelayJwt(token).sub;
-    return typeof subject === "string" && subject.length > 0 ? subject : null;
-  } catch {
-    return null;
-  }
-}
+const identitySubject = (token: string | undefined) =>
+  token
+    ? decodeRelayJwt(token).pipe(
+        Effect.map(({ sub }) => (typeof sub === "string" && sub.length > 0 ? sub : null)),
+        Effect.orElseSucceed(() => null),
+      )
+    : Effect.succeed(null);
 // T3-CUSTOM(expbkt3): END
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
@@ -440,6 +438,8 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
       const issuedAt = yield* Clock.currentTimeMillis;
+      // T3-CUSTOM(expbkt3): the Clerk user this token is bound to.
+      const subject = yield* identitySubject(bootstrap.identityToken);
       const token = new TokenStore.RemoteDpopAccessToken({
         environmentId: descriptor.environmentId,
         accountId: identity.accountId,
@@ -449,9 +449,7 @@ export const make = Effect.gen(function* () {
         expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
         dpopThumbprint: thumbprint,
         // T3-CUSTOM(expbkt3): retain identity metadata alongside upstream account-scoped caching.
-        ...(identitySubject(bootstrap.identityToken)
-          ? { identitySubject: identitySubject(bootstrap.identityToken)! }
-          : {}),
+        ...(subject ? { identitySubject: subject } : {}),
       });
       return { token, descriptor } satisfies IssuedDpopToken;
     },

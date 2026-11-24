@@ -427,25 +427,30 @@ describe("remote thread lifecycle commands", () => {
     Effect.gen(function* () {
       const saved: QueuedThreadMessage[] = [];
       const h = yield* makeHarness({ saved });
-      const result = h.commands.startTurn.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: {
-          threadId: THREAD_ID,
-          commandId: CommandId.make("durable-continuation"),
-          outboxIdentityKey: "member",
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          message: {
-            messageId: MessageId.make("durable-message"),
-            role: "user",
-            text: "Continue this run",
-            attachments: [],
-          },
-          manualContinuationOfRunId: RunId.make("prior-run"),
-          creationSource: "mcp",
-          dispatchMode: "start",
-        },
-      });
+      const result = yield* Effect.forkChild(
+        Effect.exit(
+          h.commands.startTurn.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: {
+              threadId: THREAD_ID,
+              commandId: CommandId.make("durable-continuation"),
+              outboxIdentityKey: "member",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              message: {
+                messageId: MessageId.make("durable-message"),
+                role: "user",
+                text: "Continue this run",
+                attachments: [],
+              },
+              manualContinuationOfRunId: RunId.make("prior-run"),
+              creationSource: "mcp",
+              dispatchMode: "start",
+            },
+          }),
+        ),
+        { startImmediately: true },
+      );
       const request = yield* Queue.take(h.requests);
       expect(saved[0]).toMatchObject({
         identityKey: "member",
@@ -456,7 +461,7 @@ describe("remote thread lifecycle commands", () => {
         deliveryState: "pending",
       });
       yield* Deferred.fail(request.reply, new Error("An error occurred during Read"));
-      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect((yield* Fiber.join(result))._tag).toBe("Failure");
       expect(
         saved.every(
           (message) =>

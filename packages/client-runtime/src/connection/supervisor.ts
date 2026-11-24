@@ -936,6 +936,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (probeEvent._tag === "TimedOut") {
           if (toleratesMiss) {
             toleratesMiss = false;
+            // T3-CUSTOM(expbkt3): BEGIN. A silent tolerated miss is the first of the two silent
+            // timeouts, so a dead socket is not given a third probe (TEC-1837).
+            if (!(yield* receivedFrameSince(lease.session.lastFrameAt, probeStartedAt))) {
+              silentTimeouts = 1;
+            }
+            probeStartedAt = yield* Clock.currentTimeMillis;
+            // T3-CUSTOM(expbkt3): END
             yield* Fiber.interrupt(probe);
             probe = yield* Effect.forkChild(lease.session.probe);
             deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);

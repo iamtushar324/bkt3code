@@ -1991,9 +1991,12 @@ describe("EnvironmentSupervisor", () => {
       yield* harness.wake("application-active");
       yield* TestClock.adjust("15 seconds");
       yield* TestClock.adjust("15 seconds");
-      yield* awaitState(
+      // T3-CUSTOM(expbkt3): step through the 0-2 s reconnect jitter after a probe timeout.
+      yield* advanceClockUntilState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
+        "250 millis",
+        24,
       );
 
       expect(yield* Ref.get(probeCount)).toBe(2);
