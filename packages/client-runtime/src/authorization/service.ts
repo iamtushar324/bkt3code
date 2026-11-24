@@ -42,13 +42,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+// T3-CUSTOM(expbkt3): identity token payload decode.
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+// T3-CUSTOM(expbkt3): identity token payload decode.
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
-// T3-CUSTOM(expbkt3): team mode — decode the operator identity out of bootstrap tokens.
-import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
   DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
@@ -142,14 +144,20 @@ interface IssuedDpopToken {
 }
 
 // T3-CUSTOM(expbkt3): BEGIN — team mode: recover which operator a bootstrap token belongs to,
-// so the cached DPoP token can carry that identity forward.
+// so the cached DPoP token can carry that identity forward. Only a cache label; the server
+// verifies the token itself, so this reads the payload without checking the signature.
+const decodeIdentityClaims = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ sub: Schema.optional(Schema.String) })),
+);
 const identitySubject = (token: string | undefined) =>
-  token
-    ? decodeRelayJwt(token).pipe(
-        Effect.map(({ sub }) => (typeof sub === "string" && sub.length > 0 ? sub : null)),
-        Effect.orElseSucceed(() => null),
-      )
-    : Effect.succeed(null);
+  Effect.sync(() => {
+    const payload = token?.split(".")[1];
+    if (payload === undefined) return null;
+    const json = Base64Url.decodeString(payload);
+    if (Result.isFailure(json)) return null;
+    const sub = Option.getOrUndefined(decodeIdentityClaims(json.success))?.sub;
+    return sub !== undefined && sub.length > 0 ? sub : null;
+  });
 // T3-CUSTOM(expbkt3): END
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
