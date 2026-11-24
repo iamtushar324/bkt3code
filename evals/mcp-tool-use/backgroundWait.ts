@@ -114,6 +114,9 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
   const entry = tools.find((tool) => tool.tool.name === "t3_background_wait");
   if (entry === undefined) return yield* Effect.die(new Error("T3 has no t3_background_wait."));
   const scope: McpInvocationContext.McpThreadInvocationScope = {
+    // T3-CUSTOM(expbkt3): the fork's control-plane principal and actor identity.
+    principal: "provider-session",
+    actorUserId: null,
     environmentId: EnvironmentId.make("00000000-0000-4000-8000-0000000000e0"),
     requestNamespace: "mcp-tool-use-eval",
     thread: { threadId, providerSessionId: "mcp-tool-use-eval", providerInstanceId },

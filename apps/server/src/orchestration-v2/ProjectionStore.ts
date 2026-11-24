@@ -3872,7 +3872,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
         ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
         ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
-        ${filter?.turnItemRunIds === undefined ? sql`` : !filter.turnItemRunIds.includes(null) ? sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds)}))` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`} /* T3-CUSTOM(expbkt3): an OR here defeats the run index. */
+        ${filter?.turnItemRunIds === undefined ? sql`` : !filter.turnItemRunIds.includes(null) ? sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))}))` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`} /* T3-CUSTOM(expbkt3): an OR here defeats the run index. */
     `;
 
     // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks

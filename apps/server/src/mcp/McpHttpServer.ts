@@ -479,17 +479,18 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       registered === undefined && limited.client?.linked !== true && !requestsEveryTool(request)
         ? "agent"
         : undefined;
-    return {
+    // T3-CUSTOM(expbkt3): typed scope with the fork request origin and tool list.
+    const scope: McpInvocationContext.McpInvocationScope = {
       ...limited,
       linkedEnvironments,
       agentFeedback,
       workflows,
       origin,
       ...(forge === undefined ? {} : { forge }),
-      // T3-CUSTOM(expbkt3): fork request origin and tool list.
-      ...(requestOrigin === undefined ? {} : { requestOrigin }),
-      ...(toolList === undefined ? {} : { toolList }),
+      requestOrigin,
+      toolList,
     };
+    return scope;
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {

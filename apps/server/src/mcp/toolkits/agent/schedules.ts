@@ -55,9 +55,15 @@ import {
   type WatchChange,
 } from "../../../scheduledTasks/scheduledTaskWatch.expbkt3.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type * as McpToolAccess from "../../McpToolAccess.ts";
-import { assertLiveCaller, assertTargetWithinLimits, type Caller } from "../../threadAccess.ts";
+import {
+  assertLiveCaller,
+  assertTargetWithinLimits,
+  type Caller,
+  type CallerLimits,
+} from "../../threadAccess.ts";
 import {
   fail,
   loadAgentCaller,
@@ -276,10 +282,20 @@ const webhookUrlOf = (task: ScheduledTask, context: ScheduleContext) =>
     : (task.webhook.url ??
       (context.origin === undefined ? task.webhook.path : `${context.origin}${task.webhook.path}`));
 
+/** The modes a schedule starts at, checked against the caller's; a schedule is no thread to name. */
+const assertModesWithinLimits = (
+  limits: CallerLimits,
+  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+) =>
+  resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
+    Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
+    Effect.asVoid,
+  );
+
 /** Whether the caller may see a webhook URL: its token starts runs at the task's modes. */
 const mayRun = (task: ScheduledTask, context: ScheduleContext) =>
   assertLiveCaller(context.caller).pipe(
-    Effect.andThen(assertTargetWithinLimits(context.caller.limits, task)),
+    Effect.andThen(assertModesWithinLimits(context.caller.limits, task)),
     Effect.exit,
     Effect.map(Exit.isSuccess),
   );
@@ -527,7 +543,7 @@ const newSessionSettings = Effect.fn("agentToolkit.newSessionSettings")(function
   // A saved default broader than this caller may start falls back to the
   // caller's own modes, as t3_start_session does.
   const within = yield* Effect.exit(
-    assertTargetWithinLimits(caller.limits, { runtimeMode, interactionMode }),
+    assertModesWithinLimits(caller.limits, { runtimeMode, interactionMode }),
   );
   if (Exit.isFailure(within)) {
     runtimeMode = started.runtimeMode;
@@ -918,7 +934,7 @@ const assertWithinModes = Effect.fn("agentToolkit.assertScheduleWithinModes")(fu
   context: ScheduleContext,
 ) {
   const { caller } = context;
-  yield* assertTargetWithinLimits(caller.limits, view.task);
+  yield* assertModesWithinLimits(caller.limits, view.task);
   if (view.task.threadId === null) return;
   // Fails closed: a session that cannot be read just now is not assumed safe.
   const bound =

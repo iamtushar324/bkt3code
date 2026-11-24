@@ -2295,7 +2295,7 @@ export const layerWsRpc = (
           ? effect
           : accessControl.canAccessProject(actorUserId, projectId).pipe(
               Effect.orElseSucceed(() => false),
-              Effect.flatMap((allowed) =>
+              Effect.flatMap((allowed): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
                 allowed
                   ? effect
                   : Effect.fail(

@@ -854,7 +854,8 @@ function sessionSummary(
 }
 
 function redactMcpConfiguration(settings: Parameters<typeof redactServerSettingsForClient>[0]) {
-  const redacted = redactServerSettingsForClient(settings);
+  // Keeps secret references, as before upstream made the client choose.
+  const redacted = redactServerSettingsForClient(settings, { secretReferences: true });
   return {
     ...redacted,
     experimental: {

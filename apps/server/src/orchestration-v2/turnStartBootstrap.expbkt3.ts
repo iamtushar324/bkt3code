@@ -379,8 +379,8 @@ export const make = Effect.gen(function* () {
   const resolveWorktreeBase = Effect.fn("TurnStartBootstrap.resolveWorktreeBase")(function* (
     prepareWorktree: NonNullable<NonNullable<TurnStartCommand["bootstrap"]>["prepareWorktree"]>,
   ) {
-    const isRepository = yield* gitWorkflow.isRepository(prepareWorktree.projectCwd);
-    if (!isRepository) return null;
+    const repositoryRoot = yield* gitWorkflow.repositoryRoot(prepareWorktree.projectCwd);
+    if (repositoryRoot === null) return null;
     let worktreeBaseRef: string = prepareWorktree.baseBranch;
     const startFromOrigin =
       prepareWorktree.startFromOrigin === true &&
