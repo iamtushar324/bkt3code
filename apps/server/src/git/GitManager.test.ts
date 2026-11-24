@@ -1324,8 +1324,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  // T3-CUSTOM(expbkt3): since upstream #40277 a repository without remotes shows no PR; the fork
+  // keeps the check that removing the final remote starts no provider lookup.
   it.effect(
-    "status retains a learned PR when the final remote is removed without another provider lookup",
+    "status drops a learned PR when the final remote is removed without another provider lookup",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1353,14 +1355,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(217);
         const callsBeforeRemoval = providerCalls.length;
         yield* runGit(repoDir, ["remote", "remove", "origin"]);
-        // Local status results are kept for a second; a change outside T3 Code shows after that.
-        yield* TestClock.adjust("2 seconds");
+        // A seen remote is remembered for 5 minutes; a removal outside T3 Code shows after that.
+        yield* TestClock.adjust("6 minutes");
 
         const local = yield* manager.localStatus({ cwd: repoDir });
         const remote = yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
 
         expect(local).toMatchObject({ isRepo: true, hasPrimaryRemote: false });
-        expect(remote?.pr?.number).toBe(217);
+        expect(remote?.pr ?? null).toBeNull();
         expect(providerCalls).toHaveLength(callsBeforeRemoval);
       }),
   );
@@ -2459,7 +2461,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(
           countMatching((cmd) => cmd === "config --get branch.feature/fork-no-upstream.remote"),
         ).toBe(1);
-        expect(countMatching((cmd) => cmd === "config --get-all remote.origin.url")).toBe(1);
+        // T3-CUSTOM(expbkt3): the added remote changed the repository fingerprint, so the
+        // remembered origin URL no longer counts and post-provider identity reads it again too.
+        expect(countMatching((cmd) => cmd === "config --get-all remote.origin.url")).toBe(2);
         // Fork URL is cold in the TTL map, so post-provider identity re-reads it to catch repoints.
         expect(countMatching((cmd) => cmd === "config --get-all remote.fork.url")).toBe(2);
 

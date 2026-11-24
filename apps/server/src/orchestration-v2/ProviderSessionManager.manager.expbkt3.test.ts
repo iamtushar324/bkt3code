@@ -192,6 +192,7 @@ function fixture(provider = "codex") {
             projectSettingsOverrides: {},
             enableAgentBrowserAccess: false,
             enableAgentDeviceAccess: false,
+            agentFeedback: { mode: "off" },
           } as never),
         }),
         Layer.mock(SessionIdentityEnvironmentService)({

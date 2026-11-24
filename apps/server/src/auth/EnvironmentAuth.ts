@@ -1585,9 +1585,10 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
+  // T3-CUSTOM(expbkt3): level-bound approval codes remember their approver.
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (
     input,
-    approverUserId, // T3-CUSTOM(expbkt3)
+    approverUserId,
   ) =>
     createPairingLink({
       scopes: input?.access

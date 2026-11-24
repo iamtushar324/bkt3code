@@ -12841,5 +12841,9 @@
   "52dae7bc1dfd1961": "Users",
   "73c5a7ce2e212223": "Project Access",
   "53d85e7f8d06137b": "Claude Account Access",
-  "7a7ac7fc4ff029c7": "BK Add-ons"
+  "7a7ac7fc4ff029c7": "BK Add-ons",
+  "0f60e9f6f56050dc": "Legacy",
+  "7c2b5d53c26e3c06": "Build/Plan, /plan, /default, and Shift+Tab are on by default. Off uses build mode.",
+  "1ef0ccbe5aa656ac": "Plan mode",
+  "77a9a3bbec28d8af": "build plan composer old"
 }

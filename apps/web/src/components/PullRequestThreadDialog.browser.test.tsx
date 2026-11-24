@@ -31,7 +31,8 @@ it("keeps another caller's checkout failure out of the dialog", async () => {
   const cancel = dialog.getByRole("button", { name: "Cancel" });
   const checkout = vcsActionManager.track(
     appAtomRegistry,
-    target,
+    // T3-CUSTOM(expbkt3): the fork keys action state by thread, so the caller shares the dialog's.
+    { ...target, threadId: ThreadId.make("checkout-error-test") },
     { operation: "prepare_pull_request_thread", label: "Preparing pull request thread" },
     () => reply.promise,
   );

@@ -47,6 +47,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 const owner = UserId.make("user:credentials-owner");
@@ -107,7 +108,10 @@ it.effect(
         EffectOutbox.layer,
         TurnItemPositionStore.layer,
       ).pipe(Layer.provide(database));
-      const sink = EventSink.layerFromStores.pipe(Layer.provide(Layer.merge(stores, database)));
+      // Upstream's sink reads which threads have viewers, as runtimeLayer wires it.
+      const sink = EventSink.layerFromStores.pipe(
+        Layer.provide(Layer.mergeAll(stores, database, ThreadViewers.layer)),
+      );
       const registry = ProviderAdapterRegistry.layerFromAdapters([
         {
           instanceId,

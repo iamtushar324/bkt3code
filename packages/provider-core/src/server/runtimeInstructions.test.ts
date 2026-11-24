@@ -77,10 +77,17 @@ describe("buildRuntimeInstructions", () => {
   it("lists a multi-folder thread's folders and leaves single-folder text unchanged", () => {
     const base = { runtimeMode: "full-access", interactionMode: "default" } as const;
     const single = buildRuntimeInstructions({ harness: "Codex" });
+    // T3-CUSTOM(expbkt3): BEGIN the fork's Linear block follows the PR-linking block.
+    const withoutPullRequests = buildRuntimeInstructions({
+      harness: "Codex",
+      pullRequestLinking: false,
+    });
+    const linearStart = withoutPullRequests.indexOf("\n\n<linear_linking>");
     assert.equal(
       single,
-      `${buildRuntimeInstructions({ harness: "Codex", pullRequestLinking: false })}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`,
+      `${withoutPullRequests.slice(0, linearStart)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}${withoutPullRequests.slice(linearStart)}`,
     );
+    // T3-CUSTOM(expbkt3): END
     assert.equal(
       buildRuntimeInstructions({ harness: "Codex", runtimePolicy: { ...base, cwd: "/work/app" } }),
       single,
