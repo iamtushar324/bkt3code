@@ -12,6 +12,7 @@ import { forkThreadLaunchMetadata } from "./orchestration-v2/forkThreadLaunch.ex
 // T3-CUSTOM(expbkt3): BEGIN team, credential, MCP, review and archive seams.
 import { HttpClient } from "effect/http";
 import {
+  ProjectId,
   UserId,
   SourceControlProfileError,
   type SourceControlCloneRepositoryInput,
@@ -46,12 +47,7 @@ import type * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts"
 // T3-CUSTOM(expbkt3): access-denied secret and feedback answers report a missing request.
 import { AgentFeedbackRequestError, SecretRequestError } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): members get empty workflow views and project-scoped issue reads.
-import type {
-  IssueListResult,
-  ProjectId,
-  WorkflowCounts,
-  WorkflowRunsSnapshot,
-} from "@t3tools/contracts";
+import type { IssueListInput, WorkflowCounts, WorkflowRunsSnapshot } from "@t3tools/contracts";
 import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
@@ -2278,6 +2274,17 @@ export const layerWsRpc = (
             );
       const workflowRequest = <A, R>(effect: Effect.Effect<A, Workflows.WorkflowError, R>) =>
         withWorkflowAccess(effect.pipe(Effect.mapError(toWorkflowRequestError)));
+      // T3-CUSTOM(expbkt3): tracker accounts hold shared credentials and linked environments
+      // read another machine's threads with a link's own credential: admins and operators only.
+      const adminOnlyError = (message: string) =>
+        new EnvironmentAuthorizationError({ message, requiredScope: "settings:write" });
+      const withAdminAccess = <A, E, R>(
+        message: string,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
+        workflowsAllowed ? effect : Effect.fail(adminOnlyError(message));
+      const trackerAdminMessage = "Issue tracker accounts are managed by administrators only.";
+      const peerAdminMessage = "Linked environments are available to administrators only.";
       // T3-CUSTOM(expbkt3): BEGIN issue calls act through a project's tracker binding, so they
       // need project access; a denied caller reads the project as missing.
       const withProjectAccess = <A, E, R>(
@@ -2299,20 +2306,17 @@ export const layerWsRpc = (
                     ),
               ),
             );
-      // A listing across projects keeps only the rows of projects this user may see.
-      const visibleIssueList = (result: IssueListResult) =>
+      // A listing reads only the projects this user may see, so every scope, cursor, viewer and
+      // tracker in the answer comes from those projects alone.
+      const listVisibleIssues = (input: IssueListInput) =>
         actorUserId === null
-          ? Effect.succeed(result)
+          ? issues.list(input)
           : visibleAggregateIdsForActor(actorUserId).pipe(
-              Effect.map(({ projectIds }) => ({
-                ...result,
-                entries: result.entries.filter((entry) => projectIds.has(entry.projectId)),
-                errors: result.errors.filter((error) => projectIds.has(error.projectId)),
-                ...(result.scopes === undefined
-                  ? {}
-                  : { scopes: result.scopes.filter((scope) => projectIds.has(scope.projectId)) }),
-              })),
-              Effect.orElseSucceed(() => ({ ...result, entries: [], errors: [], scopes: [] })),
+              Effect.map(
+                ({ projectIds }) => new Set([...projectIds].map((id) => ProjectId.make(id))),
+              ),
+              Effect.orElseSucceed(() => new Set<ProjectId>()),
+              Effect.flatMap((projectIds) => issues.list(input, projectIds)),
             );
       // T3-CUSTOM(expbkt3): END
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
@@ -2588,10 +2592,9 @@ export const layerWsRpc = (
       const handlers = NativeWsRpcGroup.of({
         // T3-CUSTOM(expbkt3): BEGIN issue reads and writes keep to the caller's projects.
         [WS_METHODS.issuesList]: (input) =>
-          (input.projectId === undefined
-            ? issues.list(input)
-            : withProjectAccess(input.projectId, issues.list(input))
-          ).pipe(Effect.flatMap(visibleIssueList)),
+          input.projectId === undefined
+            ? listVisibleIssues(input)
+            : withProjectAccess(input.projectId, listVisibleIssues(input)),
         [WS_METHODS.issuesDetail]: (input) =>
           withProjectAccess(input.projectId, issues.detail(input)),
         [WS_METHODS.issuesComments]: (input) =>
@@ -2622,10 +2625,18 @@ export const layerWsRpc = (
           withProjectAccess(input.projectId, issues.setState(input)),
         [WS_METHODS.issuesReact]: (input) =>
           withProjectAccess(input.projectId, issues.react(input)),
-        [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
-        [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
+        // Tracker accounts and bindings are admin-managed; members list none.
+        [WS_METHODS.issueTrackersList]: () =>
+          workflowsAllowed
+            ? issueTrackers.list
+            : Effect.succeed({ trackers: [], accounts: [], bindings: {}, accountBindings: {} }),
+        [WS_METHODS.issueTrackersConnect]: (input) =>
+          withAdminAccess(trackerAdminMessage, issueTrackers.connect(input)),
         [WS_METHODS.issueTrackersBindProject]: (input) =>
-          withProjectAccess(input.projectId, issueTrackers.bindProject(input)),
+          withAdminAccess(
+            trackerAdminMessage,
+            withProjectAccess(input.projectId, issueTrackers.bindProject(input)),
+          ),
         // T3-CUSTOM(expbkt3): END
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
@@ -3588,22 +3599,29 @@ export const layerWsRpc = (
           peerLinks.names.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
         [WS_METHODS.peerLinksUnlink]: ({ environmentId }) => peerLinks.unlink(environmentId),
-        [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
+        // T3-CUSTOM(expbkt3): BEGIN a link's credential is not scoped to the local caller,
+        // so only admins and operators read or answer linked threads through it.
+        [WS_METHODS.peerLinksSubscribeThread]: (input) =>
+          workflowsAllowed
+            ? peerThreadRelay.subscribe(input)
+            : Stream.fail(adminOnlyError(peerAdminMessage)),
         [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-            Effect.andThen(peerThreadRelay.historyPage(input)),
+            Effect.andThen(withAdminAccess(peerAdminMessage, peerThreadRelay.historyPage(input))),
           ),
         [WS_METHODS.peerLinksThreadItem]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-            Effect.andThen(peerThreadRelay.item(input)),
+            Effect.andThen(withAdminAccess(peerAdminMessage, peerThreadRelay.item(input))),
           ),
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.peerLinksPairClient]: (input) =>
           peerClientPairing.request(input, currentSession),
         [WS_METHODS.peerLinksPairLink]: (input) =>
           peerClientPairing.requestForLink(input, currentSession),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-            Effect.andThen(peerLinkRequests.answer(input)),
+            // T3-CUSTOM(expbkt3)
+            Effect.andThen(withAdminAccess(peerAdminMessage, peerLinkRequests.answer(input))),
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
           Effect.map(serverSettings.getSettings, (settings) =>

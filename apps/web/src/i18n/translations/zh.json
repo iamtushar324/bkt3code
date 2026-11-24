@@ -12845,5 +12845,61 @@
   "0f60e9f6f56050dc": "Legacy",
   "7c2b5d53c26e3c06": "Build/Plan, /plan, /default, and Shift+Tab are on by default. Off uses build mode.",
   "1ef0ccbe5aa656ac": "Plan mode",
-  "77a9a3bbec28d8af": "build plan composer old"
+  "77a9a3bbec28d8af": "build plan composer old",
+  "438e23863e7dd8c6": "Manage GitHub profiles",
+  "11c5c1735377ddd8": "Remote conversion failed",
+  "bcfe0f25cc9ac428": "The origin remote was not changed.",
+  "a4fd829992012dce": "GitHub remote converted to HTTPS",
+  "638a41afa5321655": "Convert origin to HTTPS",
+  "3db1c145d6a6690a": "Commit as @{login}",
+  "e9b50f3cf94640f2": "Plan review",
+  "6f938d5cbd13aeab": "Comments",
+  "ea5976dc1ecb3c30": "Async",
+  "11420837f7e77b92": "Agent can continue while you decide.",
+  "a13115f335aa7782": "Message could not be saved",
+  "8fc58751ff81f7bf": "Your draft is still available. Try again.",
+  "110c557ac5fce922": "{label} is slow to respond",
+  "2e5ea611691a8da1": "Still connected. Updates can arrive late.",
+  "07a71ac9d4d3027a": "Pair a BK desktop app (device-bound)",
+  "89b2590f62a3c550": "Valid for 2 hours instead of 5 minutes, and only the app that redeems it can use the session it creates. Other clients cannot redeem this link.",
+  "0827301b6e9cc6d0": "Starting mode",
+  "006f2c2416a56768": "Preview browser",
+  "9a91759f516057bc": "Toolyard",
+  "63972390c725d8e5": "Session callbacks",
+  "b18666e26fe9bae1": "Default group for new sessions",
+  "ec23f96ef110f40a": "Connect phone to local server",
+  "a1ff0b515eebe994": "Plan submission tool",
+  "e6e32d425bb5b942": "Native plan review",
+  "28dd3094984953bc": "Open a ready plan automatically",
+  "1455e3366a6078a5": "Agent views in chat",
+  "0b3608686be215c0": "Smart git button",
+  "eb62d5fe8ec97cfa": "Chat comments",
+  "1fee657074c98d9e": "Native pull request view",
+  "e681641adee733db": "Open links in the integrated browser",
+  "abb301023f985444": "Session status summary",
+  "9af722d2da73a918": "{count, plural, one {{count} unread session} other {{count} unread sessions}}",
+  "07d00842ec081ed0": "{count, plural, one {{count} session running} other {{count} sessions running}}",
+  "b513708a11c708f1": "{count, plural, one {{count} unsettled session waiting on you} other {{count} unsettled sessions waiting on you}}",
+  "5770f3b632cbd556": "Connection interrupted. Syncing…",
+  "2590345b9b0af0e5": "{label} is slow to respond. Still connected.",
+  "ce20548c777c3816": "The backend didn't respond.",
+  "d44260744c0e3abc": "Unread: finished since you last opened them",
+  "33e30ea168ed958c": "Running: an agent is working",
+  "b251f281ee641240": "Unsettled: idle and waiting on you",
+  "8c9da7ff46f4c69b": [
+    "Connecting ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "310d55310c67e44a": [
+    "Couldn't connect ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

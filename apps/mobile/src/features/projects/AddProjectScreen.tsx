@@ -321,6 +321,7 @@ function ProjectPathInput(props: {
   readonly onChangeText: (value: string) => void;
   readonly onSubmit: () => void;
 }) {
+  // T3-CUSTOM(expbkt3): translated fork labels.
   const gt = useGT();
   return (
     <TextInput

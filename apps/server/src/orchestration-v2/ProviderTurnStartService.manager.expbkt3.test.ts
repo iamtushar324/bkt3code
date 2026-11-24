@@ -264,6 +264,7 @@ function fixture(
           tryHandlePromptCommand: authCommand,
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          forkBaseline: () => Effect.succeed(Effect.void),
           startRootRun: (input) =>
             Effect.gen(function* () {
               if (options.revokeAt === "send") grantActive = false;

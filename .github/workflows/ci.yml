@@ -184,7 +184,10 @@ jobs:
           (
             set +e
             vpr typecheck
-            echo "$?" > "$RUNNER_TEMP/typecheck-status"
+            status=$?
+            # TEMP(upstream-sync): show failed tasks' output; remove before merge.
+            [ "$status" -ne 0 ] && vp run --last-details
+            echo "$status" > "$RUNNER_TEMP/typecheck-status"
           ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
 
       - name: Finish installing browser secret helper build libraries

@@ -22,6 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+// T3-CUSTOM(expbkt3): T for the fork threads-list fallback.
 import { T, useGT, useMessages } from "gt-react-native";
 import * as Option from "effect/Option";
 import {

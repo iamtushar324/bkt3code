@@ -211,6 +211,7 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
+  // T3-CUSTOM(expbkt3): translated fork labels.
   const gt = useGT();
   if (!props.title) {
     return null;

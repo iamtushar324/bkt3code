@@ -7,6 +7,7 @@ import {
   PEER_LINK_THREAD_STREAM_ROUTE,
   ThreadId,
   TurnItemId,
+  UserId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -20,6 +21,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { eventStreamResponse } from "../eventStreamResponse.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+// T3-CUSTOM(expbkt3)
+import { OrchestrationAccessControl } from "../orchestration-v2/Services/AccessControl.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
@@ -66,15 +69,29 @@ const admitLink = Effect.gen(function* () {
   if (shell.value === null || shell.value.deletedAt !== null) {
     return refusal(404, "thread_not_found");
   }
+  // T3-CUSTOM(expbkt3): a link approved by a team user reads only that user's threads; an
+  // unbound link keeps upstream's reach. A denied thread reads as missing.
+  const boundUserId = client.value.userId;
+  const accessControl = yield* Effect.serviceOption(OrchestrationAccessControl);
+  const threadAllowed =
+    boundUserId === null
+      ? Effect.succeed(true)
+      : accessControl._tag === "None"
+        ? Effect.succeed(false)
+        : accessControl.value
+            .canAccessThread(UserId.make(boundUserId), shell.value.id)
+            .pipe(Effect.orElseSucceed(() => false));
+  if (!(yield* threadAllowed)) return refusal(404, "thread_not_found");
   return {
     threadId: shell.value.id,
     params,
     linkExpiresAt: client.value.linkExpiresAt,
     /** Completes once the link's session or the beta no longer admits it. */
-    revoked: Effect.all([verify, linksEnabled]).pipe(
+    revoked: Effect.all([verify, linksEnabled, threadAllowed]).pipe(
       Effect.repeat({
         schedule: Schedule.spaced(ACCESS_RECHECK_INTERVAL),
-        until: ([current, enabled]) => current._tag === "None" || !enabled,
+        // T3-CUSTOM(expbkt3): losing the thread's access ends the stream too.
+        until: ([current, enabled, allowed]) => current._tag === "None" || !enabled || !allowed,
       }),
     ),
   };
