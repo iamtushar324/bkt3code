@@ -6782,6 +6782,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               projections
                 .getThreadsWithPullRequests(id)
                 .pipe(Effect.tap(() => Queue.offer(watchListings, undefined))),
+            // T3-CUSTOM(expbkt3): watch reads look up the thread owner before reading the host.
+            getThreadShell: projections.getThreadShell,
           }),
         );
         const wakes = Effect.map(

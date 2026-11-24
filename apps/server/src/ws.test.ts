@@ -1014,6 +1014,7 @@ it.live.each([
           authenticateWebSocketUpgrade: () =>
             Effect.succeed({
               sessionId: AuthSessionId.make("compression-test"),
+              userId: null, // T3-CUSTOM(expbkt3): an unbound session.
               subject,
               method: "bearer-access-token",
               scopes: [],

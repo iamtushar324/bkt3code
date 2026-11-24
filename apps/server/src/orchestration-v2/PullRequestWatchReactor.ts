@@ -797,6 +797,10 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // T3-CUSTOM(expbkt3): a watch group's key, split by owner and source-control profile.
+  const forkGroupKeyOf = (thread: WatchTarget["thread"], pullRequest: string) =>
+    `${thread.projectId} ${thread.ownerUserId ?? ""} ${thread.sourceControlProfileId ?? ""} ${pullRequest}`;
+
   /** Every watch, or with `changed`, only that pull request's after its host reported a change. */
   // The sweep and change reads each name their own span.
   const pass = Effect.fnUntraced(function* (changed: string | undefined) {
@@ -829,7 +833,7 @@ export const make = Effect.gen(function* () {
       }
       // Group by project because checkout access differs; one failure must not end another project's watches.
       // T3-CUSTOM(expbkt3): one group per owner and profile, so reads never borrow credentials.
-      const key = `${target.thread.projectId} ${target.thread.ownerUserId ?? ""} ${target.thread.sourceControlProfileId ?? ""} ${threadPullRequestKeyOf(target.link)}`;
+      const key = forkGroupKeyOf(target.thread, threadPullRequestKeyOf(target.link));
       byPullRequest.set(key, [...(byPullRequest.get(key) ?? []), target]);
     }
     const groups = [...byPullRequest].map(([key, members]): WatchGroup => ({
@@ -919,12 +923,16 @@ export const make = Effect.gen(function* () {
           threads.flatMap((thread) =>
             visibleThreadPullRequests(thread.pullRequests ?? [])
               .filter((link) => link.watch !== undefined)
-              .map((link) => [thread.projectId, threadPullRequestKeyOf(link)] as const),
+              // T3-CUSTOM(expbkt3): forget the read under the fork's owner and profile group key.
+              .map((link) => {
+                const pullRequest = threadPullRequestKeyOf(link);
+                return [forkGroupKeyOf(thread, pullRequest), pullRequest] as const;
+              }),
           ),
-          ([projectId, pullRequest]) =>
+          ([groupKey, pullRequest]) =>
             // After any pass in flight, which could record a read from before the merge.
             passes
-              .withPermit(Effect.sync(() => lastReads.delete(`${projectId} ${pullRequest}`)))
+              .withPermit(Effect.sync(() => lastReads.delete(groupKey)))
               .pipe(Effect.andThen(readOnChange(pullRequest))),
           { discard: true },
         ),
