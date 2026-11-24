@@ -39,7 +39,6 @@ vi.mock("node:worker_threads", async (importOriginal) => {
         hangs.onHang();
         return;
       }
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
       super.postMessage(...args);
     }
   }

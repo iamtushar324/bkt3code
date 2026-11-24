@@ -251,11 +251,14 @@ function repositoryNameSegment(value: string): string | null {
   return segment ? normalizeProjectNickname(segment) : null;
 }
 
-export function suggestProjectNickname(input: {
-  readonly workspaceRoot?: string | null;
-  readonly repositoryName?: string | null;
-  readonly remoteUrl?: string | null;
-}): string {
+export function suggestProjectNickname(
+  input: {
+    readonly workspaceRoot?: string | null;
+    readonly repositoryName?: string | null;
+    readonly remoteUrl?: string | null;
+  },
+  resolve: MFunctionType = mFallback,
+): string {
   const repositoryName = input.repositoryName ? repositoryNameSegment(input.repositoryName) : null;
   if (repositoryName) return repositoryName;
 
@@ -265,7 +268,7 @@ export function suggestProjectNickname(input: {
   const workspaceName = input.workspaceRoot
     ? normalizeProjectNickname(inferProjectTitleFromPath(input.workspaceRoot))
     : null;
-  return workspaceName ?? "Repository";
+  return workspaceName ?? resolve(msg("Repository"));
 }
 // T3-CUSTOM(expbkt3): END
 

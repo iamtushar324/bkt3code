@@ -804,7 +804,7 @@ const NativeWsRpcGroup = WsRpcGroup.omit(...FORK_WS_RPCS.map((rpc) => rpc._tag))
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
-// T3-CUSTOM(expbkt3): the split covers the native group; fork RPCs register through ForkWsRpcGroup.
+/* T3-CUSTOM(expbkt3): split only the native group; fork RPCs use ForkWsRpcGroup. */
 type ServerWsRpc = RpcGroup.Rpcs<typeof NativeWsRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = [
   "server",

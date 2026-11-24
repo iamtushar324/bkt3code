@@ -250,8 +250,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: "default",
         group: "environment",
         icon: <WifiLowIcon />,
-        title: `${activeEnvironment.label} is slow to respond`,
-        description: "Still connected. Updates can arrive late.",
+        title: gt("{label} is slow to respond", { label: activeEnvironment.label }),
+        description: gt("Still connected. Updates can arrive late."),
       });
     }
     // T3-CUSTOM(expbkt3): END

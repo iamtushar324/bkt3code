@@ -1,4 +1,4 @@
-// T3-CUSTOM(expbkt3): plan mode stays available (upstream deleted this file in #33131).
+// T3-CUSTOM(expbkt3): plan mode stays available (upstream deleted this file).
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolvePlanFollowUpSubmission } from "./proposedPlan";

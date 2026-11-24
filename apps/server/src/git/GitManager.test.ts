@@ -1324,7 +1324,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  // T3-CUSTOM(expbkt3): since upstream #40277 a repository without remotes shows no PR; the fork
+  // T3-CUSTOM(expbkt3): upstream shows no PR for a repository without remotes; the fork
   // keeps the check that removing the final remote starts no provider lookup.
   it.effect(
     "status drops a learned PR when the final remote is removed without another provider lookup",

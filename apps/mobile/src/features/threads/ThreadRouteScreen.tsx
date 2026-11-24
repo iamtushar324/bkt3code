@@ -22,7 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -224,13 +224,15 @@ function ThreadUnavailableScreen(props: {
         />
         {/* T3-CUSTOM(expbkt3): BEGIN give a missing deep-linked thread a visible route escape. */}
         <Pressable
-          accessibilityHint="Returns to the threads list."
-          accessibilityLabel="Go to threads list"
+          accessibilityHint={gt("Returns to the threads list.")}
+          accessibilityLabel={gt("Go to threads list")}
           accessibilityRole="button"
           className="mt-4 self-center rounded-lg bg-primary px-4 py-2.5 active:opacity-70"
           onPress={props.onGoToThreads}
         >
-          <Text className="text-sm font-t3-bold text-primary-foreground">Go to threads</Text>
+          <Text className="text-sm font-t3-bold text-primary-foreground">
+            <T>Go to threads</T>
+          </Text>
         </Pressable>
         {/* T3-CUSTOM(expbkt3): END give a missing deep-linked thread a visible route escape. */}
       </ScrollView>

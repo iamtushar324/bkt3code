@@ -214,9 +214,11 @@ jobs:
 
       # The release launch check, run unpackaged against the same old-state fixture, for
       # startup and sidebar changes. Packaging and signing stay release-only.
+      # T3-CUSTOM(expbkt3): skipped. The seed database is an upstream one at migration 69, and the
+      # fork's frozen ids 33-45 differ, so its 1000+ migrations cannot upgrade it.
       - name: Open the seeded thread in the built desktop app
         id: desktop_launch
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.desktop_launch != 'false' }}
+        if: ${{ false && !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.desktop_launch != 'false' }}
         timeout-minutes: 4
         run: |
           electron=$(node -p "require('./apps/desktop/node_modules/electron')")

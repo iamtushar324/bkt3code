@@ -99,9 +99,13 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       {/* T3-CUSTOM(expbkt3): BEGIN - per-thread source-control profile identity. */}
       {gitActions.actingProfileLogin ? (
         <View className="gap-1">
-          <Text className="text-sm font-t3-medium text-foreground">Identity</Text>
+          <Text className="text-sm font-t3-medium text-foreground">
+            <T>Identity</T>
+          </Text>
           <Text className="text-base text-foreground-muted">
-            Commit as @{gitActions.actingProfileLogin}
+            <T>
+              Commit as @<Var>{gitActions.actingProfileLogin}</Var>
+            </T>
           </Text>
         </View>
       ) : null}

@@ -1253,10 +1253,13 @@ export const make = Effect.gen(function* () {
     yield* ensureRates(false);
     yield* ensureScanCacheLoaded;
     const settings = yield* readSettings;
-    // Upstream's resolver needs the scan-cache retention cutoff.
+    // Upstream's resolver needs the history retention cutoff, computed as readUsage does.
+    const nowMs = yield* Clock.currentTimeMillis;
     const retentionCutoffMs =
-      (yield* Clock.currentTimeMillis) - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
+      settings.usageHistoryRetentionDays === "unlimited"
+        ? 0
+        : Math.max(0, nowMs - settings.usageHistoryRetentionDays * 24 * 60 * 60 * 1000);
+    const { dirs } = yield* resolveTranscriptDirs(settings, retentionCutoffMs, false).pipe(
       Effect.provideContext(readerContext),
     );
     const records: UsageRecord[] = [];

@@ -677,16 +677,18 @@ export function useComposerSend(input: ComposerSendInput) {
         } else {
           toastManager.add({
             type: "error",
-            title: "Message could not be saved",
-            description: "Your draft is still available. Try again.",
+            title: m(msg("Message could not be saved")),
+            description: m(msg("Your draft is still available. Try again.")),
           });
         }
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Message could not be saved",
+          title: m(msg("Message could not be saved")),
           description:
-            error instanceof Error ? error.message : "Your draft is still available. Try again.",
+            error instanceof Error
+              ? error.message
+              : m(msg("Your draft is still available. Try again.")),
         });
       }
       // Not a `finally`: the React Compiler cannot lower one, and the catch above takes every error.

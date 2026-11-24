@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -69,9 +70,12 @@ const makeBackendLayer = (
       Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
         installIntoProcess: Effect.succeed(true),
         awaitDiscovery: Effect.succeed(true),
+        awaitUserShellDiscovery: Effect.succeed(true),
+        discoveryFinished: Effect.succeed(true),
         updates: Stream.empty,
       }),
     ),
+    Layer.provide(DesktopState.layer),
     Layer.provideMerge(serverExposureLayer),
     Layer.provideMerge(DesktopAppSettings.layerTest()),
     Layer.provideMerge(DesktopWslEnvironment.layerTest()),

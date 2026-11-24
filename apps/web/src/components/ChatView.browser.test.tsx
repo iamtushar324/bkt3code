@@ -733,13 +733,25 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await vi.waitFor(() =>
     expect(dispatchedCommands().map((command) => command.type)).toContain("message.dispatch"),
   );
-  await expect.element(page.getByText("Failed prompt")).toBeVisible();
+  // T3-CUSTOM(expbkt3): the durable outbox also lists the in-flight send as a queued chip.
+  await expect.element(page.getByText("Failed prompt").first()).toBeVisible();
   await userEvent.keyboard("Next draft");
 
   await rejectPendingCommand("Attachment 'sample.png' cannot be sent.");
 
-  await expect.element(page.getByText("Attachment 'sample.png' cannot be sent.")).toBeVisible();
-  await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
+  // T3-CUSTOM(expbkt3): BEGIN the fork keeps a rejected send in its recovery alert, off the timeline.
+  await expect
+    .element(page.getByText("Attachment 'sample.png' cannot be sent.").first())
+    .toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Retry" }).first()).toBeVisible();
+  await vi.waitFor(() =>
+    expect(
+      Array.from(document.querySelectorAll("[data-user-message-bubble]")).some((bubble) =>
+        bubble.textContent?.includes("Failed prompt"),
+      ),
+    ).toBe(false),
+  );
+  // T3-CUSTOM(expbkt3): END
   expect(editor.element().textContent).toContain("Next draft");
 });
 

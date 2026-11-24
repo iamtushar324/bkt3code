@@ -1081,15 +1081,16 @@ function CheckoutGitActionsControl({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Remote conversion failed",
-        description: error instanceof Error ? error.message : "The origin remote was not changed.",
+        title: gt("Remote conversion failed"),
+        description:
+          error instanceof Error ? error.message : gt("The origin remote was not changed."),
         data: threadToastData,
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: "GitHub remote converted to HTTPS",
+      title: gt("GitHub remote converted to HTTPS"),
       description: result.value.remoteUrl,
       data: threadToastData,
     });
@@ -1111,7 +1112,7 @@ function CheckoutGitActionsControl({
         {
           id: "convert-github-origin-to-https",
           props: {
-            children: "Convert origin to HTTPS",
+            children: gt("Convert origin to HTTPS"),
             onClick: () => void convertOriginRemoteToHttps(),
           },
         },
@@ -1917,7 +1918,7 @@ function CheckoutGitActionsControl({
             {/* T3-CUSTOM(expbkt3): BEGIN — shows the acting source-control identity in the commit dialog title. */}
             <DialogTitle>
               {actingProfileLogin
-                ? `Commit as @${actingProfileLogin}`
+                ? gt("Commit as @{login}", { login: actingProfileLogin })
                 : messages(COMMIT_DIALOG_TITLE)}
             </DialogTitle>
             {/* T3-CUSTOM(expbkt3): END */}

@@ -371,7 +371,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   // T3-CUSTOM(expbkt3): the fork's Plan/Build starting mode for new threads.
   {
     id: "default-starting-mode",
-    title: "Starting mode",
+    title: msg("Starting mode"),
     to: "/settings/threads", // T3-CUSTOM(expbkt3): new-thread defaults moved to the Threads page upstream.
     scope: "project-defaults",
     searchTerms: ["new thread default plan build interaction mode"],
@@ -1176,7 +1176,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   // T3-CUSTOM(expbkt3): which browser hosts preview tabs on this environment.
   {
     id: "preview-browser-host",
-    title: "Preview browser",
+    title: msg("Preview browser"),
     to: "/settings/browser", // T3-CUSTOM(expbkt3): upstream split Integrations; the row lives on Browser.
     scope: "environment-defaults",
     searchTerms: ["client server desktop local mac headless stream tab webview host"],
@@ -1528,7 +1528,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     // T3-CUSTOM(expbkt3): fork-only Users section.
     id: "users",
-    title: "Users",
+    title: msg("Users"),
     to: "/settings/users",
   },
   {
@@ -1540,25 +1540,25 @@ export const SETTINGS_SEARCH_ITEMS = [
   // T3-CUSTOM(expbkt3): BEGIN — BK Add-ons retains the Experiments route and search aliases.
   {
     id: "toolyard",
-    title: "Toolyard",
+    title: msg("Toolyard"),
     to: "/settings/experiments",
     searchTerms: ["experiments bk add-ons addons account consent agent host connection api key"],
   },
   {
     id: "session-webhooks",
-    title: "Session callbacks",
+    title: msg("Session callbacks"),
     to: "/settings/experiments",
     searchTerms: ["experiments bk add-ons addons webhook delivery history retry notification"],
   },
   {
     id: "default-custom-group",
-    title: "Default group for new sessions",
+    title: msg("Default group for new sessions"),
     to: "/settings/experiments",
     searchTerms: ["experiments bk add-ons addons custom group ungrouped sidebar new session"],
   },
   {
     id: "connect-phone-local",
-    title: "Connect phone to local server",
+    title: msg("Connect phone to local server"),
     to: "/settings/experiments",
     desktopOnly: true,
     searchTerms: [
@@ -1569,54 +1569,54 @@ export const SETTINGS_SEARCH_ITEMS = [
   // T3-CUSTOM(expbkt3): server-wide plan submission tool experiment.
   {
     id: "plan-submission-tool",
-    title: "Plan submission tool",
+    title: msg("Plan submission tool"),
     to: "/settings/experiments",
     searchTerms: ["t3_submit_plan agent markdown html chat submit disabled"],
   },
   // T3-CUSTOM(expbkt3): native plan review.
   {
     id: "native-plan-review",
-    title: "Native plan review",
+    title: msg("Native plan review"),
     to: "/settings/experiments",
   },
   // T3-CUSTOM(expbkt3): plan review takeover.
   {
     id: "plan-review-takeover",
-    title: "Open a ready plan automatically",
+    title: msg("Open a ready plan automatically"),
     to: "/settings/experiments",
     searchTerms: ["plan review takeover auto open proposed decision gate approve full screen"],
   },
   // T3-CUSTOM(expbkt3): agent-rendered UI surfaces in chat.
   {
     id: "agent-ui-surfaces",
-    title: "Agent views in chat",
+    title: msg("Agent views in chat"),
     to: "/settings/experiments",
   },
   // T3-CUSTOM(expbkt3): smart git button asks the agent.
   {
     id: "smart-git-prompts",
-    title: "Smart git button",
+    title: msg("Smart git button"),
     to: "/settings/experiments",
     searchTerms: ["commit push create pr pull request agent prompt header highlight conductor"],
   },
   // T3-CUSTOM(expbkt3): review comments on agent messages.
   {
     id: "chat-comments",
-    title: "Chat comments",
+    title: msg("Chat comments"),
     to: "/settings/experiments",
     searchTerms: ["review comment good okay remove highlight resolve agent message selection"],
   },
   // T3-CUSTOM(expbkt3): upstream's pull request view.
   {
     id: "native-pull-request-view",
-    title: "Native pull request view",
+    title: msg("Native pull request view"),
     to: "/settings/experiments",
     searchTerms: ["pr pull request link github integrated browser panel open"],
   },
   // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
   {
     id: "open-links-in-integrated-browser",
-    title: "Open links in the integrated browser",
+    title: msg("Open links in the integrated browser"),
     to: "/settings/experiments",
     searchTerms: ["link url linear external system browser in-app preview tab click"],
   },

@@ -1690,7 +1690,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:source-control-settings",
     searchTerms: ["github", "source control", "identity", "profile", "token", "settings"],
-    title: "Manage GitHub profiles",
+    title: gt("Manage GitHub profiles"),
     icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       openSourceControlSettings();

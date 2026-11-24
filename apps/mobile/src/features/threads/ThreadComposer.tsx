@@ -722,11 +722,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   // picker in the one-row composer, and shrinks with it.
   const interactionModeControl = canSwitchInteractionMode ? (
     <ComposerInlineControl
-      accessibilityHint={`Switches to ${interactionMode === "plan" ? "Build" : "Plan"} mode`}
-      accessibilityLabel={`Interaction mode: ${interactionMode === "plan" ? "Plan" : "Build"}`}
+      accessibilityHint={
+        interactionMode === "plan" ? gt("Switches to Build mode") : gt("Switches to Plan mode")
+      }
+      accessibilityLabel={
+        interactionMode === "plan" ? gt("Interaction mode: Plan") : gt("Interaction mode: Build")
+      }
       emphasized
       icon={interactionMode === "plan" ? "list.bullet.clipboard" : "hammer"}
-      label={interactionMode === "plan" ? "Plan" : "Build"}
+      label={
+        interactionMode === "plan"
+          ? gt("Plan", { $context: "interaction mode" })
+          : gt("Build", { $context: "interaction mode" })
+      }
       size={usesLargeControls ? "large" : "regular"}
       iconOnly={!compactEditor.isExpanded}
       onPress={() => onUpdateInteractionMode?.(interactionMode === "plan" ? "default" : "plan")}

@@ -137,7 +137,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             ) : null}
             {onRetry ? (
               <Button variant="outline" size="sm" onClick={onRetry}>
-                Retry
+                <T>Retry</T>
               </Button>
             ) : null}
             {onDismiss ? (

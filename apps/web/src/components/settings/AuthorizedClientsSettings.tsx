@@ -854,11 +854,13 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 />
                 <span className="min-w-0">
                   <span className="block text-xs font-medium text-foreground">
-                    Pair a BK desktop app (device-bound)
+                    <T>Pair a BK desktop app (device-bound)</T>
                   </span>
                   <span className="block text-xs leading-snug text-muted-foreground">
-                    Valid for 2 hours instead of 5 minutes, and only the app that redeems it can use
-                    the session it creates. Other clients cannot redeem this link.
+                    <T>
+                      Valid for 2 hours instead of 5 minutes, and only the app that redeems it can
+                      use the session it creates. Other clients cannot redeem this link.
+                    </T>
                   </span>
                 </span>
               </label>

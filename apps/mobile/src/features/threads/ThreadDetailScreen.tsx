@@ -91,7 +91,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import {
   AppState,
@@ -1744,7 +1744,7 @@ function ThreadDetailBody(
                     {props.failedOutboxDetail ? (
                       <View className="mx-4 mb-3 rounded-xl border border-danger-border bg-danger px-4 py-3">
                         <Text className="text-sm font-t3-medium text-danger-foreground">
-                          Message was not accepted
+                          <T>Message was not accepted</T>
                         </Text>
                         <Text className="mt-1 text-xs text-foreground-muted">
                           {props.failedOutboxDetail}
@@ -1756,7 +1756,7 @@ function ThreadDetailBody(
                             onPress={props.onRetryFailedOutbox}
                           >
                             <Text className="text-xs font-t3-medium text-danger-foreground">
-                              Retry
+                              <T>Retry</T>
                             </Text>
                           </Pressable>
                           <Pressable
@@ -1764,7 +1764,9 @@ function ThreadDetailBody(
                             className="rounded-lg border border-border px-3 py-2"
                             onPress={props.onEditFailedOutbox}
                           >
-                            <Text className="text-xs font-t3-medium text-foreground">Edit</Text>
+                            <Text className="text-xs font-t3-medium text-foreground">
+                              <T context="verb, edit a rejected message">Edit</T>
+                            </Text>
                           </Pressable>
                         </View>
                       </View>

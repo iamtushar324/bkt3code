@@ -239,6 +239,8 @@ function fixture(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: true }),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getRun: (_threadId, id) =>
+            Effect.sync(() => projection.runs.find((candidate) => candidate.id === id)),
           // `start` reads the thread's worktree path to take the workspace lease;
           // the fixture thread has none, so the turn starts without one.
           getThreadRecords: () => Effect.sync(() => ({ thread: projection.thread }) as never),

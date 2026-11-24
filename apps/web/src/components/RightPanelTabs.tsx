@@ -636,11 +636,11 @@ function surfaceTitle(
       );
     // T3-CUSTOM(expbkt3): BEGIN — label the native plan review surface.
     case "planReview":
-      return "Plan review";
+      return resolve(msg("Plan review"));
     // T3-CUSTOM(expbkt3): END
     // T3-CUSTOM(expbkt3): BEGIN — review comments on agent messages.
     case "comments":
-      return "Comments";
+      return resolve(msg("Comments"));
     // T3-CUSTOM(expbkt3): END
     case "pull-request":
       return `#${surface.number}`;

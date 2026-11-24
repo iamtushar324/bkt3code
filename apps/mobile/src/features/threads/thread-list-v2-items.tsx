@@ -158,7 +158,11 @@ const DONE_STATUS_LABEL: StatusLabel = {
 
 // T3-CUSTOM(expbkt3): member tagging, on every variant so it never depends on
 // the experimental sidebar being enabled.
-const PEOPLE_MENU_ACTION: MenuAction = { id: "people", title: "People", image: "person.2" };
+const PEOPLE_MENU_ACTION: MenuAction = {
+  id: "people",
+  title: msg("People", { $context: "menu action, tag thread members" }),
+  image: "person.2",
+};
 
 // DM Sans has no tabular figures, so a ticking timer in it reflows the row every second.
 const TABULAR_DURATION_STYLE = {
@@ -609,7 +613,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           </View>
         ) : /* T3-CUSTOM(expbkt3): retain failed queued work as attention. */
         pendingTaskFailed ? (
-          <Text className="text-xs text-adaptive-red-700-300">Failed</Text>
+          <Text className="text-xs text-adaptive-red-700-300">
+            <T context="queued task status">Failed</T>
+          </Text>
         ) : null}
       </View>
       {/* T3-CUSTOM(expbkt3): a failed task shows Failed instead of the reconnect note. */}
@@ -1124,7 +1130,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     const localized = (action: MenuAction): MenuAction => ({ ...action, title: m(action.title) });
     const direct: MenuAction[] = [
       // T3-CUSTOM(expbkt3): member tagging, on every menu variant.
-      PEOPLE_MENU_ACTION,
+      localized(PEOPLE_MENU_ACTION),
       ...(thread.branch
         ? [
             {

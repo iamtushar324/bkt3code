@@ -553,7 +553,7 @@ export function resolveComposerProviderSelection(input: {
   };
 }
 
-// T3-CUSTOM(expbkt3): plan mode stays available (upstream removed it in #33131).
+// T3-CUSTOM(expbkt3): plan mode stays available (upstream removed it).
 export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;

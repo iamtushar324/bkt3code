@@ -492,7 +492,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
         return {
           status: "requires-auth",
           auth: currentSession.auth,
-          errorMessage: error instanceof Error ? error.message : "Authentication failed.",
+          errorMessage: error instanceof Error ? error.message : m(msg("Authentication failed.")),
         };
       }
     }

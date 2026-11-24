@@ -15,7 +15,7 @@ import {
   WifiLowIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { T, useGT } from "gt-react";
+import { T, Var, useGT } from "gt-react";
 // T3-CUSTOM(expbkt3): useEffect/useState back the lifecycle counters.
 import { memo, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -263,7 +263,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       {/* T3-CUSTOM(expbkt3): BEGIN — compact lifecycle counters beside the wordmark:
           unread, running, unsettled. Same three, same order, on mobile. */}
       {EXPERIMENTAL_CONTROL_CENTER_ENABLED ? (
-        <div className="flex shrink-0 items-center gap-1" aria-label="Session status summary">
+        <div className="flex shrink-0 items-center gap-1" aria-label={gt("Session status summary")}>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -280,13 +280,18 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                   )}
                   data-testid="sidebar-count-unread"
                   role="status"
-                  aria-label={`${counts.unread} unread session${counts.unread === 1 ? "" : "s"}`}
+                  aria-label={gt(
+                    "{count, plural, one {{count} unread session} other {{count} unread sessions}}",
+                    { count: counts.unread },
+                  )}
                 >
                   {counts.unread}
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unread: finished since you last opened them</TooltipPopup>
+            <TooltipPopup side="bottom">
+              <T>Unread: finished since you last opened them</T>
+            </TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -299,14 +304,19 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                       : "border-emerald-500/35 bg-emerald-500/12 text-emerald-600 dark:text-emerald-400",
                   )}
                   data-testid="sidebar-count-running"
-                  aria-label={`${counts.running} session${counts.running === 1 ? "" : "s"} running`}
+                  aria-label={gt(
+                    "{count, plural, one {{count} session running} other {{count} sessions running}}",
+                    { count: counts.running },
+                  )}
                   role="status"
                 >
                   {counts.running}
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Running: an agent is working</TooltipPopup>
+            <TooltipPopup side="bottom">
+              <T>Running: an agent is working</T>
+            </TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -325,13 +335,18 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
                   data-attention-state={counts.nonRunning >= 2 ? "attention" : "clear"}
                   data-testid="sidebar-count-unsettled"
                   role="status"
-                  aria-label={`${counts.nonRunning} unsettled session${counts.nonRunning === 1 ? "" : "s"} waiting on you`}
+                  aria-label={gt(
+                    "{count, plural, one {{count} unsettled session waiting on you} other {{count} unsettled sessions waiting on you}}",
+                    { count: counts.nonRunning },
+                  )}
                 >
                   {counts.nonRunning}
                 </span>
               }
             />
-            <TooltipPopup side="bottom">Unsettled: idle and waiting on you</TooltipPopup>
+            <TooltipPopup side="bottom">
+              <T>Unsettled: idle and waiting on you</T>
+            </TooltipPopup>
           </Tooltip>
         </div>
       ) : null}
@@ -339,7 +354,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       {syncing ? (
         <div className="flex h-7 max-w-full shrink-0 items-center gap-1.5 overflow-hidden">
           <span
-            aria-label="Connection interrupted. Syncing…"
+            aria-label={gt("Connection interrupted. Syncing…")}
             className="inline-flex shrink-0"
             role="status"
           >
@@ -359,7 +374,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
             <TooltipTrigger
               render={
                 <span
-                  aria-label={`${slowEnvironment.label} is slow to respond`}
+                  aria-label={gt("{label} is slow to respond", { label: slowEnvironment.label })}
                   className="inline-flex shrink-0"
                   data-testid="sidebar-connection-slow"
                   role="status"
@@ -374,7 +389,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
               }
             />
             <TooltipPopup side="bottom">
-              {`${slowEnvironment.label} is slow to respond. Still connected.`}
+              {gt("{label} is slow to respond. Still connected.", { label: slowEnvironment.label })}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -527,6 +542,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
 // T3-CUSTOM(expbkt3): BEGIN — surfaces connecting/failed desktop-local secondary
 // environment bootstraps as sidebar notices.
 export function SidebarEnvironmentNotices() {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const secondaries = useDesktopLocalBootstraps();
   const localEnvByUrl = new Map<string, { phase: string; error: string | null }>();
@@ -567,19 +583,25 @@ export function SidebarEnvironmentNotices() {
         >
           <LoaderIcon className="animate-spin" />
           <AlertTitle className="text-xs font-medium text-foreground">
-            Connecting {connecting.join(", ")}
+            <T>
+              Connecting <Var>{connecting.join(", ")}</Var>
+            </T>
           </AlertTitle>
         </Alert>
       ) : null}
       {failed.length > 0 ? (
         <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
           <TriangleAlertIcon />
-          <AlertTitle>Couldn't connect {failed.map((entry) => entry.label).join(", ")}</AlertTitle>
+          <AlertTitle>
+            <T>
+              Couldn't connect <Var>{failed.map((entry) => entry.label).join(", ")}</Var>
+            </T>
+          </AlertTitle>
           <AlertDescription>
             {failed
               .map((entry) => entry.error)
               .filter(Boolean)
-              .join("; ") || "The backend didn't respond."}
+              .join("; ") || gt("The backend didn't respond.")}
           </AlertDescription>
         </Alert>
       ) : null}

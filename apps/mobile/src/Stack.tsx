@@ -228,10 +228,20 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   ConnectOnboarding: msg("Set up {product}", { product: "T3 Connect" }),
   Connections: msg("Environments"),
   ConnectionsNew: msg("Add Environment"),
+  // T3-CUSTOM(expbkt3): fork routes; AddProjectLocal deep links need the visible title too.
+  SettingsSourceControl: msg("Users"),
+  AddProjectLocal: msg("Local folder"),
+  ThreadPlanReview: msg("Plan review"),
 };
 
 // Thread settings keep the Duo's vertical bar so cancel, search, filter and confirm sit in the
 // rail. The picker stack spans the sheet so its header reaches the rail, and insets its content.
+// T3-CUSTOM(expbkt3): fork keyboard sheets keep the horizontal-bar form sheet upstream removed.
+const HORIZONTAL_FORM_SHEET_OPTIONS = {
+  presentation: "formSheet" as const,
+  sheetPrefersHorizontalBars: true,
+};
+
 const THREAD_SETTINGS_ROUTE = sheetRoute({
   detent: "full",
   header: "none",
@@ -454,7 +464,7 @@ const SETTINGS_SCREENS = {
   SettingsSourceControl: createNativeStackScreen({
     screen: SettingsUsersRouteScreen,
     linking: "settings/users",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Users" },
+    options: settingsPage(),
   }),
   // T3-CUSTOM(expbkt3): END
 };
@@ -716,8 +726,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     AddProjectLocal: createNativeStackScreen({
       linking: "new/add-project/local",
       screen: AddProjectLocalRoute,
-      // T3-CUSTOM(expbkt3): deep links must show the user-facing route title.
-      options: pageRoute({ title: "Local folder" }),
+      options: pageRoute(),
     }),
     AddProjectNew: createNativeStackScreen({
       linking: "new/add-project/new",
@@ -783,10 +792,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadPlanReview: createNativeStackScreen({
       screen: PlanReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/plan-review`,
-      options: {
-        ...SOLID_HEADER_OPTIONS,
-        title: "Plan review",
-      },
+      options: pageRoute({ header: "solid" }),
     }),
     ThreadPlanReviewComment: createNativeStackScreen({
       screen: PlanReviewCommentSheet,

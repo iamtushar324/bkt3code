@@ -589,10 +589,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       // T3-CUSTOM(expbkt3): BEGIN project cards must remain direct native
                       // actions inside the form-sheet scroll view.
                       accessible
-                      accessibilityHint="Starts a new task in this project"
+                      accessibilityHint={gt("Starts a new task in this project")}
                       accessibilityLabel={
                         hasMultipleProjects
-                          ? `${scope.title}, ${scope.projects.length} workspaces`
+                          ? gt(
+                              "{title}, {count, plural, one {{count} workspace} other {{count} workspaces}}",
+                              { title: scope.title, count: scope.projects.length },
+                            )
                           : `${scope.title}, ${selectionTarget.workspaceRoot}`
                       }
                       accessibilityState={{ disabled: reservedDestinationProject !== null }}

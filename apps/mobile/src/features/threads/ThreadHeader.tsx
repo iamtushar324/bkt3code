@@ -42,7 +42,7 @@ export function ThreadHeader(props: {
     ...(smartGit.visible
       ? [
           {
-            accessibilityLabel: `${smartGit.intent.label}: ask the agent`,
+            accessibilityLabel: gt("{action}: ask the agent", { action: smartGit.intent.label }),
             icon: smartGit.icon,
             selected: smartGit.intent.highlighted,
             onPress: smartGit.run,
@@ -52,7 +52,7 @@ export function ThreadHeader(props: {
     ...(props.threadCostHeader
       ? [
           {
-            accessibilityLabel: `Session cost ${props.threadCostHeader.label}`,
+            accessibilityLabel: gt("Session cost {cost}", { cost: props.threadCostHeader.label }),
             icon: "dollarsign.circle" as const,
             onPress: props.threadCostHeader.onPress,
           },

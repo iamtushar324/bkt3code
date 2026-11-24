@@ -1,6 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -225,7 +225,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               `dismissible` flag (responseMode === "message"). */}
           {prompt.dismissible ? (
             <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 font-medium text-3xs text-muted-foreground">
-              Async
+              <T context="badge, the agent keeps working while a question waits">Async</T>
             </span>
           ) : null}
           {/* T3-CUSTOM(expbkt3): END */}
@@ -284,7 +284,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {/* T3-CUSTOM(expbkt3): upstream replaced responseMode with the derived
                 `dismissible` flag (responseMode === "message"). */}
             {prompt.dismissible ? (
-              <p className="text-secondary-label text-xs">Agent can continue while you decide.</p>
+              <p className="text-secondary-label text-xs">
+                <T>Agent can continue while you decide.</T>
+              </p>
             ) : null}
             {/* T3-CUSTOM(expbkt3): END */}
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}

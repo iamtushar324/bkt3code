@@ -360,7 +360,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     >
       {/* T3-CUSTOM(expbkt3): source-control identity — the profile a git action would run as. */}
       {gitActions.actingProfileLogin ? (
-        <ListSection title="GitHub identity">
+        <ListSection title={gt("GitHub identity")}>
           <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
             @{gitActions.actingProfileLogin}
           </Text>

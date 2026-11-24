@@ -44,7 +44,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { AgentPlanSubmissionSettingsRow } from "./AgentPlanSubmissionSettingsRow";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
-import { useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -145,7 +145,7 @@ function ConfiguredSettingsRouteScreen() {
         },
         environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
         // T3-CUSTOM(expbkt3): per-user source-control profiles.
-        usersRow,
+        usersRow(gt("Users")),
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -166,19 +166,21 @@ function LocalSettingsRouteScreen() {
       connections={[
         environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
         // T3-CUSTOM(expbkt3): per-user source-control profiles.
-        usersRow,
+        usersRow(gt("Users")),
       ]}
     />
   );
 }
 
 // T3-CUSTOM(expbkt3): BEGIN - per-user source-control profiles.
-const usersRow: SettingsListRow = {
-  id: "SettingsSourceControl",
-  icon: "person.crop.circle.badge.checkmark",
-  label: "Users",
-  target: "SettingsSourceControl",
-};
+function usersRow(label: string): SettingsListRow {
+  return {
+    id: "SettingsSourceControl",
+    icon: "person.crop.circle.badge.checkmark",
+    label,
+    target: "SettingsSourceControl",
+  };
+}
 // T3-CUSTOM(expbkt3): END
 
 function environmentsRow(label: string, count: number): SettingsListRow {
@@ -350,6 +352,7 @@ function useOverflowRows(): SettingsListRow[] {
 
 // T3-CUSTOM(expbkt3): BEGIN — experimental fork features.
 function ExperimentsSettingsSection() {
+  const gt = useGT();
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const phaseSidebarEnabled = usePhaseSidebarEnabled();
 
@@ -357,12 +360,12 @@ function ExperimentsSettingsSection() {
     <View className="gap-3">
       {/* T3-CUSTOM(expbkt3): Toolyard and session callbacks, grouped per server. */}
       <BkAddonsIntegrationsSection />
-      <SettingsSection title="Experimental features">
+      <SettingsSection title={gt("Experimental features")}>
         {/* T3-CUSTOM(expbkt3): saved server setting, independent from mobile preferences. */}
         <AgentPlanSubmissionSettingsRow />
         <SettingsSwitchRow
           icon="square.grid.2x2"
-          label="BK sidebar"
+          label={gt("BK sidebar")}
           value={phaseSidebarEnabled}
           onValueChange={(value) =>
             void savePreferences({ experimentalPhaseSidebarEnabled: value })
@@ -370,8 +373,10 @@ function ExperimentsSettingsSection() {
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        The BK sidebar groups threads by lifecycle and shows the full row lane: worktree codename,
-        Linear tags, priority and owner. Experimental; turn it off to return to the stock list.
+        <T>
+          The BK sidebar groups threads by lifecycle and shows the full row lane: worktree codename,
+          Linear tags, priority and owner. Experimental; turn it off to return to the stock list.
+        </T>
       </Text>
     </View>
   );

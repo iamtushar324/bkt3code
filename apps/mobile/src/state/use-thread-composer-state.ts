@@ -1103,7 +1103,7 @@ export function useThreadComposerState(input: {
       );
     } catch (error) {
       setPendingConnectionError(
-        error instanceof Error ? error.message : "Failed to save the retry request.",
+        error instanceof Error ? error.message : m(msg("Failed to save the retry request.")),
       );
     }
   };
@@ -1119,7 +1119,7 @@ export function useThreadComposerState(input: {
       await removeThreadOutboxMessage(failedOutboxMessage);
     } catch (error) {
       setPendingConnectionError(
-        error instanceof Error ? error.message : "Failed to remove the rejected message.",
+        error instanceof Error ? error.message : m(msg("Failed to remove the rejected message.")),
       );
     }
   };

@@ -321,10 +321,11 @@ function ProjectPathInput(props: {
   readonly onChangeText: (value: string) => void;
   readonly onSubmit: () => void;
 }) {
+  const gt = useGT();
   return (
     <TextInput
       // T3-CUSTOM(expbkt3): placeholders are not reliable native field labels.
-      accessibilityLabel="Project folder"
+      accessibilityLabel={gt("Project folder")}
       className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
       value={props.value}
       onChangeText={(text) => props.onChangeText(resolvePastedPath(props.value, text))}
@@ -1024,7 +1025,7 @@ export function AddProjectRepositoryScreen(props: {
           <TextInput
             // T3-CUSTOM(expbkt3): expose the repository source field by purpose,
             // not by a provider-specific placeholder.
-            accessibilityLabel={source === "url" ? "Repository URL" : "Repository name"}
+            accessibilityLabel={source === "url" ? gt("Repository URL") : gt("Repository name")}
             className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
             value={repositoryInput}
             onChangeText={setRepositoryInput}

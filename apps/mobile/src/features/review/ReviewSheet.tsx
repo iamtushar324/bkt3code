@@ -211,6 +211,7 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
+  const gt = useGT();
   if (!props.title) {
     return null;
   }
@@ -258,7 +259,7 @@ function ReviewSelectionActionBar(props: {
 
       <Pressable
         // T3-CUSTOM(expbkt3): accessibility label/role for the clear-selection button.
-        accessibilityLabel="Clear selected diff lines"
+        accessibilityLabel={gt("Clear selected diff lines")}
         accessibilityRole="button"
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
@@ -660,12 +661,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
           {/* T3-CUSTOM(expbkt3): BEGIN — retry an unavailable review without leaving the sheet. */}
           <Pressable
-            accessibilityLabel="Retry review"
+            accessibilityLabel={gt("Retry review")}
             accessibilityRole="button"
             className="mt-3 self-start rounded-md bg-primary px-3 py-2"
             onPress={() => void refreshSelectedSection()}
           >
-            <Text className="text-xs font-t3-bold text-primary-foreground">Try again</Text>
+            <Text className="text-xs font-t3-bold text-primary-foreground">
+              <T>Try again</T>
+            </Text>
           </Pressable>
           {/* T3-CUSTOM(expbkt3): END */}
         </ContentBand>,

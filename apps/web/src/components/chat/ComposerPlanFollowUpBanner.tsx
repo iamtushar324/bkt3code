@@ -1,4 +1,4 @@
-// T3-CUSTOM(expbkt3): plan mode stays available (upstream deleted this banner in #33131).
+// T3-CUSTOM(expbkt3): plan mode stays available (upstream deleted this banner).
 import { T } from "gt-react";
 import { memo } from "react";
 import { ComposerBanner } from "./ComposerBanner";
