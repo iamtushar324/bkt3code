@@ -119,6 +119,7 @@ export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecode
 // T3-CUSTOM(expbkt3): managed auth — repository error alias for the environment user store.
 export type EnvironmentUserRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type PullRequestFilesViewedRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type IssueTrackerBindingsRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type PullRequestReviewGuideRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
 export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

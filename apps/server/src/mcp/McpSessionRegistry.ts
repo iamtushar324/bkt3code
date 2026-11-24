@@ -92,6 +92,11 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("t3/mcp/McpSessionRegistry") {}
 
+interface AliveMark {
+  readonly wallMs: number;
+  readonly monotonicMs: number;
+}
+
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
@@ -103,13 +108,15 @@ interface CredentialRecord {
    * and is governed only by the absolute backstop lifetime.
    */
   readonly loginSessionIds: ReadonlySet<AuthSessionId> | undefined;
-  readonly lastAliveAt: number;
   /**
    * T3-CUSTOM(expbkt3): when the login backing this credential expires. Lives
    * on the record because upstream removed `expiresAt` from McpInvocationScope.
    */
   readonly expiresAt: number;
   // T3-CUSTOM(expbkt3): END
+  readonly lastAlive: AliveMark;
+  /** Set when a request finds the token idle; only `touch` clears it, whatever the clocks do. */
+  readonly expired: boolean;
 }
 
 interface RegistryState {
@@ -129,6 +136,7 @@ export interface McpSessionRegistryOptions {
   readonly maximumLifetimeMs?: number;
   readonly idleTimeoutMs?: number;
   // T3-CUSTOM(expbkt3): END
+  /** Drives both the wall and monotonic readings. */
   readonly now?: () => number;
   // T3-CUSTOM(expbkt3): BEGIN — hooks the fork's registry construction wires up: the
   // external-MCP settings switch, personal MCP profiles, external tokens, and active logins.
@@ -184,6 +192,11 @@ const tokenHashesMatch = (left: string, right: string): boolean => {
 };
 // T3-CUSTOM(expbkt3): END
 
+// The larger elapsed reading wins: stepping the wall clock back cannot extend a token,
+// and wall time that passes while the host sleeps still counts.
+const idleMs = (since: AliveMark, now: AliveMark): number =>
+  Math.max(now.wallMs - since.wallMs, now.monotonicMs - since.monotonicMs);
+
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
     ? "127.0.0.1"
@@ -198,7 +211,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
-  const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
+  const { now } = options;
+  const currentAliveMark: Effect.Effect<AliveMark> = now
+    ? Effect.sync(() => {
+        const timestamp = now();
+        return { wallMs: timestamp, monotonicMs: timestamp };
+      })
+    : Effect.all({
+        wallMs: Clock.currentTimeMillis,
+        monotonicMs: Clock.monotonicTimeNanos.pipe(
+          Effect.map((nanos) => Number(nanos / 1_000_000n)),
+        ),
+      });
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS; // T3-CUSTOM(expbkt3): backstop for non-login-bound credentials.
   const endpoint = NetAddress.isInetAddress(httpServer.address)
@@ -230,7 +254,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
-      const issuedAt = yield* currentTimeMillis;
+      const issuedAlive = yield* currentAliveMark;
+      const issuedAt = issuedAlive.wallMs; // T3-CUSTOM(expbkt3): login expiry uses wall time.
       const providerSessionId = yield* random.uuidV4();
       const rawToken = yield* random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
@@ -296,7 +321,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ),
         "t3.read",
         ...(request.backgroundGrantHash === undefined
-          ? (["orchestration", "worktree", "pull-requests", "t3.control", "t3.plan"] as const)
+          ? ([
+              "orchestration",
+              "worktree",
+              "pull-requests",
+              "issues",
+              "t3.control",
+              "t3.plan",
+            ] as const)
           : []),
       ]);
       if (actorUserId !== null && request.backgroundGrantHash === undefined)
@@ -340,7 +372,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           tokenHash,
           scope,
           loginSessionIds,
-          lastAliveAt: issuedAt,
+          lastAlive: issuedAlive,
+          expired: false,
           expiresAt,
         });
         return { records: next };
@@ -367,14 +400,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (rawToken) {
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
-      const timestamp = yield* currentTimeMillis;
+      const alive = yield* currentAliveMark;
+      const timestamp = alive.wallMs; // T3-CUSTOM(expbkt3): login expiry uses wall time.
       // T3-CUSTOM(expbkt3): renamed to make room for the external-user/operator fallback below;
       // records whose login expired are pruned before the liveness check.
       const providerScope = yield* SynchronizedRef.modify(state, ({ records }) => {
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
-        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
-          return [undefined, { records: current }] as const;
+        if (!record || record.expired) return [undefined, { records: current }] as const;
+        if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
+          const next = new Map(current);
+          next.set(tokenHash, { ...record, expired: true });
+          return [undefined, { records: next }] as const;
         }
         // T3-CUSTOM(expbkt3): a login-derived credential is only as authorized
         // as its logins.
@@ -382,7 +419,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           return [undefined, { records: current }] as const;
         }
         const next = new Map(current);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+        next.set(tokenHash, { ...record, lastAlive: alive });
         return [record.scope, { records: next }] as const;
       });
       if (providerScope) {
@@ -468,12 +505,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
-      const timestamp = yield* currentTimeMillis;
+      const alive = yield* currentAliveMark;
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
         for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+            next.set(tokenHash, { ...record, lastAlive: alive, expired: false });
           }
         }
         return { records: next };

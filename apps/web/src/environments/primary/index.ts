@@ -2,6 +2,7 @@ export {
   // T3-CUSTOM(expbkt3): BEGIN — Clerk-backed managed auth surface.
   bindPrimaryEnvironmentClerkIdentity,
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): the member-devices section mints pairing links.
   createServerPairingCredential,
   // T3-CUSTOM(expbkt3): fetchSessionState feeds the fork's managed offline gate.
   fetchSessionState,
@@ -20,9 +21,10 @@ export {
   PrimaryEnvironmentClerkNotMemberError,
   // T3-CUSTOM(expbkt3): END
   resolveInitialServerAuthGateState,
-  revokeOtherServerClientSessions,
+  // T3-CUSTOM(expbkt3): BEGIN — member-devices settings section revokes sessions and links.
   revokeServerClientSession,
   revokeServerPairingLink,
+  // T3-CUSTOM(expbkt3): END
   stripPairingTokenFromUrl,
   // T3-CUSTOM(expbkt3): Clerk session token exchange.
   submitClerkSessionToken,
@@ -32,8 +34,6 @@ export {
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
 } from "./auth";
-
-export { usePrimarySessionState } from "./sessionState";
 
 // T3-CUSTOM(expbkt3): fork runtime/pairing modules construct the client directly.
 export { PrimaryEnvironmentHttpClient } from "./httpClient";

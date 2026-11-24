@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type AtomCommandSuccess, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
+import type * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { toastManager } from "../ui/toast";
@@ -32,23 +36,26 @@ export type CitedHistoryOutcome =
   | { readonly _tag: "failed"; readonly title: string; readonly description: string }
   | { readonly _tag: "aborted" };
 
-type HistoryPageResult = AtomCommandSuccess<
-  Awaited<ReturnType<typeof threadEnvironment.loadEarlierHistory.run>>
+type HistoryPageResult = Effect.Success<
+  ReturnType<typeof threadEnvironment.loadEarlierHistory.run>
 >;
 
 const MAX_CITATION_PAGES = 20;
+const HISTORY_COMMAND_LABEL = "load cited thread history";
+const HISTORY_LOAD_ERROR = "Could not load history.";
 
 const COULD_NOT_LOAD = {
   _tag: "failed",
-  title: "Could not load the cited response",
-  description:
+  title: msg("Could not load the cited response"),
+  description: msg(
     "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
+  ),
 } as const;
 
 const UNAVAILABLE = {
   _tag: "failed",
-  title: "The cited response is unavailable",
-  description: "It may have been removed. The selected text is still saved in your citation.",
+  title: msg("The cited response is unavailable"),
+  description: msg("It may have been removed. The selected text is still saved in your citation."),
 } as const;
 
 /**
@@ -70,8 +77,8 @@ export async function loadCitedHistory(input: {
     if (thread.message === "other") {
       return {
         _tag: "failed",
-        title: "The citation does not refer to an assistant response",
-        description: "The selected text is still saved in your citation.",
+        title: msg("The citation does not refer to an assistant response"),
+        description: msg("The selected text is still saved in your citation."),
       };
     }
     if (!thread.hasMoreHistory) return UNAVAILABLE;
@@ -94,14 +101,18 @@ export function resolveCitationPhase(input: {
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
   const source = input.entries.find(
-    (entry) => isCitationSource(entry, input.messageId), // T3-CUSTOM(expbkt3): plans too.
+    (entry) =>
+      isCitationSource(entry, input.messageId) || // T3-CUSTOM(expbkt3): plans too.
+      (entry.kind === "sent-message" && entry.id === input.messageId),
   );
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
-  // T3-CUSTOM(expbkt3): an assistant response or a plan.
-  if (!isCitableSource(source)) return { _tag: "failed" };
+  // T3-CUSTOM(expbkt3): an assistant response, a sent message, or a plan.
+  if (source.kind !== "sent-message" && !isCitableSource(source)) return { _tag: "failed" };
   const row = input.rows.find(
-    (candidate) => isCitationSource(candidate, input.messageId), // T3-CUSTOM(expbkt3): plans too.
+    (candidate) =>
+      isCitationSource(candidate, input.messageId) || // T3-CUSTOM(expbkt3): plans too.
+      (candidate.kind === "sent-message" && candidate.id === input.messageId),
   );
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
@@ -130,21 +141,19 @@ export function citedThreadSnapshot(input: {
   }
   // Older pages merge into the visible turn items, not the message list.
   const item = input.thread.projection.visibleTurnItems.find(
-    (row) =>
-      // T3-CUSTOM(expbkt3): plan turn items are citable.
-      ((row.item.type === "assistant_message" || row.item.type === "user_message") &&
-        row.item.messageId === input.messageId) ||
+    ({ item }) =>
+      ((item.type === "assistant_message" || item.type === "user_message") &&
+        item.messageId === input.messageId) ||
       // T3-CUSTOM(expbkt3): a citation names a plan by its id.
-      (row.item.type === "proposed_plan" && row.item.planId === input.messageId),
+      (item.type === "proposed_plan" && item.planId === input.messageId) ||
+      (item.type === "dynamic_tool" &&
+        item.id === input.messageId &&
+        item.status === "completed" &&
+        sentMessageFromToolItem(item) !== undefined),
   )?.item;
   return {
-    message:
-      item === undefined
-        ? null
-        : // T3-CUSTOM(expbkt3): a plan is citable like an assistant response.
-          item.type === "assistant_message" || item.type === "proposed_plan"
-          ? "assistant"
-          : "other",
+    // T3-CUSTOM(expbkt3): a plan is citable like an assistant response (not a user message).
+    message: item === undefined ? null : item.type === "user_message" ? "other" : "assistant",
     hasMoreHistory: input.history.hasMoreHistory,
   };
 }
@@ -214,19 +223,19 @@ const citedHistoryAtom = Atom.family(
             get.registry,
             threadEnvironment.loadEarlierHistory,
             { environmentId, input: { threadId, throughEntryId: messageId } },
-            { label: "load cited thread history", reportFailure: false },
+            { label: HISTORY_COMMAND_LABEL, reportFailure: false },
           );
           return result._tag === "Success"
             ? result.value
-            : { _tag: "error", message: "Could not load history." };
+            : { _tag: "error", message: HISTORY_LOAD_ERROR };
         },
       }).then((outcome) => {
         if (outcome._tag === "aborted") return;
         if (outcome._tag === "failed") {
           toastManager.add({
             type: "warning",
-            title: outcome.title,
-            description: outcome.description,
+            title: m(outcome.title),
+            description: m(outcome.description),
           });
         }
         get.setSelf({ _tag: outcome._tag });

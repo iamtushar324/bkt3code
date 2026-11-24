@@ -6,6 +6,7 @@ import {
   StoredProjectIcon,
   ProjectId,
   ProjectScript,
+  ProjectTrackedFolders,
   ThreadEnvMode,
   // T3-CUSTOM(expbkt3): durable project ownership and membership.
   UserId,
@@ -37,6 +38,7 @@ export const ProjectRow = Schema.Struct({
   memberUserIds: Schema.optionalKey(Schema.Array(UserId)),
   projectId: ProjectId,
   title: Schema.String,
+  hasCustomTitle: Schema.Boolean,
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
@@ -44,6 +46,7 @@ export const ProjectRow = Schema.Struct({
   faviconPath: Schema.NullOr(Schema.String),
   projectIcon: Schema.NullOr(StoredProjectIcon),
   scripts: Schema.Array(ProjectScript),
+  trackedFolders: ProjectTrackedFolders,
   pinnedAt: Schema.NullOr(IsoDateTime),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
@@ -55,9 +58,11 @@ export type ProjectRow = typeof ProjectRow.Type;
 const ProjectDbRow = Schema.Struct({
   ...ProjectRow.fields,
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+  hasCustomTitle: Schema.BooleanFromBit,
   autoPull: Schema.BooleanFromBit,
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.fromJsonString(ProjectTrackedFolders),
   // T3-CUSTOM(expbkt3): project members are read from the shared durable join table.
   memberUserIds: Schema.fromJsonString(Schema.Array(UserId)),
 });
@@ -69,6 +74,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     memberUserIds: row.memberUserIds ?? [],
     id: row.projectId,
     title: row.title,
+    hasCustomTitle: row.hasCustomTitle,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: null,
     defaultModelSelection: row.defaultModelSelection,
@@ -77,6 +83,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     faviconPath: row.faviconPath,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
+    trackedFolders: row.trackedFolders,
     pinnedAt: row.pinnedAt,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -130,6 +137,7 @@ export const make = Effect.gen(function* () {
         (SELECT json_group_array(member.user_id) FROM projection_project_members AS member WHERE member.project_id = projection_projects.project_id) AS "memberUserIds",
         project_id AS "projectId",
         title,
+        has_custom_title AS "hasCustomTitle",
         workspace_root AS "workspaceRoot",
         default_model_selection_json AS "defaultModelSelection",
         default_thread_env_mode AS "defaultThreadEnvMode",
@@ -137,6 +145,7 @@ export const make = Effect.gen(function* () {
         favicon_path AS "faviconPath",
         project_icon_json AS "projectIcon",
         scripts_json AS "scripts",
+        tracked_folders_json AS "trackedFolders",
         pinned_at AS "pinnedAt",
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -165,6 +174,7 @@ export const make = Effect.gen(function* () {
             owner_user_id,
             project_id,
             title,
+            has_custom_title,
             workspace_root,
             default_model_selection_json,
             default_thread_env_mode,
@@ -172,6 +182,7 @@ export const make = Effect.gen(function* () {
             favicon_path,
             project_icon_json,
             scripts_json,
+            tracked_folders_json,
             pinned_at,
             archived_at,
             created_at,
@@ -183,6 +194,7 @@ export const make = Effect.gen(function* () {
             ${encoded.ownerUserId},
             ${encoded.projectId},
             ${encoded.title},
+            ${encoded.hasCustomTitle},
             ${encoded.workspaceRoot},
             ${encoded.defaultModelSelection},
             ${encoded.defaultThreadEnvMode},
@@ -190,6 +202,7 @@ export const make = Effect.gen(function* () {
             ${encoded.faviconPath},
             ${encoded.projectIcon},
             ${encoded.scripts},
+            ${encoded.trackedFolders},
             ${encoded.pinnedAt},
             ${encoded.archivedAt},
             ${encoded.createdAt},
@@ -200,7 +213,12 @@ export const make = Effect.gen(function* () {
           DO UPDATE SET
             /* T3-CUSTOM(expbkt3): owner transfer is durable. */
             owner_user_id = excluded.owner_user_id,
-            title = excluded.title,
+            title = CASE
+              WHEN projection_projects.has_custom_title = 1 AND excluded.has_custom_title = 0
+                THEN projection_projects.title
+              ELSE excluded.title
+            END,
+            has_custom_title = MAX(projection_projects.has_custom_title, excluded.has_custom_title),
             workspace_root = excluded.workspace_root,
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
@@ -208,6 +226,7 @@ export const make = Effect.gen(function* () {
             favicon_path = excluded.favicon_path,
             project_icon_json = excluded.project_icon_json,
             scripts_json = excluded.scripts_json,
+            tracked_folders_json = excluded.tracked_folders_json,
             pinned_at = excluded.pinned_at,
             archived_at = excluded.archived_at,
             created_at = excluded.created_at,
@@ -254,6 +273,7 @@ export const make = Effect.gen(function* () {
           memberUserIds: [],
           projectId: payload.projectId,
           title: payload.title,
+          hasCustomTitle: false,
           workspaceRoot: payload.workspaceRoot,
           defaultModelSelection: payload.defaultModelSelection,
           defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
@@ -261,6 +281,7 @@ export const make = Effect.gen(function* () {
           faviconPath: payload.faviconPath ?? null,
           projectIcon: payload.projectIcon ?? null,
           scripts: payload.scripts,
+          trackedFolders: payload.trackedFolders ?? [],
           pinnedAt: null,
           archivedAt: null,
           createdAt: payload.createdAt,
@@ -302,7 +323,7 @@ export const make = Effect.gen(function* () {
       const payload = event.payload;
       yield* upsertRow({
         ...row,
-        ...(payload.title === undefined ? {} : { title: payload.title }),
+        ...(payload.title === undefined ? {} : { title: payload.title, hasCustomTitle: true }),
         ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
         ...(payload.defaultModelSelection === undefined
           ? {}
@@ -314,6 +335,7 @@ export const make = Effect.gen(function* () {
         ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
         ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
         ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),
+        ...(payload.trackedFolders === undefined ? {} : { trackedFolders: payload.trackedFolders }),
         ...(payload.pinnedAt === undefined ? {} : { pinnedAt: payload.pinnedAt }),
         ...(payload.archivedAt === undefined ? {} : { archivedAt: payload.archivedAt }),
         updatedAt: payload.updatedAt,

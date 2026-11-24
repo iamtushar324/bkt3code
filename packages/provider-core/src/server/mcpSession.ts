@@ -1,9 +1,16 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
 // T3-CUSTOM(expbkt3): control-plane actor identity and personal MCP integrations.
 import type { UserId } from "@t3tools/contracts";
 import type { McpUpstreamServerConfig } from "./mcpUpstream.expbkt3.ts";
 // T3-CUSTOM(expbkt3): personal MCP integrations, re-exported for adapters.
 export { type McpUpstreamServerConfig, upstreamMcpServerName } from "./mcpUpstream.expbkt3.ts";
+
+/**
+ * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
+ * lists only a core set plus `tool_search`, which lists the rest on demand.
+ */
+export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -20,6 +27,8 @@ export interface McpProviderSessionConfig {
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** True while a delegated task this thread started will wake it with its result. */
+  readonly hasPendingWake?: Effect.Effect<boolean>;
 }
 
 export function withAgentDeviceEnvironment(

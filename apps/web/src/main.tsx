@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/inter";
 import "./index.css";
 
+import { trackKeyboardLayout } from "./keyboardLayout";
 // T3-CUSTOM(expbkt3): browser-only public setup continuation, without tokens.
 import { prepareToolyardSettingsContinuation } from "./fork/toolyardSettingsContinuation";
 // T3-CUSTOM(expbkt3): standalone identity mode also loads the lazy auth shell.
@@ -11,7 +12,11 @@ import { resolveAppClerkMode, resolveClerkPublishableKey } from "./cloud/publicC
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { whenLocaleReady } from "./i18n/runtime";
+import { chunkLoadState } from "./lib/chunkReloadGuard";
+
+const stopTrackingKeyboardLayout = trackKeyboardLayout();
+import.meta.hot?.dispose(stopTrackingKeyboardLayout);
 
 // T3-CUSTOM(expbkt3): preserve public Toolyard setup drafts before authentication redirects
 // and before the router reads the address.
@@ -22,16 +27,6 @@ const router = startAppServices();
 // T3-CUSTOM(expbkt3): identity-only mode also needs the publishable key/mode split.
 const clerkPublishableKey = resolveClerkPublishableKey();
 const clerkMode = resolveAppClerkMode();
-
-let chunkLoadFailed = false;
-let reloadScheduled = false;
-window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
-  if (reloadOnceForChunkLoadError()) {
-    reloadScheduled = true;
-    event.preventDefault();
-  }
-});
 
 const app = <AppRoot router={router} />;
 
@@ -46,12 +41,12 @@ const managedAuthShellModule =
 
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
-  router.load(),
+  // Chained so settings have usually hydrated; English resolves without a chunk load.
+  router.load().then(whenLocaleReady),
 ])
   .then(([ManagedAuthShell]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
-    if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
+    if (chunkLoadState.reloadScheduled) return;
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (
@@ -63,6 +58,6 @@ export const startup = Promise.all([
     );
   })
   .catch((error: unknown) => {
-    if (reloadScheduled) return;
+    if (chunkLoadState.reloadScheduled) return;
     throw error;
   });
