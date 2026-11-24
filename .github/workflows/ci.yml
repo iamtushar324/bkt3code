@@ -517,10 +517,8 @@ jobs:
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
           T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
         # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
-        run: >-
-          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
-          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
-          --verify-hits 1 apps/server
+        # TEMP(upstream-sync): plain vitest lists every failure; restore test:cached before merge.
+        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
       - name: Save Vitest module cache
         if: github.event_name == 'push' && steps.changes.outputs.test_server != 'false'

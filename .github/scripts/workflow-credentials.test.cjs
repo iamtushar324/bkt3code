@@ -287,7 +287,8 @@ test("a fork preview label removed before the run builds nothing", async () => {
 });
 
 test("a version override rewrites only the app version", () => {
-  const config = read("../apps/mobile/app.config.ts");
+  // T3-CUSTOM(expbkt3): the fork's app.config.ts reads MOBILE_APP_VERSION, so test a sample config.
+  const config = 'export default {\n  name: "T3 Code",\n  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",\n};\n';
   const next = setMobileVersion(config, "9.8.7");
   assert.match(next, /^ {2}version: repoEnv\.T3CODE_MOBILE_VERSION \?\? "9\.8\.7",$/m);
   assert.equal(setMobileVersion(next, "9.8.7"), next);

@@ -39,7 +39,6 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { ClerkDirectoryLive } from "../auth/ClerkDirectory.ts";
 import * as ClerkIdentityVerifier from "../auth/ClerkIdentityVerifier.ts";
 import * as EnvironmentUserService from "../auth/EnvironmentUserService.ts";
-import * as ServerSettings from "../serverSettings.ts";
 // T3-CUSTOM(expbkt3): END
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";

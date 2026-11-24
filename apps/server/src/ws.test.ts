@@ -176,7 +176,6 @@ import * as Option from "effect/Option";
 import { HttpClient } from "effect/http";
 import { ClerkDirectory } from "./auth/ClerkDirectory.ts";
 import * as EnvironmentUserService from "./auth/EnvironmentUserService.ts";
-import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { AgentUiService } from "./agentui/AgentUiService.ts";
 import { ClaudeAccountsService } from "./claudeAccounts/ClaudeAccountsService.ts";
 import * as UserMcpProfileStore from "./mcp/UserMcpProfileStore.ts";
