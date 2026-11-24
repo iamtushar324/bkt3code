@@ -52,10 +52,8 @@ import {
 import { readPreparedConnection } from "../../state/session";
 import { recallComposerMessage } from "./composerPromptHistory";
 // T3-CUSTOM(expbkt3): empty comment sends carry an explicit feedback instruction.
-import {
-  THREAD_COMMENTS_EMPTY_SEND_TEXT,
-  threadCommentsEmptySendAllowed,
-} from "../../fork/threadComments/threadCommentsSurface";
+import { THREAD_COMMENTS_EMPTY_SEND_TEXT } from "../../fork/threadComments/model";
+import { threadCommentsEmptySendAllowed } from "../../fork/threadComments/uiStore";
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
 // ChatView remounting while the user navigates.

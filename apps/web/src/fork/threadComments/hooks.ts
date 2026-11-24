@@ -121,8 +121,5 @@ export function useThreadCommentsEmptySendAllowed(): boolean {
   );
 }
 
-/** Same answer for code outside React (the send body reads it at click time). */
-export function threadCommentsEmptySendAllowed(): boolean {
-  const active = useThreadCommentsUiStore.getState().active;
-  return active !== null && allowsEmptySend(active);
-}
+// Lives in uiStore so the send path can read it without this module's entity imports.
+export { threadCommentsEmptySendAllowed } from "./uiStore";

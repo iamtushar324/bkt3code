@@ -4,6 +4,10 @@ vi.mock("./appInit", () => ({ startAppServices: () => ({ load: async () => {} })
 vi.mock("./AppRoot", () => ({ AppRoot: () => null }));
 vi.mock("./i18n/runtime", () => ({ whenLocaleReady: async () => {} }));
 vi.mock("react-dom/client", () => ({ default: { createRoot: () => ({ render: () => {} }) } }));
+// T3-CUSTOM(expbkt3): the fork's entry reads the address hash, which this stub page lacks.
+vi.mock("./fork/toolyardSettingsContinuation", () => ({
+  prepareToolyardSettingsContinuation: () => {},
+}));
 
 // Boots the entry in a fresh page that shares the tab's sessionStorage, as a reload does.
 async function bootThenFailLazyChunk(sessionStorage: Map<string, string>) {

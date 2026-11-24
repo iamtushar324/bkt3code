@@ -9932,7 +9932,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               yield* projectionStore.getThreadProjection(threadId),
             ),
           ]) {
-            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "secret:b");
+            // T3-CUSTOM(expbkt3): a message-mode question never fills pendingRuntimeRequest.
+            assert.equal(
+              shell?.pendingRuntimeRequest?.id,
+              fresh && responseCapability.type === "live" ? requestId : "secret:b",
+            );
           }
         }
       }

@@ -282,6 +282,18 @@ const make = Effect.gen(function* () {
       Effect.map((uuid) => CommandId.make(`server:${tag}:${threadId}:${uuid}`)),
     );
 
+  // T3-CUSTOM(expbkt3): a thread other than the caller's own is authorized exactly the
+  // way the control tools authorize a named session (team access, user-wide scopes).
+  const authorizedThreadId = (
+    scope: McpInvocationContext.McpInvocationScope,
+    requested: ThreadId | undefined,
+  ) =>
+    requested === undefined || requested === scope.thread?.threadId
+      ? Effect.succeed(scope.thread?.threadId)
+      : resolveMcpSessionTarget({ requested, capability: "pull-requests" }).pipe(
+          Effect.mapError((error) => new PullRequestSessionTargetError({ message: error.message })),
+        );
+
   const requireThread = Effect.fn("PullRequestsToolkit.requireThread")(function* (
     Failure:
       | typeof PullRequestLinkFailedError
@@ -291,16 +303,8 @@ const make = Effect.gen(function* () {
     requested: ThreadId | undefined,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
-    // T3-CUSTOM(expbkt3): a thread other than the caller's own is authorized exactly the
-    // way the control tools authorize a named session (team access, user-wide scopes).
-    const threadId =
-      requested === undefined || requested === scope.thread?.threadId
-        ? scope.thread?.threadId
-        : yield* resolveMcpSessionTarget({ requested, capability: "pull-requests" }).pipe(
-            Effect.mapError(
-              (error) => new PullRequestSessionTargetError({ message: error.message }),
-            ),
-          );
+    // T3-CUSTOM(expbkt3)
+    const threadId = yield* authorizedThreadId(scope, requested);
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
@@ -340,7 +344,8 @@ const make = Effect.gen(function* () {
     watching: boolean,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
-    const threadId = input.threadId ?? scope.thread?.threadId;
+    // T3-CUSTOM(expbkt3)
+    const threadId = yield* authorizedThreadId(scope, input.threadId);
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
     return yield* watches
       .setWatching({ threadId, target: input, watching, until: input.until })

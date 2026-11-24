@@ -12,6 +12,11 @@ vi.mock("./useAvailableSettingsSearchItems", () => ({
   ],
   useHasSecretProvidersEnvironment: () => false,
 }));
+// T3-CUSTOM(expbkt3): the fork shows its admin-only sections only to team admins.
+vi.mock("../../state/orgMembers", async (original) => ({
+  ...(await original<typeof import("../../state/orgMembers")>()),
+  useIsTeamAdmin: () => true,
+}));
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(

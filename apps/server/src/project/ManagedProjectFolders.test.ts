@@ -26,6 +26,8 @@ import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+// T3-CUSTOM(expbkt3)
+import * as ProcessHostSpawner from "../processHost/processHostSpawner.expbkt3.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -545,18 +547,22 @@ it.effect("says Git is not installed when a named project cannot start Git", () 
     {
       git: GitVcsDriver.layer.pipe(
         Layer.provide(
-          Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
-              Effect.fail(
-                PlatformError.systemError({
-                  _tag: "NotFound",
-                  module: "ChildProcess",
-                  method: "spawn",
-                  syscall: "spawn git",
-                }),
+          Layer.mergeAll(
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "ChildProcess",
+                    method: "spawn",
+                    syscall: "spawn git",
+                  }),
+                ),
               ),
             ),
+            // T3-CUSTOM(expbkt3): otherwise the process host runs a real git instead of this fake.
+            Layer.succeed(ProcessHostSpawner.ProcessHostEnabled, false),
           ),
         ),
       ),

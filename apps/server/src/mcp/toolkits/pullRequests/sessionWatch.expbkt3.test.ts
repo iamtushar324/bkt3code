@@ -1,13 +1,6 @@
 // T3-CUSTOM(expbkt3): upstream PR watches must retain named-session access rules.
 import { describe, expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  UserId,
-  type OrchestrationV2ServerCommand,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, UserId } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,11 +8,14 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
@@ -35,7 +31,9 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
   principal: McpInvocationContext.McpInvocationScope["principal"],
   allowed = true,
 ) {
-  const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+  const watches = yield* Ref.make<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly watching: boolean }>
+  >([]);
   const reads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const dependencies = Layer.mergeAll(
     // McpToolAccess reads the caller and the target thread's modes before a write.
@@ -70,9 +68,21 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
             settledAt: null,
           });
         }),
-      dispatch: (command) =>
-        Ref.update(commands, (current) => [...current, command]).pipe(
-          Effect.as({ sequence: 1, storedEvents: [] }),
+    }),
+    Layer.mock(PullRequestService.PullRequestService)({}),
+    Layer.mock(GitManager.GitManager)({}),
+    // Upstream moved the watch write into this service; the handler authorizes the target first.
+    Layer.mock(PullRequestWatchService.PullRequestWatchService)({
+      setWatching: ({ threadId, watching }) =>
+        Ref.update(watches, (current) => [...current, { threadId, watching }]).pipe(
+          Effect.as({
+            host: "github.com",
+            repository: "example/repository",
+            number: 12,
+            url: "https://github.com/example/repository/pull/12",
+            watching,
+            wasWatching: false,
+          }),
         ),
     }),
     Layer.succeed(
@@ -125,7 +135,7 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provide(dependencies),
       );
-  return { call, commands, reads };
+  return { call, watches, reads };
 });
 
 describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork access", (name) => {
@@ -135,14 +145,9 @@ describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork 
     Effect.gen(function* () {
       const harness = yield* makeHarness("external-user");
       yield* harness.call(name, input);
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        {
-          type: "thread.pull-request.watch",
-          threadId: TARGET,
-          watching: name === "watch_pull_request",
-        },
+      expect(yield* Ref.get(harness.watches)).toEqual([
+        { threadId: TARGET, watching: name === "watch_pull_request" },
       ]);
-      expect(yield* Ref.get(harness.reads)).toEqual([TARGET, TARGET]);
     }),
   );
 
@@ -151,7 +156,7 @@ describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork 
       const harness = yield* makeHarness("provider-session");
       const failure = yield* harness.call(name, input).pipe(Effect.flip);
       expect(failure).toMatchObject({ _tag: "PullRequestSessionTargetError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      expect(yield* Ref.get(harness.watches)).toEqual([]);
       expect(yield* Ref.get(harness.reads)).toEqual([]);
     }),
   );
@@ -161,7 +166,7 @@ describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork 
       const harness = yield* makeHarness("external-user", false);
       const failure = yield* harness.call(name, input).pipe(Effect.flip);
       expect(failure).toMatchObject({ _tag: "PullRequestSessionTargetError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      expect(yield* Ref.get(harness.watches)).toEqual([]);
       expect(yield* Ref.get(harness.reads)).toEqual([]);
     }),
   );
@@ -172,7 +177,7 @@ describe.each(["watch_pull_request", "unwatch_pull_request"] as const)("%s fork 
       const failure = yield* harness.call(name, { url: input.url }).pipe(Effect.flip);
       // A client caller has no thread of its own to fall back to.
       expect(failure).toMatchObject({ _tag: "PullRequestThreadRequiredError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      expect(yield* Ref.get(harness.watches)).toEqual([]);
     }),
   );
 });

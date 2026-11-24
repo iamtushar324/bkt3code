@@ -173,6 +173,13 @@ it("opens an available commit in the closed Diff pane without the pane resetting
 
 it("opens a pull request linked on the Issues page beside its issues", async () => {
   setup();
+  // T3-CUSTOM(expbkt3): this path is the native PR view, off by default in the fork.
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    pullRequestLinksOpenInApp: true,
+    browserLinkTarget: "system",
+    nativePullRequestViewEnabled: true,
+  });
   await using screen = await render(
     <AppAtomRegistryProvider>
       <IssuesPagePullRequestLink />
