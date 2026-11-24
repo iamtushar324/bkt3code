@@ -226,7 +226,10 @@ describe("resolveInitialServerAuthGateState", () => {
       expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" }),
       vi.advanceTimersByTimeAsync(1_000),
     ]);
-    expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
+    // T3-CUSTOM(expbkt3): the fork reports its client version on pairing.
+    expect(testApi.calls.browserSession).toEqual([
+      { credential: "desktop-bootstrap-token", client_version: APP_VERSION },
+    ]);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {

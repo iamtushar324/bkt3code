@@ -54,7 +54,8 @@ describe("managed desktop remote open", () => {
     expect(
       resolveRemoteOpenState({
         target: managedPrimary,
-        sshTarget: null,
+        routes: [],
+        hostEnvironmentId: null,
         remoteOpenTargets: DS1_TARGETS,
         isDesktopRenderer: desktopManagesPrimaryBackend({
           hasDesktopBridge: true,
@@ -75,7 +76,8 @@ describe("managed desktop remote open", () => {
           label: "This Mac",
           connectionId: "local:bk-local",
         }),
-        sshTarget: null,
+        routes: [],
+        hostEnvironmentId: null,
         remoteOpenTargets: DS1_TARGETS,
         isDesktopRenderer: desktopManagesPrimaryBackend({
           hasDesktopBridge: true,
@@ -89,13 +91,15 @@ describe("managed desktop remote open", () => {
     // Two hosts, two accounts, one client: the URL must follow the host.
     const ds1 = resolveRemoteOpenState({
       target: managedPrimary,
-      sshTarget: null,
+      routes: [],
+      hostEnvironmentId: null,
       remoteOpenTargets: DS1_TARGETS,
       isDesktopRenderer: false,
     });
     const otherHost = resolveRemoteOpenState({
       target: managedPrimary,
-      sshTarget: null,
+      routes: [],
+      hostEnvironmentId: null,
       remoteOpenTargets: [
         { kind: "tailscale", host: "mini.tailab6257.ts.net", username: "tushar" },
       ],
@@ -115,7 +119,7 @@ describe("managed desktop remote open", () => {
       }),
     ).toBe(
       "cursor://vscode-remote/ssh-remote+ubuntu%40dev-server-1.tailab6257.ts.net" +
-        "/home/ubuntu/.t3/bkt3-dev/worktrees/t3code-bkmain/biryani",
+        "/home/ubuntu/.t3/bkt3-dev/worktrees/t3code-bkmain/biryani?windowId=_blank",
     );
 
     expect(
@@ -125,7 +129,10 @@ describe("managed desktop remote open", () => {
         ...(otherHost.host.username === undefined ? {} : { username: otherHost.host.username }),
         absolutePath: "/Users/tushar/code",
       }),
-    ).toBe("vscode://vscode-remote/ssh-remote+tushar%40mini.tailab6257.ts.net/Users/tushar/code");
+    ).toBe(
+      "vscode://vscode-remote/ssh-remote+tushar%40mini.tailab6257.ts.net" +
+        "/Users/tushar/code?windowId=_blank",
+    );
   });
 
   it("still builds a link against a server that advertises no username", () => {
@@ -135,6 +142,6 @@ describe("managed desktop remote open", () => {
         host: "sol.tail1234.ts.net",
         absolutePath: "/srv/work",
       }),
-    ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/srv/work");
+    ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/srv/work?windowId=_blank");
   });
 });

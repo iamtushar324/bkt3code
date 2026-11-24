@@ -45,7 +45,12 @@ export function isolatedCodexReplayTranscripts(
     (entry) => entry.type === "expect_outbound" && record(entry.frame)?.method === "thread/start",
   );
   if (firstCreation < 0) return undefined;
-  const handshake = transcript.entries.slice(0, firstCreation);
+  // The handshake ends at the first request: the config read before thread/start.
+  const firstRequest = transcript.entries.findIndex((entry) => {
+    const method = entry.type === "expect_outbound" ? record(entry.frame)?.method : undefined;
+    return method !== undefined && method !== "initialize" && method !== "initialized";
+  });
+  const handshake = transcript.entries.slice(0, firstRequest);
   const initialization = handshake.find(
     (entry) => entry.type === "expect_outbound" && record(entry.frame)?.method === "initialize",
   );
@@ -54,7 +59,33 @@ export function isolatedCodexReplayTranscripts(
   const runtimes = new Map<string, RuntimeRecording>();
   const requestOwners = new Map<unknown, RuntimeRecording>();
   let current: RuntimeRecording | undefined;
-  for (let index = firstCreation; index < transcript.entries.length; index += 1) {
+  // A config read names no thread; it belongs to the runtime of the next request that does.
+  let pending: Array<Entry> = [];
+  const pendingRequestIds = new Set<unknown>();
+  const append = (runtime: RuntimeRecording, entry: Entry) => {
+    const frame = entry.type === "runtime_exit" ? undefined : record(entry.frame);
+    if (entry.type === "expect_outbound" && frame?.method !== undefined && frame.id !== undefined) {
+      const localId = runtime.nextRequestId++;
+      runtime.requestIds.set(frame.id, localId);
+      requestOwners.set(frame.id, runtime);
+      runtime.entries.push({ ...entry, frame: { ...frame, id: localId } });
+    } else if (
+      entry.type === "emit_inbound" &&
+      frame?.id !== undefined &&
+      frame.method === undefined
+    ) {
+      runtime.entries.push({
+        ...entry,
+        frame: { ...frame, id: runtime.requestIds.get(frame.id) ?? frame.id },
+      });
+    } else runtime.entries.push(entry);
+  };
+  const flushPending = (runtime: RuntimeRecording) => {
+    for (const entry of pending) append(runtime, entry);
+    pending = [];
+    pendingRequestIds.clear();
+  };
+  for (let index = firstRequest; index < transcript.entries.length; index += 1) {
     const entry = transcript.entries[index]!;
     if (entry.type === "runtime_exit") {
       // The recording's one shared process exits after all threads finish.
@@ -64,29 +95,36 @@ export function isolatedCodexReplayTranscripts(
     const frame = record(entry.frame);
     if (frame === undefined) continue;
     if (entry.type === "expect_outbound") {
+      const nativeThreadId = record(frame.params)?.threadId;
       if (frame.method === "thread/start" || frame.method === "thread/fork") {
-        const nativeThreadId = createdNativeThreadId(transcript.entries.slice(index + 1), frame.id);
-        if (nativeThreadId === undefined)
+        const createdThreadId = createdNativeThreadId(
+          transcript.entries.slice(index + 1),
+          frame.id,
+        );
+        if (createdThreadId === undefined)
           throw new Error(`Missing native thread response in ${transcript.scenario}.`);
         current = {
-          nativeThreadId,
+          nativeThreadId: createdThreadId,
           entries: [...handshake],
           requestIds: new Map([[initializationId, 1]]),
           nextRequestId: 2,
         };
-        runtimes.set(nativeThreadId, current);
-      } else {
-        const nativeThreadId = record(frame.params)?.threadId;
-        if (typeof nativeThreadId === "string") current = runtimes.get(nativeThreadId) ?? current;
+        runtimes.set(createdThreadId, current);
+      } else if (frame.method === "config/read" && typeof nativeThreadId !== "string") {
+        pending.push(entry);
+        if (frame.id !== undefined) pendingRequestIds.add(frame.id);
+        continue;
+      } else if (typeof nativeThreadId === "string") {
+        current = runtimes.get(nativeThreadId) ?? current;
       }
       if (current === undefined)
         throw new Error(`Missing runtime owner in ${transcript.scenario}.`);
-      if (frame.method !== undefined && frame.id !== undefined) {
-        const localId = current.nextRequestId++;
-        current.requestIds.set(frame.id, localId);
-        requestOwners.set(frame.id, current);
-        current.entries.push({ ...entry, frame: { ...frame, id: localId } });
-      } else current.entries.push(entry);
+      flushPending(current);
+      append(current, entry);
+      continue;
+    }
+    if (frame.id !== undefined && frame.method === undefined && pendingRequestIds.has(frame.id)) {
+      pending.push(entry);
       continue;
     }
     const nativeThreadId =
@@ -99,11 +137,8 @@ export function isolatedCodexReplayTranscripts(
         : (requestOwners.get(frame.id) ?? current);
     if (owner === undefined)
       throw new Error(`Missing inbound runtime owner in ${transcript.scenario}.`);
-    owner.entries.push(
-      frame.id !== undefined && frame.method === undefined
-        ? { ...entry, frame: { ...frame, id: owner.requestIds.get(frame.id) ?? frame.id } }
-        : entry,
-    );
+    append(owner, entry);
   }
+  if (current !== undefined) flushPending(current);
   return [...runtimes.values()].map((runtime) => ({ ...transcript, entries: runtime.entries }));
 }

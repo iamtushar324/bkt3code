@@ -18,9 +18,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { base64UrlEncode, signPayload } from "./utils.ts";
+import { base64UrlEncode } from "./utils.ts";
 
 const layerSessionStore = SessionStore.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
@@ -137,8 +138,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             exp: issuedAtMs + Duration.toMillis(Duration.hours(1)),
           }),
         );
-        const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
-        const token = `${payload}.${signPayload(payload, secret)}`;
+        const signer = yield* PayloadSigner.fromSecret(
+          yield* secrets.getOrCreateRandom("server-signing-key", 32),
+        );
+        const token = `${payload}.${yield* signer.sign(payload)}`;
 
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("UnknownSessionTokenError");
         const issued = yield* sessions.issue({ subject: "early" });

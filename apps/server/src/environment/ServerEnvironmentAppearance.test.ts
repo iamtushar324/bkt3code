@@ -64,7 +64,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("shared host appe
       const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
         environmentAppearance: { nickname: "Lab", colorId: "pink" },
       });
-      expect(redactServerSettingsForClient(settings).environmentAppearance).toEqual({
+      expect(
+        redactServerSettingsForClient(settings, { secretReferences: true }).environmentAppearance,
+      ).toEqual({
         nickname: "Lab",
         colorId: "pink",
       });

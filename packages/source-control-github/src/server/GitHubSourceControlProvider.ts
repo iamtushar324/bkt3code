@@ -487,6 +487,13 @@ function restPullRequestNode(entry: unknown) {
       __typename: pr.head.repo.owner.type,
       login: pr.head.repo.owner.login,
     },
+    // T3-CUSTOM(expbkt3): the fork's node also requires readiness, which a REST list does
+    // not return; these mean "not known yet", as GitHub reports before it computes them.
+    mergeable: "UNKNOWN",
+    mergeStateStatus: "UNKNOWN",
+    reviewDecision: null,
+    autoMergeRequest: null,
+    commits: { nodes: [] },
   };
 }
 

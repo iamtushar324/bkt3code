@@ -38,6 +38,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 vi.mock("../mcp/UserMcpProfileStore.ts", () => ({ isActiveExternalGrant: vi.fn() }));
@@ -177,6 +178,7 @@ function fixture(provider = "codex") {
     Layer.provide(
       Layer.mergeAll(
         IdAllocator.layer,
+        ProviderInstallationGate.layer,
         FileSystem.layerNoop({}),
         ProviderAdapterRegistry.layerSingle(adapter),
         eventSink,

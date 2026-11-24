@@ -5110,6 +5110,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           Layer.mergeAll(
             NodeServices.layer,
             NodeCrypto.layer,
+            // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+            Layer.mock(SourceControlProfileService)({
+              resolveThreadExecutionContext: () => Effect.succeed(null),
+            }),
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () =>
                 Effect.succeed({
@@ -5224,6 +5228,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             detail: (input) =>
               Effect.sync(() => states.get(input.number)!).pipe(
@@ -5371,6 +5379,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
+        // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+        Layer.mock(SourceControlProfileService)({
+          resolveThreadExecutionContext: () => Effect.succeed(null),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           detail: () =>
             Effect.sync(() => ({
@@ -5522,6 +5534,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             Layer.mergeAll(
               NodeServices.layer,
               NodeCrypto.layer,
+              // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+              Layer.mock(SourceControlProfileService)({
+                resolveThreadExecutionContext: () => Effect.succeed(null),
+              }),
               Layer.mock(PullRequestService.PullRequestService)({
                 watchFingerprint: () =>
                   reason === "rate-limited"
@@ -5597,6 +5613,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           Layer.mergeAll(
             NodeServices.layer,
             NodeCrypto.layer,
+            // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+            Layer.mock(SourceControlProfileService)({
+              resolveThreadExecutionContext: () => Effect.succeed(null),
+            }),
             Layer.mock(PullRequestService.PullRequestService)({
               watchFingerprint: () => Effect.succeed(null),
               detail: () =>
@@ -5723,6 +5743,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             detail: () =>
               Effect.sync(() => ({
@@ -5956,6 +5980,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             detail: (input) =>
               Effect.sync(() => ({
@@ -6075,6 +6103,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             detail: (input) =>
               Effect.gen(function* () {
@@ -6593,6 +6625,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             detail: () =>
               Queue.offer(detailReads, undefined).pipe(
@@ -6703,6 +6739,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             // Earlier tests can leave watches in other projects; only this one's reads count.
             detail: (input) =>
@@ -7071,6 +7111,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
+          // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+          Layer.mock(SourceControlProfileService)({
+            resolveThreadExecutionContext: () => Effect.succeed(null),
+          }),
           Layer.mock(PullRequestService.PullRequestService)({
             watchFingerprint: () => Effect.sync(() => ({ status, remarks: "none", coversDetail })),
             invalidate: () => Effect.void,
@@ -7240,6 +7284,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
+        // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+        Layer.mock(SourceControlProfileService)({
+          resolveThreadExecutionContext: () => Effect.succeed(null),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           watchFingerprint: () =>
             Effect.succeed({ status: removal?.id ?? "green", remarks: "none" }),
@@ -7891,6 +7939,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
+        // T3-CUSTOM(expbkt3): PR watchers resolve the thread owner's source-control identity.
+        Layer.mock(SourceControlProfileService)({
+          resolveThreadExecutionContext: () => Effect.succeed(null),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           watchFingerprint: (input) =>
             input.number === 21

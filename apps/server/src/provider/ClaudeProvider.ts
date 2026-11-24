@@ -815,20 +815,25 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const authProbe = yield* runClaudeCommand(
     claudeSettings,
     ["auth", "status"],
-    resolvedEnvironment,
+    providerProbeEnvironment(resolvedEnvironment),
     cwd,
   ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
   const authStatus =
     Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
       ? parseClaudeAuthStatus(authProbe.success.value.stdout)
       : undefined;
+  // Without capabilities yet, these answers list the catalog models this CLI version runs.
+  const authProbeModels = claudeProviderModels(
+    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+    claudeSettings.customModels,
+  );
 
   if (authStatus?.loggedIn === false) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: authProbeModels,
       updateRequiredModels,
       probe: {
         installed: true,
@@ -845,7 +850,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: authProbeModels,
       updateRequiredModels,
       probe: {
         installed: true,

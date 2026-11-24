@@ -1,6 +1,15 @@
 // T3-CUSTOM(expbkt3): the fork's Retry/Dismiss test renders the banner.
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+// T3-CUSTOM(expbkt3): the banner now reads GT hooks, which need the app's GT setup.
+vi.mock("gt-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("gt-react")>()),
+  useGT: () => (text: string) => text,
+  useMessages: () => (text: string) => text,
+  T: ({ children }: { children: ReactNode }) => children,
+}));
 
 import {
   dismissThreadErrorBannerForSession,

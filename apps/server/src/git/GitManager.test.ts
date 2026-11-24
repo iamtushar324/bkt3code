@@ -1353,6 +1353,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(217);
         const callsBeforeRemoval = providerCalls.length;
         yield* runGit(repoDir, ["remote", "remove", "origin"]);
+        // Local status results are kept for a second; a change outside T3 Code shows after that.
+        yield* TestClock.adjust("2 seconds");
 
         const local = yield* manager.localStatus({ cwd: repoDir });
         const remote = yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
@@ -1456,12 +1458,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       gitCommands.length = 0;
       expect((yield* lookup)?.state).toBe("merged");
       expect((yield* lookup)?.state).toBe("merged");
-      expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
-        "config",
-        "config",
-        "for-each-ref",
-        "for-each-ref",
-      ]);
+      // T3-CUSTOM(expbkt3): a result confirmed under unchanged git files starts no git at all.
+      expect(gitCommands).toEqual([]);
       expect(freshLookups()).toBe(0);
       gitCommands.length = 0;
       yield* manager.branchPullRequest(
@@ -1480,16 +1478,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* lookup;
       expect(freshLookups()).toBe(0);
 
-      // Remembered git state expires after 5 minutes; that rereads git without a recheck.
+      // T3-CUSTOM(expbkt3): BEGIN the fork keeps git state while its files are unchanged, and
+      // confirms a settled result again after 30 minutes instead of 15.
       yield* TestClock.adjust("10 minutes");
       gitCommands.length = 0;
       expect((yield* lookup)?.state).toBe("merged");
-      expect(freshLookups()).toBe(1);
+      expect(freshLookups()).toBe(0);
 
       yield* TestClock.adjust("5 minutes");
       gitCommands.length = 0;
       expect((yield* lookup)?.state).toBe("merged");
-      expect(freshLookups()).toBe(2);
+      expect(freshLookups()).toBe(0);
+      // T3-CUSTOM(expbkt3): END
 
       // A new PR from the reused branch shows on the next host query.
       yield* TestClock.adjust("5 minutes");
@@ -2232,7 +2232,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       gitCommands.length = 0;
       expect(yield* sweepLookup).toEqual(first);
       expect(gitCommands.some(readsBranchRef(branch))).toBe(true);
-      expect(gitCommands.filter((command) => command === "remote")).toHaveLength(1);
+      // Upstream's settled check sees the same branch ref and remote URLs, so it skips the
+      // fresh confirmation and its remotes read.
+      expect(gitCommands.filter((command) => command === "remote")).toHaveLength(0);
     }),
   );
 

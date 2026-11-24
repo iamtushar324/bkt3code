@@ -9,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
@@ -157,7 +158,8 @@ it.effect.each([["sql", layerSql]] as const)(
         nativeRequestRef: null,
         kind: "user_input",
         status: "pending",
-        responseCapability: { type: "message" },
+        // T3-CUSTOM(expbkt3): message-answered requests never block the fork's composer.
+        responseCapability: { type: "live", providerSessionId: ProviderSessionId.make("session") },
         createdAt: DateTime.subtract(now, { hours: 1 }),
         resolvedAt: null,
       };

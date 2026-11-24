@@ -13,6 +13,9 @@ import * as Option from "effect/Option";
 import * as IssueService from "../../../issue/IssueService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
+// T3-CUSTOM(expbkt3): issue tools keep the fork's team boundary.
+import { OrchestrationAccessControl } from "../../../orchestration-v2/Services/AccessControl.ts";
+import { requireForkProjectAccess, requireForkThreadAccess } from "../../forkAccess.expbkt3.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -60,6 +63,24 @@ const make = Effect.gen(function* () {
   const issues = yield* IssueService.IssueService;
   const threadIssues = yield* ThreadIssueService.ThreadIssueService;
 
+  // T3-CUSTOM(expbkt3): BEGIN every project and thread a tool reads or changes must be one
+  // the calling user may see; the caller's own thread passes the same check.
+  const requireProjectAccess = Effect.fn("IssuesToolkit.requireProjectAccess")(function* (
+    projectId: ProjectId,
+  ) {
+    const scope = yield* McpInvocationContext.requireMcpCapability("issues");
+    const access = yield* Effect.serviceOption(OrchestrationAccessControl);
+    yield* requireForkProjectAccess(access, scope, projectId);
+  });
+  const requireThreadAccess = Effect.fn("IssuesToolkit.requireThreadAccess")(function* (
+    threadId: ThreadId,
+  ) {
+    const scope = yield* McpInvocationContext.requireMcpCapability("issues");
+    const access = yield* Effect.serviceOption(OrchestrationAccessControl);
+    yield* requireForkThreadAccess(access, scope, threadId);
+  });
+  // T3-CUSTOM(expbkt3): END
+
   /** The caller's own thread, read when a tool defaults to it. */
   const callerThread = Effect.fn("IssuesToolkit.callerThread")(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("issues");
@@ -77,6 +98,7 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("issues");
     const threadId = requested ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new IssueThreadRequiredError();
+    yield* requireThreadAccess(threadId); // T3-CUSTOM(expbkt3)
     const thread = yield* engine.getThreadShell(threadId).pipe(
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new IssueLinkFailedError({ cause })),
@@ -96,6 +118,7 @@ const make = Effect.gen(function* () {
     yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
+    yield* requireProjectAccess(projectId); // T3-CUSTOM(expbkt3)
     return yield* issues.projectScope(projectId, select).pipe(
       Effect.catchTags({
         IssueUnavailableError: () => Effect.fail(new IssueProjectNotFoundError({ projectId })),
@@ -114,7 +137,11 @@ const make = Effect.gen(function* () {
     yield* McpInvocationContext.requireMcpCapability("issues");
     if (input.url !== undefined) {
       const preferred = input.projectId ?? (yield* callerThread())?.projectId;
+      // T3-CUSTOM(expbkt3): BEGIN the named project, and the checkout the URL resolved to.
+      if (input.projectId !== undefined) yield* requireProjectAccess(input.projectId);
       const resolved = yield* issues.resolveUrl(input.url, preferred);
+      yield* requireProjectAccess(resolved.projectId);
+      // T3-CUSTOM(expbkt3): END
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();

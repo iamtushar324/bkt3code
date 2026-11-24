@@ -272,8 +272,13 @@ describe("pull request toolkit handlers", () => {
       const harness = yield* makeHarness({
         thread: { ...makeThread([]), id: ThreadId.make(`mcp:${bareId}`) },
       });
+      // T3-CUSTOM(expbkt3): an in-session agent may name only its own thread, so the
+      // lookup hint is checked for a user-wide caller, which may name any thread.
       const error = yield* harness
-        .call("link_pull_request", { threadId: bareId, number: 123 })
+        .call("link_pull_request", { threadId: bareId, number: 123 }, [
+          "pull-requests",
+          "t3.session.create",
+        ])
         .pipe(Effect.flip);
       expect(error.message).toBe(
         `Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`? Thread ids belong to one environment: for a thread on a linked one, find it with \`t3_environment_links\` and pass its \`environmentId\` to a tool that takes one.`,

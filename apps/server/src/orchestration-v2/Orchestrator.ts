@@ -5700,7 +5700,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ...thread,
                 ...(command.title === undefined
                   ? {}
-                  : { title: command.title, titleRenamed: false }),
+                  : {
+                      title: command.title,
+                      titleRenamed: false,
+                      // T3-CUSTOM(expbkt3): a generated title is no longer one the user chose.
+                      titleManuallySet: false,
+                    }),
                 ...(command.outcome === undefined
                   ? {}
                   : {
@@ -6359,6 +6364,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         ...targetThread,
         ...forkThreadMetadata(sourceProjection.thread),
+        // Like upstream's titleRenamed, a rename stays with the source thread.
+        titleManuallySet: false,
         parentThreadId: sourceProjection.thread.id,
         parentEnvironmentId: null,
       },

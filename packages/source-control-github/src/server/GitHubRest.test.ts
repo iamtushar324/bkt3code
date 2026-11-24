@@ -187,6 +187,12 @@ describe("GitHubRest", () => {
                         isCrossRepository: false,
                         headRepository: { name: "web", nameWithOwner: "acme/web" },
                         headRepositoryOwner: { __typename: "User", login: "acme" },
+                        // T3-CUSTOM(expbkt3): the fork's PullRequestNode also selects readiness.
+                        mergeable: "UNKNOWN",
+                        mergeStateStatus: "UNKNOWN",
+                        reviewDecision: null,
+                        autoMergeRequest: null,
+                        commits: { nodes: [] },
                       },
                     },
                   },

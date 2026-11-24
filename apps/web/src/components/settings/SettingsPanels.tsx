@@ -849,15 +849,18 @@ function AutoSettleDaysInput({
 
 // T3-CUSTOM(expbkt3): BEGIN - upstream retired plan mode; the fork keeps its toggle here.
 export function LegacyFeaturesSection() {
+  const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
 
   return (
-    <SettingsSection id="legacy-features" title="Legacy">
+    <SettingsSection id="legacy-features" title={gt("Legacy")}>
       <SettingsRow
         {...searchableSetting("legacy-plan-mode")}
-        description="Build/Plan, /plan, /default, and Shift+Tab are on by default. Off uses build mode."
+        description={gt(
+          "Build/Plan, /plan, /default, and Shift+Tab are on by default. Off uses build mode.",
+        )}
         control={
           <Switch
             checked={settings.planModeAvailable}
@@ -886,7 +889,7 @@ export function LegacyFeaturesSection() {
                     }),
               });
             }}
-            aria-label="Plan mode"
+            aria-label={gt("Plan mode")}
           />
         }
       />

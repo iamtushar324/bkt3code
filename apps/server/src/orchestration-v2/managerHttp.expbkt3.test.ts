@@ -442,6 +442,11 @@ it.effect(
           expectedRevision: snapshot.snapshotSequence,
         };
         yield* request("/api/manager/prompt", input);
+        // Upstream resends an unstarted agent prompt when threads continue after an update.
+        // Without that setting, recovery ends the accepted start, which this test covers.
+        yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+          continueThreadsAfterServerUpdate: false,
+        });
         const recover = yield* Recovery.ProviderRuntimeRecoveryService;
         const summary = yield* recover.recover;
         expect(summary.terminalizedRuns).toBe(1);

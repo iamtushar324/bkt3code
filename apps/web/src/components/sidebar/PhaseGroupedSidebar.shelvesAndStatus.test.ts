@@ -106,8 +106,10 @@ describe("working status parity with upstream's sidebar", () => {
         latestRun: null,
         goal: null,
       };
+      // Upstream splits "preparing" ("Setting up") from "working"; both show a duration.
+      const upstreamStatus = resolveSidebarThreadStatus(thread);
       expect(resolvePhaseSidebarWorkingStatus(thread) !== null).toBe(
-        resolveSidebarThreadStatus(thread) === "working",
+        upstreamStatus === "working" || upstreamStatus === "preparing",
       );
     },
   );

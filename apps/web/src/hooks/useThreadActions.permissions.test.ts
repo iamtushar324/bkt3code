@@ -448,11 +448,11 @@ describe("thread action permissions", () => {
     });
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).toHaveBeenCalledOnce();
+    // T3-CUSTOM(expbkt3): worktree removal refreshes VCS status on the server, so no refreshStatus.
     expect(state.requests.map((request) => request.action)).toEqual([
       "stopSession",
       "delete",
       "removeWorktree",
-      "refreshStatus",
     ]);
   });
 

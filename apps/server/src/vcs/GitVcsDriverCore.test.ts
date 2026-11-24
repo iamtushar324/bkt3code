@@ -1055,7 +1055,8 @@ it.effect("keeps a branch's base cached while only other refs' commits move", ()
       // Another worktree's commits and a fetch moving a packed base ref add or remove no name.
       yield* git(other, ["commit", "--allow-empty", "-m", "other"]);
       yield* driver.statusDetailsLocal(cwd);
-      assert.equal(spawnedArgs.length, 6);
+      // T3-CUSTOM(expbkt3): +2 for the fork's two worktree base ref reads.
+      assert.equal(spawnedArgs.length, 8);
       assert.equal(lookups(), 0);
       yield* git(other, ["commit", "--allow-empty", "-m", "other again"]);
       yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "other"]);

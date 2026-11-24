@@ -2322,21 +2322,15 @@ export const make = Effect.gen(function* () {
     if (headContext.headBranch.length === 0) {
       return null;
     }
-    const remoteResult = yield* gitCore
-      .execute({
-        operation: "GitManager.isUnpublishedBranch.remotes",
-        cwd,
-        args: ["remote"],
-        timeoutMs: 5_000,
-      })
-      .pipe(Effect.option);
+    // Shares the lookup's single `git remote` read.
+    const remoteResult = yield* readLookupRemotes(
+      cwd,
+      "GitManager.isUnpublishedBranch.remotes",
+    ).pipe(Effect.option);
     if (Option.isNone(remoteResult)) {
       return null;
     }
-    const remoteNames = remoteResult.value.stdout
-      .split("\n")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+    const remoteNames = remoteResult.value;
     if (remoteNames.length === 0) {
       return "no-remote" as const;
     }
@@ -3500,6 +3494,8 @@ export const make = Effect.gen(function* () {
                 fresh,
                 readRemoteUrl(cwd, remoteName),
                 canReuseMemo(shared) ? shared.remoteUrls.get(remoteName) : undefined,
+                // T3-CUSTOM(expbkt3): see the fingerprint parameter.
+                fingerprint,
               ),
             ).pipe(
               Effect.orElseSucceed(() => null),

@@ -156,7 +156,8 @@ describe("OrchestratorMcpService custom groups", () => {
               Effect.succeed({ instanceId } as unknown as ProviderAdapterV2["Service"]),
           }),
         ),
-        Layer.mock(ProjectService.ProjectService)({}),
+        // No project folder: the model picker has no workspace to scan.
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         // Upstream's service now also reads these; createThreads uses neither.

@@ -1025,8 +1025,14 @@ it.live.each([
           markConnected: () => Effect.void,
           markDisconnected: () => Effect.void,
           awaitInvalidation: () => Effect.never,
+          // T3-CUSTOM(expbkt3): the fork records each connection's client app version.
+          recordClientConnection: () => Effect.void,
         }),
-        Layer.mock(AnalyticsService.AnalyticsService)({ recordOwners: () => Effect.void }),
+        Layer.mock(AnalyticsService.AnalyticsService)({
+          recordOwners: () => Effect.void,
+          // T3-CUSTOM(expbkt3): the fork keeps the client.connected event.
+          record: () => Effect.void,
+        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: process.cwd(),
         }),
@@ -1385,7 +1391,8 @@ it.effect("access changes made while the snapshot loads reach the client after i
             userId: null,
             subject: "current",
             method: "browser-session-cookie",
-            scopes: [],
+            // T3-CUSTOM(expbkt3): the fork re-checks the session's scopes inside the handler map.
+            scopes: [AuthAccessReadScope],
           },
           {},
           yield* ServerBrowser.ServerBrowser,
@@ -1972,7 +1979,8 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             userId: null,
             subject: "worktree-skills-test",
             method: "browser-session-cookie",
-            scopes: [],
+            // T3-CUSTOM(expbkt3): the fork re-checks the session's scopes inside the handler map.
+            scopes: [RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.serverRefreshProviders)],
           },
           {},
           yield* ServerBrowser.ServerBrowser,
@@ -2728,7 +2736,8 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
             userId: null,
             subject: "acp-test",
             method: "browser-session-cookie",
-            scopes: [],
+            // T3-CUSTOM(expbkt3): the fork re-checks the session's scopes inside the handler map.
+            scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
           },
           {},
           yield* ServerBrowser.ServerBrowser,

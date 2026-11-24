@@ -21,9 +21,9 @@ import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
 // T3-CUSTOM(expbkt3): BEGIN - experimental phase-grouped sidebar opt-in.
-import { useAtomSet } from "@effect/atom-react";
 import { AppText as Text } from "../../components/ui/AppText";
-import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { usePhaseSidebarEnabled } from "../phasesidebar/phaseSidebarEnabled";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 // T3-CUSTOM(expbkt3): END
@@ -350,7 +350,7 @@ function useOverflowRows(): SettingsListRow[] {
 
 // T3-CUSTOM(expbkt3): BEGIN — experimental fork features.
 function ExperimentsSettingsSection() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const phaseSidebarEnabled = usePhaseSidebarEnabled();
 
   return (
@@ -364,7 +364,9 @@ function ExperimentsSettingsSection() {
           icon="square.grid.2x2"
           label="BK sidebar"
           value={phaseSidebarEnabled}
-          onValueChange={(value) => savePreferences({ experimentalPhaseSidebarEnabled: value })}
+          onValueChange={(value) =>
+            void savePreferences({ experimentalPhaseSidebarEnabled: value })
+          }
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">

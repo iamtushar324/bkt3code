@@ -1069,9 +1069,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   // T3-CUSTOM(expbkt3): plan mode is a supported feature in the fork, not legacy.
   {
     id: "legacy-plan-mode",
-    title: "Plan mode",
+    title: msg("Plan mode"),
     to: "/settings/labs", // T3-CUSTOM(expbkt3): the Legacy section now renders on Labs upstream.
-    searchTerms: ["build plan composer old"],
+    searchTerms: [msg("build plan composer old")],
   },
   {
     id: "keybindings",

@@ -35,6 +35,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const driver = ProviderDriverKind.make("claudeAgent");
@@ -290,6 +291,7 @@ function fixture(
         Layer.provideMerge(
           Layer.mergeAll(
             IdAllocator.layer,
+            ProviderInstallationGate.layer,
             FileSystem.layerNoop({}),
             ProviderAdapterRegistry.layerSingle(adapter),
             Layer.mock(EventSink.EventSinkV2)({

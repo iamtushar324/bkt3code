@@ -97,12 +97,17 @@ describe("pairing credential payload", () => {
     // able to mint a credential that impersonates a teammate.
     // `requireProofOfPossession` only ever *restricts* redemption, so it is safe to
     // accept from a client. A subject would not be, and still is not accepted.
-    expect(Object.keys(AuthCreatePairingCredentialInput.fields)).toEqual([
-      "label",
-      "scopes",
-      "requireProofOfPossession",
-    ]);
-    expect(Object.keys(AuthCreatePairingCredentialInput.fields)).not.toContain("subject");
+    // Upstream made the payload a union of a plain and a peer-link credential.
+    for (const member of AuthCreatePairingCredentialInput.members) {
+      expect(Object.keys(member.fields)).toEqual([
+        "label",
+        "scopes",
+        "requireProofOfPossession",
+        "access",
+        "purpose",
+      ]);
+      expect(Object.keys(member.fields)).not.toContain("subject");
+    }
 
     const payload: AuthCreatePairingCredentialInput = {
       label: "Tushar's MacBook",

@@ -93,7 +93,8 @@ it.effect("routes shell selectors to readers while imports stay writable", () =>
         query.includes("FROM orchestration_v2_legacy_imports AS legacy_import") ||
         query.includes("FROM projection_thread_messages AS message"),
     );
-    assert.lengthOf(selectors, 6);
+    // T3-CUSTOM(expbkt3): +1 per thread for the fork's provider cursor read.
+    assert.lengthOf(selectors, 8);
     assert.deepEqual([...new Set(selectors.map((row) => row.connection))], ["reader"]);
     assert.deepEqual(yield* importer.reconcileShells, {
       importedThreadCount: 0,
