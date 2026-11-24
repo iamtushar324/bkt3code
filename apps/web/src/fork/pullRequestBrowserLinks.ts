@@ -12,7 +12,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useCallback } from "react";
 
 import { isWebUrl } from "~/browser/browserLinkTarget";
-import { BrowserSettingsReadError, openUrlInPreview } from "~/browser/openFileInPreview";
+import { isBrowserSettingsReadError, openUrlInPreview } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -76,7 +76,7 @@ export function useOpenPullRequestInBrowserInstead(
         const failure = squashAtomCommandFailure(result);
         // The same fallback "Open links in" uses: the reader asked for the page, so an in-app
         // open that failed still lands in the system browser.
-        if (!(failure instanceof BrowserSettingsReadError)) {
+        if (!isBrowserSettingsReadError(failure)) {
           console.error(result.cause);
           const api = readLocalApi();
           if (api) {

@@ -3,6 +3,8 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import type { EnvironmentPresentation } from "../../state/environments";
+// T3-CUSTOM(expbkt3): the fork's presentation carries a resolved appearance.
+import { resolveEnvironmentAppearance } from "../../state/environmentAppearance";
 import type { ServerProvider } from "@t3tools/contracts";
 import {
   scopedThreadKey,
@@ -95,6 +97,9 @@ function setup() {
         {
           environmentId: id,
           label: id,
+          // T3-CUSTOM(expbkt3): fork presentation fields.
+          connectionLabel: id,
+          appearance: resolveEnvironmentAppearance({ environmentId: id, label: id }),
           displayUrl: null,
           relayManaged: false,
           entry: {

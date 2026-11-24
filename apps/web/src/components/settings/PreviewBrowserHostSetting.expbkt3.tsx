@@ -49,7 +49,7 @@ export function PreviewBrowserHostRow() {
       resetAction={
         settings.previewBrowser !== DEFAULT_SERVER_SETTINGS.previewBrowser ? (
           <SettingResetButton
-            label="default preview browser"
+            ariaLabel="Reset default preview browser to default"
             onClick={() =>
               updateSettings({ previewBrowser: DEFAULT_SERVER_SETTINGS.previewBrowser })
             }

@@ -59,6 +59,9 @@ it("keeps composition Enter in the repository path from publishing", async () =>
       threadRef={null}
       gitCwd="/repo"
       offeredProviders={undefined}
+      // T3-CUSTOM(expbkt3): source-control profile identity for git actions.
+      threadId={null}
+      sourceControlProfileId={null}
     />,
   );
   await page.getByRole("button", { name: "Next" }).click();

@@ -28,6 +28,7 @@ import {
   ServerIcon,
   Trash2Icon,
 } from "lucide-react";
+import { msg } from "gt-react";
 import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
@@ -179,7 +180,11 @@ export function ActiveProjectsSettingsPanel() {
     [allRows],
   );
   const { copyToClipboard } = useCopyToClipboard<{ readonly path: string }>({
-    target: "project path",
+    target: {
+      target: "project path",
+      unavailableMessage: msg("Clipboard API is unavailable while copying project path."),
+      failureMessage: msg("Failed to copy project path to the clipboard."),
+    },
     onCopy: ({ path }) =>
       toastManager.add({ type: "success", title: "Project path copied", description: path }),
     onError: (error) =>

@@ -30,6 +30,7 @@ function makeThread(overrides: Partial<ThreadShell> = {}): ThreadShell {
     forkedFrom: null,
     linkOrigin: null,
     delegatedFrom: null,
+    workflowRun: null,
     pendingBackgroundTasks: [],
     providerInstanceHistory: [],
     itemCount: 0,

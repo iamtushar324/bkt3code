@@ -16,6 +16,7 @@ import { PlanCardContext } from "./planCardContext";
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   _options?: { maxLines?: number },
+  _resolve?: unknown,
 ): string {
   return stripDisplayedPlanMarkdown(planMarkdown);
 }

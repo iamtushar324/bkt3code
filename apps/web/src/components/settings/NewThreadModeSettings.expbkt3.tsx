@@ -65,7 +65,7 @@ export function StartingModeDefaultRow({ isProjectScope }: { isProjectScope: boo
       resetAction={
         value !== DEFAULT_SERVER_SETTINGS.defaultThreadInteractionMode ? (
           <SettingResetButton
-            label="default starting mode"
+            ariaLabel="Reset default starting mode to default"
             onClick={() =>
               updateSettings({
                 defaultThreadInteractionMode: DEFAULT_SERVER_SETTINGS.defaultThreadInteractionMode,

@@ -10,6 +10,8 @@ import { render } from "../../../test/render";
 import { ensureClientSettingsHydrated, persistClientSettingsPatch } from "../../hooks/useSettings";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
+// T3-CUSTOM(expbkt3): the fork's presentation carries a resolved appearance.
+import { resolveEnvironmentAppearance } from "../../state/environmentAppearance";
 import type { Project } from "../../types";
 
 const environmentId = EnvironmentId.make("browser-settings");
@@ -46,6 +48,9 @@ const environments: EnvironmentPresentation[] = [
   {
     environmentId,
     label: "Desk",
+    // T3-CUSTOM(expbkt3): fork presentation fields.
+    connectionLabel: "Desk",
+    appearance: resolveEnvironmentAppearance({ environmentId, label: "Desk" }),
     displayUrl: "http://localhost:12345",
     relayManaged: false,
     entry: {

@@ -923,7 +923,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   // T3-CUSTOM(expbkt3): same menu, reached by holding the row on a touch screen.
   const longPressContextMenu = useLongPressContextMenu((position: { x: number; y: number }) =>
-    onContextMenu(threadRef, position),
+    onContextMenu(threadRef, position, "mouse"),
   );
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;

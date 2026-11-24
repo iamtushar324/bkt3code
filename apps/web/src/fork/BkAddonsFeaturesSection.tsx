@@ -68,7 +68,7 @@ export function BkAddonsFeaturesSection() {
         resetAction={
           phaseGroupedSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled ? (
             <SettingResetButton
-              label="BK sidebar"
+              ariaLabel="Reset BK sidebar to default"
               onClick={() =>
                 updateClientSettings({
                   phaseGroupedSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled,

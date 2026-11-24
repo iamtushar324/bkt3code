@@ -17,6 +17,7 @@ import {
   TOOLYARD_MCP_INTEGRATION_ID,
 } from "@t3tools/contracts";
 import { CopyIcon, KeyRoundIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { msg } from "gt-react";
 import { useMemo, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -81,10 +82,20 @@ export function ExternalMcpSettingsSection() {
   const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const { copyToClipboard: copyToken, isCopied: tokenCopied } = useCopyToClipboard({
-    target: "personal T3 MCP token",
+    target: {
+      target: "personal T3 MCP token",
+      unavailableMessage: msg("Clipboard API is unavailable while copying personal T3 MCP token."),
+      failureMessage: msg("Failed to copy personal T3 MCP token to the clipboard."),
+    },
   });
   const { copyToClipboard: copyConfig, isCopied: configCopied } = useCopyToClipboard({
-    target: "personal T3 MCP configuration",
+    target: {
+      target: "personal T3 MCP configuration",
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying personal T3 MCP configuration.",
+      ),
+      failureMessage: msg("Failed to copy personal T3 MCP configuration to the clipboard."),
+    },
   });
 
   const effectiveUrl =
