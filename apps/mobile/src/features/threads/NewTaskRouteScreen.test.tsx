@@ -147,7 +147,8 @@ it("keeps the project picked while No project was still opening", async () => {
   const root = createRoot(container);
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
   act(() => root.render(<NewTaskRouteScreen route={{ params: undefined } as never} />));
-  const row = (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+  // T3-CUSTOM(expbkt3): fork project cards add the workspace path to their label.
+  const row = (label: string) => container.querySelector<HTMLElement>(`[aria-label^="${label}"]`)!;
 
   act(() => row("No project").click());
   await act(async () => row("app").click());
@@ -178,7 +179,8 @@ function renderWithSavedDraft() {
     retargeting,
     root,
     route,
-    row: (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!,
+    // T3-CUSTOM(expbkt3): fork project cards add the workspace path to their label.
+    row: (label: string) => container.querySelector<HTMLElement>(`[aria-label^="${label}"]`)!,
     [Symbol.dispose]: () => act(() => root.unmount()),
   };
 }

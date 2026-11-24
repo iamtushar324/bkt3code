@@ -1842,14 +1842,24 @@ const WsProviderMcpSignInCompleteRpc = Rpc.make(WS_METHODS.providerMcpSignInComp
 const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
   payload: VcsStatusInput,
   success: VcsBranchStatus,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  // T3-CUSTOM(expbkt3): the status fallback surfaces the profile's own failure mode.
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 
 const WsVcsRefreshBranchRpc = Rpc.make(WS_METHODS.vcsRefreshBranch, {
   payload: VcsStatusInput,
   success: Schema.Void,
-  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  // T3-CUSTOM(expbkt3): the status fallback surfaces the profile's own failure mode.
+  error: Schema.Union([
+    GitManagerServiceError,
+    SourceControlProfileError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {

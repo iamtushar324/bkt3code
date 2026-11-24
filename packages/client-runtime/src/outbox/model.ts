@@ -241,7 +241,9 @@ function withImplicitFastModeSelection(
   const options = capabilities
     ? withImplicitFastModeDefault(capabilities, selection.options)
     : selection.options;
-  return options === selection.options ? selection : { ...selection, options };
+  return options === selection.options || options === undefined
+    ? selection
+    : { ...selection, options };
 }
 
 export function resolveQueuedThreadSettings(
