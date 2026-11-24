@@ -188,7 +188,7 @@ jobs:
             vp run -r --cache --concurrency-limit 1 typecheck
             status=$?
             # TEMP(upstream-sync): show failed tasks' output; remove before merge.
-            [ "$status" -ne 0 ] && (cd evals && PATH="$PWD/node_modules/.bin:$PWD/../node_modules/.bin:$PATH" effect-tsgo tsrs --noEmit > /tmp/evals-tc.log 2>&1; echo "evals exit $?"; grep -av "suggestion TS" /tmp/evals-tc.log | grep -av "^ *[0-9]* \|~~~\|^\s*$" | tail -120; free -m)
+            [ "$status" -ne 0 ] && (cd apps/server && PATH="$PWD/node_modules/.bin:$PWD/../../node_modules/.bin:$PATH" effect-tsgo tsrs --noEmit > /tmp/evals-tc.log 2>&1; echo "server exit $?"; grep -av "suggestion TS" /tmp/evals-tc.log | grep -av "^ *[0-9]* \|~~~\|^\s*$" | tail -120; free -m)
             echo "$status" > "$RUNNER_TEMP/typecheck-status"
           ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
 

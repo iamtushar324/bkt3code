@@ -369,7 +369,11 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const giveUp = (target: WatchTarget, cause: Cause.Cause<PullRequestService.PullRequestError>) => {
+  // T3-CUSTOM(expbkt3): reads run through owner resolution, which adds its own error.
+  const giveUp = (
+    target: WatchTarget,
+    cause: Cause.Cause<PullRequestService.PullRequestError | SourceControlProfileError>,
+  ) => {
     const error = Option.getOrUndefined(Cause.findErrorOption(cause));
     // The message is the host's own setup instruction, never the subprocess output in `cause`.
     const unusable =

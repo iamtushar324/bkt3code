@@ -12891,5 +12891,15 @@
       "k": "_gt_value_1",
       "v": "v"
     }
-  ]
+  ],
+  "5cb3a38d7ea42a58": "Clipboard API is unavailable while copying session context.",
+  "f8acfed8de5f5736": "Failed to copy session context to the clipboard.",
+  "3c95d73a740ec7a3": "Clipboard API is unavailable while copying project path.",
+  "b417a66d6d05d62f": "Failed to copy project path to the clipboard.",
+  "b78b4f482a61faf9": "Clipboard API is unavailable while copying personal T3 MCP token.",
+  "64c61026e6cafaa5": "Failed to copy personal T3 MCP token to the clipboard.",
+  "9eb9c409bc7dde17": "Clipboard API is unavailable while copying personal T3 MCP configuration.",
+  "1ad573fdbe44b72d": "Failed to copy personal T3 MCP configuration to the clipboard.",
+  "61f944e7fa70a582": "Clipboard API is unavailable while copying Toolyard identifier.",
+  "fa20f39a6dfa2761": "Failed to copy Toolyard identifier to the clipboard."
 }

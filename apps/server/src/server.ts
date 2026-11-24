@@ -883,51 +883,55 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   SessionActivityReactor.layer, // T3-CUSTOM(expbkt3): session time-in-state metrics (TEC-1631).
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   SubagentArchiveCascade.layer, // T3-CUSTOM(expbkt3): provider subagents follow their parent's archive.
-).pipe(
-  Layer.provideMerge(layerOrchestrationApplication),
-  // T3-CUSTOM(expbkt3): capture trust and access in the actual native V2 runtime, before startup workers.
-  Layer.provideMerge(toolyardIntegrationLayer.pipe(Layer.provideMerge(EnvironmentUsers.layer))),
-  // T3-CUSTOM(expbkt3): expose the same native stores to retained fork services.
-  Layer.provideMerge(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
-  // One hub, which the feeders above and the workflow store inside the runtime publish to.
-  Layer.provideMerge(MilestoneHub.layer),
-  Layer.provideMerge(layerTaskFolders),
-  Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
-  Layer.provideMerge(SecretCheck.layer),
-  Layer.provideMerge(SecretResolver.layer),
-  // Above the settings it writes when a theme is applied.
-  Layer.provideMerge(EnvironmentTheme.layer),
-  Layer.provideMerge(layerServerSettings),
-  Layer.provideMerge(layerSourceControlProviderRegistry),
-  // T3-CUSTOM(expbkt3): per-user profiles.
-  Layer.provideMerge(
-    Layer.mergeAll(layerSourceControlProfileService, ThreadSourceControlActionLock.layer),
-  ),
-  Layer.provideMerge(layerGit),
-  Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
-  Layer.provideMerge(layerPersistence),
-  Layer.provideMerge(Layer.mergeAll(Keybindings.layer, UsageLimitSources.layer)),
-  Layer.provideMerge(ProviderRegistry.layer),
-  Layer.provideMerge(
-    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
-  ),
-  // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
-  // reference, so the runtime layer shares it.
-  Layer.provideMerge(ProviderInstallationGate.layer),
-  // Provider hydration builds the Claude runner, which reports agents to the same scanner the
-  // terminal and preview layers share.
-  Layer.provideMerge(layerPortScanner),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer.pipe(
-        Layer.provide(layerServerSettings),
-      ),
-      CodexInstallation.CodexInstallation.layer,
+)
+  .pipe(
+    Layer.provideMerge(layerOrchestrationApplication),
+    // T3-CUSTOM(expbkt3): capture trust and access in the actual native V2 runtime, before startup workers.
+    Layer.provideMerge(toolyardIntegrationLayer.pipe(Layer.provideMerge(EnvironmentUsers.layer))),
+    // T3-CUSTOM(expbkt3): expose the same native stores to retained fork services.
+    Layer.provideMerge(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
+    // One hub, which the feeders above and the workflow store inside the runtime publish to.
+    Layer.provideMerge(MilestoneHub.layer),
+    Layer.provideMerge(layerTaskFolders),
+    Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
+    Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+    Layer.provideMerge(SecretCheck.layer),
+    Layer.provideMerge(SecretResolver.layer),
+    // Above the settings it writes when a theme is applied.
+    Layer.provideMerge(EnvironmentTheme.layer),
+    Layer.provideMerge(layerServerSettings),
+    Layer.provideMerge(layerSourceControlProviderRegistry),
+    // T3-CUSTOM(expbkt3): per-user profiles.
+    Layer.provideMerge(
+      Layer.mergeAll(layerSourceControlProfileService, ThreadSourceControlActionLock.layer),
     ),
-  ),
-);
+    // T3-CUSTOM(expbkt3): the fork lines above push this chain past pipe's 20-function limit.
+  )
+  .pipe(
+    Layer.provideMerge(layerGit),
+    Layer.provideMerge(layerVcs),
+    Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+    Layer.provideMerge(layerPersistence),
+    Layer.provideMerge(Layer.mergeAll(Keybindings.layer, UsageLimitSources.layer)),
+    Layer.provideMerge(ProviderRegistry.layer),
+    Layer.provideMerge(
+      ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+    ),
+    // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
+    // reference, so the runtime layer shares it.
+    Layer.provideMerge(ProviderInstallationGate.layer),
+    // Provider hydration builds the Claude runner, which reports agents to the same scanner the
+    // terminal and preview layers share.
+    Layer.provideMerge(layerPortScanner),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        AntigravityInstallation.AntigravityInstallation.layer.pipe(
+          Layer.provide(layerServerSettings),
+        ),
+        CodexInstallation.CodexInstallation.layer,
+      ),
+    ),
+  );
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // T3-CUSTOM(expbkt3): native turn workers capture the comment service before their runtime starts.
