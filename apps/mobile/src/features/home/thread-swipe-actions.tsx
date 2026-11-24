@@ -920,6 +920,8 @@ function ThreadSwipeActions(props: {
           label={tertiaryAction.label}
           menu={tertiaryAction.menu}
           onPress={tertiaryAction.onPress}
+          rowHeight={props.rowHeight}
+          slidesUnderStretch
           stretchesOnFullSwipe={false}
           translation={props.translation}
         />

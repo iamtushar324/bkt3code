@@ -1029,8 +1029,13 @@ export function createThreadOutboxDelivery(): {
       if (AsyncResult.isFailure(compactionResult) && !hasAccess()) return;
       const compactionFailure = reportCommandFailure(queuedMessage, compactionResult, "start-turn");
       if (compactionFailure?.action === "retry") return yield* retryDelivery;
-      if (compactionFailure?.action === "restore") {
-        return yield* restoreQueuedMessage(persistedMessage, compactionFailure.message);
+      // T3-CUSTOM(expbkt3): rejected messages stay visibly failed until retry/edit.
+      if (compactionFailure?.action === "fail") {
+        return yield* markQueuedMessageFailed(
+          persistedMessage,
+          compactionFailure.message,
+          deliveryRevision,
+        );
       }
       if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) return;
     }

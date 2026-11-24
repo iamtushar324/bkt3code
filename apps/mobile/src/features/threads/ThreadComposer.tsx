@@ -18,6 +18,8 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  // T3-CUSTOM(expbkt3): the fork's Plan/Build control.
+  type ProviderInteractionMode,
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
 } from "@t3tools/contracts";
@@ -194,6 +196,8 @@ export interface ThreadComposerProps {
   ) => Promise<MessageId | null>;
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
+  // T3-CUSTOM(expbkt3): the fork's Plan/Build control.
+  readonly onUpdateInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onHeightChange?: (height: number) => void;
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }

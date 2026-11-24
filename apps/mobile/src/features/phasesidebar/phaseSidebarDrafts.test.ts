@@ -59,6 +59,12 @@ const tasks = buildPendingNewTasks({
       creation: { projectId: alpha, workspaceMode: "local", branch: null, worktreePath: null },
     },
   ],
+  sendGate: {
+    connectedEnvironmentIds: new Set(),
+    operableEnvironmentIds: new Set(),
+    shellStatuses: new Map(),
+    retryingMessageIds: {},
+  },
 });
 
 describe("selectPhaseSidebarDrafts", () => {

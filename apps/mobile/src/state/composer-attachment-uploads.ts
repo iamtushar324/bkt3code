@@ -79,7 +79,8 @@ type ComposerAttachmentUploadRequest = {
 
 export function composerAttachmentUploadRequests(input: {
   readonly drafts: Readonly<Record<string, Pick<ComposerDraft, "attachments" | "project">>>;
-  readonly queuedMessagesByThreadKey: Parameters<typeof flattenQueuedThreadMessages>[0];
+  // T3-CUSTOM(expbkt3): the shared flatten helper is generic, so name the native message type.
+  readonly queuedMessagesByThreadKey: Readonly<Record<string, ReadonlyArray<QueuedThreadMessage>>>;
   /** An edited message's attachments upload through its editor draft. */
   readonly editingQueuedMessageIds: Readonly<Record<string, true>>;
   /** Every environment the client knows, so a draft key never resolves to a shorter connected prefix. */

@@ -189,7 +189,7 @@ const layerCapabilities = Layer.effectContext(
         ClientCapabilities.PrimaryEnvironmentAuth.of({
           bearerToken: Effect.succeedNone,
           // T3-CUSTOM(expbkt3): mobile does not provide a managed primary credential.
-          dpopAuthorization: Effect.succeed(Option.none()),
+          dpopAuthorization: Effect.succeedNone,
         }),
       ),
       // The relay device id already persists in secure storage; analytics only sends its hash.
