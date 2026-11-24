@@ -187,8 +187,6 @@ jobs:
             # tsgo runs were killed (exit 137) at a limit of 4 and of 2.
             vp run -r --cache --concurrency-limit 1 typecheck
             status=$?
-            # TEMP(upstream-sync): show failed tasks' output; remove before merge.
-            [ "$status" -ne 0 ] && (cd apps/server && PATH="$PWD/node_modules/.bin:$PWD/../../node_modules/.bin:$PATH" effect-tsgo tsrs --noEmit > /tmp/evals-tc.log 2>&1; echo "server exit $?"; grep -av "suggestion TS" /tmp/evals-tc.log | grep -av "^ *[0-9]* \|~~~\|^\s*$" | tail -120; free -m)
             echo "$status" > "$RUNNER_TEMP/typecheck-status"
           ) > "$RUNNER_TEMP/typecheck.log" 2>&1 < /dev/null &
 
@@ -524,8 +522,10 @@ jobs:
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
           T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
         # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
-        # TEMP(upstream-sync): plain vitest lists every failure; restore test:cached before merge.
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 apps/server
 
       - name: Save Vitest module cache
         if: github.event_name == 'push' && steps.changes.outputs.test_server != 'false'

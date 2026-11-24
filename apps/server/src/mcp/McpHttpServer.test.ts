@@ -1948,6 +1948,8 @@ it.effect(
                     projectId: ProjectId.make(threadId.replace("thread-", "project-")),
                   } as never),
               }),
+              // T3-CUSTOM(expbkt3): unrestricted fixture for the fork target-access dependency.
+              Layer.mock(OrchestrationAccessControl)({ actorFor: () => Option.none() }),
               NodeServices.layer,
               NodeCrypto.layer,
             ),

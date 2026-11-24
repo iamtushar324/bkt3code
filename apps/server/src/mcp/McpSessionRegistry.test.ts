@@ -679,6 +679,10 @@ const makeStubSessionStore = (input: {
     bindUserId: () => Effect.die("unused"),
     markConnected: () => Effect.void,
     markDisconnected: () => Effect.void,
+    renew: () => Effect.die("unused"),
+    extend: () => Effect.die("unused"),
+    proofKeyThumbprintOf: () => Effect.die("unused"),
+    revokeByProofKey: () => Effect.die("unused"),
   });
 
 it.effect("cuts off provider MCP access when the auth session store revokes the login", () =>

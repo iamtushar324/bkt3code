@@ -217,6 +217,8 @@ it.effect("only a full-access link's own session reaches the box's pairing route
           Layer.mergeAll(
             ServerSettings.ServerSettingsService.layerTest(),
             Layer.mock(SessionStore.SessionStore)({
+              cookieName: "t3-session",
+              legacyCookieName: undefined,
               listActive: () => Effect.succeed([]),
               streamChanges: Stream.never,
             }),

@@ -21,7 +21,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 
@@ -285,7 +284,7 @@ function fixture(
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         // The lease lookup finds no project root, so the turn starts without a reservation.
         Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.none()),
+          getById: () => Effect.succeedNone,
         }),
         // Upstream's start path also needs these; the fixture thread has no worktree or folder.
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({

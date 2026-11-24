@@ -84,7 +84,7 @@ describe("fork V2 ledger upgrade", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 1042 });
       const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+      assert.deepStrictEqual(yield* runMigrations(), [...pendingV2Migrations]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 1042 ORDER BY migration_id`,
@@ -144,7 +144,7 @@ describe("fork V2 ledger upgrade", () => {
         [],
       );
       yield* sql`DROP TRIGGER fail_v2_upgrade`;
-      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+      assert.deepStrictEqual(yield* runMigrations(), [...pendingV2Migrations]);
     }).pipe(Effect.provide(database)),
   );
 

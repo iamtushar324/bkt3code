@@ -339,6 +339,13 @@ describe("POST /api/orchestration/pull-request-state", () => {
   );
 });
 
+// Plain helpers keep the process.env access outside the Effect body (processEnvInEffect).
+const readExternalPullRequestSyncEnv = () => process.env[EXTERNAL_PR_SYNC_ENV];
+const writeExternalPullRequestSyncEnv = (value: string | undefined) => {
+  if (value === undefined) delete process.env[EXTERNAL_PR_SYNC_ENV];
+  else process.env[EXTERNAL_PR_SYNC_ENV] = value;
+};
+
 describe("T3_EXTERNAL_PR_SYNC", () => {
   it("is on only for an explicit truthy value", () => {
     assert.isFalse(externalPullRequestSyncEnabled({}));
@@ -350,19 +357,18 @@ describe("T3_EXTERNAL_PR_SYNC", () => {
 
   it.effect("skips the reactor start only while the switch is on", () =>
     Effect.gen(function* () {
-      const previous = process.env[EXTERNAL_PR_SYNC_ENV];
+      const previous = readExternalPullRequestSyncEnv();
       let starts = 0;
       const start = Effect.sync(() => {
         starts += 1;
       });
       try {
-        delete process.env[EXTERNAL_PR_SYNC_ENV];
+        writeExternalPullRequestSyncEnv(undefined);
         yield* unlessExternalPullRequestSync("ThreadPullRequestReactor", start);
-        process.env[EXTERNAL_PR_SYNC_ENV] = "1";
+        writeExternalPullRequestSyncEnv("1");
         yield* unlessExternalPullRequestSync("ThreadPullRequestReactor", start);
       } finally {
-        if (previous === undefined) delete process.env[EXTERNAL_PR_SYNC_ENV];
-        else process.env[EXTERNAL_PR_SYNC_ENV] = previous;
+        writeExternalPullRequestSyncEnv(previous);
       }
       assert.strictEqual(starts, 1);
     }),

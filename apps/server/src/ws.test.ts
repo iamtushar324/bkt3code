@@ -1032,7 +1032,7 @@ it.live.each([
         Layer.mock(AnalyticsService.AnalyticsService)({
           recordOwners: () => Effect.void,
           // T3-CUSTOM(expbkt3): the fork keeps the client.connected event.
-          record: () => Effect.void,
+          record: () => Effect.succeed(true),
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: process.cwd(),

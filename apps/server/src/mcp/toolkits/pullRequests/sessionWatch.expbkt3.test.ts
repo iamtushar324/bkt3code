@@ -20,7 +20,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
-import { PullRequestsToolkit, type PullRequestTargetInput } from "./tools.ts";
+import { PullRequestsToolkit } from "./tools.ts";
 
 const SELF = ThreadId.make("self");
 const TARGET = ThreadId.make("target");
@@ -125,7 +125,7 @@ const makeHarness = Effect.fn("makeForkWatchHarness")(function* (
   };
   const call = (
     name: "watch_pull_request" | "unwatch_pull_request",
-    input: PullRequestTargetInput,
+    input: Parameters<typeof toolkit.handle<"watch_pull_request">>[1],
   ) =>
     toolkit
       .handle(name, input)
