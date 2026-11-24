@@ -1721,12 +1721,12 @@ export const make = Effect.gen(function* () {
           return {
             pr:
               skipReason === "no-remote"
-                ? resolveLastKnownPr(branchKey, {
+                ? (resolveLastKnownPr(branchKey, {
                     upstreamRef: details.upstreamRef,
                     headBranch: headContext.headBranch,
                     remoteName: headContext.remoteName,
                     headRemoteUrlKey: headContext.headRemoteUrlKey,
-                  })
+                  })?.pr ?? null)
                 : null,
             headSha: null,
             headContext,
