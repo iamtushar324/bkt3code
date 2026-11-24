@@ -10,6 +10,8 @@ import React, { useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
@@ -92,6 +94,12 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+// T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+import {
+  resolvePendingTaskInteractionMode,
+  resolveProviderInteractionMode,
+} from "../../state/legacy-plan-mode";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskDraftWorkspace,
   resolveNewTaskBranchWorktreePath,
@@ -178,6 +186,9 @@ type NewTaskFlowContextValue = {
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  readonly interactionMode: ProviderInteractionMode;
+  readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -234,6 +245,8 @@ type NewTaskFlowContextValue = {
   readonly setSubmitting: (value: boolean) => void;
   readonly loadBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  readonly setInteractionMode: (value: ProviderInteractionMode) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
   ) => void;
@@ -255,6 +268,8 @@ export function NewTaskFlowProvider(
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  const { enabled: legacyPlanModeEnabled } = useLegacyPlanModeState();
 
   const projectScopes = sortHomeProjectScopes({
     scopes: buildHomeProjectScopes(
@@ -519,6 +534,13 @@ export function NewTaskFlowProvider(
     selectedEnvironmentServerConfig?.providers.find(
       (provider) => provider.instanceId === selectedModel?.instanceId,
     ) ?? null;
+  // T3-CUSTOM(expbkt3): BEGIN - the fork keeps the Plan/Build interaction mode.
+  const planModeEnabled =
+    legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
+  const interactionMode = planModeEnabled
+    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
+    : DEFAULT_PROVIDER_INTERACTION_MODE;
+  // T3-CUSTOM(expbkt3): END
   const setSelectedModelKey = (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -533,7 +555,17 @@ export function NewTaskFlowProvider(
     const selection = withRememberedModelOptions(
       options ? { ...option.selection, options } : option.selection,
     );
-    updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selection });
+    // T3-CUSTOM(expbkt3): BEGIN - a provider without Plan mode resets the draft to Build.
+    const provider = selectedEnvironmentServerConfig?.providers.find(
+      (candidate) => candidate.instanceId === selection.instanceId,
+    );
+    updateComposerDraftSettings(selectedProjectDraftKey, {
+      modelSelection: selection,
+      ...(provider?.showInteractionModeToggle === false
+        ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
+        : {}),
+    });
+    // T3-CUSTOM(expbkt3): END
     setStickyComposerModelSelection(selection);
   };
   const setSelectedModelOptions = (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
@@ -776,6 +808,15 @@ export function NewTaskFlowProvider(
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
     }
   };
+  // T3-CUSTOM(expbkt3): BEGIN - the fork keeps the Plan/Build interaction mode.
+  const setInteractionMode = (value: ProviderInteractionMode) => {
+    if (selectedProjectDraftKey) {
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        interactionMode: resolveProviderInteractionMode(selectedProviderStatus, value),
+      });
+    }
+  };
+  // T3-CUSTOM(expbkt3): END
 
   const worktreeCreation = (chosen: ReadonlyArray<string> | undefined) => {
     const repositories = resolveWorktreeRepositorySelection({
@@ -840,7 +881,15 @@ export function NewTaskFlowProvider(
         defaultRuntimeMode,
         managedPolicy,
       ),
-      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      // T3-CUSTOM(expbkt3): BEGIN - the fork keeps Plan mode for new tasks.
+      interactionMode: resolvePendingTaskInteractionMode({
+        planModeEnabled: legacyPlanModeEnabled,
+        draftInteractionMode: draft.interactionMode,
+        provider: selectedEnvironmentServerConfig?.providers.find(
+          (candidate) => candidate.instanceId === draftModelSelection.instanceId,
+        ),
+      }),
+      // T3-CUSTOM(expbkt3): END
       creation: {
         projectId: selectedProject.id,
         projectTitle: selectedProject.title,
@@ -956,6 +1005,9 @@ export function NewTaskFlowProvider(
     availableBranches,
     currentCheckoutBranchName,
     runtimeMode,
+    // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+    interactionMode,
+    planModeEnabled,
     expandedProvider,
     environments,
     selectedProject,
@@ -996,6 +1048,8 @@ export function NewTaskFlowProvider(
     },
     loadBranches,
     setRuntimeMode,
+    // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+    setInteractionMode,
     setSelectedModelOptions,
     setExpandedProvider: (value: string | null) => updateFlow({ expandedProvider: value }),
   } satisfies NewTaskFlowContextValue;

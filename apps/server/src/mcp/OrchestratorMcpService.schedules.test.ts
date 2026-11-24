@@ -44,6 +44,9 @@ const dependencies = Layer.mergeAll(
 );
 
 const client: McpInvocationScope = {
+  // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+  principal: "external-operator",
+  actorUserId: null,
   environmentId: EnvironmentId.make("schedule-test"),
   requestNamespace: "client",
   thread: undefined,

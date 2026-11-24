@@ -1,5 +1,13 @@
-import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProviderInstanceId,
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+// T3-CUSTOM(expbkt3): plan mode stays available (Build/Plan toggle icons).
+import { BotIcon, PencilRulerIcon } from "lucide-react";
 import { T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
@@ -19,6 +27,10 @@ export type RuntimeModeOption = {
   disabledReason?: string;
 } & (typeof runtimeModeConfig)[RuntimeMode];
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  showInteractionModeToggle: boolean;
+  interactionMode: ProviderInteractionMode;
+  onToggleInteractionMode: () => void;
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   size?: "sm" | "xs";
@@ -40,6 +52,50 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     resolveRuntimeModeOption("approval-required", messages);
   const RuntimeModeIcon = runtimeModeOption.icon;
+  // T3-CUSTOM(expbkt3): plan mode stays available (Build/Plan toggle).
+  const interactionModeTooltip =
+    props.interactionMode === "plan"
+      ? gt("Plan mode. Click to return to normal build mode")
+      : gt("Default mode. Click to enter plan mode");
+  const interactionModeToggle = props.showInteractionModeToggle ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={size}
+            className="shrink-0 whitespace-nowrap"
+            aria-pressed={props.interactionMode === "plan"}
+            type="button"
+            onClick={props.onToggleInteractionMode}
+            aria-label={interactionModeTooltip}
+          />
+        }
+      >
+        {props.interactionMode === "plan" ? (
+          <ComposerControlIcon
+            icon={PencilRulerIcon}
+            size={size}
+            className="text-current opacity-100"
+          />
+        ) : (
+          <ComposerControlIcon
+            icon={BotIcon}
+            size={size}
+            opticalSize={size === "xs" ? "default" : "large"}
+          />
+        )}
+        {/* The compacted row (xs) keeps this icon-only, like the other controls there. */}
+        <span
+          data-composer-control-label
+          className={size === "xs" ? "sr-only" : "sr-only sm:not-sr-only"}
+        >
+          {props.interactionMode === "plan" ? gt("Plan") : gt("Build")}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
+    </Tooltip>
+  ) : null;
+
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = gt("Permissions: {mode}. {description}", {
     mode: runtimeModeOption.label,
@@ -95,7 +151,13 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     </Menu>
   );
 
-  return accessDisplay === "hidden" ? null : permissionsChip;
+  // T3-CUSTOM(expbkt3): plan mode stays available (the toggle sits after the permissions chip).
+  return (
+    <>
+      {accessDisplay === "hidden" ? null : permissionsChip}
+      {interactionModeToggle}
+    </>
+  );
 });
 
 /**
@@ -209,6 +271,10 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
   alternateShortcutLabel: string | null;
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  showPlanFollowUpPrompt: boolean;
+  promptHasText: boolean;
+  onImplementPlanInNewThread: () => void;
   voiceInputActive?: boolean;
   isSendBusy: boolean;
   isSendHeld?: boolean;
@@ -241,6 +307,10 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}
+        // T3-CUSTOM(expbkt3): plan mode stays available.
+        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+        promptHasText={props.promptHasText}
+        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
         voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}
         isSendHeld={props.isSendHeld ?? false}

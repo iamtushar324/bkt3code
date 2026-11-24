@@ -105,6 +105,39 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  // T3-CUSTOM(expbkt3): BEGIN - the fork keeps T3's /plan and /default commands.
+  it.each([false, true])(
+    "keeps native /plan where the provider has no Plan mode (allowed=%s)",
+    (allowInteractionMode) => {
+      const items = buildComposerSlashCommandItems({
+        query: "pl",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make("antigravity"),
+          showInteractionModeToggle: false,
+          slashCommands: [{ name: "plan", description: "Plan with Antigravity" }],
+        },
+      });
+      expect(items.map((item) => item.id)).toEqual(["pcmd:plan"]);
+    },
+  );
+
+  it("offers T3's /plan only when the Plan/Build control is available", () => {
+    const build = (allowInteractionMode: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "plan",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode,
+        selectedProviderStatus: { driver: ProviderDriverKind.make("codex"), slashCommands: [] },
+      }).map((item) => item.id);
+    expect(build(true)).toEqual(["cmd:plan"]);
+    expect(build(false)).toEqual([]);
+  });
+  // T3-CUSTOM(expbkt3): END
 });
 
 describe("mobile model mentions", () => {

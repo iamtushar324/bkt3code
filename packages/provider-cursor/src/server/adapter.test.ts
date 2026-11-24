@@ -3350,6 +3350,9 @@ describe("CursorAdapterV2", () => {
         const threadId = ThreadId.make("cursor-mcp-thread");
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         yield* mcpSessions.set({
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          actorUserId: null,
+          upstreamServers: [],
           environmentId: EnvironmentId.make("cursor-mcp-environment"),
           threadId,
           providerSessionId: "cursor-mcp-session",

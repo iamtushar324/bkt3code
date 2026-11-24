@@ -6961,6 +6961,9 @@ describe("AcpAdapterV2", () => {
       const threadId = ThreadId.make("thread-acp-stop-mcp-call");
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         environmentId: EnvironmentId.make("environment-acp-stop-mcp-call"),
         threadId,
         providerSessionId: "mcp-session-acp-stop-mcp-call",

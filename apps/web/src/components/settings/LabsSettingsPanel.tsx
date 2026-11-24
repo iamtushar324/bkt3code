@@ -13,6 +13,8 @@ import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+// T3-CUSTOM(expbkt3): plan mode stays available; its toggle lives in the fork's Legacy section.
+import { LegacyFeaturesSection } from "./SettingsPanels";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -37,6 +39,8 @@ export function LabsSettingsPanel() {
         <FastWorktreeCheckoutRow />
         <AgentFeedbackRow />
       </SettingsSection>
+      {/* T3-CUSTOM(expbkt3): plan mode toggle (settings search item legacy-plan-mode). */}
+      <LegacyFeaturesSection />
     </SettingsPageContainer>
   );
 }

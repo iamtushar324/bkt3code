@@ -1217,6 +1217,8 @@ function ThreadRouteContent(
           onSendCommand={composer.onSendCommand}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
+          // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+          onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}

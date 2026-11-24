@@ -42,6 +42,9 @@ const GITHUB = IssueTrackerKind.make("github");
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
+  // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+  principal: "provider-session",
+  actorUserId: null,
   environmentId: EnvironmentId.make("environment-1"),
   requestNamespace: "provider-session-1",
   thread: {

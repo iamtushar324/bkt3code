@@ -479,6 +479,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const endpoint = "http://127.0.0.1:43126/mcp";
         const threadId = ThreadId.make("thread-antigravity-process-environment");
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+          actorUserId: null,
+          upstreamServers: [],
           environmentId: EnvironmentId.make("environment-antigravity-process-environment"),
           threadId,
           providerSessionId: "mcp-session-antigravity-process-environment",

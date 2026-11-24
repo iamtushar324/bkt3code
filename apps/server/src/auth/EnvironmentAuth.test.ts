@@ -714,9 +714,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect(rejected._tag).toBe("ServerAuthMcpApprovalCodeError");
         }
 
+        // T3-CUSTOM(expbkt3): the fork returns a grant object, not the bare access level.
         expect(
           yield* serverAuth.consumeMcpApprovalCode(pairing.credential, "approval-required", true),
-        ).toBe("approval-required");
+        ).toMatchObject({ access: "approval-required" });
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 

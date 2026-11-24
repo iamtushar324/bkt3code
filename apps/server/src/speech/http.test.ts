@@ -43,6 +43,8 @@ const principalWith = (scopes: ReadonlySet<AuthEnvironmentScope>) =>
     effect.pipe(
       Effect.provideService(EnvironmentAuthenticatedPrincipal, {
         sessionId: decodeSessionId("voice-test"),
+        // T3-CUSTOM(expbkt3): an unbound session.
+        userId: null,
         subject: "test",
         method: "bearer-access-token",
         scopes,

@@ -108,7 +108,8 @@ describe("composer list indentation", () => {
     expect(applyEdit(value, edit)).toBe(expected);
   });
 
-  it("leaves a top-level item alone", () => {
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  it("leaves a top-level item alone so Shift+Tab can still switch Build/Plan", () => {
     expect(listOutdentForTab("- item", 6, 6)).toBeNull();
   });
 });

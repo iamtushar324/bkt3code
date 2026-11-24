@@ -7,9 +7,10 @@ import {
 import { SettingDescription } from "../../fork/SettingDescription";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 export function AgentPlanSubmissionSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const enabled = usePrimarySettings(
     (settings) => settings.experimental.agentPlanSubmissionEnabled,
   );

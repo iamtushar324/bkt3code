@@ -16,6 +16,8 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  type ProviderInteractionMode,
   type RuntimeMode,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -54,6 +56,11 @@ export function ComposerControlsBar(props: {
   reportedModelSelection: ChatComposerProps["reportedModelSelection"];
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  planModeEnabled: boolean;
+  planModeUiEnabled: boolean;
+  interactionMode: ProviderInteractionMode;
+  toggleInteractionMode: () => void;
   effortDisplay: EffortDisplay;
   /** The strip under a new thread names the permissions, so the row does not repeat them. */
   permissionsShownInStrip: boolean;
@@ -101,6 +108,11 @@ export function ComposerControlsBar(props: {
     reportedModelSelection,
     promptUltrathink,
     onPromptEdit,
+    // T3-CUSTOM(expbkt3): plan mode stays available.
+    planModeEnabled,
+    planModeUiEnabled,
+    interactionMode,
+    toggleInteractionMode,
     compatibleRuntimeMode,
     defaultRuntimeMode,
     compatibleRuntimeModeOptions,
@@ -142,6 +154,7 @@ export function ComposerControlsBar(props: {
     pickerOwnsModeShortcut,
   } = resolveComposerControlsOwnership({
     matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+    planModeUiEnabled, // T3-CUSTOM(expbkt3): plan mode stays available.
     collapsed: composerControlsCollapsed,
     measuredHiddenBlockCount,
   });
@@ -163,6 +176,8 @@ export function ComposerControlsBar(props: {
     reportedModelSelection,
     promptUltrathink,
     onPromptEdit,
+    // T3-CUSTOM(expbkt3): plan mode keeps the OpenCode plan agent (upstream prop includePlanAgent).
+    includePlanAgent: planModeEnabled,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize, m);
   const restingBlockDefs = showModeBlock
@@ -171,6 +186,10 @@ export function ComposerControlsBar(props: {
           id: "mode",
           content: (
             <ComposerFooterModeControls
+              // T3-CUSTOM(expbkt3): plan mode stays available.
+              showInteractionModeToggle={planModeUiEnabled}
+              interactionMode={interactionMode}
+              onToggleInteractionMode={toggleInteractionMode}
               runtimeMode={compatibleRuntimeMode}
               runtimeModeOptions={compatibleRuntimeModeOptions}
               size={controlSize}
@@ -300,6 +319,10 @@ export function ComposerControlsBar(props: {
           )}
         >
           <CompactComposerControlsMenu
+            // T3-CUSTOM(expbkt3): plan mode stays available.
+            interactionMode={interactionMode}
+            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.length > 0}
+            onToggleInteractionMode={toggleInteractionMode}
             runtimeMode={compatibleRuntimeMode}
             runtimeModeOptions={compatibleRuntimeModeOptions}
             size={controlSize}

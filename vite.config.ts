@@ -4,7 +4,10 @@ import * as NodeURL from "node:url";
 import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
 // T3-CUSTOM(expbkt3): fork lint style-debt ratchet list.
-import { forkLintStyleDebtFiles } from "./scripts/lib/forkLintStyleDebt.expbkt3.ts";
+import {
+  forkLintStyleDebtFiles,
+  forkUntranslatedCopyFiles,
+} from "./scripts/lib/forkLintStyleDebt.expbkt3.ts";
 
 const TEST_EXCLUDE = [
   "**/.repos/**",
@@ -639,6 +642,12 @@ export default defineConfig({
         ],
         rules: { "t3code/no-untranslated-copy": "error" },
       },
+      // T3-CUSTOM(expbkt3): BEGIN fork-owned client copy predates upstream's i18n rule.
+      {
+        files: [...forkUntranslatedCopyFiles],
+        rules: { "t3code/no-untranslated-copy": "off" },
+      },
+      // T3-CUSTOM(expbkt3): END
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
@@ -794,6 +803,37 @@ export default defineConfig({
           "t3code/no-unreasoned-state-sync": "off",
           "t3code/no-em-dash-copy": "off",
           "t3code/no-inline-schema-compile": "off",
+        },
+      },
+      // T3-CUSTOM(expbkt3): END
+      // T3-CUSTOM(expbkt3): BEGIN fork debt under upstream's 2026-11-24 lint rules. A ratchet:
+      // drop a file once it passes; never add an upstream-owned file.
+      {
+        files: [
+          "apps/web/src/components/settings/SessionArchiveSettingsSection.tsx",
+          "apps/web/src/fork/LocalPhonePairingSection.tsx",
+        ],
+        rules: { "t3code/max-settings-description-length": "off" },
+      },
+      {
+        // These fork lists still use FlatList; every other import restriction stays.
+        files: [
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarList.tsx",
+          "apps/mobile/src/features/phasesidebar/PhaseSidebarPane.tsx",
+          "apps/mobile/src/features/planreview/PlanReviewSheet.tsx",
+        ],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                ...RESTRICTED_IMPORT_PATHS.filter(
+                  (entry) => !("importNames" in entry && entry.importNames.includes("FlatList")),
+                ),
+                RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS,
+              ],
+            },
+          ],
         },
       },
       // T3-CUSTOM(expbkt3): END

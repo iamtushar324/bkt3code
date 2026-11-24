@@ -11,7 +11,8 @@ layer("086_QueuedTurnInputIndex", (it) => {
   it.effect("keeps a user message with a malformed payload migratable and writable", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 85 });
+      // T3-CUSTOM(expbkt3): upstream 85 registers as 1077 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1077 });
       const insertUserMessage = (id: string) => sql`
         INSERT INTO orchestration_v2_projection_turn_items (
           turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json
@@ -39,7 +40,8 @@ layer("086_QueuedTurnInputIndex", (it) => {
   it.effect("re-guards the index on a database that ran the unguarded migration 86", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 91 });
+      // T3-CUSTOM(expbkt3): upstream 91 registers as 1083 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1083 });
       yield* sql`DROP INDEX orchestration_v2_projection_turn_items_queued_input_idx`;
       yield* sql`
         CREATE INDEX orchestration_v2_projection_turn_items_queued_input_idx

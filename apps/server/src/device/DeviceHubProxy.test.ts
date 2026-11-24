@@ -64,6 +64,8 @@ const fixture = (
               ? Effect.fail(authError)
               : Effect.succeed({
                   sessionId: AuthSessionId.make("test"),
+                  // T3-CUSTOM(expbkt3): an unbound session.
+                  userId: null,
                   subject: "test",
                   method: "bearer-access-token",
                   scopes,

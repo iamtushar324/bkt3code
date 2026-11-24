@@ -8,7 +8,11 @@ export async function runCliCommand() {
   // Install the socket guard before importing code that can open outbound connections.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
-  if (command === "__document-text") {
+  // T3-CUSTOM(expbkt3): native Toolyard stdio access avoids the full CLI startup graph.
+  if (command === "toolyard-mcp-bridge") {
+    const { runNativeToolyardCli } = await import("./toolyard/ToolyardNativeCli.ts");
+    await runNativeToolyardCli(process.argv.slice(3));
+  } else if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {
       process.stdout.write(await extractDocumentText(process.argv[3]!, process.argv[4]!));

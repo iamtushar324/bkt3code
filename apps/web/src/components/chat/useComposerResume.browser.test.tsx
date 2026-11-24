@@ -58,6 +58,7 @@ function ResumeButton(props: {
     threadDetailLoading: false,
     activeEnvironmentUnavailable: false,
     runtimeMode: "full-access",
+    interactionMode: "default", // T3-CUSTOM(expbkt3): plan mode stays available.
     localCheckoutBranchMismatch: null,
     composerRef: props.composerRef,
     persistThreadSettingsForNextTurn: props.persistSettings,

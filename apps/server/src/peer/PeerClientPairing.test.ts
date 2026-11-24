@@ -26,6 +26,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { Toolkit } from "effect/ai";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+// T3-CUSTOM(expbkt3): fork registry dependencies.
+import * as SessionStore from "../auth/SessionStore.ts";
+import * as Stream from "effect/Stream";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -209,6 +212,16 @@ it.effect("only a full-access link's own session reaches the box's pairing route
           }),
         ),
         Layer.provide(NodeCrypto.layer),
+        // T3-CUSTOM(expbkt3): the fork registry reads server settings and login sessions.
+        Layer.provide(
+          Layer.mergeAll(
+            ServerSettings.ServerSettingsService.layerTest(),
+            Layer.mock(SessionStore.SessionStore)({
+              listActive: () => Effect.succeed([]),
+              streamChanges: Stream.never,
+            }),
+          ),
+        ),
         Layer.build,
       );
       const thread = yield* Context.get(registry, McpSessionRegistry.McpSessionRegistry).issue({

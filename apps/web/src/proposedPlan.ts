@@ -57,6 +57,40 @@ function sanitizePlanFileSegment(input: string): string {
 
 export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
 
+// T3-CUSTOM(expbkt3): plan mode stays available (plan follow-up and implement actions).
+export function buildPlanImplementationPrompt(planMarkdown: string): string {
+  return `${PLAN_IMPLEMENTATION_PROMPT_PREFIX}${planMarkdown.trim()}`;
+}
+
+export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
+  text: string;
+  interactionMode: "default" | "plan";
+} {
+  const trimmedDraftText = input.draftText.trim();
+  if (trimmedDraftText.length > 0) {
+    return {
+      text: trimmedDraftText,
+      interactionMode: "plan",
+    };
+  }
+
+  return {
+    text: buildPlanImplementationPrompt(input.planMarkdown),
+    interactionMode: "default",
+  };
+}
+
+export function buildPlanImplementationThreadTitle(
+  planMarkdown: string,
+  resolve: MessageResolver = m,
+): string {
+  const title = proposedPlanTitle(planMarkdown);
+  if (!title) {
+    return resolve(msg("Implement plan"));
+  }
+  return resolve(msg("Implement {title}", { title }));
+}
+
 export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
   const title = proposedPlanTitle(planMarkdown);
   return `${sanitizePlanFileSegment(title ?? "plan")}.md`;

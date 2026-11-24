@@ -11,6 +11,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ThreadId,
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
@@ -50,6 +52,9 @@ interface ComposerSelectionInput {
   readonly supportsProviderSwitchingViaHandoff: boolean;
   readonly multipleModelSelections: ReadonlyArray<ModelSelection> | null;
   readonly runtimeMode: RuntimeMode;
+  // T3-CUSTOM(expbkt3): plan mode stays available (optional so upstream callers keep build mode).
+  readonly interactionMode?: ProviderInteractionMode;
+  readonly interactionModeEnabled?: boolean;
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
   readonly setPendingServerThreadEnvModeEntry: Dispatch<
@@ -79,6 +84,9 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     supportsProviderSwitchingViaHandoff,
     multipleModelSelections,
     runtimeMode,
+    // T3-CUSTOM(expbkt3): plan mode stays available.
+    interactionMode = "default",
+    interactionModeEnabled = false,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
     setPendingServerThreadEnvModeEntry,
@@ -92,6 +100,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  const setComposerDraftInteractionMode = useComposerDraftStore(
+    (store) => store.setInteractionMode,
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const applyThreadModelPick = useApplyThreadModelPick();
 
@@ -105,6 +117,23 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     scheduleComposerFocus();
   };
   const handleRuntimeModeChangeStable = useStableCallback(handleRuntimeModeChange);
+
+  // T3-CUSTOM(expbkt3): plan mode stays available (Build/Plan toggle, Shift+Tab, /plan, /default).
+  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
+    if (mode === "plan" && !interactionModeEnabled) return;
+    if (mode === interactionMode) return;
+    setComposerDraftInteractionMode(composerDraftTarget, mode);
+    if (isLocalDraftThread) {
+      setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
+    }
+    scheduleComposerFocus();
+  };
+  const handleInteractionModeChangeStable = useStableCallback(handleInteractionModeChange);
+  const toggleInteractionMode = () => {
+    if (!interactionModeEnabled) return;
+    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+  };
+  const toggleInteractionModeStable = useStableCallback(toggleInteractionMode);
 
   const openProviderSetup = (instanceId: ProviderInstanceId) => {
     void navigate({
@@ -283,6 +312,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   return {
     getModelDisabledReason,
+    // T3-CUSTOM(expbkt3): plan mode stays available.
+    handleInteractionModeChange,
+    handleInteractionModeChangeStable,
+    toggleInteractionModeStable,
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
     onProviderModelSelectStable,

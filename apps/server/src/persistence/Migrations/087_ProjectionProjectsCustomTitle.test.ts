@@ -11,7 +11,8 @@ layer("087_ProjectionProjectsCustomTitle", (it) => {
   it.effect("marks projects with a recorded title update as renamed", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 86 });
+      // T3-CUSTOM(expbkt3): upstream 86 registers as 1078 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1078 });
       for (const projectId of ["renamed", "untouched"]) {
         yield* sql`
           INSERT INTO projection_projects

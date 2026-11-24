@@ -13,7 +13,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
     it.effect("keeps a one-team binding and saves and replaces extra teams", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 102 });
+        // T3-CUSTOM(expbkt3): upstream 102 registers as 1094 in the fork lane.
+        yield* runMigrations({ toMigrationInclusive: 1094 });
         yield* sql`INSERT INTO issue_tracker_bindings VALUES ('web', 'linear', 'ENG', '2026-11-21')`;
         yield* runMigrations();
         const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository.pipe(

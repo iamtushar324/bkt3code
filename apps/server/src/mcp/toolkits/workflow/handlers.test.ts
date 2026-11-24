@@ -19,6 +19,9 @@ const handlersWith = (workflows: Partial<Workflows.Workflows["Service"]>) =>
         NodeCrypto.layer,
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+          principal: "external-operator",
+          actorUserId: null,
           environmentId: EnvironmentId.make("environment:workflow"),
           requestNamespace: "client:workflow",
           thread: undefined,

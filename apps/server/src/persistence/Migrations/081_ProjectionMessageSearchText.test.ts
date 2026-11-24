@@ -37,7 +37,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
     it.effect("backfills readable text only for messages whose citations read differently", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 80 });
+        // T3-CUSTOM(expbkt3): upstream 80 registers as 1072 in the fork lane.
+        yield* runMigrations({ toMigrationInclusive: 1072 });
         const insertMessage = (messageId: string, text: unknown) => sql`
           INSERT INTO orchestration_v2_projection_messages (
             message_id, thread_id, role, streaming, created_at, updated_at, payload_json
@@ -70,8 +71,9 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { discard: true },
         );
 
-        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 81 }), [
-          [81, "ProjectionMessageSearchText"],
+        // T3-CUSTOM(expbkt3): upstream 81 registers as 1073 in the fork lane.
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 1073 }), [
+          [1073, "ProjectionMessageSearchText"],
         ]);
         const rows = yield* sql<{
           readonly message_id: string;

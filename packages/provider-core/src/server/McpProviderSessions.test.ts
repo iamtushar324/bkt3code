@@ -108,6 +108,9 @@ describe("McpProviderSessions tool results", () => {
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       yield* sessions.set({
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         environmentId: EnvironmentId.make("env-tool-results"),
         threadId,
         providerSessionId: "session-2",

@@ -429,7 +429,8 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         source,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* runMigrations({ toMigrationInclusive: 54 });
+          // T3-CUSTOM(expbkt3): the fork's last pre-V2 migration is 1042 (V2 is 1043).
+          yield* runMigrations({ toMigrationInclusive: 1042 });
           yield* sql`INSERT INTO projection_projects
             (project_id, title, workspace_root, scripts_json, created_at, updated_at)
             VALUES ('project-legacy', 'Legacy', '/tmp/legacy', '[]', '2026-08-01', '2026-08-01')`;
@@ -533,7 +534,9 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
-  it.effect("imports a dev seed whose ids after 67 came from the peer links branch", () =>
+  // T3-CUSTOM(expbkt3): upstream's 68-70 preview history cannot occur here; the fork
+  // registers upstream 68+ in its 1000+ lane, so this repair never applies.
+  it.effect.skip("imports a dev seed whose ids after 67 came from the peer links branch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-peer-" });

@@ -21,6 +21,8 @@ import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 import * as TaskFolders from "./TaskFolders.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
+// T3-CUSTOM(expbkt3): background turn starts renew their grant check after pruning.
+import type { BackgroundTurnDenied } from "../orchestration-v2/backgroundTurnGrant.expbkt3.ts";
 
 export class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
   "WorktreeRecreateError",
@@ -156,9 +158,13 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     readonly cwd: string;
     readonly worktreePath: string;
     readonly branch: string;
+    // T3-CUSTOM(expbkt3): background turn starts renew their grant check after pruning.
+    readonly afterPrune: Effect.Effect<void, BackgroundTurnDenied>;
   }) {
     const { cwd, worktreePath, branch } = input;
     yield* gitWorkflow.pruneWorktrees({ cwd });
+    // T3-CUSTOM(expbkt3): a revoked grant stops before any worktree is created.
+    yield* input.afterPrune;
     const localBranchNames = yield* gitWorkflow.listLocalBranchNames(cwd);
     if (localBranchNames.includes(branch)) {
       yield* gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath });
@@ -191,7 +197,11 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
   });
 
-  return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
+  // T3-CUSTOM(expbkt3): `afterPrune` runs after each prune, before a worktree is created.
+  const restoreWithAfterPrune = Effect.fn("restoreMissingWorktree")(function* (
+    thread: WorktreeThread,
+    afterPrune: Effect.Effect<void, BackgroundTurnDenied>,
+  ) {
     const { worktreePath, branch } = thread;
     if (worktreePath === null) return;
     if (branch === null) return yield* recreateScratchFolder(thread, worktreePath);
@@ -217,13 +227,17 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
                   cwd: checkout.repositoryPath,
                   worktreePath: checkout.worktreePath,
                   branch,
+                  // T3-CUSTOM(expbkt3): grant check after pruning.
+                  afterPrune,
                 }),
               ),
             ),
         })
         .pipe(
           Effect.mapError((cause) =>
-            cause._tag === "WorktreeRecreateNoBaseError"
+            cause._tag === "WorktreeRecreateNoBaseError" ||
+            // T3-CUSTOM(expbkt3): a revoked grant is not a workspace failure.
+            cause._tag === "BackgroundTurnDenied"
               ? cause
               : new WorktreeRecreateError({ worktreePath, branch, cause }),
           ),
@@ -243,15 +257,27 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       branch,
     });
     yield* (leftover ? clearLeftovers(worktreePath) : Effect.void).pipe(
-      Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
+      Effect.andThen(
+        // T3-CUSTOM(expbkt3): grant check after pruning.
+        recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch, afterPrune }),
+      ),
       Effect.mapError((cause) =>
-        cause._tag === "WorktreeRecreateNoBaseError"
+        cause._tag === "WorktreeRecreateNoBaseError" ||
+        // T3-CUSTOM(expbkt3): a revoked grant is not a workspace failure.
+        cause._tag === "BackgroundTurnDenied"
           ? cause
           : new WorktreeRecreateError({ worktreePath, branch, cause }),
       ),
     );
     return { project, worktreePath };
   });
+  // T3-CUSTOM(expbkt3): BEGIN plain restores never fail with a grant denial.
+  const restore = (thread: WorktreeThread) =>
+    restoreWithAfterPrune(thread, Effect.void).pipe(
+      Effect.catchTags({ BackgroundTurnDenied: (cause) => Effect.die(cause) }),
+    );
+  return Object.assign(restore, { withAfterPrune: restoreWithAfterPrune });
+  // T3-CUSTOM(expbkt3): END
 });
 
 export class ThreadWorktreeRestore extends Context.Service<

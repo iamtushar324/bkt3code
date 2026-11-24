@@ -4,6 +4,8 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
 
 const base = {
   matchesDefault: true,
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  planModeUiEnabled: false,
   collapsed: false,
   measuredHiddenBlockCount: 0,
 };
@@ -28,7 +30,7 @@ describe("resolveComposerControlsOwnership", () => {
     });
   });
 
-  it("gives an overflowed chip's Permissions to the overflow menu", () => {
+  it("gives an overflowed chip's Permissions to the overflow menu when it has no Plan toggle", () => {
     const result = resolveComposerControlsOwnership({
       ...base,
       matchesDefault: false,
@@ -37,6 +39,33 @@ describe("resolveComposerControlsOwnership", () => {
     expect(result.hiddenBlockIds).toEqual(["mode"]);
     expect(result.overflowShowsPermissions).toBe(true);
     expect(result.pickerOwnsModeShortcut).toBe(false);
+  });
+
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  it("keeps the Plan toggle block at the default and leaves Permissions with the picker", () => {
+    const result = resolveComposerControlsOwnership({
+      ...base,
+      planModeUiEnabled: true,
+      measuredHiddenBlockCount: 1,
+    });
+    expect(result.showModeBlock).toBe(true);
+    expect(result.hiddenBlockIds).toEqual(["mode"]);
+    expect(result.overflowShowsPermissions).toBe(false);
+    expect(result.pickerOwnsModeShortcut).toBe(true);
+  });
+
+  // T3-CUSTOM(expbkt3): plan mode stays available.
+  it("overflows only the chip when the Plan toggle gives the overflow menu content", () => {
+    const result = resolveComposerControlsOwnership({
+      ...base,
+      matchesDefault: false,
+      planModeUiEnabled: true,
+      measuredHiddenBlockCount: 1,
+    });
+    expect(result.hiddenBlockIds).toEqual(["mode"]);
+    // Permissions stay in the model picker, which now answers composer.mode.
+    expect(result.overflowShowsPermissions).toBe(false);
+    expect(result.pickerOwnsModeShortcut).toBe(true);
   });
 
   it("shows the non-default chip as an icon in the compacted row", () => {

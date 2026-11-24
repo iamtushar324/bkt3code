@@ -38,13 +38,15 @@ const insertTurnItem = (
 it.effect("migrates over a message whose payload is not JSON, and takes one after it", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 93 });
+    // T3-CUSTOM(expbkt3): upstream 93 registers as 1085 in the fork lane.
+    yield* runMigrations({ toMigrationInclusive: 1085 });
     yield* insertTurnItem("bad-1", "thread-a", 1, "assistant_message", "{not json");
     yield* insertTurnItem("ok-1", "thread-a", 2, "user_message", '{"messageId":"m1"}');
 
+    // T3-CUSTOM(expbkt3): upstream 94 registers as 1086 in the fork lane.
     assert.deepEqual(
-      (yield* runMigrations({ toMigrationInclusive: 94 })).map(([id]) => id),
-      [94],
+      (yield* runMigrations({ toMigrationInclusive: 1086 })).map(([id]) => id),
+      [1086],
     );
     yield* insertTurnItem("bad-2", "thread-a", 3, "user_message", "{not json");
     yield* insertTurnItem("ok-2", "thread-a", 4, "assistant_message", '{"messageId":"m1"}');

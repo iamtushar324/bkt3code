@@ -70,6 +70,10 @@ vi.mock("../../state/olderSettledShelf", () => ({ useOlderSettledCount: () => 0 
 vi.mock("../../state/project-grouping", () => ({
   useMobileProjectGroupingSettings: () => ({ sidebarProjectGroupingMode: "none" }),
 }));
+// T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+vi.mock("./use-legacy-plan-mode-enabled", () => ({
+  useLegacyPlanModeState: () => ({ enabled: false, loaded: true }),
+}));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.openScratch }));
 vi.mock("../triage/usePrepareTriage", () => ({ usePrepareTriage: () => mocks.prepareTriage }));

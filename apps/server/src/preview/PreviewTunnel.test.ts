@@ -104,6 +104,8 @@ const serveTunnel = (
             authenticateWebSocketUpgrade: (request) =>
               Effect.succeed({
                 sessionId: AuthSessionId.make("tunnel-test"),
+                // T3-CUSTOM(expbkt3): an unbound session.
+                userId: null,
                 subject: "tunnel-test",
                 method: "bearer-access-token",
                 scopes: request.url.includes("wsTicket=reader")

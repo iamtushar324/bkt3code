@@ -36,6 +36,9 @@ it.effect("applies the theme through the service and reports a refusal as an inv
     const layerDependencies = Layer.mergeAll(
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+        principal: "provider-session",
+        actorUserId: null,
         environmentId,
         requestNamespace: "provider:theme",
         thread: {

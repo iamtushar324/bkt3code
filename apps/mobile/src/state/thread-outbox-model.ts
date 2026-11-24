@@ -1,10 +1,12 @@
 // T3-CUSTOM(expbkt3): one durable outbox format across all clients.
 import {
   decodeQueuedThreadMessage as decodeSharedQueuedThreadMessage,
+  resolveThreadOutboxDispatchStep as resolveSharedThreadOutboxDispatchStep,
   type QueuedThreadMessage as SharedQueuedThreadMessage,
   type QueuedThreadCreation as SharedQueuedThreadCreation,
 } from "@t3tools/client-runtime/outbox";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import { m } from "../i18n/messages";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 export * from "@t3tools/client-runtime/outbox";
 export type QueuedThreadCreation = SharedQueuedThreadCreation;
@@ -12,6 +14,13 @@ export interface QueuedThreadMessage extends Omit<SharedQueuedThreadMessage, "at
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly dispatchMode?: ComposerDispatchMode;
 }
+// T3-CUSTOM(expbkt3): restore reasons resolve in the app's language, as upstream's mobile model did.
+export function resolveThreadOutboxDispatchStep(
+  input: Parameters<typeof resolveSharedThreadOutboxDispatchStep>[0],
+) {
+  return resolveSharedThreadOutboxDispatchStep({ resolve: m, ...input });
+}
+
 // T3-CUSTOM(expbkt3): recover native draft metadata from the shared durable schema.
 export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
   const message = decodeSharedQueuedThreadMessage(value);

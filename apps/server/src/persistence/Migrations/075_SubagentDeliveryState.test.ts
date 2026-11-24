@@ -13,7 +13,8 @@ layer("075_SubagentDeliveryState", (it) => {
   it.effect("backfills delivery state without failing on an unreadable payload", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 74 });
+      // T3-CUSTOM(expbkt3): upstream 74 registers as 1066 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1066 });
       const payloads = [
         ["delivered", deliveredPayload],
         ["unreadable", ""],
@@ -30,7 +31,8 @@ layer("075_SubagentDeliveryState", (it) => {
         `;
       }
 
-      yield* runMigrations({ toMigrationInclusive: 75 });
+      // T3-CUSTOM(expbkt3): upstream 75 registers as 1067 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1067 });
       const rows = yield* sql`
         SELECT subagent_id, completion_delivery_state, payload_json
         FROM orchestration_v2_projection_subagents ORDER BY subagent_id

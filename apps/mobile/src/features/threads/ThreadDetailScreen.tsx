@@ -45,6 +45,8 @@ import {
 import type {
   EnvironmentId,
   MessageId,
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  ProviderInteractionMode,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
@@ -328,6 +330,8 @@ export interface ThreadDetailScreenProps {
   readonly onSendCommand: (text: string) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
+  // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+  readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: RuntimeRequestId,
@@ -2047,6 +2051,8 @@ function ThreadDetailBody(
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}
+                        // T3-CUSTOM(expbkt3): the fork keeps the Plan/Build interaction mode.
+                        onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />

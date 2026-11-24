@@ -453,6 +453,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
+    // T3-CUSTOM(expbkt3): /plan and /default follow the legacy plan-mode switch.
+    onUpdateInteractionMode: canSwitchInteractionMode ? onUpdateInteractionMode : undefined,
     hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,

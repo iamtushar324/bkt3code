@@ -1382,6 +1382,8 @@ it.effect("access changes made while the snapshot loads reach the client after i
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("current"),
+            // T3-CUSTOM(expbkt3): an unbound session.
+            userId: null,
             subject: "current",
             method: "browser-session-cookie",
             scopes: [],
@@ -1967,6 +1969,8 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("worktree-skills-test"),
+            // T3-CUSTOM(expbkt3): an unbound session.
+            userId: null,
             subject: "worktree-skills-test",
             method: "browser-session-cookie",
             scopes: [],
@@ -2046,6 +2050,8 @@ it.effect("a git action that fails partway still refreshes the repository status
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("git-test"),
+            // T3-CUSTOM(expbkt3): an unbound session.
+            userId: null,
             subject: "git-test",
             method: "browser-session-cookie",
             scopes: [AuthSourceControlWriteScope],
@@ -2126,6 +2132,8 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("publish-test"),
+            // T3-CUSTOM(expbkt3): an unbound session.
+            userId: null,
             subject: "publish-test",
             method: "browser-session-cookie",
             scopes: [AuthSourceControlWriteScope],
@@ -2717,6 +2725,8 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         layerWsRpc(
           {
             sessionId: AuthSessionId.make("acp-test"),
+            // T3-CUSTOM(expbkt3): an unbound session.
+            userId: null,
             subject: "acp-test",
             method: "browser-session-cookie",
             scopes: [],
@@ -2864,6 +2874,8 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
       layerWsRpc(
         {
           sessionId: AuthSessionId.make("workflow-test"),
+          // T3-CUSTOM(expbkt3): an unbound session.
+          userId: null,
           subject: "workflow-test",
           method: "browser-session-cookie",
           scopes: [...scopes],
@@ -2932,6 +2944,8 @@ const makeAcpRegistryClient = Effect.fn("test.makeAcpRegistryClient")(function* 
       layerWsRpc(
         {
           sessionId: AuthSessionId.make("acp-test"),
+          // T3-CUSTOM(expbkt3): an unbound session.
+          userId: null,
           subject: "acp-test",
           method: "browser-session-cookie",
           scopes,

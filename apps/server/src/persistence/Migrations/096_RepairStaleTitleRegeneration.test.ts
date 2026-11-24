@@ -17,7 +17,8 @@ layer("096_RepairStaleTitleRegeneration", (it) => {
   it.effect("clears title markers that no pending or running title job will complete", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 95 });
+      // T3-CUSTOM(expbkt3): upstream 95 registers as 1087 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1087 });
 
       const insertThread = (id: string, titleRegeneration: unknown, parentThreadId?: string) => {
         const payload = {
@@ -93,7 +94,8 @@ layer("096_RepairStaleTitleRegeneration", (it) => {
       `;
       const before = new Map((yield* rows).map((row) => [row.thread_id, row.payload_json]));
 
-      yield* runMigrations({ toMigrationInclusive: 96 });
+      // T3-CUSTOM(expbkt3): upstream 96 registers as 1088 in the fork lane.
+      yield* runMigrations({ toMigrationInclusive: 1088 });
       const after = new Map((yield* rows).map((row) => [row.thread_id, row.payload_json]));
       for (const id of ["parent", "queued-parent", "running-job", "absent"]) {
         assert.strictEqual(after.get(id), before.get(id));

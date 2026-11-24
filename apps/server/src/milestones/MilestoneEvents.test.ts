@@ -43,6 +43,9 @@ const threadToken = "threadTokenWithoutDots";
 const hostToken = "hostTokenWithoutDots";
 const scopes: Record<string, McpInvocationContext.McpInvocationScope> = {
   [clientToken]: {
+    // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId,
     requestNamespace: "client-session",
     thread: undefined,
@@ -51,6 +54,9 @@ const scopes: Record<string, McpInvocationContext.McpInvocationScope> = {
     issuedAt: 1,
   },
   [threadToken]: {
+    // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+    principal: "provider-session",
+    actorUserId: null,
     environmentId,
     requestNamespace: "provider-session",
     thread: {
@@ -64,6 +70,9 @@ const scopes: Record<string, McpInvocationContext.McpInvocationScope> = {
   },
   // A script on the host: signed in as no outside client.
   [hostToken]: {
+    // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted actor.
+    principal: "external-operator",
+    actorUserId: null,
     environmentId,
     requestNamespace: "host",
     thread: undefined,

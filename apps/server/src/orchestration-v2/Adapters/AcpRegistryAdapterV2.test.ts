@@ -1657,6 +1657,9 @@ describe("AcpRegistryAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-registry-thread-env");
       const threadId = ThreadId.make("thread-acp-registry-thread-env");
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        // T3-CUSTOM(expbkt3): upstream fixtures use an unrestricted provider actor.
+        actorUserId: null,
+        upstreamServers: [],
         environmentId: EnvironmentId.make("environment-acp-registry-thread-env"),
         threadId,
         providerSessionId: "mcp-session-acp-registry-thread-env",

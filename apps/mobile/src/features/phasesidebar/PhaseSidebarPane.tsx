@@ -52,7 +52,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { usePendingNewTasks, type PendingDraftTask } from "../../state/use-pending-new-tasks";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadListV2PendingRow } from "../threads/thread-list-v2-items";
 import { useEnvironmentAppearances } from "../environments/useEnvironmentAppearance";

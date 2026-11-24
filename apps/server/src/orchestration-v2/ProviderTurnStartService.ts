@@ -908,8 +908,17 @@ export const layer: Layer.Layer<
       }
       // T3-CUSTOM(expbkt3): filesystem discovery can overlap revocation.
       if (backgroundTurn && !(yield* backgroundAllowed)) return;
-      const recreateResult = yield* Effect.result(restoreMissingWorktree(projection.thread));
+      const recreateResult = yield* Effect.result(
+        // T3-CUSTOM(expbkt3): renew the grant check after pruning.
+        restoreMissingWorktree.withAfterPrune(projection.thread, grantCheck),
+      );
       if (recreateResult._tag === "Failure") {
+        // T3-CUSTOM(expbkt3): BEGIN a revoked grant is a denied start, not a workspace failure.
+        if (recreateResult.failure._tag === "BackgroundTurnDenied") {
+          yield* denyBackgroundStart(recreateResult.failure.detail);
+          return;
+        }
+        // T3-CUSTOM(expbkt3): END
         if (input.willRetry === true) return yield* recreateResult.failure;
         yield* settleStartFailure({
           signal: "worktree-recreate-failure",
@@ -2393,8 +2402,7 @@ export const layer: Layer.Layer<
         ),
       );
       const deliverySession =
-        carriesPendingContext ||
-        backgroundTurn // T3-CUSTOM(expbkt3): even plain turns need the final guarded send.
+        carriesPendingContext || backgroundTurn // T3-CUSTOM(expbkt3): even plain turns need the final guarded send.
           ? makeDeliverySession(session, startWithHandoffs)
           : session;
       return runExecution.startRootRun({

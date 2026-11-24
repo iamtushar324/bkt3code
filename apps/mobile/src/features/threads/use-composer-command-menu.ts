@@ -3,6 +3,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
+  // T3-CUSTOM(expbkt3): the fork keeps T3's /plan and /default commands.
+  ProviderInteractionMode,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
@@ -115,7 +117,12 @@ export function buildComposerSlashCommandItems(
     /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
     readonly offersFreshSession?: boolean;
     readonly offersSideChat?: boolean;
-    readonly selectedProviderStatus: Pick<ServerProvider, "driver" | "slashCommands"> | null;
+    // T3-CUSTOM(expbkt3): the fork keeps T3's /plan and /default commands.
+    readonly allowInteractionMode?: boolean;
+    readonly selectedProviderStatus:
+      | (Pick<ServerProvider, "driver" | "slashCommands"> &
+          Partial<Pick<ServerProvider, "showInteractionModeToggle">>)
+      | null;
   },
   resolve: MessageResolver = m,
 ): ComposerCommandItem[] {
@@ -131,6 +138,26 @@ export function buildComposerSlashCommandItems(
         },
       ]
     : [];
+  // T3-CUSTOM(expbkt3): BEGIN - the fork keeps T3's /plan and /default commands.
+  if (
+    input.allowInteractionMode === true &&
+    input.selectedProviderStatus?.showInteractionModeToggle !== false
+  ) {
+    for (const [command, description] of [
+      ["plan", resolve(msg("Switch to plan mode"))],
+      ["default", resolve(msg("Switch to default mode"))],
+    ] as const) {
+      if (!command.includes(query)) continue;
+      items.push({
+        id: `cmd:${command}`,
+        type: "slash-command",
+        command,
+        label: `/${command}`,
+        description,
+      });
+    }
+  }
+  // T3-CUSTOM(expbkt3): END
 
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction, except `/clear`.
@@ -266,6 +293,8 @@ export function useComposerCommandMenu({
   offersUsageLimits = false,
   enabled = true,
   onChangeDraftMessage,
+  // T3-CUSTOM(expbkt3): the fork keeps T3's /plan and /default commands.
+  onUpdateInteractionMode,
   onUsageLimits,
   onOpenModelPicker,
   modelOptions,
@@ -291,6 +320,8 @@ export function useComposerCommandMenu({
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
+  // T3-CUSTOM(expbkt3): the fork keeps T3's /plan and /default commands.
+  readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
   /** `/model` opens this picker instead of inserting text. */
   readonly onOpenModelPicker: () => void;
@@ -408,6 +439,8 @@ export function useComposerCommandMenu({
           offersUsageLimits,
           offersFreshSession: onFreshSession !== undefined,
           offersSideChat,
+          // T3-CUSTOM(expbkt3): the fork keeps T3's /plan and /default commands.
+          allowInteractionMode: onUpdateInteractionMode !== undefined,
           selectedProviderStatus: selectedProviderStatus
             ? {
                 ...selectedProviderStatus,
@@ -676,6 +709,18 @@ export function useComposerCommandMenu({
       clearTriggerThen(onFreshSession);
       return;
     }
+    // T3-CUSTOM(expbkt3): BEGIN - the fork keeps T3's /plan and /default commands.
+    if (
+      item.type === "slash-command" &&
+      (item.command === "plan" || item.command === "default") &&
+      onUpdateInteractionMode &&
+      selectedProviderStatus?.showInteractionModeToggle !== false
+    ) {
+      const mode: ProviderInteractionMode = item.command === "plan" ? "plan" : "default";
+      clearTriggerThen(() => onUpdateInteractionMode(mode));
+      return;
+    }
+    // T3-CUSTOM(expbkt3): END
     if (
       item.type === "provider-slash-command" &&
       item.command.name === USAGE_LIMITS_COMMAND.name &&

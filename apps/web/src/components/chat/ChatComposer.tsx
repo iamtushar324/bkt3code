@@ -4125,7 +4125,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 )
                           : // T3-CUSTOM(expbkt3): plan mode stays available.
                             showPlanFollowUpPrompt && activeProposedPlan
-                            ? gt("Add feedback to refine the plan, or leave this blank to implement it")
+                            ? gt(
+                                "Add feedback to refine the plan, or leave this blank to implement it",
+                              )
                             : projectSelectionRequired
                               ? gt("Choose a project above to start a thread")
                               : showProviderUnavailable

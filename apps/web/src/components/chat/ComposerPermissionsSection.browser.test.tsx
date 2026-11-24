@@ -163,6 +163,10 @@ function PermissionsChip() {
       </button>
       {mode === "full-access" ? null : (
         <ComposerFooterModeControls
+          // T3-CUSTOM(expbkt3): plan mode stays available.
+          showInteractionModeToggle={false}
+          interactionMode="default"
+          onToggleInteractionMode={() => {}}
           runtimeMode={mode}
           runtimeModeOptions={options}
           accessDisplay="label"

@@ -72,6 +72,7 @@ export function useComposerMenuItems({
   pullRequestProjectId,
   pullRequestRepository,
   threadPullRequests,
+  planModeUiEnabled, // T3-CUSTOM(expbkt3): plan mode stays available (/plan, /default).
   sideChatAvailable,
   sideChatDisabledReason,
   freshSessionAvailable,
@@ -92,6 +93,8 @@ export function useComposerMenuItems({
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  // T3-CUSTOM(expbkt3): plan mode stays available (/plan, /default).
+  readonly planModeUiEnabled: boolean;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
   readonly freshSessionAvailable: boolean;
@@ -262,6 +265,25 @@ export function useComposerMenuItems({
           label: "/model",
           description: gt("Switch response model for this thread"),
         },
+        // T3-CUSTOM(expbkt3): plan mode stays available (/plan, /default).
+        ...(planModeUiEnabled
+          ? ([
+              {
+                id: "slash:plan",
+                type: "slash-command",
+                command: "plan",
+                label: "/plan",
+                description: gt("Switch this thread into plan mode"),
+              },
+              {
+                id: "slash:default",
+                type: "slash-command",
+                command: "default",
+                label: "/default",
+                description: gt("Switch this thread back to normal build mode"),
+              },
+            ] as const)
+          : []),
         ...(sideChatAvailable
           ? ([
               {
