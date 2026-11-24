@@ -3386,9 +3386,9 @@ export const make = Effect.gen(function* () {
   });
   // Closed PR results can settle threads or remove worktrees; confirm fresh git state before
   // persisting, and before acting when a caller skipped confirmation (`confirmTerminal: false`).
+  // T3-CUSTOM(expbkt3): token is the fingerprint the value was read under, if any.
   const prLookupGitStateByKey = new Map<
     string,
-    // T3-CUSTOM(expbkt3): token is the fingerprint the value was read under, if any.
     RememberedPrLookupValue & { readonly token: string | null }
   >();
   const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(

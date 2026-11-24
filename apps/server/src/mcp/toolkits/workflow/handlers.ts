@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Workflows from "../../../workflows/Workflows.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { WORKFLOW_READ_ACTIONS, WorkflowToolkit } from "./tools.ts";
+// T3-CUSTOM(expbkt3): team-mode gate for ownerless workflow state.
+import { requireWorkflowOperator } from "./workflowAccess.expbkt3.ts";
 
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
@@ -21,6 +23,8 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     (input) => isRead(input.action),
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
+        // T3-CUSTOM(expbkt3): ownerless workflow state is for admins and operators only.
+        yield* requireWorkflowOperator();
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") {
           return { questions: yield* workflows.questions.pipe(Effect.mapError(refused)) };
@@ -43,6 +47,8 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     ),
     McpToolAccess.writes((input) =>
       Effect.gen(function* () {
+        // T3-CUSTOM(expbkt3): ownerless workflow state is for admins and operators only.
+        yield* requireWorkflowOperator();
         const workflows = yield* Workflows.Workflows;
         // A hook's path holds its secret, and posting to it starts a run.
         if (input.action === "hooks") {

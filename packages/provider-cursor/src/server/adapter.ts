@@ -2858,10 +2858,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               cursorSkills === undefined &&
               (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0)
             ) {
-              const skills = yield* discoverCursorSkills(
-                cwd,
-                sessionEnvironment, // T3-CUSTOM(expbkt3): actor execution identity.
-              ).pipe(
+              // T3-CUSTOM(expbkt3): actor execution identity.
+              const skills = yield* discoverCursorSkills(cwd, sessionEnvironment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
               );

@@ -13,7 +13,7 @@ import type {
   ClaudeAccountStatus,
   ThreadClaudeAccount,
 } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/usageLimits";
+import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
 
 /** Distinct from the runtime "Auto" modes and Cursor's "auto" model. */
 export const AUTO_ACCOUNT_LABEL = "Auto (account)";

@@ -4,7 +4,7 @@
 // this hook only reads the blob out of device preferences and writes the
 // result of a pure operation back. Web keeps the same preferences in a zustand
 // store — same operations, different storage.
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_PHASE_SIDEBAR_GROUPING,
   type PhaseSidebarGroupingPreferences,
@@ -12,7 +12,8 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 export function usePhaseSidebarGrouping(): PhaseSidebarGroupingPreferences {
   const result = useAtomValue(mobilePreferencesAtom);
@@ -29,7 +30,7 @@ export function useUpdatePhaseSidebarGrouping(): (
   apply: (current: PhaseSidebarGroupingPreferences) => PhaseSidebarGroupingPreferences,
 ) => void {
   const result = useAtomValue(mobilePreferencesAtom);
-  const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const updatePreferences = useAtomCommand(saveMobilePreferences);
   return useCallback(
     (apply) => {
       // Until the stored preferences have loaded, the hook above is showing
@@ -40,7 +41,7 @@ export function useUpdatePhaseSidebarGrouping(): (
       const grouping = result.value.phaseSidebarGrouping ?? DEFAULT_PHASE_SIDEBAR_GROUPING;
       const next = apply(grouping);
       if (next === grouping) return;
-      updatePreferences({ phaseSidebarGrouping: next });
+      void updatePreferences({ phaseSidebarGrouping: next });
     },
     [result, updatePreferences],
   );

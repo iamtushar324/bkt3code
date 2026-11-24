@@ -181,6 +181,7 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
   },
   {
     heading: msg("Connections"),
+    // T3-CUSTOM(expbkt3): the list grew to hold the fork-only team sections below.
     paths: [
       "/settings/connections",
       "/settings/access",
@@ -1065,8 +1066,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Open source licenses"),
     to: "/settings/about",
   },
+  // T3-CUSTOM(expbkt3): plan mode is a supported feature in the fork, not legacy.
   {
-    // T3-CUSTOM(expbkt3): plan mode is a supported feature in the fork, not legacy.
     id: "legacy-plan-mode",
     title: "Plan mode",
     to: "/settings/labs", // T3-CUSTOM(expbkt3): the Legacy section now renders on Labs upstream.

@@ -1700,8 +1700,6 @@
   "7271bf4e60d789cd": "{account} を開く",
   "00ad8aeed0a6c461": "キャンセル",
   "c5e27d5df76d836e": "このデバイスから削除しますか？",
-  "10ff159aae2a3b43": "このデバイスから {name} とキャッシュされたスレッドを削除します。",
-  "d9dc19957b8db375": "このデバイスから {name} とキャッシュされたスレッドを削除します。保存したままにするには、代わりにオフにしてください。",
   "7d0dd30b40372c6c": "Git のステータスを更新できませんでした。",
   "1b371b7cc002b970": "この接続ではスレッドのブランチを更新できません。",
   "c4fe79fe536dc5d5": "ソース管理のステータスを更新しています",
@@ -4435,7 +4433,6 @@
   "b5c9761e72e6f801": "ユーザー入力を折りたたむ",
   "0b24a48355b3f4cf": "回答を送信",
   "19b1478b09e46dee": "回答せずに閉じる",
-  "4a498d0b15b91d52": "ユーザーの入力が必要です",
   "248343b081b5a887": {
     "t": "Plural",
     "i": 1,
@@ -4457,7 +4454,6 @@
       "t": "p"
     }
   },
-  "a5ab121035166e53": "未回答の項目を入力してください",
   "545e67cafc32dc6b": "この接続では回答を送信できません。",
   "aa5674d75dc47395": "{name} のクローンをキャンセルしました",
   "3c38548cbd950933": "{name} をクローンできませんでした",
@@ -5590,5 +5586,23 @@
   "8d545d54c0a9e950": "エージェントが実行するコマンド、編集、検索を非表示にします。「成功したものを非表示」では失敗は表示されます。Zen では最終的な回答だけを表示します。承認、質問、エラーは常に表示されます。",
   "99d51127f573296b": "別のアカウント",
   "8ec2c57414669b79": "2つ目の {tracker} ワークスペースまたはユーザーを接続します。",
-  "892f08d21b8e48a9": "要件が満たされたら、{layers} を{kind, select, squash {スカッシュ} merge {マージ} rebase {リベース} fastForward {早送り} other {{method}}}で {base} にマージします。すぐにマージされる場合があります。"
+  "892f08d21b8e48a9": "要件が満たされたら、{layers} を{kind, select, squash {スカッシュ} merge {マージ} rebase {リベース} fastForward {早送り} other {{method}}}で {base} にマージします。すぐにマージされる場合があります。",
+  "e4dad86ea624d39c": "This environment requires a signed-in user. Sign in and try again.",
+  "64b8912951cf35ee": "This environment did not accept your identity. It may belong to a different workspace, or your account may not be a member of it.",
+  "610c4043a12d3e60": "Your account is blocked on this environment.",
+  "d20f7013c036cc32": "Connected · slow to respond",
+  "eedd954322aa8e49": "Forget {name} and its cached threads and unsent messages on this device.",
+  "90020862ca7b2c07": "Forget {name} and its cached threads and unsent messages on this device. Switch it off instead to keep it saved.",
+  "0f60e9f6f56050dc": "Legacy",
+  "c7b91c1b490a7db1": "Plan Mode",
+  "1bccb0de253434b9": "Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan control; otherwise every task runs in Build mode.",
+  "6b58c64245907fcd": "legacy",
+  "c937958efc33f9e4": "plan mode",
+  "fc0f66aecd76c2d5": "Async question",
+  "1c98260858eb17ec": "User input needed",
+  "e58d7c21ab6f8f39": "Agent can continue while you decide",
+  "9f9da2370c3c41ae": "Fill in the pending answers",
+  "904b7f6c3180491c": "Question",
+  "1e7449be84d4247b": "Switch to plan mode",
+  "6ffe22e8693eae78": "Switch to default mode"
 }

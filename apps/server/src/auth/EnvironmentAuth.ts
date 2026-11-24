@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): an MCP client approved by a team user acts as that user.
 import {
+  parseMcpApprovalCode,
   AuthMemberClientScopes,
   EnvironmentUserId as EnvironmentUserIdSchema,
   userIdFromSubject,
@@ -641,6 +642,8 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
+      // T3-CUSTOM(expbkt3): the signed-in user a level-bound app approval code approves for.
+      approverUserId?: EnvironmentUserId | null,
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -730,11 +733,13 @@ export class EnvironmentAuth extends Context.Service<
      * code must name `access`. Rejects desktop grants and leaves refused codes unspent.
      */
     // T3-CUSTOM(expbkt3): also resolves to the team user the code was issued for (null
-    // when it names none) and whether it held `access:write`.
+    // when it names none) and whether it held `access:write`. With `requireUser`, a
+    // level-bound code issued for no user is refused before it is spent.
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
       peerLink?: boolean,
+      requireUser?: boolean,
     ) => Effect.Effect<
       McpApprovalCodeGrant,
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
@@ -1027,6 +1032,38 @@ export const make = Effect.gen(function* () {
   // Counts "revoke all others" runs. An exchange or sign-in approval that began before a run
   // issues its session here, under the lock the run holds, so it cannot leave a session behind.
   const otherSessionRevocations = yield* Ref.make(0);
+  // T3-CUSTOM(expbkt3): BEGIN - a level-bound app approval code's subject names its level, so
+  // the user who issued it is kept here by code until it expires. A restart forgets them, and
+  // such a code then approves for no user.
+  const mcpApprovalApprovers = yield* Ref.make(
+    new Map<string, { readonly userId: EnvironmentUserId; readonly expiresAtMs: number }>(),
+  );
+  const rememberMcpApprover = (code: string, userId: EnvironmentUserId, expiresAt: DateTime.Utc) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) =>
+        Ref.update(mcpApprovalApprovers, (current) => {
+          const live = Array.from(current).filter(
+            ([, approver]) => approver.expiresAtMs > now.epochMilliseconds,
+          );
+          return new Map(live).set(parseMcpApprovalCode(code)?.code ?? code, {
+            userId,
+            expiresAtMs: expiresAt.epochMilliseconds,
+          });
+        }),
+      ),
+    );
+  const mcpApproverFor = (code: string) =>
+    Effect.all([DateTime.now, Ref.get(mcpApprovalApprovers)]).pipe(
+      Effect.map(([now, approvers]) => {
+        const key = parseMcpApprovalCode(code)?.code;
+        if (key === undefined) return null;
+        const approver = approvers.get(key);
+        return approver !== undefined && approver.expiresAtMs > now.epochMilliseconds
+          ? { key, userId: approver.userId }
+          : null;
+      }),
+    );
+  // T3-CUSTOM(expbkt3): END
   const issueUnlessOthersRevokedSince = <A, E>(since: number, issue: Effect.Effect<A, E>) =>
     Ref.get(otherSessionRevocations).pipe(
       Effect.flatMap((count): Effect.Effect<A, E | ServerAuthInvalidCredentialError> =>
@@ -1548,7 +1585,10 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
-  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
+  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (
+    input,
+    approverUserId, // T3-CUSTOM(expbkt3)
+  ) =>
     createPairingLink({
       scopes: input?.access
         ? mcpClientScopes(input.access)
@@ -1560,6 +1600,12 @@ export const make = Effect.gen(function* () {
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.access && input.purpose !== "peer-link" ? { mcpApproval: input.access } : {}),
     }).pipe(
+      // T3-CUSTOM(expbkt3): remember who issued a level-bound app approval code.
+      Effect.tap((issued) =>
+        input?.access && input.purpose !== "peer-link" && approverUserId
+          ? rememberMcpApprover(issued.credential, approverUserId, issued.expiresAt)
+          : Effect.void,
+      ),
       Effect.map((issued) => ({
         ...toPairingCredential(issued),
         ...(input?.access ? { access: input.access } : {}),
@@ -1861,11 +1907,8 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.withSpan("EnvironmentAuth.issueMcpClientSession"));
   };
 
-  const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (
-    code,
-    access,
-    peerLink = false,
-  ) =>
+  // T3-CUSTOM(expbkt3): upstream's consumption, wrapped below with the approver check.
+  const spendMcpApprovalCode = (code: string, access: AuthMcpClientAccess, peerLink = false) =>
     resolveBootstrapGrant(code.trim(), {
       requiredScopes: mcpClientScopes(access),
       allowedSubject: `${peerLink ? PEER_LINK_PAIRING_SUBJECT_PREFIX : MCP_APPROVAL_SUBJECT_PREFIX}${access}`,
@@ -1891,6 +1934,36 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
+  // T3-CUSTOM(expbkt3): BEGIN - a level-bound code acts for the user who issued it. With
+  // identity required, one issued for no user is refused while it is still unspent.
+  const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (
+    code,
+    access,
+    peerLink = false,
+    requireUser = false,
+  ) =>
+    mcpApproverFor(code).pipe(
+      Effect.flatMap((approver) =>
+        requireUser && !peerLink && approver === null && parseMcpApprovalCode(code) !== undefined
+          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+          : spendMcpApprovalCode(code, access, peerLink).pipe(
+              Effect.tap(() =>
+                approver === null
+                  ? Effect.void
+                  : Ref.update(mcpApprovalApprovers, (current) => {
+                      const next = new Map(current);
+                      next.delete(approver.key);
+                      return next;
+                    }),
+              ),
+              Effect.map((grant): McpApprovalCodeGrant => ({
+                ...grant,
+                userId: grant.userId ?? approver?.userId ?? null,
+              })),
+            ),
+      ),
+    );
+  // T3-CUSTOM(expbkt3): END
 
   yield* revokePairedClientsThePolicyDisallows(managedPolicy, {
     sessions,

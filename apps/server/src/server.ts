@@ -1051,12 +1051,13 @@ export const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
       Layer.provide(PeerClientPairingHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
       Layer.provide(CloudHttp.layer),
+      // T3-CUSTOM(expbkt3): team visibility.
       Layer.provide(
         OrchestrationHttp.layer.pipe(
           Layer.provide(ClerkDirectoryLive),
           Layer.provide(OrchestrationAccessControlLive),
         ),
-      ), // T3-CUSTOM(expbkt3): team visibility.
+      ),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(speechHttpApiLayer),

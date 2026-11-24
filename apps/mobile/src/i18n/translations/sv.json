@@ -1700,8 +1700,6 @@
   "7271bf4e60d789cd": "Öppna {account}",
   "00ad8aeed0a6c461": "Avbryt",
   "c5e27d5df76d836e": "Ta bort från den här enheten?",
-  "10ff159aae2a3b43": "Glöm {name} och dess cachade trådar på den här enheten.",
-  "d9dc19957b8db375": "Glöm {name} och dess cachade trådar på den här enheten. Stäng av den i stället för att behålla den sparad.",
   "7d0dd30b40372c6c": "Kunde inte uppdatera Git-status.",
   "1b371b7cc002b970": "Den här anslutningen kan inte uppdatera trådens gren.",
   "c4fe79fe536dc5d5": "Uppdaterar versionshanteringsstatus",
@@ -4449,7 +4447,6 @@
   "b5c9761e72e6f801": "Fäll ihop användarindata",
   "0b24a48355b3f4cf": "Skicka svar",
   "19b1478b09e46dee": "Stäng utan att svara",
-  "4a498d0b15b91d52": "Användarindata krävs",
   "248343b081b5a887": {
     "t": "Plural",
     "i": 1,
@@ -4483,7 +4480,6 @@
       "t": "p"
     }
   },
-  "a5ab121035166e53": "Fyll i de väntande svaren",
   "545e67cafc32dc6b": "Den här anslutningen kan inte skicka svar.",
   "aa5674d75dc47395": "Avbröt kloningen av {name}",
   "3c38548cbd950933": "Det gick inte att klona {name}",
@@ -5616,5 +5612,23 @@
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
-  "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt."
+  "892f08d21b8e48a9": "Merga {layers} in i {base} med {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} när kraven är uppfyllda. Det kan ske direkt.",
+  "e4dad86ea624d39c": "This environment requires a signed-in user. Sign in and try again.",
+  "64b8912951cf35ee": "This environment did not accept your identity. It may belong to a different workspace, or your account may not be a member of it.",
+  "610c4043a12d3e60": "Your account is blocked on this environment.",
+  "d20f7013c036cc32": "Connected · slow to respond",
+  "eedd954322aa8e49": "Forget {name} and its cached threads and unsent messages on this device.",
+  "90020862ca7b2c07": "Forget {name} and its cached threads and unsent messages on this device. Switch it off instead to keep it saved.",
+  "0f60e9f6f56050dc": "Legacy",
+  "c7b91c1b490a7db1": "Plan Mode",
+  "1bccb0de253434b9": "Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan control; otherwise every task runs in Build mode.",
+  "6b58c64245907fcd": "legacy",
+  "c937958efc33f9e4": "plan mode",
+  "fc0f66aecd76c2d5": "Async question",
+  "1c98260858eb17ec": "User input needed",
+  "e58d7c21ab6f8f39": "Agent can continue while you decide",
+  "9f9da2370c3c41ae": "Fill in the pending answers",
+  "904b7f6c3180491c": "Question",
+  "1e7449be84d4247b": "Switch to plan mode",
+  "6ffe22e8693eae78": "Switch to default mode"
 }

@@ -1,3 +1,4 @@
+// T3-CUSTOM(expbkt3): plan mode stays available (interaction mode type).
 import type {
   ModelSelection,
   ProviderInstanceId,

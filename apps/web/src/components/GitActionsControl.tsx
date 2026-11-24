@@ -2216,12 +2216,12 @@ export default function ThreadGitActionsControl({
     sourceControlProfileId: view.sourceControlProfileId ?? null,
   };
   // T3-CUSTOM(expbkt3): END
+  // T3-CUSTOM(expbkt3): the thread id selects its source-control profile.
   // The same subscription the control below holds, so this adds no read of its own.
   const { data: gitStatus } = useEnvironmentQuery(
     activeEnvironmentId !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: activeEnvironmentId,
-          // T3-CUSTOM(expbkt3): the thread id selects its source-control profile.
           input: {
             cwd: gitCwd,
             ...(activeThreadRef ? { threadId: activeThreadRef.threadId } : {}),

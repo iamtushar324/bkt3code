@@ -504,6 +504,7 @@ export const layer = HttpApiBuilder.group(
     );
     // T3-CUSTOM(expbkt3): END
 
+    // T3-CUSTOM(expbkt3): the fork's handler chain re-indents the upstream handlers below.
     return (
       handlers
         .handle(
@@ -568,6 +569,7 @@ export const layer = HttpApiBuilder.group(
                   : undefined,
                 identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
               );
+              // T3-CUSTOM(expbkt3): team identity persist; the rest is re-indented upstream code.
               yield* persistIdentity(
                 identity,
                 result.response.scopes.includes(AuthAccessWriteScope),
@@ -598,6 +600,7 @@ export const layer = HttpApiBuilder.group(
                   )
                 : selectedCookie;
 
+              // T3-CUSTOM(expbkt3): upstream code, re-indented by the fork's handler chain.
               yield* HttpEffect.appendPreResponseHandler((_request, response) =>
                 Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
               );
@@ -871,7 +874,13 @@ export const layer = HttpApiBuilder.group(
                     return yield* failEnvironmentScopeRequired(delegatedScope);
                   }
                 }
-                return yield* serverAuth.issuePairingCredential(args.payload);
+                // The signed-in approver travels with the code, so it can approve a client when
+                // environment identity is required.
+                const approverUserId = operatorUserIdForPrincipal(session);
+                return yield* serverAuth.issuePairingCredential(
+                  args.payload,
+                  approverUserId === null ? null : EnvironmentUserId.make(approverUserId),
+                );
               }
               // T3-CUSTOM(expbkt3): END
               const delegatedScopes =

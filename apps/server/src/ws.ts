@@ -43,8 +43,15 @@ import { githubSshRemoteToHttps } from "./sourceControl/GitHubRemoteUrl.ts";
 import type { OrchestrationClientOrigin } from "@t3tools/contracts";
 import type * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 // T3-CUSTOM(expbkt3): END
-// T3-CUSTOM(expbkt3): access-denied secret answers report a missing request.
-import { SecretRequestError } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): access-denied secret and feedback answers report a missing request.
+import { AgentFeedbackRequestError, SecretRequestError } from "@t3tools/contracts";
+// T3-CUSTOM(expbkt3): members get empty workflow views and project-scoped issue reads.
+import type {
+  IssueListResult,
+  ProjectId,
+  WorkflowCounts,
+  WorkflowRunsSnapshot,
+} from "@t3tools/contracts";
 import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
@@ -1796,6 +1803,7 @@ export const layerWsRpc = (
       const listAcpRegistrySessions = Effect.fn("ws.acpRegistry.listSessions")(function* (
         input: AcpRegistryListSessionsInput,
       ) {
+        // T3-CUSTOM(expbkt3): resolve the project through the fork's access check.
         const project = yield* acpRegistryProject(input.projectId);
         const { instance, manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
         // Only a probed agent advertises listing, so a read never installs or first-starts one.
@@ -1855,6 +1863,7 @@ export const layerWsRpc = (
       ) {
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
+            // T3-CUSTOM(expbkt3): resolve the project through the fork's access check.
             const project = yield* acpRegistryProject(input.projectId);
             const { instance, manager } = yield* acpRegistrySessions.sessionManager(
               input.instanceId,
@@ -1902,6 +1911,7 @@ export const layerWsRpc = (
       const listAcpRegistryProviders = Effect.fn("ws.acpRegistry.listProviders")(function* (
         input: AcpRegistryListProvidersInput,
       ) {
+        // T3-CUSTOM(expbkt3): resolve the project through the fork's access check.
         const project = yield* acpRegistryProject(input.projectId);
         const { instance, manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
         const snapshot = yield* instance.snapshot.getSnapshot;
@@ -1917,6 +1927,7 @@ export const layerWsRpc = (
       const setAcpRegistryProvider = Effect.fn("ws.acpRegistry.setProvider")(function* (
         input: AcpRegistrySetProviderInput,
       ) {
+        // T3-CUSTOM(expbkt3): resolve the project through the fork's access check.
         const project = yield* acpRegistryProject(input.projectId);
         const { manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
         if (input.headers !== undefined && Object.keys(input.headers).length > 32) {
@@ -1959,6 +1970,7 @@ export const layerWsRpc = (
       const disableAcpRegistryProvider = Effect.fn("ws.acpRegistry.disableProvider")(function* (
         input: AcpRegistryDisableProviderInput,
       ) {
+        // T3-CUSTOM(expbkt3): resolve the project through the fork's access check.
         const project = yield* acpRegistryProject(input.projectId);
         const { manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
         const listed = yield* manager.listProviders(project.workspaceRoot);
@@ -2248,6 +2260,61 @@ export const layerWsRpc = (
                 ),
           ),
         );
+      // T3-CUSTOM(expbkt3): workflow runs and definitions carry no owner, so only org admins and
+      // unrestricted operators read or steer them. Members see empty live views, not errors.
+      const workflowsAllowed = actorUserId === null || actorIsAdmin;
+      const noWorkflowRuns: WorkflowRunsSnapshot = { workflows: [], runs: [], questions: [] };
+      const noWorkflowCounts: WorkflowCounts = { needsYou: 0, active: 0, total: 0 };
+      const withWorkflowAccess = <A, E, R>(
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
+        workflowsAllowed
+          ? effect
+          : Effect.fail(
+              new EnvironmentAuthorizationError({
+                message: "Workflows are available to administrators only.",
+                requiredScope: "orchestration:operate",
+              }),
+            );
+      const workflowRequest = <A, R>(effect: Effect.Effect<A, Workflows.WorkflowError, R>) =>
+        withWorkflowAccess(effect.pipe(Effect.mapError(toWorkflowRequestError)));
+      // T3-CUSTOM(expbkt3): BEGIN issue calls act through a project's tracker binding, so they
+      // need project access; a denied caller reads the project as missing.
+      const withProjectAccess = <A, E, R>(
+        projectId: ProjectId,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
+        actorUserId === null
+          ? effect
+          : accessControl.canAccessProject(actorUserId, projectId).pipe(
+              Effect.orElseSucceed(() => false),
+              Effect.flatMap((allowed) =>
+                allowed
+                  ? effect
+                  : Effect.fail(
+                      new EnvironmentAuthorizationError({
+                        message: "Project not found.",
+                        requiredScope: "orchestration:operate",
+                      }),
+                    ),
+              ),
+            );
+      // A listing across projects keeps only the rows of projects this user may see.
+      const visibleIssueList = (result: IssueListResult) =>
+        actorUserId === null
+          ? Effect.succeed(result)
+          : visibleAggregateIdsForActor(actorUserId).pipe(
+              Effect.map(({ projectIds }) => ({
+                ...result,
+                entries: result.entries.filter((entry) => projectIds.has(entry.projectId)),
+                errors: result.errors.filter((error) => projectIds.has(error.projectId)),
+                ...(result.scopes === undefined
+                  ? {}
+                  : { scopes: result.scopes.filter((scope) => projectIds.has(scope.projectId)) }),
+              })),
+              Effect.orElseSucceed(() => ({ ...result, entries: [], errors: [], scopes: [] })),
+            );
+      // T3-CUSTOM(expbkt3): END
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
         yield* authorizeNativeCommand(mutation); // T3-CUSTOM(expbkt3)
         return yield* mutateProjectWithClone(projectService, projectCloneTracker, mutation);
@@ -2519,20 +2586,47 @@ export const layerWsRpc = (
       // T3-CUSTOM(expbkt3): END
 
       const handlers = NativeWsRpcGroup.of({
-        [WS_METHODS.issuesList]: (input) => issues.list(input),
-        [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
-        [WS_METHODS.issuesComments]: (input) => issues.comments(input),
-        [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
-        [WS_METHODS.issuesCandidates]: (input) => issues.candidates(input),
-        [WS_METHODS.issuesLinkedThreads]: (input) => threadIssues.linkedThreads(input),
-        [WS_METHODS.issuesCreate]: (input) => issues.create(input),
-        [WS_METHODS.issuesComment]: (input) => issues.comment(input),
-        [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
-        [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
-        [WS_METHODS.issuesReact]: (input) => issues.react(input),
+        // T3-CUSTOM(expbkt3): BEGIN issue reads and writes keep to the caller's projects.
+        [WS_METHODS.issuesList]: (input) =>
+          (input.projectId === undefined
+            ? issues.list(input)
+            : withProjectAccess(input.projectId, issues.list(input))
+          ).pipe(Effect.flatMap(visibleIssueList)),
+        [WS_METHODS.issuesDetail]: (input) =>
+          withProjectAccess(input.projectId, issues.detail(input)),
+        [WS_METHODS.issuesComments]: (input) =>
+          withProjectAccess(input.projectId, issues.comments(input)),
+        [WS_METHODS.issuesTemplates]: (input) =>
+          withProjectAccess(input.projectId, issues.templates(input)),
+        [WS_METHODS.issuesCandidates]: (input) =>
+          withProjectAccess(input.projectId, issues.candidates(input)),
+        // Linked threads name only threads this user may access.
+        [WS_METHODS.issuesLinkedThreads]: (input) =>
+          threadIssues.linkedThreads(input).pipe(
+            Effect.flatMap((result) =>
+              accessibleThreadIds(result.threads.map((thread) => thread.id)).pipe(
+                Effect.map((threadIds) => ({
+                  ...result,
+                  threads: result.threads.filter((thread) => threadIds.includes(thread.id)),
+                })),
+              ),
+            ),
+          ),
+        [WS_METHODS.issuesCreate]: (input) =>
+          withProjectAccess(input.projectId, issues.create(input)),
+        [WS_METHODS.issuesComment]: (input) =>
+          withProjectAccess(input.projectId, issues.comment(input)),
+        [WS_METHODS.issuesUpdate]: (input) =>
+          withProjectAccess(input.projectId, issues.update(input)),
+        [WS_METHODS.issuesSetState]: (input) =>
+          withProjectAccess(input.projectId, issues.setState(input)),
+        [WS_METHODS.issuesReact]: (input) =>
+          withProjectAccess(input.projectId, issues.react(input)),
         [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
         [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
-        [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
+        [WS_METHODS.issueTrackersBindProject]: (input) =>
+          withProjectAccess(input.projectId, issueTrackers.bindProject(input)),
+        // T3-CUSTOM(expbkt3): END
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3043,26 +3137,42 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
-          providerSessionManager.subscribePromptSuggestion(input.threadId),
-        [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
-        [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
-        [WS_METHODS.workflowsGet]: (input) =>
-          workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+          Stream.unwrap(
+            // T3-CUSTOM(expbkt3): a suggested prompt is thread content, so it needs thread access.
+            requireThreadAccess(input.threadId).pipe(
+              Effect.mapError(
+                () =>
+                  new EnvironmentAuthorizationError({
+                    message: "Thread not found.",
+                    requiredScope: "orchestration:read",
+                  }),
+              ),
+              Effect.as(providerSessionManager.subscribePromptSuggestion(input.threadId)),
+            ),
+          ),
+        // T3-CUSTOM(expbkt3): BEGIN workflows are limited to admins and unrestricted operators.
+        [WS_METHODS.workflowsSubscribe]: (_input) =>
+          workflowsAllowed ? workflows.watch : Stream.succeed(noWorkflowRuns),
+        [WS_METHODS.workflowsCounts]: (_input) =>
+          workflowsAllowed ? workflows.counts : Stream.succeed(noWorkflowCounts),
+        [WS_METHODS.workflowsGet]: (input) => workflowRequest(workflows.get(input.runId)),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          workflows
-            .answer(input.runId, input.name, {
+          workflowRequest(
+            workflows.answer(input.runId, input.name, {
               choice: input.choice,
               ...(input.reason === undefined ? {} : { reason: input.reason }),
-            })
-            .pipe(Effect.mapError(toWorkflowRequestError)),
-        [WS_METHODS.workflowsResume]: (input) =>
-          workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+            }),
+          ),
+        [WS_METHODS.workflowsResume]: (input) => workflowRequest(workflows.resume(input.runId)),
         [WS_METHODS.workflowsCancel]: (input) =>
-          workflows.cancel(input.runId, input.reason).pipe(Effect.mapError(toWorkflowRequestError)),
-        [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
+          workflowRequest(workflows.cancel(input.runId, input.reason)),
+        [WS_METHODS.workflowsGetDefinition]: (_input) =>
+          withWorkflowAccess(workflowDefinitions.read),
         [WS_METHODS.workflowsSaveDefinition]: (input) =>
-          workflowDefinitions.save(input.name, input.source),
-        [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
+          withWorkflowAccess(workflowDefinitions.save(input.name, input.source)),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) =>
+          withWorkflowAccess(workflowDefinitions.remove(input.name)),
+        // T3-CUSTOM(expbkt3): END
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
@@ -3094,7 +3204,13 @@ export const layerWsRpc = (
             Effect.mapError(() => new SecretRequestError({ reason: "not_found" })),
             Effect.andThen(secretRequests.answer(input)),
           ),
-        [WS_METHODS.agentFeedbackAnswerRequest]: (input) => feedbackStore.answer(input),
+        [WS_METHODS.agentFeedbackAnswerRequest]: (input) =>
+          // T3-CUSTOM(expbkt3): only members who can access the thread answer its feedback cards;
+          // a denied caller sees the same reason as a missing card.
+          requireThreadAccess(input.threadId).pipe(
+            Effect.mapError(() => new AgentFeedbackRequestError({ reason: "not_found" })),
+            Effect.andThen(feedbackStore.answer(input)),
+          ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
@@ -3919,7 +4035,19 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
-        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
+        // T3-CUSTOM(expbkt3): adding a repository changes the thread's worktree, so it needs
+        // thread access.
+        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) =>
+          requireThreadAccess(input.threadId).pipe(
+            Effect.mapError(
+              () =>
+                new EnvironmentAuthorizationError({
+                  message: "Thread not found.",
+                  requiredScope: "orchestration:operate",
+                }),
+            ),
+            Effect.andThen(taskFolders.addRepository(input)),
+          ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,

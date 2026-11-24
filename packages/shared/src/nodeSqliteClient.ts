@@ -943,9 +943,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const semaphore = yield* Semaphore.make(1);
   const writerWorker = options.writerWorker === true && isFileDatabase;
   let checkpointAfterWrite: (() => void) | undefined;
+  // T3-CUSTOM(expbkt3): makeWorkerConnection also returns a busy probe; the writer uses `.acquire`.
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
-    ? // T3-CUSTOM(expbkt3): makeWorkerConnection also returns a busy probe.
-      (yield* makeWorkerConnection({
+    ? (yield* makeWorkerConnection({
         filename: options.filename,
         role: "writer",
         readOnly: options.readonly ?? false,

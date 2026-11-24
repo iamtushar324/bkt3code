@@ -1500,8 +1500,8 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  // T3-CUSTOM(expbkt3): plan mode stays available by default.
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
-    // T3-CUSTOM(expbkt3): plan mode stays available by default.
     planModeEnabled: settings.planModeAvailable,
     provider: activeProviderStatus,
     interactionMode:

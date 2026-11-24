@@ -1700,8 +1700,6 @@
   "7271bf4e60d789cd": "Abrir {account}",
   "00ad8aeed0a6c461": "Cancelar",
   "c5e27d5df76d836e": "Remover deste dispositivo?",
-  "10ff159aae2a3b43": "Esquece {name} e as threads em cache dele neste dispositivo.",
-  "d9dc19957b8db375": "Esquece {name} e as threads em cache dele neste dispositivo. Desligue-o em vez disso para mantê-lo salvo.",
   "7d0dd30b40372c6c": "Falha ao atualizar o status do git.",
   "1b371b7cc002b970": "Esta conexão não pode atualizar o branch da thread.",
   "c4fe79fe536dc5d5": "Atualizando o status do controle de versão",
@@ -4443,7 +4441,6 @@
   "b5c9761e72e6f801": "Recolher entrada do usuário",
   "0b24a48355b3f4cf": "Enviar respostas",
   "19b1478b09e46dee": "Dispensar sem responder",
-  "4a498d0b15b91d52": "Resposta do usuário necessária",
   "248343b081b5a887": {
     "t": "Plural",
     "i": 1,
@@ -4477,7 +4474,6 @@
       "t": "p"
     }
   },
-  "a5ab121035166e53": "Preencha as respostas pendentes",
   "545e67cafc32dc6b": "Esta conexão não pode enviar respostas.",
   "aa5674d75dc47395": "Clone de {name} cancelado",
   "3c38548cbd950933": "Falha ao clonar {name}",
@@ -5610,5 +5606,23 @@
   "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
   "99d51127f573296b": "Outra conta",
   "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
-  "892f08d21b8e48a9": "Mesclar {layers} em {base} usando {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} quando os requisitos forem atendidos. Isso pode acontecer imediatamente."
+  "892f08d21b8e48a9": "Mesclar {layers} em {base} usando {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} quando os requisitos forem atendidos. Isso pode acontecer imediatamente.",
+  "e4dad86ea624d39c": "This environment requires a signed-in user. Sign in and try again.",
+  "64b8912951cf35ee": "This environment did not accept your identity. It may belong to a different workspace, or your account may not be a member of it.",
+  "610c4043a12d3e60": "Your account is blocked on this environment.",
+  "d20f7013c036cc32": "Connected · slow to respond",
+  "eedd954322aa8e49": "Forget {name} and its cached threads and unsent messages on this device.",
+  "90020862ca7b2c07": "Forget {name} and its cached threads and unsent messages on this device. Switch it off instead to keep it saved.",
+  "0f60e9f6f56050dc": "Legacy",
+  "c7b91c1b490a7db1": "Plan Mode",
+  "1bccb0de253434b9": "Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan control; otherwise every task runs in Build mode.",
+  "6b58c64245907fcd": "legacy",
+  "c937958efc33f9e4": "plan mode",
+  "fc0f66aecd76c2d5": "Async question",
+  "1c98260858eb17ec": "User input needed",
+  "e58d7c21ab6f8f39": "Agent can continue while you decide",
+  "9f9da2370c3c41ae": "Fill in the pending answers",
+  "904b7f6c3180491c": "Question",
+  "1e7449be84d4247b": "Switch to plan mode",
+  "6ffe22e8693eae78": "Switch to default mode"
 }

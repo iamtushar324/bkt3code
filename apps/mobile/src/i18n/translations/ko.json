@@ -1700,8 +1700,6 @@
   "7271bf4e60d789cd": "{account} 열기",
   "00ad8aeed0a6c461": "취소",
   "c5e27d5df76d836e": "이 기기에서 제거할까요?",
-  "10ff159aae2a3b43": "이 기기에서 {name}과(와) 캐시된 스레드를 삭제합니다.",
-  "d9dc19957b8db375": "이 기기에서 {name}과(와) 캐시된 스레드를 삭제합니다. 저장된 상태로 유지하려면 대신 끄세요.",
   "7d0dd30b40372c6c": "Git 상태를 새로 고치지 못했습니다.",
   "1b371b7cc002b970": "이 연결로는 스레드의 브랜치를 업데이트할 수 없습니다.",
   "c4fe79fe536dc5d5": "소스 제어 상태 새로 고치는 중",
@@ -4439,7 +4437,6 @@
   "b5c9761e72e6f801": "사용자 입력 접기",
   "0b24a48355b3f4cf": "답변 제출",
   "19b1478b09e46dee": "답변하지 않고 닫기",
-  "4a498d0b15b91d52": "사용자 입력 필요",
   "248343b081b5a887": {
     "t": "Plural",
     "i": 1,
@@ -4462,7 +4459,6 @@
       "t": "p"
     }
   },
-  "a5ab121035166e53": "대기 중인 답변을 입력하세요",
   "545e67cafc32dc6b": "이 연결로는 답변을 제출할 수 없습니다.",
   "aa5674d75dc47395": "{name} 복제 취소됨",
   "3c38548cbd950933": "{name}을(를) 복제하지 못했습니다",
@@ -5596,5 +5592,23 @@
   "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다.",
   "99d51127f573296b": "다른 계정",
   "8ec2c57414669b79": "두 번째 {tracker} 워크스페이스 또는 사용자를 연결합니다.",
-  "892f08d21b8e48a9": "요구 사항이 충족되면 {layers}을(를) {kind, select, squash {스쿼시} merge {병합} rebase {리베이스} fastForward {빨리 감기} other {{method}}} 방식으로 {base}에 병합합니다. 바로 병합될 수도 있습니다."
+  "892f08d21b8e48a9": "요구 사항이 충족되면 {layers}을(를) {kind, select, squash {스쿼시} merge {병합} rebase {리베이스} fastForward {빨리 감기} other {{method}}} 방식으로 {base}에 병합합니다. 바로 병합될 수도 있습니다.",
+  "e4dad86ea624d39c": "This environment requires a signed-in user. Sign in and try again.",
+  "64b8912951cf35ee": "This environment did not accept your identity. It may belong to a different workspace, or your account may not be a member of it.",
+  "610c4043a12d3e60": "Your account is blocked on this environment.",
+  "d20f7013c036cc32": "Connected · slow to respond",
+  "eedd954322aa8e49": "Forget {name} and its cached threads and unsent messages on this device.",
+  "90020862ca7b2c07": "Forget {name} and its cached threads and unsent messages on this device. Switch it off instead to keep it saved.",
+  "0f60e9f6f56050dc": "Legacy",
+  "c7b91c1b490a7db1": "Plan Mode",
+  "1bccb0de253434b9": "Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan control; otherwise every task runs in Build mode.",
+  "6b58c64245907fcd": "legacy",
+  "c937958efc33f9e4": "plan mode",
+  "fc0f66aecd76c2d5": "Async question",
+  "1c98260858eb17ec": "User input needed",
+  "e58d7c21ab6f8f39": "Agent can continue while you decide",
+  "9f9da2370c3c41ae": "Fill in the pending answers",
+  "904b7f6c3180491c": "Question",
+  "1e7449be84d4247b": "Switch to plan mode",
+  "6ffe22e8693eae78": "Switch to default mode"
 }

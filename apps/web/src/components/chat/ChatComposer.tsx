@@ -91,10 +91,11 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+// T3-CUSTOM(expbkt3): plan mode stays available.
 import {
   deriveComposerSendState,
   getAntigravitySendBlockReason,
-  resolveComposerInteractionMode, // T3-CUSTOM(expbkt3): plan mode stays available.
+  resolveComposerInteractionMode,
 } from "../ChatView.logic";
 import { threadHasStarted } from "../../lib/chatThreadActions";
 // T3-CUSTOM(expbkt3): review comments on agent messages.
@@ -1359,6 +1360,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  // T3-CUSTOM(expbkt3): the plan follow-up drawer also opens the top drawer.
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     // T3-CUSTOM(expbkt3): inside plan review the plan is the surface, so this

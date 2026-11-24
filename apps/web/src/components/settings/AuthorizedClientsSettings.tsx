@@ -654,11 +654,11 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
     const trimmedLabel = pairingLabel.trim();
     const result = await createPairingCredential({
       environmentId,
+      // T3-CUSTOM(expbkt3): `requireProofOfPossession` is opt-in and false by default,
+      // so an unchecked dialog sends exactly the payload it always sent.
       input: {
         ...(trimmedLabel ? { label: trimmedLabel } : {}),
         scopes: selectedScopes,
-        // T3-CUSTOM(expbkt3): `requireProofOfPossession` is opt-in and false by default,
-        // so an unchecked dialog sends exactly the payload it always sent.
         ...(requireProofOfPossession ? { requireProofOfPossession: true } : {}),
       },
     });

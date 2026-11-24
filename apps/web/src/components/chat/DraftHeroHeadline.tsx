@@ -28,12 +28,13 @@ import {
 import {
   buildSidebarProjectPickerEntries,
   projectGroupsSpanEnvironments,
+  // T3-CUSTOM(expbkt3): per-environment rows in the project picker.
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
+// T3-CUSTOM(expbkt3): environment identity in the new-thread picker.
 import {
-  // T3-CUSTOM(expbkt3): environment identity in the new-thread picker.
   useEnvironmentAppearances,
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -383,6 +384,7 @@ export function DraftHeroHeadline({
                     onToggle={() => toggleProjectGroupPin(entry.group)}
                   />
                 ) : null}
+                {/* T3-CUSTOM(expbkt3): rows that name an environment show its own badge. */}
                 {appearance ? (
                   // T3-CUSTOM(expbkt3): this row already names its environment, so
                   // upstream's machine badge would repeat it.

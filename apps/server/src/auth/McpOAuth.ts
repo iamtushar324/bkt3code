@@ -530,8 +530,15 @@ const make = Effect.gen(function* () {
         });
       }
       // T3-CUSTOM(expbkt3): the approval result also carries the team user and operator flag.
+      // With identity required, a code issued for no user is refused before it is spent.
+      const requireUser = yield* identityRequired;
       const approval = yield* environmentAuth
-        .consumeMcpApprovalCode(decision.code, decision.access, input.authorization.client.peerLink)
+        .consumeMcpApprovalCode(
+          decision.code,
+          decision.access,
+          input.authorization.client.peerLink,
+          requireUser,
+        )
         .pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
             Effect.logError("MCP approval code check failed.", { cause }).pipe(
@@ -547,7 +554,7 @@ const make = Effect.gen(function* () {
         );
       access = approval.access;
       // T3-CUSTOM(expbkt3): BEGIN — an anonymous code cannot approve when identity is required.
-      if (approval.userId === null && (yield* identityRequired)) {
+      if (approval.userId === null && requireUser) {
         return yield* new EnvironmentAuth.ServerAuthMcpApprovalCodeError({
           reason: "not_a_pairing_code",
         });
