@@ -84,7 +84,8 @@ jobs:
         run: pnpm exec vp check
 
       - name: Typecheck
-        run: pnpm exec vp run typecheck
+        # GitHub-hosted runners were killed (exit 137) typechecking packages in parallel.
+        run: pnpm exec vp run -r --cache --concurrency-limit 1 typecheck
 
       # No test step: ci.yml runs the full suite on every PR, sharded, in about
       # 6 minutes. Running it here again on one runner took 20-30 minutes on the
