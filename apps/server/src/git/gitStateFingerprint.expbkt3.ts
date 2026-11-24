@@ -31,7 +31,8 @@ export interface GitStateFingerprint {
 export const gitStateFingerprintToken = (fingerprint: GitStateFingerprint, key: string): string =>
   key === "remotes" ||
   key.startsWith("defaultBranch\u0000") ||
-  key.startsWith("config\u0000remote.")
+  key.startsWith("config\u0000remote.") ||
+  key.startsWith("remoteUrl\u0000")
     ? fingerprint.repository
     : fingerprint.branch;
 

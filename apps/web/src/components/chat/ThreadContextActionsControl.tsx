@@ -30,6 +30,7 @@ import {
   GitForkIcon,
   MessageSquarePlusIcon,
 } from "lucide-react";
+import { msg } from "gt-react";
 import { useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -166,7 +167,11 @@ export function ThreadContextActionsControl({
       const digest = await fetchDigest();
       if (digest === null) return;
       try {
-        await writeTextToClipboard(digest.markdown, "session context");
+        await writeTextToClipboard(digest.markdown, {
+          target: "session context",
+          unavailableMessage: msg("Clipboard API is unavailable while copying session context."),
+          failureMessage: msg("Failed to copy session context to the clipboard."),
+        });
       } catch (cause) {
         reportError("Could not copy session context", cause);
         return;

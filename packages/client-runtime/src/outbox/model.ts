@@ -1,4 +1,7 @@
 // T3-CUSTOM(expbkt3): durable client outbox shared by web, desktop, and mobile.
+import { withImplicitFastModeDefault } from "@t3tools/shared/model";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { isTransportConnectionErrorMessage } from "../errors/transport.ts";
 import {
   clampFileAttachmentUploadBytes,
@@ -34,7 +37,9 @@ import {
   type RuntimeMode as RuntimeModeType,
   type SourceControlProfileId as SourceControlProfileIdType,
   type ThreadId as ThreadIdType,
+  type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -66,6 +71,8 @@ const QueuedThreadCreationSchema = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
   sourceControlProfileId: Schema.optional(SourceControlProfileId),
   pullRequestReference: Schema.optional(Schema.String),
+  repositories: Schema.optional(Schema.Array(Schema.String)),
+  startsFromRepositoryDefaults: Schema.optional(Schema.Boolean),
 });
 
 export const QueuedThreadImageAttachmentSchema = Schema.Struct({
@@ -120,12 +127,15 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
+  restoreToDraft: Schema.optional(Schema.Boolean),
   context: Schema.optional(OrchestrationMessageContext),
   manualContinuationOfRunId: Schema.optional(RunId),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   attachments: Schema.Array(QueuedThreadAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "start"])),
+  compactBeforeSend: Schema.optional(Schema.Boolean),
+  freshContext: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
@@ -150,6 +160,10 @@ export interface QueuedThreadCreation {
   readonly startFromOrigin?: boolean | undefined;
   readonly sourceControlProfileId?: SourceControlProfileIdType | undefined;
   readonly pullRequestReference?: string | undefined;
+  /** Tracked repositories the new worktree takes, by path; absent leaves the choice to the server. */
+  readonly repositories?: ReadonlyArray<string> | undefined;
+  /** The project folder is no Git repository, so a new worktree needs no base branch. */
+  readonly startsFromRepositoryDefaults?: boolean | undefined;
 }
 
 // T3-CUSTOM(expbkt3): mirrors QueuedThreadImageAttachmentSchema. Deliberately not
@@ -183,6 +197,7 @@ export interface QueuedThreadMessage {
   readonly messageId: MessageIdType;
   readonly commandId: CommandId;
   readonly text: string;
+  readonly restoreToDraft?: boolean | undefined;
   readonly context?: OrchestrationMessageContextType | undefined;
   readonly manualContinuationOfRunId?:
     | ClientTurnStartCommand["manualContinuationOfRunId"]
@@ -191,6 +206,10 @@ export interface QueuedThreadMessage {
   readonly attachments: ReadonlyArray<QueuedThreadAttachment>;
   readonly modelSelection?: ModelSelectionType | undefined;
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start" | undefined;
+  /** Sends "When you return"'s `/compact` ahead of the message, which queues behind it. */
+  readonly compactBeforeSend?: boolean | undefined;
+  /** Starts a new provider session (`/clear`). */
+  readonly freshContext?: boolean | undefined;
   readonly runtimeMode?: RuntimeModeType | undefined;
   readonly interactionMode?: ProviderInteractionModeType | undefined;
   readonly bootstrap?: ClientTurnStartCommand["bootstrap"] | undefined;
@@ -208,12 +227,38 @@ export interface ThreadSettingsSnapshot {
   readonly interactionMode: ProviderInteractionModeType;
 }
 
+/** Spells out the Fast off the picker shows, or a provider such as Cursor applies its own default. */
+function withImplicitFastModeSelection(
+  selection: ModelSelectionType,
+  providers: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "capabilities">>;
+  }>,
+): ModelSelectionType {
+  const capabilities = providers
+    .find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model)?.capabilities;
+  const options = capabilities
+    ? withImplicitFastModeDefault(capabilities, selection.options)
+    : selection.options;
+  return options === selection.options || options === undefined
+    ? selection
+    : { ...selection, options };
+}
+
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">> = [],
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle"> & {
+      readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "capabilities">>;
+    }
+  > = [],
 ): ThreadSettingsSnapshot {
-  const modelSelection = message.modelSelection ?? thread.modelSelection;
+  const modelSelection = withImplicitFastModeSelection(
+    message.modelSelection ?? thread.modelSelection,
+    providers,
+  );
   const provider = providers.find(
     (candidate) => candidate.instanceId === modelSelection.instanceId,
   );
@@ -341,7 +386,10 @@ export function resolveThreadOutboxDispatchStep(input: {
   readonly fileAttachments: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
   /** Null while the environment's server config has not synced yet. */
   readonly serverConfig: { readonly maxFileUploadBytes: number | undefined } | null;
+  /** Resolves the restore reason in the client's language. */
+  readonly resolve?: MFunctionType;
 }): ThreadOutboxDispatchStep {
+  const resolve = input.resolve ?? mFallback;
   if (input.deliveryAction !== "send") {
     return { step: input.deliveryAction };
   }
@@ -353,14 +401,20 @@ export function resolveThreadOutboxDispatchStep(input: {
   }
   const maxBytes = input.serverConfig.maxFileUploadBytes;
   if (maxBytes === undefined) {
-    return { step: "restore", reason: "This server does not support file attachments." };
+    return {
+      step: "restore",
+      reason: resolve(msg("This server does not support file attachments.")),
+    };
   }
   const effectiveMaxBytes = clampFileAttachmentUploadBytes(maxBytes);
   const oversized = input.fileAttachments.find(
     (attachment) => attachment.sizeBytes > effectiveMaxBytes,
   );
   return oversized
-    ? { step: "restore", reason: fileAttachmentTooLargeMessage(oversized.name, effectiveMaxBytes) }
+    ? {
+        step: "restore",
+        reason: fileAttachmentTooLargeMessage(oversized.name, effectiveMaxBytes, resolve),
+      }
     : { step: "send" };
 }
 
@@ -368,7 +422,11 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   if (!message.creation) return false;
   const hasContent = message.text.trim().length > 0 || message.attachments.length > 0;
   if (!hasContent || message.modelSelection === undefined) return false;
-  return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
+  return (
+    message.creation.workspaceMode !== "worktree" ||
+    Boolean(message.creation.branch) ||
+    message.creation.startsFromRepositoryDefaults === true
+  );
 }
 
 function errorMessage(error: unknown): string | null {
@@ -400,6 +458,9 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
       case "EnvironmentRpcUnavailableError":
       case "EnvironmentNotRegisteredError":
         return true;
+      // A shared upload's failure decides by what made the upload fail.
+      case "AttachmentUploadError":
+        return "cause" in error && shouldRetryThreadOutboxDelivery(error.cause);
       default:
         break;
     }

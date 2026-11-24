@@ -19,7 +19,6 @@ interface ImportMetaEnv {
   // T3-CUSTOM(expbkt3): Set to "false" to stop deepening cached thread history.
   readonly VITE_T3_OFFLINE_HISTORY_SYNC: string;
   readonly T3CODE_DESKTOP_UPDATE_REPOSITORY: string;
-  readonly T3CODE_FEATURE_SECRETS: string;
   readonly APP_VERSION: string;
 }
 

@@ -303,7 +303,7 @@ export function SessionArchiveReclaimSection({
               Reclaim disk from archived sessions
             </span>
           }
-          description="Archived sessions keep their worktree on disk indefinitely. Scanning measures what each one still occupies and what can be given back. Every reclaim exports the session's history first, so nothing you did is lost."
+          description="Archived sessions keep their worktree on disk. Scanning measures what each one still occupies and what can be given back. Every reclaim exports the session's history first, so nothing is lost."
         />
       ) : (
         <>

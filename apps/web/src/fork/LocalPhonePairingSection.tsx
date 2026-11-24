@@ -30,7 +30,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
-import { searchableSetting } from "../components/settings/settingsSearch";
+import { useSearchableSetting } from "../components/settings/settingsSearch";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { QRCodeSvg } from "../components/ui/qr-code";
@@ -118,6 +118,7 @@ function statusBadgeVariant(status: LocalServerStatus): "success" | "secondary" 
 }
 
 function LocalPhonePairingSettings() {
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const bundled = useMemo(() => findBundledBackendEnvironment(environments), [environments]);
   const networkAccess = useEnvironmentQuery(desktopNetworkAccessStateAtom);

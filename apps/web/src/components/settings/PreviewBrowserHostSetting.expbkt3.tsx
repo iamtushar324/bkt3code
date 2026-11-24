@@ -6,7 +6,7 @@
 import { DEFAULT_SERVER_SETTINGS, type PreviewBrowserHostSetting } from "@t3tools/contracts";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import {
@@ -33,6 +33,7 @@ function isPreviewBrowserHostSetting(value: unknown): value is PreviewBrowserHos
 }
 
 export function PreviewBrowserHostRow() {
+  const searchableSetting = useSearchableSetting();
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -48,7 +49,7 @@ export function PreviewBrowserHostRow() {
       resetAction={
         settings.previewBrowser !== DEFAULT_SERVER_SETTINGS.previewBrowser ? (
           <SettingResetButton
-            label="default preview browser"
+            ariaLabel="Reset default preview browser to default"
             onClick={() =>
               updateSettings({ previewBrowser: DEFAULT_SERVER_SETTINGS.previewBrowser })
             }

@@ -66,7 +66,7 @@ const threadShell = (
     itemCount: 0,
     visibleItemCount: 0,
     createdAt: hoursAgo(24 * 30),
-    updatedAt: NOW,
+    updatedAt: hoursAgo(24 * 30),
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
@@ -88,6 +88,8 @@ describe("periodic pull-request sweep rotation", () => {
       isIdleForSweep(threadShell("messaged", { latestUserMessageAt: hoursAgo(1) }), NOW_MS),
     ).toBe(false);
     expect(isIdleForSweep(threadShell("new", { createdAt: hoursAgo(3) }), NOW_MS)).toBe(false);
+    // The pull-request snapshot carries only the thread's own timestamps.
+    expect(isIdleForSweep(threadShell("updated", { updatedAt: hoursAgo(2) }), NOW_MS)).toBe(false);
     expect(
       isIdleForSweep(
         threadShell("waiting", {
@@ -124,8 +126,19 @@ describe("periodic pull-request sweep rotation", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const idle = threadShell("idle", { latestRunCompletedAt: hoursAgo(72) });
-          const active = threadShell("active", { latestRunCompletedAt: hoursAgo(1) });
+          // A saved pull request keeps both off upstream's no-pull-request recheck schedule.
+          const branchPullRequest = (thread: string) => ({
+            projectId: ProjectId.make(`project-${thread}`),
+            repository: "github.com/pingdotgg/t3code",
+            number: 1,
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+          });
+          const idle = threadShell("idle", { branchPullRequest: branchPullRequest("idle") });
+          // The sweep's snapshot shows activity only as the thread's updatedAt.
+          const active = threadShell("active", {
+            updatedAt: hoursAgo(1),
+            branchPullRequest: branchPullRequest("active"),
+          });
           const project = (thread: OrchestrationV2ThreadShell): OrchestrationProjectShell => ({
             id: thread.projectId,
             title: thread.title,
@@ -142,14 +155,9 @@ describe("periodic pull-request sweep rotation", () => {
           const layerDependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
-              getShellSnapshot: () =>
+              getPullRequestSnapshot: () =>
                 Queue.offer(passes, undefined).pipe(
-                  Effect.as({
-                    schemaVersion: 2,
-                    snapshotSequence: 1,
-                    threads: [idle, active],
-                    archivedThreads: [],
-                  }),
+                  Effect.as({ snapshotSequence: 1, threads: [idle, active] as never }),
                 ),
             }),
             Layer.mock(ProjectStore.ProjectStoreV2)({

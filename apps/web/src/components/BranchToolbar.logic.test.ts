@@ -1,20 +1,47 @@
-import { type VcsRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  GitCommandError,
+  ProviderInstanceId,
+  RunId,
+  type VcsRef,
+} from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): worktree codenames.
 import { resolveWorktreeCodename } from "@t3tools/shared/worktreeCodename";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  isWorktreeChangeBlocked,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
-  // T3-CUSTOM(expbkt3): worktree codename label coverage.
-  resolveLockedWorkspaceLabel,
+  resolveConfirmedSelectedRef,
+  resolveDefaultWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
+  resolveLockedWorkspaceLabel,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  isBranchHoldCurrent,
+  offersWorkspaceModes,
+  toBranchActionErrorMessage,
 } from "./BranchToolbar.logic";
+
+describe("toBranchActionErrorMessage", () => {
+  it("shows a Git failure's detail without the operation and cwd", () => {
+    const error = new GitCommandError({
+      operation: "GitVcsDriver.switchRef.checkout",
+      command: "git",
+      cwd: "/tmp/repo",
+      detail: "Commit, stash, or discard them, then switch again.",
+    });
+
+    expect(toBranchActionErrorMessage(error)).toBe(
+      "Commit, stash, or discard them, then switch again.",
+    );
+    expect(toBranchActionErrorMessage(new Error("boom"))).toBe("boom");
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
@@ -46,6 +73,24 @@ describe("resolveBranchToolbarPrBranch", () => {
         resolvedActiveBranch: "feature/next",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveDefaultWorktreeBaseBranch", () => {
+  it("offers nothing while a clone has no refs, then the default branch once they are listed", () => {
+    expect(resolveDefaultWorktreeBaseBranch([])).toBeNull();
+    expect(
+      resolveDefaultWorktreeBaseBranch([
+        { name: "feature", isDefault: false, current: true },
+        { name: "staging", isDefault: true, current: false },
+      ]),
+    ).toBe("staging");
+    expect(
+      resolveDefaultWorktreeBaseBranch([
+        { name: "other", isDefault: false, current: false },
+        { name: "feature", isDefault: false, current: true },
+      ]),
+    ).toBe("feature");
   });
 });
 
@@ -96,9 +141,22 @@ describe("resolveEffectiveEnvMode", () => {
   });
 });
 
+describe("offersWorkspaceModes", () => {
+  it("offers worktrees from a repository or tracked repositories, never in No project", () => {
+    const folder = { isScratchProject: false, isGitRepo: false, tracksGitRepositories: false };
+    expect(offersWorkspaceModes(folder)).toBe(false);
+    expect(offersWorkspaceModes({ ...folder, isGitRepo: true })).toBe(true);
+    expect(offersWorkspaceModes({ ...folder, tracksGitRepositories: true })).toBe(true);
+    // Git status assumes a repository until it loads.
+    expect(offersWorkspaceModes({ ...folder, isScratchProject: true, isGitRepo: true })).toBe(
+      false,
+    );
+  });
+});
+
 describe("resolveLockedWorkspaceLabel", () => {
-  // T3-CUSTOM(expbkt3): the label names the worktree rather than restating its kind
-  // (replaces upstream's "uses a shorter label for an attached worktree" case).
+  // T3-CUSTOM(expbkt3): the label names the worktree by its codename rather than its
+  // directory (replaces upstream's "names the worktree at %s" cases).
   it("names an attached worktree by its codename", () => {
     const worktreePath = "/repo/.t3/worktrees/t3code-2d633e64";
     expect(resolveLockedWorkspaceLabel(worktreePath, "worktree")).toBe(
@@ -117,16 +175,23 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
 });
 
 describe("dedupeRemoteBranchesWithLocalMatches", () => {
-  it("hides remote refs when the matching local ref exists", () => {
+  it.each([
+    ["feature/demo", "origin/feature/demo", true],
+    ["feature/demo", "feature/demo", false],
+    ["demo", "demo", true],
+    ["origin/", "origin/", true],
+    ["/demo", "/demo", true],
+    ["", "", false],
+  ])("filters origin ref %s / %s (hidden: %s)", (localName, remoteName, hidden) => {
     const input: VcsRef[] = [
       {
-        name: "feature/demo",
+        name: localName,
         current: false,
         isDefault: false,
         worktreePath: null,
       },
       {
-        name: "origin/feature/demo",
+        name: remoteName,
         isRemote: true,
         remoteName: "origin",
         current: false,
@@ -143,10 +208,12 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       },
     ];
 
-    expect(dedupeRemoteBranchesWithLocalMatches(input).map((ref) => ref.name)).toEqual([
-      "feature/demo",
-      "origin/feature/remote-only",
-    ]);
+    const result = dedupeRemoteBranchesWithLocalMatches(input);
+    const expected = hidden ? [input[0], input[2]] : input;
+    expect(result).toEqual(expected);
+    for (const [index, ref] of result.entries()) {
+      expect(ref).toBe(expected[index]);
+    }
   });
 
   it("keeps non-origin remote refs visible when git tracks with first-slash local naming", () => {
@@ -178,6 +245,19 @@ describe("resolveBranchSelectionTarget", () => {
   it("reuses an existing secondary worktree for the selected ref", () => {
     expect(
       resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo/nested-checkout/packages/app",
+        activeProjectCheckoutRoot: "/repo/nested-checkout",
+        activeWorktreePath: null,
+        refName: { isDefault: true, worktreePath: "/repo" },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo",
+      nextWorktreePath: "/repo",
+      reuseExistingWorktree: true,
+      staysInActiveCheckout: false,
+    });
+    expect(
+      resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
@@ -189,24 +269,38 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-b",
       nextWorktreePath: "/repo/.t3/worktrees/feature-b",
       reuseExistingWorktree: true,
+      staysInActiveCheckout: false,
     });
   });
 
   it("switches back to the main repo when the ref already lives there", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: true,
-          worktreePath: "/repo",
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: null,
-      reuseExistingWorktree: true,
-    });
+    // A subdirectory project's own checkout is reported at the repository root.
+    // The checkout root is undefined until the project's status loads.
+    for (const [activeProjectCwd, activeWorktreePath, activeProjectCheckoutRoot] of [
+      ["/repo", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", null, "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", undefined],
+      ["/repo/packages/app", null, undefined],
+    ] as const) {
+      expect(
+        resolveBranchSelectionTarget({
+          activeProjectCwd,
+          activeProjectCheckoutRoot,
+          activeWorktreePath,
+          refName: {
+            isDefault: true,
+            worktreePath: "/repo",
+          },
+        }),
+      ).toEqual({
+        checkoutCwd: "/repo",
+        nextWorktreePath: null,
+        reuseExistingWorktree: true,
+        // A ref listed in the thread's own checkout may be stale, so it is checked out, not assumed.
+        staysInActiveCheckout: activeWorktreePath === null,
+      });
+    }
   });
 
   it("keeps checkout in the current worktree for non-default refs", () => {
@@ -223,8 +317,38 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-a",
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
+      staysInActiveCheckout: true,
     });
   });
+});
+
+describe("isWorktreeChangeBlocked", () => {
+  const runtime = (status: "preparing" | "running" | "completed") => ({
+    status,
+    activeRunId: status === "completed" ? null : RunId.make("run"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: null,
+    lastError: null,
+  });
+
+  it.each([
+    ["preparing", "/repo/wt-a", null, true],
+    ["running", "/repo/wt-a", "/repo/wt-b", true],
+    ["running", null, "/repo/wt-b", true],
+    ["running", "/repo/wt-a", "/repo/wt-a", false],
+    ["completed", "/repo/wt-a", null, false],
+  ] as const)(
+    "a %s turn moving %s -> %s is blocked: %s",
+    (status, currentWorktreePath, nextWorktreePath, blocked) => {
+      expect(
+        isWorktreeChangeBlocked({
+          runtime: runtime(status),
+          currentWorktreePath,
+          nextWorktreePath,
+        }),
+      ).toBe(blocked);
+    },
+  );
 });
 
 describe("shouldIncludeBranchPickerItem", () => {
@@ -251,6 +375,60 @@ describe("shouldIncludeBranchPickerItem", () => {
   });
 });
 
+describe("isBranchHoldCurrent", () => {
+  const environmentId = EnvironmentId.make("env-a");
+  const hold = {
+    branch: "feature",
+    environmentId,
+    checkouts: [{ cwd: "/repo", replaces: "main" }],
+  };
+  const current = { canonicalBranch: "main", environmentId, cwd: "/repo" };
+
+  it("keeps showing the checked-out branch while status still reports the old one", () => {
+    expect(isBranchHoldCurrent(hold, current)).toBe(true);
+  });
+
+  it("lets go once status moves, even to a different branch than the checkout", () => {
+    for (const canonicalBranch of ["feature", "other", null]) {
+      expect(isBranchHoldCurrent(hold, { ...current, canonicalBranch })).toBe(false);
+    }
+  });
+
+  it("does not apply to another checkout that happens to be on the old branch", () => {
+    expect(isBranchHoldCurrent(hold, { ...current, cwd: "/other" })).toBe(false);
+  });
+
+  it("follows a thread moving from its worktree to the project root", () => {
+    const moveHold = {
+      branch: "main",
+      environmentId,
+      checkouts: [
+        { cwd: "/repo-feature", replaces: "feature" },
+        { cwd: "/repo", replaces: "dev" },
+      ],
+    };
+    expect(
+      isBranchHoldCurrent(moveHold, {
+        environmentId,
+        cwd: "/repo-feature",
+        canonicalBranch: "feature",
+      }),
+    ).toBe(true);
+    expect(
+      isBranchHoldCurrent(moveHold, { environmentId, cwd: "/repo", canonicalBranch: "dev" }),
+    ).toBe(true);
+    expect(
+      isBranchHoldCurrent(moveHold, { environmentId, cwd: "/repo", canonicalBranch: "main" }),
+    ).toBe(false);
+  });
+
+  it("does not apply to the same path on another environment", () => {
+    expect(
+      isBranchHoldCurrent(hold, { ...current, environmentId: EnvironmentId.make("env-b") }),
+    ).toBe(false);
+  });
+});
+
 describe("sanitizeNewRefName", () => {
   it("collapses a run of whitespace into a single dash", () => {
     expect(sanitizeNewRefName("new   branch")).toBe("new-branch");
@@ -268,5 +446,30 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveConfirmedSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "previous",
+    isRemote: false,
+    current: false,
+    isDefault: false,
+    worktreePath: "/worktree-b",
+  };
+
+  it.each([
+    [
+      "the claimed worktree still has it checked out",
+      [{ ...listed, current: true }],
+      "/worktree-b",
+    ],
+    ["the claimed worktree has moved to another branch", [], null],
+    ["the claimed worktree lists it but not as current", [listed], null],
+    ["the read failed", null, null],
+  ] as const)("%s", (_label, refs, expected) => {
+    expect(resolveConfirmedSelectedRef(listed, refs === null ? null : { refs }).worktreePath).toBe(
+      expected,
+    );
   });
 });

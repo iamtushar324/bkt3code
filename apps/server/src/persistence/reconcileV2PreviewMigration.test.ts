@@ -42,6 +42,40 @@ const pendingV2Migrations = [
   [1068, "ProjectionProjectsPinArchive"],
   [1069, "RepairBooleanSettledOverride"],
   [1070, "DropOrchestrationEventCorrelationIndex"],
+  // Upstream 79-111, remapped into the 1000+ lane.
+  [1071, "DelegatedRecoveryIndexes"],
+  [1072, "ScheduledTaskThreadMode"],
+  [1073, "ProjectionMessageSearchText"],
+  [1074, "TurnItemConversationIndex"],
+  [1075, "CommandReadIndexes"],
+  [1076, "LastExecutedRunIndex"],
+  [1077, "TurnItemCounts"],
+  [1078, "QueuedTurnInputIndex"],
+  [1079, "ProjectionProjectsCustomTitle"],
+  [1080, "TurnItemTypeStatusIndex"],
+  [1081, "ShellThreadReadIndexes"],
+  [1082, "AuthConnectDevices"],
+  [1083, "AuthConnectDeniedRequests"],
+  [1084, "QueuedTurnInputIndexJsonValid"],
+  [1085, "ProviderTurnAttemptIndex"],
+  [1086, "TurnItemMessageOrdinalIndex"],
+  [1087, "TurnItemInlineWorkOutput"],
+  [1088, "RepairStaleTitleRegeneration"],
+  [1089, "IssueTrackerBindings"],
+  [1090, "ActiveShellIndexIndexes"],
+  [1091, "BackgroundRecoveryIndexes"],
+  [1092, "TurnStartReadIndexes"],
+  [1093, "DelegatedTaskReadIndexes"],
+  [1094, "ThreadItemCounts"],
+  [1095, "IssueTrackerAdditionalScopes"],
+  [1096, "ProjectionProjectsTrackedFolders"],
+  [1097, "TaskFolders"],
+  [1098, "WorktreePathKeyIndex"],
+  [1099, "DeferredSlashCommandIndex"],
+  [1100, "AgentFeedback"],
+  [1101, "IssueTrackerAccounts"],
+  [1102, "Workflows"],
+  [1103, "SupersededRunAttemptIndex"],
 ] as const;
 
 describe("fork V2 ledger upgrade", () => {
@@ -50,7 +84,7 @@ describe("fork V2 ledger upgrade", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 1042 });
       const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+      assert.deepStrictEqual(yield* runMigrations(), [...pendingV2Migrations]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 1042 ORDER BY migration_id`,
@@ -110,7 +144,7 @@ describe("fork V2 ledger upgrade", () => {
         [],
       );
       yield* sql`DROP TRIGGER fail_v2_upgrade`;
-      assert.deepStrictEqual(yield* runMigrations(), pendingV2Migrations);
+      assert.deepStrictEqual(yield* runMigrations(), [...pendingV2Migrations]);
     }).pipe(Effect.provide(database)),
   );
 

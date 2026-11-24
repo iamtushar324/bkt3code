@@ -93,16 +93,19 @@ describe("operator identity derivation", () => {
 
 describe("pairing credential payload", () => {
   it("cannot carry a subject", () => {
-    // The whole point of deriving the subject server-side: a client must never be
-    // able to mint a credential that impersonates a teammate.
-    // `requireProofOfPossession` only ever *restricts* redemption, so it is safe to
-    // accept from a client. A subject would not be, and still is not accepted.
-    expect(Object.keys(AuthCreatePairingCredentialInput.fields)).toEqual([
-      "label",
-      "scopes",
-      "requireProofOfPossession",
-    ]);
-    expect(Object.keys(AuthCreatePairingCredentialInput.fields)).not.toContain("subject");
+    // A client must never mint a credential that impersonates a teammate, so no member of
+    // the (plain | peer-link) payload union accepts a subject. `requireProofOfPossession`
+    // only restricts redemption, so it is safe to accept from a client.
+    for (const member of AuthCreatePairingCredentialInput.members) {
+      expect(Object.keys(member.fields)).toEqual([
+        "label",
+        "scopes",
+        "requireProofOfPossession",
+        "access",
+        "purpose",
+      ]);
+      expect(Object.keys(member.fields)).not.toContain("subject");
+    }
 
     const payload: AuthCreatePairingCredentialInput = {
       label: "Tushar's MacBook",

@@ -24,7 +24,8 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+// T3-CUSTOM(expbkt3): the fork's thread-only tools hide from outside clients.
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import { ClerkDirectory } from "../../../auth/ClerkDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
@@ -769,7 +770,9 @@ export const T3ShowUiTool = readonlyTool(
     success: JsonToolResult,
     failure: T3ControlFailure,
     dependencies: agentUiDependencies,
-  }).annotate(Tool.Title, "Show a view in chat"),
+  })
+    .annotate(Tool.Title, "Show a view in chat")
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );
 // T3-CUSTOM(expbkt3): END
 
@@ -792,7 +795,9 @@ export const T3ListCommentsTool = readonlyTool(
     success: JsonToolResult,
     failure: T3ControlFailure,
     dependencies: threadCommentsDependencies,
-  }).annotate(Tool.Title, "List review comments on this session"),
+  })
+    .annotate(Tool.Title, "List review comments on this session")
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );
 
 export const T3ReplyCommentTool = mutatingTool(
@@ -820,7 +825,9 @@ export const T3ReplyCommentTool = mutatingTool(
     success: JsonToolResult,
     failure: T3ControlFailure,
     dependencies: threadCommentsDependencies,
-  }).annotate(Tool.Title, "Reply to a review comment"),
+  })
+    .annotate(Tool.Title, "Reply to a review comment")
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );
 // T3-CUSTOM(expbkt3): END
 

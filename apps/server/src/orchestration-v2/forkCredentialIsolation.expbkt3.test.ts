@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
@@ -46,6 +47,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 const owner = UserId.make("user:credentials-owner");
@@ -106,7 +108,10 @@ it.effect(
         EffectOutbox.layer,
         TurnItemPositionStore.layer,
       ).pipe(Layer.provide(database));
-      const sink = EventSink.layerFromStores.pipe(Layer.provide(Layer.merge(stores, database)));
+      // Upstream's sink reads which threads have viewers, as runtimeLayer wires it.
+      const sink = EventSink.layerFromStores.pipe(
+        Layer.provide(Layer.mergeAll(stores, database, ThreadViewers.layer)),
+      );
       const registry = ProviderAdapterRegistry.layerFromAdapters([
         {
           instanceId,
@@ -122,7 +127,15 @@ it.effect(
         IdAllocator.layer,
         registry,
         CommandPolicy.layer,
-        RuntimePolicy.layer,
+        // Upstream removed RuntimePolicy.layer; this keeps its pass-through of the thread's modes.
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+          resolve: (input) =>
+            Effect.succeed({
+              runtimeMode: input.thread.runtimeMode,
+              interactionMode: input.thread.interactionMode,
+              cwd: input.thread.worktreePath,
+            }),
+        }),
         ThreadForkService.layer,
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({}),
@@ -147,6 +160,8 @@ it.effect(
         }),
         // Upstream's orchestrator reads server settings at construction.
         ServerSettings.layerTest(),
+        // Upstream's orchestrator resolves task folders for thread workspaces.
+        TaskFolderStore.layer.pipe(Layer.provide(Layer.merge(database, NodeServices.layer))),
         NodeServices.layer,
       );
       const layer = Orchestrator.layer.pipe(Layer.provideMerge(dependencies));

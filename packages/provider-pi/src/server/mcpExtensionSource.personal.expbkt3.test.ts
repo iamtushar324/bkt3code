@@ -82,6 +82,7 @@ it("keeps working servers, retries only failed profiles, and retains structured 
     pi: {
       on: (name: string, hook: SessionHook) => hooks.set(name, hook),
       registerTool: (tool: Tool) => registered.push(tool),
+      registerCommand: () => {},
       getCommands: () => [],
     },
     // The extension's imports are stripped above; these stand in for them.

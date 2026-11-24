@@ -67,6 +67,7 @@ it.effect("stores a task's custom group, applies it to each fresh thread, and dr
           launched.push(input);
           return {} as ThreadLaunchService.ThreadLaunchResult;
         }),
+      isNonGitProject: () => Effect.succeed(false),
     });
     const scheduledTasks = ScheduledTaskService.layer.pipe(
       Layer.provide(

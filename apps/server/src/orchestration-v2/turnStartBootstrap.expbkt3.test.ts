@@ -175,7 +175,7 @@ const makeHarness = (options: HarnessOptions = {}) =>
           ServerSettings.layerTest(),
           Layer.mock(OrchestrationEngine.OrchestrationEngineService)({ dispatch }),
           Layer.mock(GitWorkflowService.GitWorkflowService)({
-            isRepository: () => Effect.succeed(true),
+            repositoryRoot: () => Effect.succeed("/repo"),
             hasCommit: () => Effect.succeed(true),
             listRefs: (input) =>
               Effect.succeed({

@@ -7,8 +7,11 @@ import {
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { readEnvironmentScope } from "~/state/session";
 import { isPreviewAvailableFor } from "./previewRuntime";
+import { isWebUrl } from "./webUrl";
 // T3-CUSTOM(expbkt3): every link opens in the integrated browser.
 import { effectiveBrowserLinkTarget } from "~/fork/effectiveBrowserLinkTarget";
+
+export { isWebUrl };
 
 export interface ResolveLinkTargetInput {
   readonly url: string;
@@ -27,15 +30,6 @@ export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTar
   if (!input.canOpenInApp) return "system";
   if (!isWebUrl(input.url)) return "system";
   return "app";
-}
-
-export function isWebUrl(url: string): boolean {
-  try {
-    const { protocol } = new URL(url);
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 /** Before hydration, the default "system" would ignore a saved "app" link target. */

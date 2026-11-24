@@ -5,6 +5,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -37,6 +38,8 @@ export const forkLegacyProviderEvents = Effect.fn("forkLegacyProviderEvents")(fu
     LEFT JOIN projection_thread_sessions AS session ON session.thread_id = thread.thread_id
     WHERE thread.thread_id = ${thread.id}
   `.pipe(
+    // A shell selector over frozen V1 rows, so it reads on a reader like upstream's.
+    NodeSqliteClient.readOnly,
     Effect.mapError(
       (cause) => new PersistenceSqlError({ operation: "import-legacy-provider", cause }),
     ),

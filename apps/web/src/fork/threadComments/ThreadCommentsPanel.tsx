@@ -394,17 +394,20 @@ const ThreadCommentCard = memo(function ThreadCommentCard({
 
   const scrollToQuote = () => {
     void navigate(
-      assistantCitationNavigation({
-        version: 1,
-        environmentId: threadRef.environmentId,
-        threadId: threadRef.threadId,
-        messageId: comment.anchor.messageId,
-        text: comment.anchor.text,
-        start: comment.anchor.start,
-        end: comment.anchor.end,
-        prefix: comment.anchor.prefix,
-        suffix: comment.anchor.suffix,
-      }),
+      assistantCitationNavigation(
+        {
+          version: 1,
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          messageId: comment.anchor.messageId,
+          text: comment.anchor.text,
+          start: comment.anchor.start,
+          end: comment.anchor.end,
+          prefix: comment.anchor.prefix,
+          suffix: comment.anchor.suffix,
+        },
+        null,
+      ),
     );
   };
 

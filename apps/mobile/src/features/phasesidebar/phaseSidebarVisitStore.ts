@@ -4,11 +4,12 @@
 // the shared `hasUnseenCompletion`. Persisted in device preferences rather than
 // synced: "have *I* seen this" is per device, and mobile has no client-settings
 // sync to hang it on. Pruning lives in phaseSidebarPreferences.ts.
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { pruneVisitTimestamps, removeVisitTimestamp } from "./phaseSidebarPreferences";
 
 const EMPTY_VISITS: Readonly<Record<string, string>> = {};
@@ -23,10 +24,10 @@ export function usePhaseSidebarVisitTimestamps(): Readonly<Record<string, string
 /** Records a visit. Call it when a thread is opened, not when it is rendered. */
 export function useMarkPhaseSidebarThreadVisited(): (threadKey: string) => void {
   const visits = usePhaseSidebarVisitTimestamps();
-  const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const updatePreferences = useAtomCommand(saveMobilePreferences);
   return useCallback(
     (threadKey: string) => {
-      updatePreferences({
+      void updatePreferences({
         phaseSidebarVisitedAt: pruneVisitTimestamps({
           ...visits,
           [threadKey]: new Date().toISOString(),
@@ -40,11 +41,11 @@ export function useMarkPhaseSidebarThreadVisited(): (threadKey: string) => void 
 /** "Mark unread": forgets the visit so the row flags again. */
 export function useClearPhaseSidebarThreadVisit(): (threadKey: string) => void {
   const visits = usePhaseSidebarVisitTimestamps();
-  const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const updatePreferences = useAtomCommand(saveMobilePreferences);
   return useCallback(
     (threadKey: string) => {
       const next = removeVisitTimestamp(visits, threadKey);
-      if (next !== visits) updatePreferences({ phaseSidebarVisitedAt: next });
+      if (next !== visits) void updatePreferences({ phaseSidebarVisitedAt: next });
     },
     [updatePreferences, visits],
   );

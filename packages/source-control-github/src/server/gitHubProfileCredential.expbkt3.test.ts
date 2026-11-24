@@ -7,6 +7,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
@@ -36,6 +37,7 @@ function harness(tokens: Record<string, string> = {}) {
       }),
     ),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
   );
   return { layer, calls };
 }

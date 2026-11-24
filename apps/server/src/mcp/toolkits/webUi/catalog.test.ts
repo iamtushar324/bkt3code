@@ -54,8 +54,9 @@ const invocation = (
 
 it("generates one unique virtual tool and complete schemas for every web RPC", () => {
   // T3-CUSTOM(expbkt3): the catalog includes native V2 methods and every retained fork RPC.
-  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(265);
-  expect(WEB_UI_STREAM_TOOL_COUNT).toBe(31);
+  // 257 upstream RPCs (33 streams) plus 55 fork RPCs (4 streams) from rpcFork.ts.
+  expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(312);
+  expect(WEB_UI_STREAM_TOOL_COUNT).toBe(37);
   expect(WEB_UI_VIRTUAL_TOOL_COUNT).toBe(WsRpcGroup.requests.size);
   expect(new Set(WEB_UI_VIRTUAL_TOOLS.map((tool) => tool.name)).size).toBe(
     WEB_UI_VIRTUAL_TOOL_COUNT,

@@ -144,6 +144,7 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
   useRouter: () => testState.router,
 }));
+vi.mock("react-dom", () => ({ flushSync: (update: () => void) => update() }));
 vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
@@ -166,6 +167,7 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
 }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
+  peekT3ProjectFile: () => undefined,
 }));
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-fresh",
@@ -196,6 +198,7 @@ vi.mock("../state/entities", () => {
 vi.mock("../providerInstances", () => ({
   resolveProjectDefaultProviderModelSelection: () => null,
 }));
+vi.mock("../state/projects", () => ({ defaultProjectFallbackReadyAtom: () => true }));
 vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/presentation", () => ({
   environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },

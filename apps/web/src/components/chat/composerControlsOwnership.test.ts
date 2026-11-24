@@ -4,6 +4,7 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
 
 const base = {
   matchesDefault: true,
+  // T3-CUSTOM(expbkt3): plan mode stays available.
   planModeUiEnabled: false,
   collapsed: false,
   measuredHiddenBlockCount: 0,
@@ -40,6 +41,7 @@ describe("resolveComposerControlsOwnership", () => {
     expect(result.pickerOwnsModeShortcut).toBe(false);
   });
 
+  // T3-CUSTOM(expbkt3): plan mode stays available.
   it("keeps the Plan toggle block at the default and leaves Permissions with the picker", () => {
     const result = resolveComposerControlsOwnership({
       ...base,
@@ -52,6 +54,7 @@ describe("resolveComposerControlsOwnership", () => {
     expect(result.pickerOwnsModeShortcut).toBe(true);
   });
 
+  // T3-CUSTOM(expbkt3): plan mode stays available.
   it("overflows only the chip when the Plan toggle gives the overflow menu content", () => {
     const result = resolveComposerControlsOwnership({
       ...base,

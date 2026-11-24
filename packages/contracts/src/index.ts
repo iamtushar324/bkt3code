@@ -54,6 +54,7 @@ export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
+export * from "./speech.ts";
 export * from "./pullRequest.ts";
 // T3-CUSTOM(expbkt3): fork source-control identity schemas
 export * from "./sourceControlProfiles.ts";
@@ -62,6 +63,7 @@ export * from "./sessionArchive.ts";
 // T3-CUSTOM(expbkt3): fork websocket RPC definitions
 export * from "./rpcFork.ts";
 export * from "./pullRequestReviewGuide.ts";
+export * from "./issue.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
@@ -80,6 +82,7 @@ export * from "./orchestrationFork.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
+export * from "./workspaceFolders.ts";
 export * from "./filesystem.ts";
 export * from "./agentSessions.ts";
 export * from "./assets.ts";
@@ -93,11 +96,14 @@ export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
+export * from "./milestones.ts";
+export * from "./workflow.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
+export * from "./agentFeedback.ts";
 
 // T3-CUSTOM(expbkt3): BEGIN — retained V1 wire schemas for fork adapters and legacy data import.
 export {

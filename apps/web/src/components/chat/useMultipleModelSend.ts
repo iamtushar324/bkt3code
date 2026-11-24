@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -53,6 +56,7 @@ interface MultipleModelSendInput {
   readonly promptRef: { current: string };
   readonly runtimeMode: RuntimeMode;
   readonly startFromOrigin: boolean;
+  readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly resetLocalDispatch: ReturnType<typeof useLocalDispatchState>["resetLocalDispatch"];
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
 }
@@ -73,6 +77,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     promptRef,
     runtimeMode,
     startFromOrigin,
+    worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
   } = input;
@@ -97,6 +102,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readFileBlockReason,
     buildOutgoingMessageContext,
     isCurrentSend,
+    draftChangedDuringPreparation,
     // T3-CUSTOM(expbkt3): draft lineage and the selected git profile.
     creationForkFields,
   }: {
@@ -115,6 +121,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     ) => ReturnType<typeof buildMessageContext>;
     /** False once a newer send from this composer started. */
     readonly isCurrentSend: () => boolean;
+    readonly draftChangedDuringPreparation: () => boolean;
     // T3-CUSTOM(expbkt3): draft lineage and the selected git profile.
     readonly creationForkFields: ReturnType<typeof threadCreationForkFields>;
   }) => {
@@ -128,18 +135,24 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     // fails every selection; the draft restore below still runs.
     const sendResult = await settlePromise(async () => {
       const attachments = await attachmentsPromise;
+      if (draftChangedDuringPreparation())
+        throw new Error(
+          m(msg("Draft changed while preparing this message. Review it and send again.")),
+        );
       const fileBlockReason = readFileBlockReason();
       if (fileBlockReason !== null) throw new Error(fileBlockReason);
       const context = buildOutgoingMessageContext(
         boundAttachmentIds(attachments, attachmentsSnapshot),
       );
-      const title = deriveThreadTitleSeed({
-        text: messageText,
-        attachments: attachmentsSnapshot,
-      });
-      promptRef.current = "";
+      const title = deriveThreadTitleSeed(
+        { text: messageText, attachments: attachmentsSnapshot },
+        m,
+      );
       clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
         .getState()
@@ -179,6 +192,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   modelSelection: target.selection,
                   titleSeed: title,
                   runtimeMode,
+                  // T3-CUSTOM(expbkt3): plan mode stays available, per selected model.
                   interactionMode: target.interactionMode,
                   bootstrap: {
                     createThread: {
@@ -186,6 +200,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       title,
                       modelSelection: target.selection,
                       runtimeMode,
+                      // T3-CUSTOM(expbkt3): plan mode stays available, per selected model.
                       interactionMode: target.interactionMode,
                       branch,
                       worktreePath: null,
@@ -198,6 +213,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       baseBranch: branch,
                       requireWorktree: true,
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(worktreeRepositories ? { repositories: worktreeRepositories } : {}),
                     },
                     runSetupScript: true,
                   },
@@ -223,7 +239,12 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `Started ${startedCount} ${startedCount === 1 ? "thread" : "threads"} in background`,
+            title: m(
+              msg(
+                "{count, plural, one {Started {count} thread in background} other {Started {count} threads in background}}",
+                { count: startedCount },
+              ),
+            ),
           }),
         );
       }
@@ -234,17 +255,20 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     if (sendResult._tag === "Failure") {
       const error = squashAtomCommandFailure(sendResult);
       failedSelections.push(...selections);
-      setThreadError(threadId, error instanceof Error ? error.message : "Failed to send messages.");
+      setThreadError(threadId, thrownErrorMessage(error, m) ?? m(msg("Failed to send messages.")));
     }
     const restoreFailedDraft = () => {
       appAtomRegistry.set(fanoutSelectionsAtom, failedSelections);
       if (clearedDraft) {
         restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = messageText;
+          promptRef.current = sendSnapshot.draftText;
           composerRef.current.resetCursorState({
-            cursor: collapseExpandedComposerCursor(messageText, messageText.length),
-            prompt: messageText,
+            cursor: collapseExpandedComposerCursor(
+              sendSnapshot.draftText,
+              sendSnapshot.draftText.length,
+            ),
+            prompt: sendSnapshot.draftText,
             detectTrigger: true,
           });
         }
@@ -257,12 +281,15 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         const recoveryToastId = toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "A background prompt could not be sent",
-            description:
-              "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
+            title: m(msg("A background prompt could not be sent")),
+            description: m(
+              msg(
+                "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
+              ),
+            ),
             timeout: 0,
             actionProps: {
-              children: "Restore prompt",
+              children: m(msg("Restore prompt")),
               onClick: () => {
                 if (
                   !draftId ||
@@ -273,8 +300,11 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   )
                 ) {
                   toastManager.update(recoveryToastId, {
-                    description:
-                      "Return to the original draft and send or clear its current prompt before restoring.",
+                    description: m(
+                      msg(
+                        "Return to the original draft and send or clear its current prompt before restoring.",
+                      ),
+                    ),
                   });
                   return;
                 }

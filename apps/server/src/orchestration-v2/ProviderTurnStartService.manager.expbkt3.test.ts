@@ -28,6 +28,8 @@ import { isActiveExternalGrant } from "../mcp/UserMcpProfileStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -37,6 +39,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
+import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 
 vi.mock("../mcp/UserMcpProfileStore.ts", () => ({ isActiveExternalGrant: vi.fn() }));
@@ -234,6 +238,8 @@ function fixture(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: true }),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getRun: (_threadId, id) =>
+            Effect.sync(() => projection.runs.find((candidate) => candidate.id === id)),
           // `start` reads the thread's worktree path to take the workspace lease;
           // the fixture thread has none, so the turn starts without one.
           getThreadRecords: () => Effect.sync(() => ({ thread: projection.thread }) as never),
@@ -257,6 +263,7 @@ function fixture(
           tryHandlePromptCommand: authCommand,
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          forkBaseline: () => Effect.succeed(Effect.void),
           startRootRun: (input) =>
             Effect.gen(function* () {
               if (options.revokeAt === "send") grantActive = false;
@@ -275,7 +282,17 @@ function fixture(
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        // The lease lookup finds no project root, so the turn starts without a reservation.
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedNone,
+        }),
+        // Upstream's start path also needs these; the fixture thread has no worktree or folder.
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" }),
+        }),
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
+        layerNoTaskFolders,
         FileSystem.layerNoop({}),
         // The service resolves managed worktree paths at construction, as upstream's fixture provides.
         Path.layer,
@@ -332,8 +349,8 @@ it.effect("checks again after provider open and before native thread creation", 
 it.effect("checks the original grant immediately before the final provider send", () =>
   Effect.gen(function* () {
     const f = fixture({ revokeAt: "send" });
-    const exit = yield* Effect.exit(f.start);
-    expect(exit._tag).toBe("Failure");
+    // Upstream now settles a failed run start itself, so the start can exit either way.
+    yield* Effect.exit(f.start);
     expect(f.ensureThread).toHaveBeenCalledOnce();
     expect(f.startTurn).not.toHaveBeenCalled();
   }),

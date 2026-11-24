@@ -9,6 +9,7 @@ import {
   reportAtomCommandResult,
   runAtomCommand,
   settleAsyncResult,
+  squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react"; // T3-CUSTOM(expbkt3): useState and useSyncExternalStore power the managed-auth readiness gates below.
@@ -71,6 +72,23 @@ function clerkTokenReader(clerk: ClerkInstance): () => Promise<string | null> {
     clerk.session ? await clerk.session.getToken(resolveRelayClerkTokenOptions()) : null;
 }
 
+// A failed route removal fails the switch, so the next account never activates over the old routes.
+async function cleanUpManagedRelayAccount(): Promise<void> {
+  const [removal, tokenReset] = await Promise.all([
+    runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
+      reportFailure: false,
+      reportDefect: false,
+    }),
+    settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+      ),
+    ),
+  ]);
+  reportAtomCommandResult(tokenReset, { label: "cloud account cleanup" });
+  if (removal._tag !== "Success") throw squashAtomCommandFailure(removal);
+}
+
 // T3-CUSTOM(expbkt3): BEGIN managed relay readiness gate. Children stay hidden
 // until the account service settles (signed out, or the account is active), so
 // they never see a flash of signed-out state, including while accounts switch.
@@ -99,22 +117,7 @@ const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
     notifyManagedRelayReadiness();
   },
   // T3-CUSTOM(expbkt3): END notify the readiness gate on every account step.
-  cleanUp: async () => {
-    const results = await Promise.all([
-      runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
-        reportFailure: false,
-        reportDefect: false,
-      }),
-      settleAsyncResult(() =>
-        runtime.runPromiseExit(
-          ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
-        ),
-      ),
-    ]);
-    for (const result of results) {
-      reportAtomCommandResult(result, { label: "cloud account cleanup" });
-    }
-  },
+  cleanUp: cleanUpManagedRelayAccount,
   // T3-CUSTOM(expbkt3): activation also reveals children gated on relay auth.
   activate: ({ source, accountId }) => {
     activateManagedRelayAuthentication(accountId, clerkTokenReader(source));

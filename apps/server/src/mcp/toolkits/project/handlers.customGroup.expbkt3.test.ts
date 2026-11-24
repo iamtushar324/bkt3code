@@ -80,7 +80,11 @@ it.effect("passes a launched thread's custom group to the launch, trimmed and va
           } as unknown as ThreadLaunch.ThreadLaunchResult);
         },
       }),
-      Layer.mock(Project.ProjectService)({}),
+      // The launch reads the project it files the thread under.
+      Layer.mock(Project.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({ id: projectId, workspaceRoot: "/projects/project" } as never),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       // Project tools now read attached documents; the launch path never does.

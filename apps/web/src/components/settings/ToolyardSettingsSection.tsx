@@ -4,6 +4,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { DEFAULT_TOOLYARD_BASE_URL, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
+import { msg } from "gt-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckIcon,
@@ -239,7 +240,11 @@ function ToolyardSettingsContent({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<string>({
-    target: "Toolyard identifier",
+    target: {
+      target: "Toolyard identifier",
+      unavailableMessage: msg("Clipboard API is unavailable while copying Toolyard identifier."),
+      failureMessage: msg("Failed to copy Toolyard identifier to the clipboard."),
+    },
   });
   const [copiedField, setCopiedField] = useState<string | null>(null);
   // The server names its default instance; an unconfigured server starts from it.

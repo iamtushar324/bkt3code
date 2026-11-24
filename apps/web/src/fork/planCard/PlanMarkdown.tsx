@@ -9,7 +9,7 @@
  * comment actions, with comment highlights painted back on the text.
  */
 import { MessageId } from "@t3tools/contracts";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { type ComponentProps, use, useMemo } from "react";
 
 import { AssistantCitationSource } from "../../components/chat/AssistantCitationSource";

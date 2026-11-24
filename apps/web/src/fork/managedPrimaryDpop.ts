@@ -19,35 +19,32 @@
  *
  * @module fork/managedPrimaryDpop
  */
+import { DpopProof } from "@t3tools/client-runtime/relay";
+import { computeDpopJwkThumbprint } from "@t3tools/shared/dpop";
 import * as Effect from "effect/Effect";
 
-import {
-  layer as browserCryptoLayer,
-  createBrowserDpopProof,
-  generateBrowserDpopKey,
-  readStoredBrowserDpopKey,
-  writeStoredBrowserDpopKey,
-  type BrowserDpopKey,
-} from "../cloud/dpop";
+import { layer as browserCryptoLayer, loadOrCreateProofKey } from "../cloud/dpop";
 
-let keyPromise: Promise<BrowserDpopKey | null> | null = null;
+export interface ManagedPrimaryDpopKey {
+  readonly proofKey: DpopProof.DpopProofKey;
+  readonly thumbprint: string;
+}
 
-const loadOrCreateKey = Effect.gen(function* () {
-  const stored = yield* readStoredBrowserDpopKey();
-  if (stored) {
-    return stored;
-  }
-  const generated = yield* generateBrowserDpopKey;
-  yield* writeStoredBrowserDpopKey(generated);
-  return generated;
-});
+let keyPromise: Promise<ManagedPrimaryDpopKey | null> | null = null;
+
+const loadOrCreateKey = loadOrCreateProofKey().pipe(
+  Effect.map((proofKey) => ({
+    proofKey,
+    thumbprint: computeDpopJwkThumbprint(proofKey.publicJwk),
+  })),
+);
 
 /**
  * The device key, or `null` where it cannot be created (no WebCrypto, no
  * IndexedDB). Callers treat `null` as "cannot pair here" rather than throwing:
  * the pairing gate has a message for it, a crash has nothing.
  */
-export function loadManagedPrimaryDpopKey(): Promise<BrowserDpopKey | null> {
+export function loadManagedPrimaryDpopKey(): Promise<ManagedPrimaryDpopKey | null> {
   keyPromise ??= Effect.runPromise(
     loadOrCreateKey.pipe(
       Effect.provide(browserCryptoLayer),
@@ -72,18 +69,17 @@ export async function createManagedPrimaryDpopProof(input: {
   readonly url: string;
   readonly accessToken?: string;
 }): Promise<string | null> {
-  const proofKey = await loadManagedPrimaryDpopKey();
-  if (proofKey === null) {
+  const loaded = await loadManagedPrimaryDpopKey();
+  if (loaded === null) {
     return null;
   }
   return Effect.runPromise(
-    createBrowserDpopProof({
+    DpopProof.createProof({
       method: input.method,
       url: input.url,
       ...(input.accessToken ? { accessToken: input.accessToken } : {}),
-      proofKey,
+      key: loaded.proofKey,
     }).pipe(
-      Effect.map((signed) => signed.proof),
       Effect.provide(browserCryptoLayer),
       Effect.catchCause(() => Effect.succeed(null)),
     ),

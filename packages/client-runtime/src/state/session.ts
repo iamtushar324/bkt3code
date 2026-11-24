@@ -1,9 +1,20 @@
 import { pipe } from "effect/Function";
-// T3-CUSTOM(expbkt3): UserId for operatorUserIdFromSessionState below.
-import type { AuthSessionState, EnvironmentId, ServerConfig, UserId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import {
+  type AuthEnvironmentScope,
+  AuthSessionState,
+  EnvironmentAuthInvalidError,
+  type EnvironmentId,
+  EnvironmentOperationForbiddenError,
+  EnvironmentScopeRequiredError,
+  type ServerConfig,
+  sessionGrantsScope,
+  // T3-CUSTOM(expbkt3): UserId for operatorUserIdFromSessionState below.
+  type UserId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
@@ -14,15 +25,20 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import {
+  RemoteEnvironmentAuthFetchError,
+  RemoteEnvironmentAuthUndeclaredStatusError,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 
 /** @public Required to name the error in consumers' inferred session results. */
-export class SessionHttpClientUnavailable extends Data.TaggedError(
+export class SessionHttpClientUnavailable extends Schema.TaggedError<SessionHttpClientUnavailable>()(
   "SessionHttpClientUnavailable",
+  {},
 ) {}
 
 function initialConfigOption<E>(
@@ -43,6 +59,39 @@ const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 const MAX_SESSION_STATE_TIMEOUT_MS = 60_000;
 const SESSION_STATE_RETRY_BASE_MS = 2_000;
 const SESSION_STATE_RETRY_MAX_MS = 60_000;
+
+const isSessionRejectionError = Schema.is(
+  Schema.Union([
+    EnvironmentAuthInvalidError,
+    EnvironmentScopeRequiredError,
+    EnvironmentOperationForbiddenError,
+  ]),
+);
+const isSessionResponse = Schema.is(AuthSessionState);
+const isUndeclaredStatusError = Schema.is(RemoteEnvironmentAuthUndeclaredStatusError);
+const isAuthFetchError = Schema.is(RemoteEnvironmentAuthFetchError);
+
+/**
+ * True only when the host said no: its session lacks the scope, or it rejected the credential.
+ * A lookup that is still pending or failed on the network is not a denial.
+ */
+export function sessionDeniesScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): boolean {
+  if (result._tag === "Success") return !sessionGrantsScope(result.value, scope);
+  return result._tag === "Failure" && isSessionRejection(result.cause);
+}
+
+function isSessionRejection(cause: Cause.Cause<unknown>): boolean {
+  const error = Option.getOrNull(Cause.findErrorOption(cause));
+  if (isUndeclaredStatusError(error)) {
+    return error.status === 401 || error.status === 403;
+  }
+  // A twice-rejected relay credential arrives wrapping the `authenticated: false` response.
+  if (isAuthFetchError(error)) return isSessionResponse(error.cause);
+  return isSessionRejectionError(error);
+}
 
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
@@ -298,6 +347,7 @@ function makeEnvironmentSessionAtoms<R, E>(
     preparedConnectionValueAtom,
     sessionStateAtom,
     sessionStateValueAtom,
+    transportSessionAtom,
     // T3-CUSTOM(expbkt3): org user directory.
     orchestrationUsersAtom,
   };

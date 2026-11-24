@@ -5,6 +5,7 @@ import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapTo
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -19,7 +20,8 @@ import desktopPackageJson from "../../package.json" with { type: "json" };
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
-const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
+// Each /oauth/token attempt may take 10 s, so a backend busy after ready needs several attempts.
+const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(60);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 
@@ -70,6 +72,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
+  const mac = yield* Mac.Mac;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
 
@@ -96,32 +99,41 @@ export const make = Effect.gen(function* () {
         const credential =
           secret === undefined
             ? config.bootstrap.desktopBootstrapToken
-            : currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+            : yield* currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis).pipe(
+                Effect.provideService(Mac.Mac, mac),
+              );
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
-        const session = yield* bootstrapRemoteBearerSession({
-          httpBaseUrl: config.httpBaseUrl.href,
-          // T3-CUSTOM(expbkt3): BEGIN - attach the packaged build to the local session.
-          credential,
-          clientMetadata: {
-            label: "T3 Code Desktop",
-            deviceType: "desktop",
-            appVersion: desktopPackageJson.version,
-          },
-          // T3-CUSTOM(expbkt3): END
-        }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
+        const exchange = Effect.gen(function* () {
+          // Each attempt goes only to a backend that is currently ready.
+          if (!(yield* primary.waitForReady(Duration.infinity))) {
+            return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+          }
+          return yield* bootstrapRemoteBearerSession({
+            httpBaseUrl: config.httpBaseUrl.href,
+            // T3-CUSTOM(expbkt3): BEGIN - attach the packaged build to the local session.
+            credential,
+            clientMetadata: {
+              label: "T3 Code Desktop",
+              deviceType: "desktop",
+              appVersion: desktopPackageJson.version,
+            },
+            // T3-CUSTOM(expbkt3): END
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        });
+        const session = yield* exchange.pipe(
           Effect.retry({
-            while: isTransientBearerBootstrapError,
+            while: (error) =>
+              error._tag !== "DesktopLocalEnvironmentAuthBackendNotConfiguredError" &&
+              isTransientBearerBootstrapError(error),
             schedule: Schedule.spaced(BOOTSTRAP_TRANSIENT_RETRY_INTERVAL),
           }),
           Effect.timeout(BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT),
-          Effect.mapError(
-            (cause) =>
-              new DesktopLocalEnvironmentAuthSessionBootstrapError({
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            cause._tag === "DesktopLocalEnvironmentAuthBackendNotConfiguredError"
+              ? cause
+              : new DesktopLocalEnvironmentAuthSessionBootstrapError({ cause }),
           ),
         );
         yield* Ref.set(tokenRef, Option.some(session.access_token));

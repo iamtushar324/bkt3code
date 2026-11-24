@@ -42,6 +42,10 @@ const launchedThreadId = ThreadId.make("thread:launched");
 const boundThreadId = ThreadId.make("thread:bound");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
 
+// A live thread in the task's project, so upstream's destination check accepts the binding.
+const projectThreadShell = () =>
+  Effect.succeed({ projectId, archivedAt: null, deletedAt: null } as never);
+
 const baseTask = {
   title: "Check the build",
   prompt: "Check the nightly build.",
@@ -87,6 +91,7 @@ it.effect("tags new sessions, snoozes quiet ones, keeps the model and pauses aft
               }),
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: projectThreadShell,
             sendToThread: (input) =>
               Effect.gen(function* () {
                 sends.push({ input, actor: yield* CurrentOrchestrationActorUserId });
@@ -193,6 +198,7 @@ it.effect("a bound run steers by default and queues on request", () =>
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: projectThreadShell,
             sendToThread: (input) =>
               Effect.sync(() => {
                 sends.push(input);
@@ -253,6 +259,7 @@ it.effect("a task without options runs as nobody, as upstream's do", () =>
               }),
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: projectThreadShell,
             sendToThread: (input) =>
               Effect.fail(
                 new ThreadManagementService.ThreadManagementThreadArchivedError({
@@ -309,7 +316,10 @@ it.effect("a watch waits without counting runs, then sends one note and ends", (
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadShell: () => Effect.succeed(watched as unknown as OrchestrationV2ThreadShell),
+            getThreadShell: (threadId) =>
+              threadId === watchedThreadId
+                ? Effect.succeed(watched as unknown as OrchestrationV2ThreadShell)
+                : projectThreadShell(),
             sendToThread: (input) =>
               Effect.sync(() => {
                 sends.push(input);

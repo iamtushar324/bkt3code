@@ -28,6 +28,7 @@ const recordingAnalytics = (recorded: Array<Recorded>) =>
     record: (event, properties, options) =>
       Effect.sync(() => {
         recorded.push({ event, properties, options });
+        return true;
       }),
     flush: Effect.void,
     recordOwners: () => Effect.void,

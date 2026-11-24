@@ -17,6 +17,13 @@ import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/
 // T3-CUSTOM(expbkt3): BEGIN — exact payload shared across client surfaces.
 import type { QueuedThreadMessage } from "../outbox/model.ts";
 // T3-CUSTOM(expbkt3): END
+import type { ShellCacheOrigin } from "./orchestrationCache.ts";
+
+export type { ShellCacheOrigin };
+
+export interface CachedShellSnapshot extends DeferredShellSnapshot {
+  readonly origin?: ShellCacheOrigin;
+}
 
 export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
@@ -90,10 +97,12 @@ export class EnvironmentCacheStore extends Context.Service<
   {
     readonly loadShell: (
       environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<DeferredShellSnapshot>, ConnectionPersistenceError>;
+    ) => Effect.Effect<Option.Option<CachedShellSnapshot>, ConnectionPersistenceError>;
+    /** `origin` only when the rows descend from a server snapshot. */
     readonly saveShell: (
       environmentId: EnvironmentId,
       snapshot: OrchestrationV2ShellSnapshot,
+      origin?: ShellCacheOrigin,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly loadThread: (
       environmentId: EnvironmentId,

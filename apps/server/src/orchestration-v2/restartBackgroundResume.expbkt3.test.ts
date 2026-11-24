@@ -130,8 +130,9 @@ const makeRecovery = (
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
             getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-            // Startup recovery reads queued runs' messages to spare buffered notifications.
             getThreadRecords: () => Effect.succeed({ messages: [] } as never),
+            // Startup recovery reads queued runs' messages to spare buffered notifications.
+            getMessagesById: () => Effect.succeed(new Map()),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             writeWithEffects: (input) =>
@@ -179,7 +180,12 @@ it.effect("wakes a settled run whose background shell a startup restart cancelle
       [
         {
           id: `effect:restart-continuation:${runId}`,
-          request: { type: "provider-runtime.continue", sourceRunId: runId, wakeSettledRun: true },
+          request: {
+            type: "provider-runtime.continue",
+            sourceRunId: runId,
+            processLossCount: 1,
+            wakeSettledRun: true,
+          },
         },
       ],
     );
@@ -201,7 +207,9 @@ it.effect("leaves awaited work to upstream's unmarked wake, even with the fork s
       ...base,
       providerThreads: [{ ...base.providerThreads[0]!, pendingBackgroundTasks: [monitorTask] }],
     } as unknown as OrchestrationV2ThreadProjection;
-    const unmarked = [{ type: "provider-runtime.continue" as const, sourceRunId: runId }];
+    const unmarked = [
+      { type: "provider-runtime.continue" as const, sourceRunId: runId, processLossCount: 1 },
+    ];
     assert.deepEqual(
       (yield* startupEffects(projection)).map((effect) => effect.request),
       unmarked,
@@ -233,7 +241,7 @@ it.effect("keeps upstream's unmarked continuation for a turn cut mid-way", () =>
     const effects = yield* startupEffects(projection);
     assert.deepEqual(
       effects.map((effect) => effect.request),
-      [{ type: "provider-runtime.continue", sourceRunId: runId }],
+      [{ type: "provider-runtime.continue", sourceRunId: runId, processLossCount: 1 }],
     );
   }),
 );
@@ -309,7 +317,13 @@ it.effect("captures the wake before shutdown reconciliation cancels an open shel
       [
         {
           id: `effect:restart-continuation:${runId}`,
-          request: { type: "provider-runtime.continue", sourceRunId: runId, wakeSettledRun: true },
+          // Shutdown records no process loss; startup counts it.
+          request: {
+            type: "provider-runtime.continue",
+            sourceRunId: runId,
+            processLossCount: 0,
+            wakeSettledRun: true,
+          },
         },
       ],
     );

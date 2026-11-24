@@ -15,22 +15,26 @@ import * as DateTime from "effect/DateTime";
 export const IDLE_SWEEP_AFTER_MS = 24 * 60 * 60 * 1000;
 export const IDLE_SWEEP_EVERY_PASSES = 30;
 
-type SweepThread = Pick<
-  OrchestrationV2ThreadShell,
-  | "id"
-  | "activeRunId"
-  | "activityRunStatus"
-  | "createdAt"
-  | "latestUserMessageAt"
-  | "latestRunRequestedAt"
-  | "latestRunStartedAt"
-  | "latestRunCompletedAt"
->;
+// The sweep reads upstream's light pull-request snapshot, which carries only the thread's own
+// timestamps; a full shell adds its run and message activity.
+type SweepThread = Pick<OrchestrationV2ThreadShell, "id" | "createdAt" | "updatedAt"> &
+  Partial<
+    Pick<
+      OrchestrationV2ThreadShell,
+      | "activeRunId"
+      | "activityRunStatus"
+      | "latestUserMessageAt"
+      | "latestRunRequestedAt"
+      | "latestRunStartedAt"
+      | "latestRunCompletedAt"
+    >
+  >;
 
 const latestActivityMs = (thread: SweepThread) =>
   Math.max(
     ...[
       thread.createdAt,
+      thread.updatedAt,
       thread.latestUserMessageAt,
       thread.latestRunRequestedAt,
       thread.latestRunStartedAt,
@@ -39,7 +43,7 @@ const latestActivityMs = (thread: SweepThread) =>
   );
 
 export const isIdleForSweep = (thread: SweepThread, nowMs: number) =>
-  thread.activeRunId === null &&
+  thread.activeRunId == null &&
   thread.activityRunStatus == null &&
   nowMs - latestActivityMs(thread) >= IDLE_SWEEP_AFTER_MS;
 

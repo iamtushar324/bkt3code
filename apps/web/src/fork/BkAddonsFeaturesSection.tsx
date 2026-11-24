@@ -10,7 +10,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../components/settings/settingsLayout";
-import { searchableSetting } from "../components/settings/settingsSearch";
+import { useSearchableSetting } from "../components/settings/settingsSearch";
 import { Switch } from "../components/ui/switch";
 import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { SettingDescription } from "./SettingDescription";
@@ -37,6 +37,7 @@ function ClientSwitch({
 }
 
 export function BkAddonsFeaturesSection() {
+  const searchableSetting = useSearchableSetting();
   const phaseGroupedSidebarEnabled = useClientSettings(
     (settings) => settings.phaseGroupedSidebarEnabled,
   );
@@ -67,7 +68,7 @@ export function BkAddonsFeaturesSection() {
         resetAction={
           phaseGroupedSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled ? (
             <SettingResetButton
-              label="BK sidebar"
+              ariaLabel="Reset BK sidebar to default"
               onClick={() =>
                 updateClientSettings({
                   phaseGroupedSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.phaseGroupedSidebarEnabled,

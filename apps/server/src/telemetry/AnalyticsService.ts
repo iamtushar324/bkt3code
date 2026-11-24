@@ -53,8 +53,10 @@ interface DeliveryState {
 
 // Retry delays shorter than this still wait for the next background check.
 const FLUSH_INTERVAL_MS = 10_000;
-// A hung send would hold the flush lock, and with it the shutdown flush.
+// A hung send would hold the flush lock for the next background flush.
 const SEND_TIMEOUT = "10 seconds";
+// Quit and restart wait for this flush; events it cannot send in time are dropped.
+const SHUTDOWN_FLUSH_TIMEOUT = "1 second";
 // A failed batch is tried again until it has failed for this long. Ingest answers 503 when it
 // cannot store a batch, and a broken Cloudflare location can take about 5 minutes to fail over.
 // The waiting batch holds newer events back; `maxBufferedEvents` bounds them meanwhile.
@@ -105,12 +107,12 @@ export interface AnalyticsRecordOptions {
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** T3-CUSTOM(expbkt3): may identify a user. */
+    /** Whether the event was queued to send; false when telemetry is off. T3-CUSTOM(expbkt3): may identify a user. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
       options?: AnalyticsRecordOptions, // T3-CUSTOM(expbkt3): identity and backfill options.
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<boolean>;
 
     readonly flush: Effect.Effect<void>;
 
@@ -407,7 +409,7 @@ export const make = Effect.gen(function* () {
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties, options) {
       // T3-CUSTOM(expbkt3): key-gated, per-user identity and insert-id dedupe (TEC-1631).
-      if (!(yield* telemetryEnabled) || !telemetryKeyConfigured || !distinctId) return;
+      if (!(yield* telemetryEnabled) || !telemetryKeyConfigured || !distinctId) return false;
 
       const { kept, dropped } = filterAnalyticsProperties(properties);
       yield* logDroppedKeys(event, dropped);
@@ -421,7 +423,7 @@ export const make = Effect.gen(function* () {
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       // T3-CUSTOM(expbkt3): an insert id yields a stable uuid, so a backfill never duplicates.
       const uuid = yield* eventUuid(options?.insertId);
-      if (uuid === undefined) return;
+      if (uuid === undefined) return false;
 
       const enqueueResult = yield* enqueueBufferedEvent(
         {
@@ -441,6 +443,7 @@ export const make = Effect.gen(function* () {
           event,
         });
       }
+      return true;
     },
   );
 
@@ -494,7 +497,9 @@ export const make = Effect.gen(function* () {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
-  yield* Effect.addFinalizer(() => flush);
+  yield* Effect.addFinalizer(() =>
+    flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
+  );
 
   return AnalyticsService.of({ record, flush, recordOwners });
 });

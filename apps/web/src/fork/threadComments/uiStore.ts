@@ -11,6 +11,8 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import { allowsEmptySend } from "./model";
+
 export interface ThreadCommentsActiveSummary {
   readonly threadKey: string;
   /** The same thread as `threadKey`, for the composer chip's actions. */
@@ -71,4 +73,10 @@ export function useActiveThreadCommentsOpenCount(): number {
 
 export function resetThreadCommentsUiStoreForTests() {
   useThreadCommentsUiStore.setState({ active: null, hoveredCommentId: null, focusRequest: null });
+}
+
+/** Same answer for code outside React (the send body reads it at click time). */
+export function threadCommentsEmptySendAllowed(): boolean {
+  const active = useThreadCommentsUiStore.getState().active;
+  return active !== null && allowsEmptySend(active);
 }

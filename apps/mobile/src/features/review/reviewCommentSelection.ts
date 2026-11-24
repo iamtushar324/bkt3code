@@ -6,6 +6,8 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface ReviewCommentTarget {
   readonly sectionId: string;
@@ -317,6 +319,7 @@ function parseReviewInlineComment(
   rawAttributes: string,
   rawBody: string,
   index: number,
+  resolve: MessageResolver,
 ): ReviewInlineComment | null {
   const attributes = readReviewCommentAttributes(rawAttributes);
   const startIndex = readNonNegativeInteger(attributes.startIndex);
@@ -339,13 +342,16 @@ function parseReviewInlineComment(
       : `review-comment:${index}:${sectionId}:${filePath}`,
     // T3-CUSTOM(expbkt3): END
     sectionId,
-    sectionTitle: attributes.sectionTitle?.trim() || "Review",
+    sectionTitle:
+      attributes.sectionTitle?.trim() ||
+      resolve(msg("Review", { $context: "review comment section" })),
     filePath,
     // T3-CUSTOM(expbkt3): BEGIN
     startIndex: hasRange ? Math.min(startIndex, endIndex) : null,
     endIndex: hasRange ? Math.max(startIndex, endIndex) : null,
     // T3-CUSTOM(expbkt3): END
-    rangeLabel: attributes.rangeLabel?.trim() || "line",
+    rangeLabel:
+      attributes.rangeLabel?.trim() || resolve(msg("line", { $context: "review comment range" })),
     text: body.text,
     diff: body.contents,
     fenceLanguage: body.language,
@@ -384,6 +390,7 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
 export function parseReviewInlineComments(
   value: string,
   context?: OrchestrationMessageContext,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ReviewInlineComment> {
   const comments: ReviewInlineComment[] = [];
   // Mask chip delimiters: labels containing </review_comment> would otherwise truncate the block.
@@ -401,6 +408,7 @@ export function parseReviewInlineComments(
       raw.slice(attributeStart, attributeEnd),
       raw.slice(attributeEnd + 1, -"</review_comment>".length),
       index,
+      resolve,
     );
     if (!comment) {
       continue;
@@ -440,6 +448,7 @@ export function parseReviewInlineComments(
 
 export function parseReviewCommentMessageSegments(
   value: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ReviewCommentMessageSegment> {
   const segments: ReviewCommentMessageSegment[] = [];
   let cursor = 0;
@@ -465,6 +474,7 @@ export function parseReviewCommentMessageSegments(
       raw.slice(attributeStart, attributeEnd),
       raw.slice(attributeEnd + 1, -"</review_comment>".length),
       parsedCommentIndex,
+      resolve,
     );
     if (comment) {
       segments.push({ kind: "review-comment", comment });

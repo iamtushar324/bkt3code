@@ -70,7 +70,7 @@ export function SessionArchiveSettingsSection() {
         resetAction={
           archive.enabled !== DEFAULTS.enabled ? (
             <SettingResetButton
-              label="session archive reclaim"
+              ariaLabel="Reset session archive reclaim to default"
               onClick={() => patch({ enabled: DEFAULTS.enabled })}
             />
           ) : null
@@ -89,7 +89,7 @@ export function SessionArchiveSettingsSection() {
         resetAction={
           archive.includeTranscriptSidecar !== DEFAULTS.includeTranscriptSidecar ? (
             <SettingResetButton
-              label="transcript sidecars"
+              ariaLabel="Reset transcript sidecars to default"
               onClick={() => patch({ includeTranscriptSidecar: DEFAULTS.includeTranscriptSidecar })}
             />
           ) : null
@@ -110,7 +110,7 @@ export function SessionArchiveSettingsSection() {
         resetAction={
           archive.autoSweep.enabled !== DEFAULTS.autoSweep.enabled ? (
             <SettingResetButton
-              label="automatic sweep"
+              ariaLabel="Reset automatic sweep to default"
               onClick={() => patchSweep({ enabled: DEFAULTS.autoSweep.enabled })}
             />
           ) : null
@@ -130,7 +130,7 @@ export function SessionArchiveSettingsSection() {
         resetAction={
           archive.autoSweep.mode !== DEFAULTS.autoSweep.mode ? (
             <SettingResetButton
-              label="sweep action"
+              ariaLabel="Reset sweep action to default"
               onClick={() => patchSweep({ mode: DEFAULTS.autoSweep.mode })}
             />
           ) : null
@@ -163,7 +163,7 @@ export function SessionArchiveSettingsSection() {
         resetAction={
           archive.autoSweep.minArchivedDays !== DEFAULTS.autoSweep.minArchivedDays ? (
             <SettingResetButton
-              label="retention window"
+              ariaLabel="Reset retention window to default"
               onClick={() => patchSweep({ minArchivedDays: DEFAULTS.autoSweep.minArchivedDays })}
             />
           ) : null

@@ -22,7 +22,7 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import {
   useScopedSettings,
@@ -45,6 +45,7 @@ function isInteractionMode(value: string | null): value is ProviderInteractionMo
  * Build everywhere it would apply.
  */
 export function StartingModeDefaultRow({ isProjectScope }: { isProjectScope: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["defaultThreadInteractionMode"]);
@@ -64,7 +65,7 @@ export function StartingModeDefaultRow({ isProjectScope }: { isProjectScope: boo
       resetAction={
         value !== DEFAULT_SERVER_SETTINGS.defaultThreadInteractionMode ? (
           <SettingResetButton
-            label="default starting mode"
+            ariaLabel="Reset default starting mode to default"
             onClick={() =>
               updateSettings({
                 defaultThreadInteractionMode: DEFAULT_SERVER_SETTINGS.defaultThreadInteractionMode,
@@ -103,6 +104,7 @@ export function StartingModeDefaultRow({ isProjectScope }: { isProjectScope: boo
  * the project panel gets the same control.
  */
 export function PermissionsDefaultRow() {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["defaultRuntimeMode"]);

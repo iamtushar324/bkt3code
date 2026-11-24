@@ -1,12 +1,14 @@
 import {
   authScopeRequiredResponse,
   AuthAccessReadScope, // T3-CUSTOM(expbkt3): the pairingLinks and clients routes upstream deleted.
+  AuthAccessTokenType,
   AuthAccessWriteScope,
   // T3-CUSTOM(expbkt3): administrator-minted pairing links default to member scopes.
   AuthMemberClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
+  EnvironmentConnectApprovalPendingError,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
@@ -21,6 +23,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 // T3-CUSTOM(expbkt3): decode the operator a pairing grant's subject names.
@@ -30,6 +33,7 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
@@ -65,7 +69,7 @@ import * as SessionStore from "./SessionStore.ts";
 import * as ServerSettings from "../serverSettings.ts"; // T3-CUSTOM(expbkt3): environment user identity mode.
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { checkRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -87,7 +91,7 @@ const appendDpopChallengeOnUnauthorized =
     const request = yield* HttpServerRequest.HttpServerRequest;
     const usesDpop =
       (request.originalUrl.startsWith("/oauth/token") && request.headers.dpop !== undefined) ||
-      request.headers.authorization?.startsWith("DPoP ") === true;
+      /^DPoP /i.test(request.headers.authorization ?? "");
     if (usesDpop) {
       yield* appendDpopChallengeHeader;
     }
@@ -239,7 +243,11 @@ export const authenticateMediaRequest =
 
 export const failEnvironmentInternal =
   /* Request instrumentation already owns the span; keep this helper in that context. */
-  Effect.fnUntraced(function* (reason: EnvironmentInternalErrorReason, error?: unknown) {
+  Effect.fnUntraced(function* (
+    reason: EnvironmentInternalErrorReason,
+    error?: unknown,
+    detail?: string,
+  ) {
     const traceId = yield* currentEnvironmentTraceId;
     if (error !== undefined) {
       yield* Effect.logError("environment api operation failed", {
@@ -248,16 +256,32 @@ export const failEnvironmentInternal =
         cause: error,
       });
     }
-    return yield* new EnvironmentInternalError({ code: "internal_error", reason, traceId });
+    return yield* new EnvironmentInternalError({
+      code: "internal_error",
+      reason,
+      traceId,
+      ...(detail === undefined ? {} : { detail }),
+    });
   });
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+// Plaintext LAN servers still need the cookie; TLS arrives through a proxy that sets X-Forwarded-Proto.
+const sessionCookieOptions = (request: HttpServerRequest.HttpServerRequest) => ({
+  httpOnly: true,
+  path: "/",
+  sameSite: "lax" as const,
+  secure: Option.exists(requestUrl(request), (url) => url.protocol === "https:"),
+});
+
+const appendSessionCookie = (
+  request: HttpServerRequest.HttpServerRequest,
+  cookieName: string,
+  token: string,
+  expiresAt: DateTime.DateTime,
+) =>
   Effect.fromResult(
     Cookies.set(Cookies.empty, cookieName, token, {
+      ...sessionCookieOptions(request),
       expires: DateTime.toDate(expiresAt),
-      httpOnly: true,
-      path: "/",
-      sameSite: "lax",
     }),
   ).pipe(
     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
@@ -304,7 +328,7 @@ export const layerAuthenticatedAuth = Layer.effect(
             scopes: new Set(session.scopes),
           }),
         );
-        return yield* session.subject === "cloud-connect"
+        return yield* session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
           : handler;
       }).pipe(Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }));
@@ -480,6 +504,7 @@ export const layer = HttpApiBuilder.group(
     );
     // T3-CUSTOM(expbkt3): END
 
+    // T3-CUSTOM(expbkt3): the fork's handler chain re-indents the upstream handlers below.
     return (
       handlers
         .handle(
@@ -500,7 +525,12 @@ export const layer = HttpApiBuilder.group(
                 result.sessionMethod === "browser-session-cookie" &&
                 result.expiresAt
               ) {
-                yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+                yield* appendSessionCookie(
+                  request,
+                  sessions.cookieName,
+                  credential.token,
+                  result.expiresAt,
+                );
                 yield* appendCredentialResponseHeaders;
               }
               return result;
@@ -539,6 +569,7 @@ export const layer = HttpApiBuilder.group(
                   : undefined,
                 identity ? { userId: identity.userId } : undefined, // T3-CUSTOM(expbkt3): bind the team user.
               );
+              // T3-CUSTOM(expbkt3): team identity persist; the rest is re-indented upstream code.
               yield* persistIdentity(
                 identity,
                 result.response.scopes.includes(AuthAccessWriteScope),
@@ -553,24 +584,23 @@ export const layer = HttpApiBuilder.group(
               const cookieName = result.cookieName ?? sessions.cookieName;
               const selectedCookie = yield* Effect.fromResult(
                 Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+                  ...sessionCookieOptions(request),
                   expires: DateTime.toDate(result.response.expiresAt),
-                  httpOnly: true,
-                  path: "/",
-                  sameSite: "lax",
                 }),
               ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
               const sessionCookies = result.expireNormalCookie
                 ? yield* Effect.fromResult(
-                    Cookies.expireCookie(selectedCookie, sessions.cookieName, {
-                      httpOnly: true,
-                      path: "/",
-                      sameSite: "lax",
-                    }),
+                    Cookies.expireCookie(
+                      selectedCookie,
+                      sessions.cookieName,
+                      sessionCookieOptions(request),
+                    ),
                   ).pipe(
                     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
                   )
                 : selectedCookie;
 
+              // T3-CUSTOM(expbkt3): upstream code, re-indented by the fork's handler chain.
               yield* HttpEffect.appendPreResponseHandler((_request, response) =>
                 Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
               );
@@ -609,10 +639,9 @@ export const layer = HttpApiBuilder.group(
               );
               const sessionCookies = yield* Effect.fromResult(
                 Cookies.set(Cookies.empty, sessions.cookieName, result.sessionToken, {
+                  // T3-CUSTOM(expbkt3): Secure over HTTPS, like upstream's session cookies.
+                  ...sessionCookieOptions(request),
                   expires: DateTime.toDate(result.response.expiresAt),
-                  httpOnly: true,
-                  path: "/",
-                  sameSite: "lax",
                 }),
               ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
 
@@ -684,8 +713,9 @@ export const layer = HttpApiBuilder.group(
               if (requestedScopes === null || requestedScopes?.length === 0) {
                 return yield* failEnvironmentInvalidRequest("invalid_scope");
               }
-              const proofKeyThumbprint = args.headers.dpop
-                ? yield* verifyRequestDpopProof({ request }).pipe(
+              // Bootstrap exchanges leave the proof unrecorded because its key is not always trusted.
+              const proof = args.headers.dpop
+                ? yield* checkRequestDpopProof({ request }).pipe(
                     Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                       appendDpopChallengeHeader.pipe(
                         Effect.andThen(
@@ -701,6 +731,21 @@ export const layer = HttpApiBuilder.group(
                     ),
                   )
                 : undefined;
+              if (args.payload.subject_token_type === AuthAccessTokenType) {
+                yield* appendCredentialResponseHeaders;
+                if (requestedScopes !== undefined) {
+                  return yield* failEnvironmentInvalidRequest("invalid_scope");
+                }
+                if (!proof) {
+                  yield* appendDpopChallengeHeader;
+                  return yield* failEnvironmentAuthInvalid("invalid_credential");
+                }
+                return yield* serverAuth.renewAccessToken(
+                  args.payload.subject_token,
+                  proof.thumbprint,
+                  proof.consume,
+                );
+              }
               // T3-CUSTOM(expbkt3): accept a direct Clerk browser token here too, so a
               // remote client can pair against `environmentUserIdentityMode: "required"`.
               const { identity, administrativeGrant, identitySource } =
@@ -727,9 +772,9 @@ export const layer = HttpApiBuilder.group(
                       : {}),
                   },
                 }),
-                proofKeyThumbprint || identity
+                proof || identity
                   ? {
-                      ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                      ...(proof ? { proofKeyThumbprint: proof.thumbprint } : {}),
                       ...(identity ? { userId: identity.userId } : {}),
                     }
                   : undefined,
@@ -760,6 +805,19 @@ export const layer = HttpApiBuilder.group(
                 EnvironmentAuth.serverAuthDpopFailureReason(error),
               ),
             ),
+            Effect.catchTags({
+              ServerAuthConnectApprovalPendingError: () =>
+                currentEnvironmentTraceId.pipe(
+                  Effect.flatMap((traceId) =>
+                    Effect.fail(
+                      new EnvironmentConnectApprovalPendingError({
+                        code: "connect_approval_pending",
+                        traceId,
+                      }),
+                    ),
+                  ),
+                ),
+            }),
             Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
               failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
             ),
@@ -805,6 +863,26 @@ export const layer = HttpApiBuilder.group(
               // `access:write` still gates every environment-wide credential.
               const { session, administrative } =
                 yield* requireEnvironmentScopeOrOwnIdentity(AuthAccessWriteScope);
+              // T3-CUSTOM(expbkt3): BEGIN - upstream's app approval and peer-link codes stay
+              // administrative. Their subject names the access level, not the operator.
+              if (args.payload.access) {
+                if (!administrative) {
+                  return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
+                }
+                for (const delegatedScope of mcpClientScopes(args.payload.access)) {
+                  if (!session.scopes.has(delegatedScope)) {
+                    return yield* failEnvironmentScopeRequired(delegatedScope);
+                  }
+                }
+                // The signed-in approver travels with the code, so it can approve a client when
+                // environment identity is required.
+                const approverUserId = operatorUserIdForPrincipal(session);
+                return yield* serverAuth.issuePairingCredential(
+                  args.payload,
+                  approverUserId === null ? null : EnvironmentUserId.make(approverUserId),
+                );
+              }
+              // T3-CUSTOM(expbkt3): END
               const delegatedScopes =
                 args.payload.scopes ??
                 // T3-CUSTOM(expbkt3): a member's default is their own standard scopes; an
@@ -963,6 +1041,36 @@ export const layer = HttpApiBuilder.group(
             }),
             Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
               failEnvironmentInternal("client_session_revoke_failed", error),
+            ),
+          ),
+        )
+        .handle(
+          "approveConnectDevice",
+          Effect.fn("environment.auth.approveConnectDevice")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              yield* requireEnvironmentScope(AuthAccessWriteScope);
+              const approved = yield* serverAuth.approveConnectDevice(args.payload.pairingLinkId);
+              return { approved };
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("connect_device_approve_failed", error),
+            ),
+          ),
+        )
+        .handle(
+          "revokeConnectDevice",
+          Effect.fn("environment.auth.revokeConnectDevice")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              yield* requireEnvironmentScope(AuthAccessWriteScope);
+              const revoked = yield* serverAuth.revokeConnectDevice(
+                args.payload.proofKeyThumbprint,
+              );
+              return { revoked };
+            },
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("connect_device_revoke_failed", error),
             ),
           ),
         )

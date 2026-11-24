@@ -1,10 +1,14 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "./i18n/messages";
 
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   options?: {
     maxLines?: number;
   },
+  resolve: MessageResolver = m,
 ): string {
   const maxLines = options?.maxLines ?? 8;
   const lines = stripDisplayedPlanMarkdown(planMarkdown)
@@ -32,7 +36,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   }
 
   if (previewLines.length === 0) {
-    return proposedPlanTitle(planMarkdown) ?? "Plan preview unavailable.";
+    return proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable."));
   }
 
   if (hasMoreContent) {
@@ -53,6 +57,7 @@ function sanitizePlanFileSegment(input: string): string {
 
 export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
 
+// T3-CUSTOM(expbkt3): plan mode stays available (plan follow-up and implement actions).
 export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `${PLAN_IMPLEMENTATION_PROMPT_PREFIX}${planMarkdown.trim()}`;
 }
@@ -75,12 +80,15 @@ export function resolvePlanFollowUpSubmission(input: { draftText: string; planMa
   };
 }
 
-export function buildPlanImplementationThreadTitle(planMarkdown: string): string {
+export function buildPlanImplementationThreadTitle(
+  planMarkdown: string,
+  resolve: MessageResolver = m,
+): string {
   const title = proposedPlanTitle(planMarkdown);
   if (!title) {
-    return "Implement plan";
+    return resolve(msg("Implement plan"));
   }
-  return `Implement ${title}`;
+  return resolve(msg("Implement {title}", { title }));
 }
 
 export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
