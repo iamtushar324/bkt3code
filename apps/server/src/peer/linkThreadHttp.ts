@@ -7,6 +7,7 @@ import {
   PEER_LINK_THREAD_STREAM_ROUTE,
   ThreadId,
   TurnItemId,
+  // T3-CUSTOM(expbkt3): user-bound link credentials.
   UserId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";

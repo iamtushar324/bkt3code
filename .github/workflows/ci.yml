@@ -183,7 +183,9 @@ jobs:
         run: |
           (
             set +e
-            vpr typecheck
+            # T3-CUSTOM(expbkt3): GitHub-hosted runners have less memory than upstream's; four
+            # parallel tsgo runs killed client-runtime (exit 137).
+            vp run -r --cache --concurrency-limit 2 typecheck
             status=$?
             # TEMP(upstream-sync): show failed tasks' output; remove before merge.
             [ "$status" -ne 0 ] && vp run --last-details

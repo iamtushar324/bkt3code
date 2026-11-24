@@ -2316,7 +2316,9 @@ export const layerWsRpc = (
                 ({ projectIds }) => new Set([...projectIds].map((id) => ProjectId.make(id))),
               ),
               Effect.orElseSucceed(() => new Set<ProjectId>()),
-              Effect.flatMap((projectIds) => issues.list(input, projectIds)),
+              Effect.flatMap((projectIds) =>
+                issues.list({ ...input, visibleProjectIds: projectIds }),
+              ),
             );
       // T3-CUSTOM(expbkt3): END
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
