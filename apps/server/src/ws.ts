@@ -2435,6 +2435,28 @@ export const layerWsRpc = (
           withSourceControlExecutionEnvironment(effect, executionEnvironment),
         );
 
+      // T3-CUSTOM(expbkt3): admins and operators keep upstream's cwd-only branch reads.
+      const requireBranchThreadAccess = (threadId: ThreadId | undefined) =>
+        workflowsAllowed
+          ? Effect.void
+          : threadId === undefined
+            ? Effect.fail(
+                new EnvironmentAuthorizationError({
+                  message: "Branch status needs a thread.",
+                  requiredScope: "orchestration:read",
+                }),
+              )
+            : requireThreadAccess(threadId).pipe(
+                Effect.mapError(
+                  () =>
+                    new EnvironmentAuthorizationError({
+                      message: "Thread not found.",
+                      requiredScope: "orchestration:read",
+                    }),
+                ),
+                Effect.asVoid,
+              );
+
       const withThreadActionLock = <A, E, R>(
         threadId: ThreadId | undefined,
         effect: Effect.Effect<A, E, R>,
@@ -4168,9 +4190,19 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        [WS_METHODS.subscribeVcsBranch]: (input) => vcsStatusBroadcaster.streamBranchStatus(input),
+        // T3-CUSTOM(expbkt3): members read branch status only through a thread they can access.
+        [WS_METHODS.subscribeVcsBranch]: (input) =>
+          Stream.unwrap(
+            requireBranchThreadAccess(input.threadId).pipe(
+              Effect.as(vcsStatusBroadcaster.streamBranchStatus(input)),
+            ),
+          ),
+        // T3-CUSTOM(expbkt3): members refresh branch status only through a thread they can access.
         [WS_METHODS.vcsRefreshBranch]: (input) =>
-          vcsStatusBroadcaster.refreshBranchStatus(input).pipe(Effect.asVoid),
+          requireBranchThreadAccess(input.threadId).pipe(
+            Effect.andThen(vcsStatusBroadcaster.refreshBranchStatus(input)),
+            Effect.asVoid,
+          ),
         // T3-CUSTOM(expbkt3): retain per-thread credential and action isolation.
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           withThreadSourceControlStream(input.threadId, vcsStatusBroadcaster.streamStatus(input)),
